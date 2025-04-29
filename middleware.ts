@@ -1,6 +1,10 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 
-export default clerkMiddleware();
+// This middleware protects ALL routes
+export default clerkMiddleware(async (auth, req) => {
+  // Protect all routes by default
+  await auth.protect();
+});
 
 export const config = {
   matcher: [
