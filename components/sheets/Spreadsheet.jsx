@@ -31,7 +31,7 @@ const columnTypes = {
 // Generate unique ID for cells
 const generateId = () => `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
 
-export default function Spreadsheet() {
+export default function Spreadsheet({ initialRows = [] }) {
   // State for spreadsheet data
   const [columns, setColumns] = useState(() => 
     loadFromLocalStorage('spreadsheet-columns', [
@@ -42,27 +42,33 @@ export default function Spreadsheet() {
     ])
   );
   
-  const [rows, setRows] = useState(() => 
-    loadFromLocalStorage('spreadsheet-rows', [
-      { id: generateId(), cells: { col1: 'perplexity.ai', col2: 'Perplexity', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'databricks.com', col2: 'Databricks', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'waymo.com', col2: 'Waymo', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'cohere.com', col2: 'Cohere', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'meta.com', col2: 'AI at Meta', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'apple.com', col2: 'Apple', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'abc.xyz', col2: 'Alphabet Inc.', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'amazon.com', col2: 'Amazon Web Services', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'atlassian.com', col2: 'Atlassian', col3: 'https://www.linkedin.com/...' } },
-      { id: generateId(), cells: { col1: 'activision.com', col2: 'Activision', col3: 'https://www.linkedin.com/...' } },
-    ])
-  );
+  const [rows, setRows] = useState(() => {
+    // Use initial rows if provided and not empty, otherwise load from local storage
+    if (initialRows && initialRows.length > 0) {
+      return initialRows;
+    }
+    
+    return loadFromLocalStorage('spreadsheet-rows', []);
+  });
+  
+  // Update rows when initialRows changes
+  useEffect(() => {
+    if (initialRows && initialRows.length > 0) {
+      setRows(prevRows => {
+        // Avoid duplicate rows by checking IDs
+        const existingIds = new Set(prevRows.map(row => row.id));
+        const newRows = initialRows.filter(row => !existingIds.has(row.id));
+        return [...prevRows, ...newRows];
+      });
+    }
+  }, [initialRows]);
   
   // State for UI controls
   const [activeCell, setActiveCell] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('Default view');
-  const [columnCount, setColumnCount] = useState('3/5 columns');
-  const [rowCount, setRowCount] = useState('10/10 rows');
+  const [columnCount, setColumnCount] = useState(`${columns.length}/5 columns`);
+  const [rowCount, setRowCount] = useState(`${rows.length}/${rows.length} rows`);
   const [zoom, setZoom] = useState(100);
   const [showDropdown, setShowDropdown] = useState(null);
   const [editingCellContent, setEditingCellContent] = useState('');
@@ -79,6 +85,10 @@ export default function Spreadsheet() {
     const timer = setTimeout(() => {
       saveToLocalStorage('spreadsheet-columns', columns);
       saveToLocalStorage('spreadsheet-rows', rows);
+      
+      // Update row count
+      setRowCount(`${rows.length}/${rows.length} rows`);
+      setColumnCount(`${columns.length}/5 columns`);
     }, 300);
     
     return () => clearTimeout(timer);
@@ -422,7 +432,7 @@ export default function Spreadsheet() {
   const filteredRows = rows.filter(row => {
     if (!searchTerm) return true;
     return Object.values(row.cells).some(
-      cellValue => cellValue.toString().toLowerCase().includes(searchTerm.toLowerCase())
+      cellValue => cellValue && cellValue.toString().toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
   
@@ -430,18 +440,27 @@ export default function Spreadsheet() {
   const getCompanyIcon = useCallback((name) => {
     if (!name) return '🏢';
     
-    if (name.includes('Perplexity')) return '🧠';
-    if (name.includes('Databricks')) return '🔴';
-    if (name.includes('Waymo')) return '🚗';
-    if (name.includes('Cohere')) return '🔄';
-    if (name.includes('Meta')) return '∞';
-    if (name.includes('Apple')) return '🍎';
-    if (name.includes('Alphabet')) return '🔤';
-    if (name.includes('Amazon')) return '📦';
-    if (name.includes('Atlassian')) return '🔷';
-    if (name.includes('Activision')) return '🎮';
+    const nameLower = name.toLowerCase();
     
-    return '🏢';
+    // Moving items icons
+    if (nameLower.includes('sofa') || nameLower.includes('couch')) return '🛋️';
+    if (nameLower.includes('table')) return '🪑';
+    if (nameLower.includes('bed') || nameLower.includes('mattress')) return '🛏️';
+    if (nameLower.includes('television') || nameLower.includes('tv')) return '📺';
+    if (nameLower.includes('book')) return '📚';
+    if (nameLower.includes('lamp')) return '💡';
+    if (nameLower.includes('chair')) return '🪑';
+    if (nameLower.includes('computer') || nameLower.includes('laptop')) return '💻';
+    if (nameLower.includes('dresser') || nameLower.includes('cabinet')) return '🗄️';
+    if (nameLower.includes('mirror')) return '🪞';
+    if (nameLower.includes('plant')) return '🪴';
+    if (nameLower.includes('refrigerator') || nameLower.includes('fridge')) return '🧊';
+    if (nameLower.includes('oven') || nameLower.includes('stove')) return '🍳';
+    if (nameLower.includes('dish') || nameLower.includes('plate')) return '🍽️';
+    if (nameLower.includes('washer') || nameLower.includes('dryer')) return '🧺';
+    
+    // Default for furniture/items
+    return '📦';
   }, []);
   
   // Render cell content based on column type
@@ -471,7 +490,7 @@ export default function Spreadsheet() {
         );
       case 'url':
         return (
-          <div className="flex items-center text-blue-500 underline">
+          <div className="flex items-center text-blue-500">
             <span className="truncate">{value}</span>
           </div>
         );

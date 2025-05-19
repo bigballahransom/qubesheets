@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import PhotoInventoryUploader, { InventoryItem } from '../components/PhotoInventoryUploader';
 import Spreadsheet from '../components/sheets/Spreadsheet';
+import InventoryManager from '@/components/InventoryManager';
 
 export default function Home() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -16,17 +17,17 @@ export default function Home() {
     <div className="overflow-x-hidden"> 
       <main className="flex flex-col min-h-screen">
         <div className="container mx-auto px-4 py-8">
-          <h1 className="text-4xl font-bold text-center mb-8">Qube Sheets | Moving Inventory</h1>
           
           {/* Photo Inventory Uploader */}
-          <div className="mb-8">
+          {/* <div className="mb-8">
             <PhotoInventoryUploader onItemsAnalyzed={handleItemsAnalyzed} />
-          </div>
+          </div> */}
+          <InventoryManager/>
           
           {/* Spreadsheet */}
-          {/* <div className="h-[800px] border rounded-lg shadow-lg overflow-hidden">
-            <Spreadsheet inventoryItems={inventoryItems} />
-          </div> */}
+          {/* <div className="h-[800px] border rounded-lg shadow-lg overflow-hidden"> */}
+            {/* <Spreadsheet/> */}
+          {/* </div> */}
         </div>
       </main>
     </div>
