@@ -383,7 +383,7 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
             <img
               src={previewUrl!}
               alt="Preview"
-              className="w-full max-w-md mx-auto rounded-lg shadow-md"
+              className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
             />
             <button
               onClick={handleReset}
