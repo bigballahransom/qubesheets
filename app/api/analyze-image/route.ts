@@ -1,5 +1,10 @@
+// app/api/analyze-image/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import OpenAI from 'openai';
+import connectMongoDB from '@/lib/mongodb';
+import Project from '@/models/Project';
+import InventoryItem from '@/models/InventoryItem';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -135,10 +140,21 @@ interface AnalysisResult {
     book?: number;
     specialty?: number;
   };
+  savedToDatabase?: boolean;
+  dbError?: string;
 }
 
 export async function POST(request: NextRequest) {
   try {
+    // Get auth from Clerk
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
     // Check if OpenAI API key is configured
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
@@ -150,6 +166,7 @@ export async function POST(request: NextRequest) {
     // Parse the form data
     const formData = await request.formData();
     const image = formData.get('image') as File;
+    const projectId = formData.get('projectId') as string;
 
     if (!image) {
       return NextResponse.json(
@@ -233,7 +250,7 @@ Return your response as a JSON object with the following structure:
       "box_recommendation": {
         "box_type": "Medium",
         "box_quantity": 2,
-        "box_dimensions": "18-1/8\" x 18\" x 16\""
+        "box_dimensions": "18-1/8\\" x 18\\" x 16\\""
       }
     }
   ],
@@ -300,20 +317,10 @@ For box recommendations, consider how items would be packed efficiently. For exa
     } catch (parseError) {
       // If JSON parsing fails, create a structured response from the text
       console.error('JSON parsing failed:', parseError);
-      analysisResult = {
-        summary: content,
-        items: [
-          {
-            name: "Analysis completed",
-            description: content,
-            category: "General",
-            quantity: 1,
-            location: "Unknown",
-            cuft: 1,
-            weight: 7,
-          },
-        ],
-      };
+      return NextResponse.json(
+        { error: 'Failed to parse analysis result' },
+        { status: 500 }
+      );
     }
 
     // Validate and clean the response
@@ -436,6 +443,43 @@ For box recommendations, consider how items would be packed efficiently. For exa
       });
       
       analysisResult.total_boxes = totalBoxes;
+    }
+
+    // Store the inventory items in MongoDB if projectId is provided
+    try {
+      if (projectId) {
+        // Connect to MongoDB
+        await connectMongoDB();
+        
+        // Check if project exists and belongs to the user
+        const project = await Project.findOne({ _id: projectId, userId });
+        if (!project) {
+          return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+        }
+
+        // Prepare items for database
+        const itemsToCreate = analysisResult.items.map(item => ({
+          ...item,
+          projectId,
+          userId
+        }));
+        
+        // Insert all items to the database
+        await InventoryItem.insertMany(itemsToCreate);
+        
+        // Update project's updatedAt timestamp
+        await Project.findByIdAndUpdate(projectId, { 
+          updatedAt: new Date() 
+        });
+        
+        // Add a flag to indicate items were saved to database
+        analysisResult.savedToDatabase = true;
+      }
+    } catch (dbError) {
+      console.error('Error saving inventory items to database:', dbError);
+      // Don't fail the API call, just return the analysis without saving
+      analysisResult.savedToDatabase = false;
+      analysisResult.dbError = "Failed to save items to database";
     }
 
     // Log usage for monitoring

@@ -1,11 +1,25 @@
+// components/EditableProjectName.tsx
+'use client';
 
-'use client'
 import React, { useState, useRef, useEffect } from 'react';
 
-const EditableProjectName = () => {
+interface EditableProjectNameProps {
+  initialName: string;
+  onNameChange: (newName: string) => void;
+}
+
+const EditableProjectName: React.FC<EditableProjectNameProps> = ({ 
+  initialName, 
+  onNameChange 
+}) => {
   const [isEditing, setIsEditing] = useState(false);
-  const [projectName, setProjectName] = useState("My Awesome Project");
-  const inputRef = useRef(null);
+  const [projectName, setProjectName] = useState(initialName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Update the project name if the initialName prop changes
+  useEffect(() => {
+    setProjectName(initialName);
+  }, [initialName]);
 
   // Focus the input when editing starts
   useEffect(() => {
@@ -21,25 +35,31 @@ const EditableProjectName = () => {
 
   const handleBlur = () => {
     setIsEditing(false);
-    // Optional: validate or save the project name here
+    if (projectName.trim() !== initialName) {
+      onNameChange(projectName);
+    }
   };
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       setIsEditing(false);
+      if (projectName.trim() !== initialName) {
+        onNameChange(projectName);
+      }
     }
     if (e.key === 'Escape') {
-      // Optional: restore previous value on escape
+      // Restore previous value on escape
+      setProjectName(initialName);
       setIsEditing(false);
     }
   };
 
-  const handleChange = (e) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setProjectName(e.target.value);
   };
 
   return (
-    <div className="flex flex-col items-center justify-center py-2">
+    <div className="flex flex-col items-start justify-center py-2">
       <div className="w-full max-w-md p-2 bg-white rounded-lg border border-gray-200">
         <div className="flex items-center justify-between">
           <div className="flex-1">

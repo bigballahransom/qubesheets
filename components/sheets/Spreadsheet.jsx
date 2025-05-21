@@ -1,25 +1,8 @@
+// components/sheets/Spreadsheet.jsx
 'use client'
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu } from 'lucide-react';
-
-// Utility functions for local storage
-const saveToLocalStorage = (key, data) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch (error) {
-    console.error('Error saving to local storage:', error);
-  }
-};
-
-const loadFromLocalStorage = (key, defaultValue) => {
-  try {
-    const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : defaultValue;
-  } catch (error) {
-    console.error('Error loading from local storage:', error);
-    return defaultValue;
-  }
-};
 
 // Column type definitions
 const columnTypes = {
@@ -31,37 +14,27 @@ const columnTypes = {
 // Generate unique ID for cells
 const generateId = () => `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
 
-export default function Spreadsheet({ initialRows = [] }) {
+export default function Spreadsheet({ 
+  initialRows = [], 
+  initialColumns = [],
+  onRowsChange = () => {},
+  onColumnsChange = () => {} 
+}) {
   // State for spreadsheet data
-  const [columns, setColumns] = useState(() => 
-    loadFromLocalStorage('spreadsheet-columns', [
-      { id: 'col1', name: 'Location', type: 'text' },
-      { id: 'col2', name: 'Item', type: 'company' },
-      { id: 'col3', name: 'Cuft', type: 'url' },
-      { id: 'col4', name: 'Weight', type: 'url' },
-    ])
+  const [columns, setColumns] = useState(
+    initialColumns.length > 0 
+      ? initialColumns 
+      : [
+          { id: 'col1', name: 'Location', type: 'text' },
+          { id: 'col2', name: 'Item', type: 'company' },
+          { id: 'col3', name: 'Cuft', type: 'url' },
+          { id: 'col4', name: 'Weight', type: 'url' },
+        ]
   );
   
-  const [rows, setRows] = useState(() => {
-    // Use initial rows if provided and not empty, otherwise load from local storage
-    if (initialRows && initialRows.length > 0) {
-      return initialRows;
-    }
-    
-    return loadFromLocalStorage('spreadsheet-rows', []);
-  });
-  
-  // Update rows when initialRows changes
-  useEffect(() => {
-    if (initialRows && initialRows.length > 0) {
-      setRows(prevRows => {
-        // Avoid duplicate rows by checking IDs
-        const existingIds = new Set(prevRows.map(row => row.id));
-        const newRows = initialRows.filter(row => !existingIds.has(row.id));
-        return [...prevRows, ...newRows];
-      });
-    }
-  }, [initialRows]);
+  const [rows, setRows] = useState(initialRows);
+  const [isLoading, setIsLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'saving', 'saved', 'error'
   
   // State for UI controls
   const [activeCell, setActiveCell] = useState(null);
@@ -80,19 +53,85 @@ export default function Spreadsheet({ initialRows = [] }) {
   const spreadsheetRef = useRef(null);
   const columnRefs = useRef({});
   
-  // Save data to localStorage whenever it changes with debounce
+  // Update rows when initialRows changes
   useEffect(() => {
-    const timer = setTimeout(() => {
-      saveToLocalStorage('spreadsheet-columns', columns);
-      saveToLocalStorage('spreadsheet-rows', rows);
+    if (initialRows) {
+      // Check if it's different from current rows to avoid infinite re-renders
+      const currentRowsJson = JSON.stringify(rows.map(r => ({ id: r.id, cells: r.cells })));
+      const initialRowsJson = JSON.stringify(initialRows.map(r => ({ id: r.id, cells: r.cells })));
       
-      // Update row count
-      setRowCount(`${rows.length}/${rows.length} rows`);
-      setColumnCount(`${columns.length}/5 columns`);
-    }, 300);
+      if (currentRowsJson !== initialRowsJson) {
+        setRows(initialRows);
+      }
+      
+      setIsLoading(false);
+    } else {
+      // If no initialRows provided, start with a single empty row
+      if (rows.length === 0) {
+        const emptyRow = {
+          id: `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`,
+          cells: {}
+        };
+        setRows([emptyRow]);
+      }
+      setIsLoading(false);
+    }
+  }, [initialRows]);
+  
+  // Add this function to handle empty states in render
+  const renderEmptyStateIfNeeded = () => {
+    if (rows.length === 0 && !isLoading) {
+      return (
+        <div className="flex justify-center items-center h-40 text-gray-500">
+          <button 
+            className="flex items-center justify-center text-blue-500 hover:bg-gray-100 p-2 rounded-md"
+            onClick={handleAddRow}
+          >
+            <Plus size={16} />
+            <span className="ml-1">Add a row to start</span>
+          </button>
+        </div>
+      );
+    }
+    return null;
+  };
+  // Update columns when initialColumns changes
+  useEffect(() => {
+    if (initialColumns && initialColumns.length > 0) {
+      setColumns(initialColumns);
+    }
+  }, [initialColumns]);
+  
+  // Call the callbacks when data changes
+  // Update the useEffect that calls callbacks
+useEffect(() => {
+  // Don't call the callback on every render, only when rows actually change
+  // This is important to avoid infinite loops
+  const rowsChanged = rows !== initialRows;
+  if (rows.length > 0 && rowsChanged) {
+    setRowCount(`${rows.length}/${rows.length} rows`);
     
-    return () => clearTimeout(timer);
-  }, [columns, rows]);
+    // Use a callback ref to avoid infinite loops
+    const timeoutId = setTimeout(() => {
+      onRowsChange(rows);
+    }, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }
+}, [rows, initialRows, onRowsChange]);
+
+useEffect(() => {
+  const columnsChanged = columns !== initialColumns;
+  if (columns.length > 0 && columnsChanged) {
+    setColumnCount(`${columns.length}/5 columns`);
+    
+    const timeoutId = setTimeout(() => {
+      onColumnsChange(columns);
+    }, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }
+}, [columns, initialColumns, onColumnsChange]);
   
   // Focus input when cell becomes active and set initial selection
   useEffect(() => {
@@ -137,6 +176,32 @@ export default function Spreadsheet({ initialRows = [] }) {
     };
   }, [zoom]);
   
+  // Set saveStatus to 'saved' after delay
+  useEffect(() => {
+    if (saveStatus === 'saving') {
+      const timer = setTimeout(() => {
+        setSaveStatus('saved');
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [saveStatus]);
+
+  function useDebounce(value, delay) {
+    const [debouncedValue, setDebouncedValue] = useState(value);
+  
+    useEffect(() => {
+      const handler = setTimeout(() => {
+        setDebouncedValue(value);
+      }, delay);
+  
+      return () => {
+        clearTimeout(handler);
+      };
+    }, [value, delay]);
+  
+    return debouncedValue;
+  }
+  
   // Handle cell editing
   const handleCellClick = useCallback((rowId, colId, currentValue) => {
     setActiveCell({ rowId, colId });
@@ -150,24 +215,29 @@ export default function Spreadsheet({ initialRows = [] }) {
   const handleCellBlur = useCallback(() => {
     if (activeCell) {
       const { rowId, colId } = activeCell;
-      setRows(prevRows => {
-        return prevRows.map(row => {
-          if (row.id === rowId) {
-            return {
-              ...row,
-              cells: {
-                ...row.cells,
-                [colId]: editingCellContent
-              }
-            };
-          }
-          return row;
-        });
+      const updatedRows = rows.map(row => {
+        if (row.id === rowId) {
+          return {
+            ...row,
+            cells: {
+              ...row.cells,
+              [colId]: editingCellContent
+            }
+          };
+        }
+        return row;
       });
+      
+      setRows(updatedRows);
       setActiveCell(null);
+      setSaveStatus('saving');
+      
+      // Update row and column counts
+      setRowCount(`${updatedRows.length}/${updatedRows.length} rows`);
+      
+      // This will trigger the debounced onRowsChange
     }
-  }, [activeCell, editingCellContent]);
-  
+  }, [activeCell, editingCellContent, rows]);
   const handleKeyDown = useCallback((e) => {
     if (!activeCell) return;
     
@@ -247,29 +317,32 @@ export default function Spreadsheet({ initialRows = [] }) {
         handleCellClick(activeCell.rowId, nextCol.id, rows.find(r => r.id === activeCell.rowId).cells[nextCol.id] || '');
       }
     }
-  }, [activeCell, columns, rows, handleCellBlur, handleCellClick, editingCellContent]);
+  }, [activeCell, columns, rows, handleCellBlur, handleCellClick]);
   
   // Handle adding columns
   const handleAddColumn = useCallback(() => {
     const newColumnId = `col${columns.length + 1}`;
     const newColumn = { id: newColumnId, name: `Column ${columns.length + 1}`, type: 'text' };
     
-    setColumns(prev => [...prev, newColumn]);
+    const updatedColumns = [...columns, newColumn];
+    setColumns(updatedColumns);
     
     // Add empty cell for new column to all rows
-    setRows(prevRows => {
-      return prevRows.map(row => ({
-        ...row,
-        cells: {
-          ...row.cells,
-          [newColumnId]: ''
-        }
-      }));
-    });
+    const updatedRows = rows.map(row => ({
+      ...row,
+      cells: {
+        ...row.cells,
+        [newColumnId]: ''
+      }
+    }));
+    setRows(updatedRows);
     
     // Update column count
-    setColumnCount(`${columns.length + 1}/5 columns`);
-  }, [columns]);
+    setColumnCount(`${updatedColumns.length}/5 columns`);
+    setSaveStatus('saving');
+    
+    // This will trigger the useEffect to call onColumnsChange and onRowsChange
+  }, [columns, rows]);
   
   // Handle adding rows
   const handleAddRow = useCallback(() => {
@@ -282,58 +355,72 @@ export default function Spreadsheet({ initialRows = [] }) {
     });
     
     const newRow = { id: newRowId, cells: newCells };
-    setRows(prev => [...prev, newRow]);
+    const updatedRows = [...rows, newRow];
+    setRows(updatedRows);
     
     // Update row count
-    setRowCount(`${rows.length + 1}/${rows.length + 1} rows`);
+    setRowCount(`${updatedRows.length}/${updatedRows.length} rows`);
+    setSaveStatus('saving');
+    
+    // This will trigger the useEffect to call onRowsChange
   }, [columns, rows]);
   
   // Handle removing columns
   const handleRemoveColumn = useCallback((columnId) => {
     if (columns.length <= 1) return; // Keep at least one column
     
-    setColumns(prev => prev.filter(col => col.id !== columnId));
+    const updatedColumns = columns.filter(col => col.id !== columnId);
+    setColumns(updatedColumns);
     
     // Remove column from all rows
-    setRows(prevRows => {
-      return prevRows.map(row => {
-        const { [columnId]: removedCell, ...remainingCells } = row.cells;
-        return {
-          ...row,
-          cells: remainingCells
-        };
-      });
+    const updatedRows = rows.map(row => {
+      const newCells = { ...row.cells };
+      delete newCells[columnId];
+      return {
+        ...row,
+        cells: newCells
+      };
     });
+    setRows(updatedRows);
     
     // Update column count
-    setColumnCount(`${columns.length - 1}/5 columns`);
+    setColumnCount(`${updatedColumns.length}/5 columns`);
     setShowDropdown(null);
-  }, [columns]);
+    setSaveStatus('saving');
+    
+    // This will trigger the useEffect to call onColumnsChange and onRowsChange
+  }, [columns, rows]);
   
   // Handle removing rows
   const handleRemoveRow = useCallback((rowId) => {
     if (rows.length <= 1) return; // Keep at least one row
     
-    setRows(prev => prev.filter(row => row.id !== rowId));
+    const updatedRows = rows.filter(row => row.id !== rowId);
+    setRows(updatedRows);
     
     // Update row count
-    setRowCount(`${rows.length - 1}/${rows.length - 1} rows`);
+    setRowCount(`${updatedRows.length}/${updatedRows.length} rows`);
     
     // Clear selection if removed row was selected
     if (selectedRows.includes(rowId)) {
       setSelectedRows(prev => prev.filter(id => id !== rowId));
     }
+    
+    setSaveStatus('saving');
+    // This will trigger the useEffect to call onRowsChange
   }, [rows, selectedRows]);
   
   // Handle column renaming
   const handleRenameColumn = useCallback((columnId, newName) => {
-    setColumns(prev => 
-      prev.map(col => 
-        col.id === columnId ? { ...col, name: newName } : col
-      )
+    const updatedColumns = columns.map(col => 
+      col.id === columnId ? { ...col, name: newName } : col
     );
+    setColumns(updatedColumns);
     setShowDropdown(null);
-  }, []);
+    setSaveStatus('saving');
+    
+    // This will trigger the useEffect to call onColumnsChange
+  }, [columns]);
   
   // Handle row selection
   const handleRowSelect = useCallback((rowId, event) => {
@@ -383,16 +470,14 @@ export default function Spreadsheet({ initialRows = [] }) {
     if (!draggedColumn || draggedColumn === targetColumnId) return;
     
     // Reorder columns
-    setColumns(prev => {
-      const reordered = [...prev];
-      const draggedIndex = reordered.findIndex(col => col.id === draggedColumn);
-      const targetIndex = reordered.findIndex(col => col.id === targetColumnId);
-      
-      const [removed] = reordered.splice(draggedIndex, 1);
-      reordered.splice(targetIndex, 0, removed);
-      
-      return reordered;
-    });
+    const draggedIndex = columns.findIndex(col => col.id === draggedColumn);
+    const targetIndex = columns.findIndex(col => col.id === targetColumnId);
+    
+    const reordered = [...columns];
+    const [removed] = reordered.splice(draggedIndex, 1);
+    reordered.splice(targetIndex, 0, removed);
+    
+    setColumns(reordered);
     
     // Remove visual feedback
     const targetElement = columnRefs.current[targetColumnId];
@@ -401,7 +486,10 @@ export default function Spreadsheet({ initialRows = [] }) {
     }
     
     setDraggedColumn(null);
-  }, [draggedColumn]);
+    setSaveStatus('saving');
+    
+    // This will trigger the useEffect to call onColumnsChange
+  }, [draggedColumn, columns]);
   
   // Handle column resizing
   const handleColumnResizeStart = useCallback((e, columnId) => {
@@ -409,7 +497,7 @@ export default function Spreadsheet({ initialRows = [] }) {
     setIsResizing(columnId);
     
     const handleMouseMove = (moveEvent) => {
-      if (isResizing) {
+      if (isResizing && columnId) {
         const columnElement = columnRefs.current[columnId];
         if (columnElement) {
           const newWidth = moveEvent.clientX - columnElement.getBoundingClientRect().left;
@@ -498,6 +586,18 @@ export default function Spreadsheet({ initialRows = [] }) {
         return <span className="truncate">{value}</span>;
     }
   }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon]);
+  
+  // Render loading state
+  if (isLoading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center p-8">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading data...</p>
+        </div>
+      </div>
+    );
+  }
   
   return (
     <div 
@@ -620,7 +720,7 @@ export default function Spreadsheet({ initialRows = [] }) {
           </div>
           
           {/* Column headers */}
-          {columns.map((column, index) => (
+          {columns.map((column) => (
             <div 
               key={column.id}
               ref={el => columnRefs.current[column.id] = el}
@@ -658,6 +758,7 @@ export default function Spreadsheet({ initialRows = [] }) {
                         const newType = column.type === 'text' ? 'company' : column.type === 'company' ? 'url' : 'text';
                         setColumns(prev => prev.map(col => col.id === column.id ? {...col, type: newType} : col));
                         setShowDropdown(null);
+                        setSaveStatus('saving');
                       }}>
                         Change type
                       </div>
@@ -684,9 +785,9 @@ export default function Spreadsheet({ initialRows = [] }) {
             </button>
           </div>
         </div>
-        
-        {/* Spreadsheet Body */}
-        <div>
+
+{/* Spreadsheet Body */}
+<div>
           {filteredRows.map((row, rowIndex) => (
             <div key={row.id} className={`flex ${selectedRows.includes(row.id) ? 'bg-blue-50' : rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
               {/* Row number */}
@@ -741,13 +842,15 @@ export default function Spreadsheet({ initialRows = [] }) {
               <span className="ml-1">New row</span>
             </button>
           </div>
-          
-          {/* Autosave indicator */}
-          <div className="mt-2 ml-2 text-sm text-gray-500 flex items-center">
-            <div className="w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse"></div>
-            All changes saved to local storage
-          </div>
         </div>
+        
+        {/* Autosave indicator */}
+        {/* <div className="mt-2 ml-2 text-sm text-gray-500 flex items-center">
+          <div className={`w-2 h-2 rounded-full ${saveStatus === 'saved' ? 'bg-green-500' : saveStatus === 'saving' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'} mr-2`}></div>
+          {saveStatus === 'saved' ? 'All changes saved' : 
+           saveStatus === 'saving' ? 'Saving changes...' : 
+           'Error saving changes'}
+        </div> */}
       </div>
       
       {/* Zoom controls */}
@@ -780,6 +883,7 @@ export default function Spreadsheet({ initialRows = [] }) {
                 setRows(prev => prev.filter(row => !selectedRows.includes(row.id)));
                 setSelectedRows([]);
                 setRowCount(`${rows.length - selectedRows.length}/${rows.length - selectedRows.length} rows`);
+                setSaveStatus('saving');
               }}
             >
               Delete
@@ -794,4 +898,5 @@ export default function Spreadsheet({ initialRows = [] }) {
         </div>
       )}
     </div>
-  );}
+  );
+}

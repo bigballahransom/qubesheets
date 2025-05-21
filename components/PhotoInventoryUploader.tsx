@@ -1,3 +1,4 @@
+// components/PhotoInventoryUploader.tsx
 'use client';
 
 import { useState, useRef } from 'react';
@@ -31,10 +32,13 @@ export interface AnalysisResult {
     book?: number;
     specialty?: number;
   };
+  savedToDatabase?: boolean;
+  dbError?: string;
 }
 
 interface PhotoInventoryUploaderProps {
-  onItemsAnalyzed?: (items: InventoryItem[]) => void;
+  onItemsAnalyzed?: (result: AnalysisResult) => void;
+  projectId?: string;
 }
 
 // Helper functions to match those in the API route
@@ -68,7 +72,7 @@ function generateBoxRecommendation(
   const itemNameLower = itemName.toLowerCase();
   const categoryLower = category ? category.toLowerCase() : '';
   
-  // Determine the right box based on item category, cuft, and weight
+  // Implementation details same as before...
   if (categoryLower.includes('book') || itemNameLower.includes('book') || weight > 40) {
     if (cuft <= 1) {
       boxType = "Book Box";
@@ -138,7 +142,7 @@ function generateBoxRecommendation(
   };
 }
 
-export default function PhotoInventoryUploader({ onItemsAnalyzed }: PhotoInventoryUploaderProps) {
+export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: PhotoInventoryUploaderProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -173,6 +177,11 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed }: PhotoInvento
     try {
       const formData = new FormData();
       formData.append('image', selectedFile);
+      
+      // Add projectId to the form data if provided
+      if (projectId) {
+        formData.append('projectId', projectId);
+      }
 
       const response = await fetch('/api/analyze-image', {
         method: 'POST',
@@ -291,16 +300,16 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed }: PhotoInvento
         result.total_boxes = totalBoxes;
       }
 
-      const enhancedResult = {
+      const enhancedResult: AnalysisResult = {
         ...result,
         items: enhancedItems
       };
 
       setAnalysisResult(enhancedResult);
       
-      // If a callback function was provided, pass the enhanced items
+      // If a callback function was provided, pass the enhanced result
       if (onItemsAnalyzed) {
-        onItemsAnalyzed(enhancedItems);
+        onItemsAnalyzed(enhancedResult);
       }
     } catch (err) {
       console.error('Error analyzing image:', err);
@@ -431,6 +440,16 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed }: PhotoInvento
               {analysisResult.summary}
             </p>
           </div>
+
+          {/* Database Status (if available) */}
+          {analysisResult.savedToDatabase !== undefined && (
+            <div className={`mb-6 p-3 rounded ${analysisResult.savedToDatabase ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+              {analysisResult.savedToDatabase 
+                ? 'Items have been saved to your project database.' 
+                : 'Items could not be saved to the database. They are still available in this session.'}
+              {analysisResult.dbError && <p className="mt-1 text-sm">{analysisResult.dbError}</p>}
+            </div>
+          )}
 
           {/* Box Summary */}
           {analysisResult.total_boxes && (
