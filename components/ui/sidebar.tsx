@@ -59,6 +59,7 @@ export function SidebarTrigger() {
   const { toggleSidebar, isOpen } = useSidebar();
   
   return (
+    <>
     <button
       onClick={toggleSidebar}
       className="fixed top-4 left-4 z-30 p-2 rounded-md hover:bg-gray-100 transition-colors lg:hidden"
@@ -66,6 +67,12 @@ export function SidebarTrigger() {
     >
       <Menu size={20} />
     </button>
+    <div className='fixed top-0 left-0 w-full bg-white h-16'>
+    </div>
+    <div className='fixed top-4 right-4 z-30 lg:hidden'>
+    <Logo />
+    </div>
+    </>
   );
 }
 

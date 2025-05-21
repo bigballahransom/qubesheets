@@ -384,8 +384,8 @@ export default function InventoryManager() {
       {/* Main content wrapper */}
       <div className="lg:pl-64"> {/* Add left padding for sidebar on large screens */}
         {/* Sleek top header bar */}
-        <header className="sticky top-0 z-10 bg-white border-b shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        <header className="sticky top-10 z-10 bg-white border-b shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
             {/* Project Name and Save Status */}
             <div className="flex items-center">
               {currentProject && (

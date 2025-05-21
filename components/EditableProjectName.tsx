@@ -59,8 +59,8 @@ const EditableProjectName: React.FC<EditableProjectNameProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-start justify-center py-2">
-      <div className="w-full max-w-md p-2 bg-white rounded-lg border border-gray-200">
+    <div className="flex flex-col items-start justify-center py-0">
+      <div className="w-full max-w-md px-2 bg-white rounded-lg border border-gray-200">
         <div className="flex items-center justify-between">
           <div className="flex-1">
             {isEditing ? (
