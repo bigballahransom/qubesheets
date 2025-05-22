@@ -30,12 +30,15 @@ export async function GET(
       return NextResponse.json({ error: 'Image not found' }, { status: 404 });
     }
     
-    // Return the image as a blob response
+    // Return the image as a blob response with proper headers
     return new NextResponse(image.data, {
       headers: {
         'Content-Type': image.mimeType,
         'Content-Length': image.size.toString(),
-        'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
+        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour (reduced from 1 year for development)
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET',
+        'Access-Control-Allow-Headers': 'Content-Type',
       },
     });
   } catch (error) {
