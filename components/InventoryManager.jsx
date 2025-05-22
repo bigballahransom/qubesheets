@@ -1,15 +1,17 @@
-// InventoryManager.jsx - Fixed spacing and alignment issues
+// InventoryManager.jsx - Updated with Image Gallery
 
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images
 } from 'lucide-react';
 import { Button } from './ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import EditableProjectName from './EditableProjectName';
 import PhotoInventoryUploader from './PhotoInventoryUploader';
+import ImageGallery from './ImageGallery';
 import Spreadsheet from './sheets/Spreadsheet';
 
 // Helper function to generate a unique ID
@@ -39,6 +41,8 @@ export default function InventoryManager() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [savingStatus, setSavingStatus] = useState('idle'); // 'idle', 'saving', 'saved', 'error'
+  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
+  const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of gallery
   
   // Default columns setup
   const defaultColumns = [
@@ -182,7 +186,16 @@ export default function InventoryManager() {
     
     // Close the uploader
     setIsUploaderOpen(false);
+    
+    // Switch to inventory tab to show the new items
+    setActiveTab('inventory');
   }, [currentProject, spreadsheetColumns]);
+
+  // Handle image saved callback
+  const handleImageSaved = useCallback(() => {
+    // Force re-render of image gallery to show new image
+    setImageGalleryKey(prev => prev + 1);
+  }, []);
   
   // Function to convert inventory items to spreadsheet rows
   const convertItemsToRows = useCallback((items) => {
@@ -477,25 +490,56 @@ export default function InventoryManager() {
             </div>
           </div>
           
-          {/* Spreadsheet Container */}
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            {/* Optional toolbar */}
-            <div className="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-              <h2 className="text-sm font-medium text-slate-700">Inventory Spreadsheet</h2>
-            </div>
+          {/* Tabs for Inventory and Images */}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="mb-4">
+              <TabsTrigger value="inventory" className="flex items-center gap-2">
+                <Table size={16} />
+                Inventory
+              </TabsTrigger>
+              <TabsTrigger value="images" className="flex items-center gap-2">
+                <Images size={16} />
+                Images
+              </TabsTrigger>
+            </TabsList>
             
-            {/* Spreadsheet Component */}
-            <div className="h-[calc(100vh-260px)]">
-              {currentProject && (
-                <Spreadsheet 
-                  initialRows={spreadsheetRows} 
-                  initialColumns={spreadsheetColumns}
-                  onRowsChange={handleSpreadsheetRowsChange}
-                  onColumnsChange={handleSpreadsheetColumnsChange}
-                />
-              )}
-            </div>
-          </div>
+            <TabsContent value="inventory">
+              {/* Spreadsheet Container */}
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                {/* Optional toolbar */}
+                <div className="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <h2 className="text-sm font-medium text-slate-700">Inventory Spreadsheet</h2>
+                </div>
+                
+                {/* Spreadsheet Component */}
+                <div className="h-[calc(100vh-320px)]">
+                  {currentProject && (
+                    <Spreadsheet 
+                      initialRows={spreadsheetRows} 
+                      initialColumns={spreadsheetColumns}
+                      onRowsChange={handleSpreadsheetRowsChange}
+                      onColumnsChange={handleSpreadsheetColumnsChange}
+                    />
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="images">
+              {/* Image Gallery Container */}
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="p-6">
+                  {currentProject && (
+                    <ImageGallery 
+                      key={imageGalleryKey}
+                      projectId={currentProject._id}
+                      onUploadClick={() => setIsUploaderOpen(true)}
+                    />
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
       
@@ -514,7 +558,8 @@ export default function InventoryManager() {
             </div>
             <div className="p-1 overflow-auto">
               <PhotoInventoryUploader 
-                onItemsAnalyzed={handleItemsAnalyzed} 
+                onItemsAnalyzed={handleItemsAnalyzed}
+                onImageSaved={handleImageSaved}
                 projectId={currentProject._id}
               />
             </div>

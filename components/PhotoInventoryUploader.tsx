@@ -38,12 +38,12 @@ export interface AnalysisResult {
 
 interface PhotoInventoryUploaderProps {
   onItemsAnalyzed?: (result: AnalysisResult) => void;
+  onImageSaved?: () => void; // New callback for when image is saved
   projectId?: string;
 }
 
 // Helper functions to match those in the API route
 function isFurniture(category?: string): boolean {
-  // Items that typically don't need boxes (large furniture pieces)
   const furnitureKeywords = [
     'sofa', 'couch', 'table', 'chair', 'bed', 'mattress', 'dresser', 
     'cabinet', 'desk', 'wardrobe', 'bookcase', 'shelf', 'shelving',
@@ -64,7 +64,6 @@ function generateBoxRecommendation(
   weight: number, 
   quantity: number
 ): { box_type: string; box_quantity: number; box_dimensions: string } {
-  // Default box to use if we can't determine a better match
   let boxType = "Medium";
   let boxDimensions = "18-1/8\" x 18\" x 16\"";
   let boxQuantity = 1;
@@ -72,17 +71,14 @@ function generateBoxRecommendation(
   const itemNameLower = itemName.toLowerCase();
   const categoryLower = category ? category.toLowerCase() : '';
   
-  // Implementation details same as before...
   if (categoryLower.includes('book') || itemNameLower.includes('book') || weight > 40) {
     if (cuft <= 1) {
       boxType = "Book Box";
       boxDimensions = "12\" x 12\" x 12\"";
-      // Books are heavy, so we need more boxes for them
       boxQuantity = Math.ceil(quantity * cuft / 1);
     } else {
       boxType = "Small";
       boxDimensions = "16-3/8\" x 12-5/8\" x 12-5/8\"";
-      // Heavy items need more boxes
       boxQuantity = Math.ceil(quantity * cuft / 1.5);
     }
   } else if (categoryLower.includes('kitchenware') || 
@@ -132,7 +128,6 @@ function generateBoxRecommendation(
     boxQuantity = Math.ceil(quantity * cuft / 6);
   }
   
-  // Ensure we recommend at least one box
   boxQuantity = Math.max(1, boxQuantity);
   
   return {
@@ -142,12 +137,17 @@ function generateBoxRecommendation(
   };
 }
 
-export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: PhotoInventoryUploaderProps) {
+export default function PhotoInventoryUploader({ 
+  onItemsAnalyzed, 
+  onImageSaved,
+  projectId 
+}: PhotoInventoryUploaderProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [imageDescription, setImageDescription] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,6 +158,7 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
         setPreviewUrl(URL.createObjectURL(file));
         setError(null);
         setAnalysisResult(null);
+        setImageDescription('');
       } else {
         setError('Please select a valid image file');
       }
@@ -166,6 +167,34 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const saveImageToDatabase = async (file: File, analysisResult: AnalysisResult) => {
+    if (!projectId) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      formData.append('description', imageDescription);
+      formData.append('analysisResult', JSON.stringify(analysisResult));
+
+      const response = await fetch(`/api/projects/${projectId}/images`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save image');
+      }
+
+      // Call the callback to refresh the image gallery
+      if (onImageSaved) {
+        onImageSaved();
+      }
+    } catch (error) {
+      console.error('Error saving image:', error);
+      // Don't throw error here, as analysis was successful
+    }
   };
 
   const handleAnalyze = async () => {
@@ -178,7 +207,6 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
       const formData = new FormData();
       formData.append('image', selectedFile);
       
-      // Add projectId to the form data if provided
       if (projectId) {
         formData.append('projectId', projectId);
       }
@@ -196,10 +224,8 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
       
       // Only enhance items if fields are missing from the API response
       const enhancedItems = result.items.map((item: InventoryItem) => {
-        // Start with the original item
         const enhancedItem = { ...item };
         
-        // Only set location if not provided by API
         if (!enhancedItem.location) {
           enhancedItem.location = item.category === 'furniture' ? 'Living Room' : 
                              item.category === 'kitchenware' ? 'Kitchen' : 
@@ -209,7 +235,6 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
                              item.category === 'office' ? 'Office' : 'Other';
         }
         
-        // Only set cuft if not provided by API
         if (!enhancedItem.cuft) {
           enhancedItem.cuft = item.category === 'furniture' ? 15 : 
                          item.category === 'electronics' ? 3 : 
@@ -218,28 +243,25 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
                          item.category === 'decor' ? 1 : 3;
         }
         
-        // Only calculate weight if not provided by API
         if (!enhancedItem.weight) {
           const cuft = enhancedItem.cuft || 3;
-          // Use more accurate weight estimates based on category
           if (item.category === 'furniture') {
-            enhancedItem.weight = cuft * 8; // Furniture is slightly heavier than standard
+            enhancedItem.weight = cuft * 8;
           } else if (item.category === 'electronics') {
-            enhancedItem.weight = cuft * 10; // Electronics are denser
+            enhancedItem.weight = cuft * 10;
           } else if (item.category === 'books' || item.category === 'media') {
-            enhancedItem.weight = cuft * 20; // Books are very dense
+            enhancedItem.weight = cuft * 20;
           } else if (item.category === 'clothing' || item.category === 'bedding') {
-            enhancedItem.weight = cuft * 4; // Soft items are lighter
+            enhancedItem.weight = cuft * 4;
           } else if (item.category === 'kitchenware') {
-            enhancedItem.weight = cuft * 9; // Kitchen items often dense
+            enhancedItem.weight = cuft * 9;
           } else if (item.category === 'appliances') {
-            enhancedItem.weight = cuft * 12; // Appliances are quite heavy
+            enhancedItem.weight = cuft * 12;
           } else {
-            enhancedItem.weight = cuft * 7; // Standard industry estimate
+            enhancedItem.weight = cuft * 7;
           }
         }
         
-        // Generate box recommendation if not provided by API
         if (!enhancedItem.box_recommendation && !isFurniture(item.category)) {
           enhancedItem.box_recommendation = generateBoxRecommendation(
             enhancedItem.category || '',
@@ -250,14 +272,12 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
           );
         }
         
-        // Ensure other fields have defaults if missing
         enhancedItem.fragile = enhancedItem.fragile || false;
         enhancedItem.special_handling = enhancedItem.special_handling || "";
         
         return enhancedItem;
       });
 
-      // Calculate total boxes if not provided
       if (!result.total_boxes && enhancedItems.length > 0) {
         const totalBoxes: {
           small: number;
@@ -291,7 +311,6 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
             } else if (boxType.includes('book')) {
               totalBoxes.book += quantity;
             } else {
-              // Wardrobe, dish pack, picture boxes, etc.
               totalBoxes.specialty += quantity;
             }
           }
@@ -307,7 +326,10 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
 
       setAnalysisResult(enhancedResult);
       
-      // If a callback function was provided, pass the enhanced result
+      // Save image to database
+      await saveImageToDatabase(selectedFile, enhancedResult);
+      
+      // Call the items analyzed callback
       if (onItemsAnalyzed) {
         onItemsAnalyzed(enhancedResult);
       }
@@ -324,12 +346,12 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
     setPreviewUrl(null);
     setAnalysisResult(null);
     setError(null);
+    setImageDescription('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  // Helper function to safely calculate total boxes
   const calculateTotalBoxes = (totalBoxes: AnalysisResult['total_boxes']): number => {
     if (!totalBoxes) return 0;
     
@@ -347,9 +369,6 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
   return (
     <div className="max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg">
       <div className="text-center mb-6">
-        {/* <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Photo Inventory Analyzer
-        </h1> */}
         <p className="text-gray-600">
           Upload a photo to automatically identify and inventory items in the image
         </p>
@@ -379,18 +398,35 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
             </p>
           </div>
         ) : (
-          <div className="relative">
-            <img
-              src={previewUrl!}
-              alt="Preview"
-              className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
-            />
-            <button
-              onClick={handleReset}
-              className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
+          <div className="space-y-4">
+            <div className="relative">
+              <img
+                src={previewUrl!}
+                alt="Preview"
+                className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
+              />
+              <button
+                onClick={handleReset}
+                className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            
+            {/* Image Description Input */}
+            <div className="max-w-md mx-auto">
+              <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                Add a description (optional)
+              </label>
+              <input
+                id="description"
+                type="text"
+                value={imageDescription}
+                onChange={(e) => setImageDescription(e.target.value)}
+                placeholder="e.g., Living room items, Kitchen inventory..."
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
           </div>
         )}
       </div>
@@ -406,7 +442,7 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
             {isAnalyzing ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
-                Analyzing...
+                Analyzing & Saving...
               </>
             ) : (
               <>
@@ -415,6 +451,9 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
               </>
             )}
           </button>
+          <p className="text-xs text-gray-500 mt-2">
+            Your image will be saved to the project gallery
+          </p>
         </div>
       )}
 
@@ -441,12 +480,12 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
             </p>
           </div>
 
-          {/* Database Status (if available) */}
+          {/* Database Status */}
           {analysisResult.savedToDatabase !== undefined && (
             <div className={`mb-6 p-3 rounded ${analysisResult.savedToDatabase ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
               {analysisResult.savedToDatabase 
-                ? 'Items have been saved to your project database.' 
-                : 'Items could not be saved to the database. They are still available in this session.'}
+                ? '✅ Items and image have been saved to your project.' 
+                : '⚠️ Items could not be saved to the database. They are still available in this session.'}
               {analysisResult.dbError && <p className="mt-1 text-sm">{analysisResult.dbError}</p>}
             </div>
           )}
@@ -511,18 +550,8 @@ export default function PhotoInventoryUploader({ onItemsAnalyzed, projectId }: P
                     </span>
                   </div>
                   <p className="text-sm text-blue-600 mt-1">
-                    These are U-Haul standard box recommendations based on item dimensions and weight. You may need additional specialty boxes for fragile or oddly-shaped items.
+                    These are U-Haul standard box recommendations based on item dimensions and weight.
                   </p>
-                  <div className="mt-2">
-                    <a 
-                      href="https://www.uhaul.com/MovingSupplies/Boxes/" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-sm text-blue-600 hover:underline"
-                    >
-                      View U-Haul Box Options →
-                    </a>
-                  </div>
                 </div>
               </div>
             </div>
