@@ -32,7 +32,7 @@ export async function extractFrameFromTrack(
     return null;
   }
 
-  const videoElement = track.attach();
+  const videoElement = track.attach() as HTMLVideoElement;
   
   // Wait for video to be ready
   await new Promise((resolve) => {
