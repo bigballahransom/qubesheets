@@ -12,6 +12,7 @@ import './globals.css'
 import Navbar from '../components/nav/navbar'
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
+import '@livekit/components-styles';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -24,9 +25,9 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata = {
-  title: 'Qube Sheets | AI CRM for Moving Companies',
-  description: 'Automate inventory, create smart estimates, schedule jobs, and take payments on the go with our AI-powered CRM designed specifically for moving companies.',
-  keywords: 'CRM, moving companies, inventory management, job scheduling, AI automation, paperless, bill of lading',
+  title: 'Qube Sheets | AI Inventory for Moving Companies',
+  description: 'Automate inventory, with photo or video.',
+  keywords: 'inventory, moving companies, inventory management, job scheduling, AI automation, paperless, bill of lading',
 }
 
 export default function RootLayout({

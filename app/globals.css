@@ -144,3 +144,82 @@
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 }
+/* Add this to your app/globals.css file */
+
+/* Add this to your app/globals.css file */
+
+/* Custom styles for video call UI */
+/* Add this to your app/globals.css file */
+
+/* Custom styles for video call UI */
+.lk-video-conference {
+  --lk-brand-color: #10b981; /* Green color to match your theme */
+}
+
+/* Custom styles for LiveKit components */
+.lk-participant-tile {
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.lk-control-bar {
+  background-color: transparent;
+  padding: 0;
+}
+
+.lk-control-bar__controls {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 1rem;
+  padding: 0.75rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.lk-button {
+  transition: all 0.2s ease;
+  border-radius: 0.75rem;
+}
+
+.lk-button:hover {
+  transform: scale(1.05);
+}
+
+/* Fix for grid layout in your app */
+.lk-grid-layout {
+  height: 100%;
+  width: 100%;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  .lk-control-bar__controls {
+    width: 100%;
+    justify-content: space-around;
+  }
+  
+  .lk-participant-tile video {
+    object-fit: cover;
+  }
+  
+  .lk-participant-metadata {
+    font-size: 0.75rem;
+  }
+}
+
+/* Smooth transitions */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Better mobile scrolling */
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Fix for mobile Safari */
+.h-screen {
+  height: 100vh;
+  height: -webkit-fill-available;
+}

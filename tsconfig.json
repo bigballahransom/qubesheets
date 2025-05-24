@@ -22,6 +22,6 @@
       "@/*": ["./*"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "components/sheets/cubesheet.jsx", "app/api/projects/[projectId]/inventory/[itemId]/route.js", "app/api/projects/[projectId]/inventory/route.js", "app/api/projects/[projectId]/route.js", "app/api/projects/[projectId]/spreadsheet/route.js", "app/projects/page.jsx", "app/projects/[projectId]/page.jsx", "components/InventoryManager.jsx", "components/sheets/Spreadsheet.jsx", "components/sheets/Spreadsheet.jsx", "components/sheets/Spreadsheet.jsx"],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "components/sheets/cubesheet.jsx", "app/api/projects/[projectId]/inventory/[itemId]/route.js", "app/api/projects/[projectId]/inventory/route.js", "app/api/projects/[projectId]/route.js", "app/api/projects/[projectId]/spreadsheet/route.js", "app/projects/page.jsx", "app/projects/[projectId]/page.jsx", "components/InventoryManager.jsx", "components/sheets/Spreadsheet.jsx", "components/sheets/Spreadsheet.jsx", "components/sheets/Spreadsheet.jsx", "lib/mongodb.js"],
   "exclude": ["node_modules"]
 }

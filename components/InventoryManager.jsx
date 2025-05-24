@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -13,9 +13,17 @@ import EditableProjectName from './EditableProjectName';
 import PhotoInventoryUploader from './PhotoInventoryUploader';
 import ImageGallery from './ImageGallery';
 import Spreadsheet from './sheets/Spreadsheet';
+import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 
 // Helper function to generate a unique ID
 const generateId = () => `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
+
+// Add this function to generate a room ID
+const generateVideoRoomId = (projectId) => {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 9);
+  return `${projectId}-${timestamp}-${random}`;
+};
 
 // Debounce utility function
 const debounce = (func, wait) => {
@@ -43,6 +51,8 @@ export default function InventoryManager() {
   const [savingStatus, setSavingStatus] = useState('idle'); // 'idle', 'saving', 'saved', 'error'
   const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
   const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of gallery
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+const [videoRoomId, setVideoRoomId] = useState(null);
   
   // Default columns setup
   const defaultColumns = [
@@ -413,16 +423,29 @@ export default function InventoryManager() {
             </div>
             
             {/* Action Buttons */}
-            <div>
-              <Button
-                onClick={() => setIsUploaderOpen(true)}
-                className="bg-blue-500 hover:bg-blue-600 text-white shadow-sm"
-                size="sm"
-              >
-                <Camera size={16} className="mr-2" />
-                <span>Add Items from Photo</span>
-              </Button>
-            </div>
+            <div className="flex gap-2">
+            <Button
+  onClick={() => {
+    const roomId = generateVideoRoomId(currentProject._id);
+    setVideoRoomId(roomId);
+    setIsVideoModalOpen(true);
+  }}
+  className="bg-green-500 hover:bg-green-600 text-white shadow-sm"
+  size="sm"
+>
+  <Video size={16} className="mr-2" />
+  <span>Start Video Inventory</span>
+</Button>
+  
+  <Button
+    onClick={() => setIsUploaderOpen(true)}
+    className="bg-blue-500 hover:bg-blue-600 text-white shadow-sm"
+    size="sm"
+  >
+    <Camera size={16} className="mr-2" />
+    <span>Add Items from Photo</span>
+  </Button>
+</div>
           </div>
         </header>
         
@@ -566,6 +589,15 @@ export default function InventoryManager() {
           </div>
         </div>
       )}
+      {isVideoModalOpen && currentProject && (
+  <ShareVideoLinkModal
+    isOpen={isVideoModalOpen}
+    onClose={() => setIsVideoModalOpen(false)}
+    roomId={videoRoomId}
+    projectId={currentProject._id}
+    projectName={currentProject.name}
+  />
+)}
     </div>
   );
 }
