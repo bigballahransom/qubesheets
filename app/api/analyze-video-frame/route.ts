@@ -4,6 +4,7 @@ import { auth } from '@clerk/nextjs/server';
 import OpenAI from 'openai';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
+import Image from '@/models/Image';
 import crypto from 'crypto';
 
 const openai = new OpenAI({
@@ -183,6 +184,39 @@ Only include items you're confident about (confidence > 0.7). Keep the response 
       }));
     }
 
+    // If we found new items, save the frame as an image
+    let savedImageId = null;
+    if (result.items && result.items.length > 0) {
+      try {
+        // Generate unique name for the frame
+        const timestamp = Date.now();
+        const frameName = `video-frame-${roomLabel.toLowerCase().replace(/\s+/g, '-')}-${timestamp}.jpg`;
+
+        // Create the image document
+        const imageDoc = await Image.create({
+          name: frameName,
+          originalName: frameName,
+          mimeType: 'image/jpeg',
+          size: buffer.length,
+          data: buffer,
+          projectId,
+          userId,
+          description: `Video frame from ${roomLabel} - ${result.items.length} items detected`,
+          analysisResult: {
+            summary: result.summary || `Detected ${result.items.length} items in ${roomLabel}`,
+            itemsCount: result.items.length,
+            totalBoxes: 0
+          }
+        });
+
+        savedImageId = imageDoc._id;
+        console.log(`Saved video frame as image: ${frameName}`);
+      } catch (error) {
+        console.error('Error saving video frame as image:', error);
+        // Don't fail the whole request if image save fails
+      }
+    }
+
     // Cache the result
     recentFrameHashes.set(imageHash, {
       timestamp: Date.now(),
@@ -198,6 +232,7 @@ Only include items you're confident about (confidence > 0.7). Keep the response 
       items: result.items || [],
       summary: result.summary || 'Frame analyzed',
       fromCache: false,
+      savedImageId: savedImageId,
     });
 
   } catch (error) {

@@ -233,7 +233,7 @@ function RoomContent({
             {isMobile && (
               <button
                 onClick={() => setShowMobileMenu(!showMobileMenu)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
+                className="text-black p-2 hover:bg-gray-100 rounded-lg"
               >
                 {showMobileMenu ? <X size={20} /> : <Menu size={20} />}
               </button>
@@ -346,7 +346,7 @@ function RoomContent({
                   setShowInventory(!showInventory);
                   setShowMobileMenu(false);
                 }}
-                className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium flex items-center justify-center gap-2"
+                className="w-full px-4 py-3 bg-gray-300 hover:bg-gray-200 rounded-lg font-medium flex items-center justify-center gap-2 text-blue-600"
               >
                 {showInventory ? <EyeOff size={16} /> : <Eye size={16} />}
                 {showInventory ? 'Hide' : 'Show'} Items ({detectedItems.length})
