@@ -212,7 +212,7 @@ export function AppSidebar() {
       {/* Footer menu */}
       <ClerkProvider>
       <div className="absolute bottom-0 left-0 right-0 border-t bg-white">
-        <div className="p-2">
+        <div className="p-4">
             
                       {/* Desktop Action Buttons */}
                       <div className="flex items-center space-x-4">

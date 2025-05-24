@@ -15,6 +15,22 @@ import ImageGallery from './ImageGallery';
 import Spreadsheet from './sheets/Spreadsheet';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 
+import {
+  Menubar,
+  MenubarCheckboxItem,
+  MenubarContent,
+  MenubarItem,
+  MenubarMenu,
+  MenubarRadioGroup,
+  MenubarRadioItem,
+  MenubarSeparator,
+  MenubarShortcut,
+  MenubarSub,
+  MenubarSubContent,
+  MenubarSubTrigger,
+  MenubarTrigger,
+} from "@/components/ui/menubar"
+
 // Helper function to generate a unique ID
 const generateId = () => `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
 
@@ -424,7 +440,101 @@ const [videoRoomId, setVideoRoomId] = useState(null);
             
             {/* Action Buttons */}
             <div className="flex flex-wrap gap-2">
-            <Button
+            <Menubar>
+      {/* <MenubarMenu>
+        <MenubarTrigger>File</MenubarTrigger>
+        <MenubarContent>
+          <MenubarItem>
+            Nothing here yet...
+          </MenubarItem> */}
+          {/* <MenubarItem>
+            New Window <MenubarShortcut>⌘N</MenubarShortcut>
+          </MenubarItem>
+          <MenubarItem disabled>New Incognito Window</MenubarItem>
+          <MenubarSeparator />
+          <MenubarSub>
+            <MenubarSubTrigger>Share</MenubarSubTrigger>
+            <MenubarSubContent>
+              <MenubarItem>Email link</MenubarItem>
+              <MenubarItem>Messages</MenubarItem>
+              <MenubarItem>Notes</MenubarItem>
+            </MenubarSubContent>
+          </MenubarSub>
+          <MenubarSeparator />
+          <MenubarItem>
+            Print... <MenubarShortcut>⌘P</MenubarShortcut>
+          </MenubarItem> */}
+        {/* </MenubarContent>
+      </MenubarMenu> */}
+      {/* <MenubarMenu>
+        <MenubarTrigger>Edit</MenubarTrigger>
+        <MenubarContent>
+        <MenubarItem>Nothing here yet...</MenubarItem> */}
+          {/* <MenubarItem>
+            Undo <MenubarShortcut>⌘Z</MenubarShortcut>
+          </MenubarItem>
+          <MenubarItem>
+            Redo <MenubarShortcut>⇧⌘Z</MenubarShortcut>
+          </MenubarItem>
+          <MenubarSeparator />
+          <MenubarSub>
+            <MenubarSubTrigger>Find</MenubarSubTrigger>
+            <MenubarSubContent>
+              <MenubarItem>Search the web</MenubarItem>
+              <MenubarSeparator />
+              <MenubarItem>Find...</MenubarItem>
+              <MenubarItem>Find Next</MenubarItem>
+              <MenubarItem>Find Previous</MenubarItem>
+            </MenubarSubContent>
+          </MenubarSub>
+          <MenubarSeparator />
+          <MenubarItem>Cut</MenubarItem>
+          <MenubarItem>Copy</MenubarItem>
+          <MenubarItem>Paste</MenubarItem> */}
+        {/* </MenubarContent>
+      </MenubarMenu> */}
+      <MenubarMenu>
+        <MenubarTrigger className='gap-1'>
+ Actions</MenubarTrigger>
+        <MenubarContent>
+          <MenubarItem 
+            onClick={() => {
+              const roomId = generateVideoRoomId(currentProject._id);
+              setVideoRoomId(roomId);
+              setIsVideoModalOpen(true);
+            }}
+          ><Video size={16} className="mr-1" /> Inventory from Video</MenubarItem>
+          <MenubarItem     onClick={() => setIsUploaderOpen(true)}><Camera size={16} className="mr-1" />Inventory from Photo</MenubarItem>
+          {/* <MenubarSeparator />
+          <MenubarItem inset>
+            Reload <MenubarShortcut>⌘R</MenubarShortcut>
+          </MenubarItem>
+          <MenubarItem disabled inset>
+            Force Reload <MenubarShortcut>⇧⌘R</MenubarShortcut>
+          </MenubarItem>
+          <MenubarSeparator />
+          <MenubarItem inset>Toggle Fullscreen</MenubarItem>
+          <MenubarSeparator />
+          <MenubarItem inset>Hide Sidebar</MenubarItem> */}
+        </MenubarContent>
+      </MenubarMenu>
+      {/* <MenubarMenu>
+        <MenubarTrigger>Share</MenubarTrigger>
+        <MenubarContent>
+          <MenubarRadioGroup value="benoit">
+            <MenubarRadioItem value="andy">Andy</MenubarRadioItem>
+            <MenubarRadioItem value="benoit">Benoit</MenubarRadioItem>
+            <MenubarRadioItem value="Luis">Luis</MenubarRadioItem>
+          </MenubarRadioGroup>
+          <MenubarSeparator />
+          <MenubarItem inset>Edit...</MenubarItem>
+          <MenubarSeparator />
+          <MenubarItem inset>Add Profile...</MenubarItem>
+        </MenubarContent>
+      </MenubarMenu> */}
+    </Menubar>
+
+            {/* <Button
   onClick={() => {
     const roomId = generateVideoRoomId(currentProject._id);
     setVideoRoomId(roomId);
@@ -435,16 +545,16 @@ const [videoRoomId, setVideoRoomId] = useState(null);
 >
   <Video size={16} className="mr-2" />
   <span>Start Video Inventory</span>
-</Button>
+</Button> */}
   
-  <Button
+  {/* <Button
     onClick={() => setIsUploaderOpen(true)}
     className="bg-blue-500 hover:bg-blue-600 text-white shadow-sm"
     size="sm"
   >
     <Camera size={16} className="mr-2" />
     <span>Add Items from Photo</span>
-  </Button>
+  </Button> */}
 </div>
           </div>
         </header>

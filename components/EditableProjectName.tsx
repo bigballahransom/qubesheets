@@ -83,11 +83,11 @@ const EditableProjectName: React.FC<EditableProjectNameProps> = ({
               </h2>
             )}
           </div>
-          <div className="ml-2 flex items-center text-gray-400">
+          {/* <div className="ml-2 flex items-center text-gray-400">
             {!isEditing && (
               <p className="text-xs">Double-click to edit</p>
             )}
-          </div>
+          </div> */}
         </div>
       </div>
     </div>

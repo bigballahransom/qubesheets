@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Folder, Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
 // Define Project type (optional in JSX but helpful for documentation)
 // interface Project {
 //   _id: string;
@@ -102,7 +103,9 @@ export default function ProjectsPage() {
   };
   
   return (
-    <div className="container mx-auto p-4 max-w-4xl">
+        <SidebarProvider>
+          <AppSidebar />
+    <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
       <h1 className="text-2xl font-bold mb-6">Projects</h1>
       
       {/* Create new project form */}
@@ -192,5 +195,7 @@ export default function ProjectsPage() {
         )}
       </div>
     </div>
+          <SidebarTrigger />
+        </SidebarProvider>
   );
 }
