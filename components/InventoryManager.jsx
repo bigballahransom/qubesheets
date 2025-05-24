@@ -423,7 +423,7 @@ const [videoRoomId, setVideoRoomId] = useState(null);
             </div>
             
             {/* Action Buttons */}
-            <div className="flex gap-2">
+            <div className="flex flex-wrapgap-2">
             <Button
   onClick={() => {
     const roomId = generateVideoRoomId(currentProject._id);
