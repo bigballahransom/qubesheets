@@ -10,8 +10,9 @@ import {
   RoomAudioRenderer,
   useTracks,
   useRoomContext,
+  useLocalParticipant,
 } from '@livekit/components-react';
-import { Track, Room } from 'livekit-client';
+import { Track, Room, LocalVideoTrack } from 'livekit-client';
 import '@livekit/components-styles';
 import { 
   Camera, 
@@ -25,7 +26,9 @@ import {
   Menu,
   X,
   Home,
-  CheckCircle
+  CheckCircle,
+  SwitchCamera,
+  FlipHorizontal
 } from 'lucide-react';
 import { toast } from 'sonner';
 import InventorySidebar from './InventorySidebar';
@@ -49,6 +52,129 @@ interface DetectedItem {
   confidence?: number;
   detectedAt: string;
   frameId: string;
+}
+
+// Camera switching hook
+function useCameraSwitching() {
+  const { localParticipant } = useLocalParticipant();
+  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('user');
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [isSwitching, setIsSwitching] = useState(false);
+
+  // Get available cameras
+  useEffect(() => {
+    const getAvailableCameras = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter(device => device.kind === 'videoinput');
+        setAvailableCameras(cameras);
+        
+        // Detect current facing mode if we have a video track
+        const videoTrack = localParticipant?.videoTrackPublications.values().next().value?.track;
+        if (videoTrack instanceof LocalVideoTrack) {
+          const settings = videoTrack.mediaStreamTrack?.getSettings();
+          if (settings?.facingMode) {
+            setCurrentFacingMode(settings.facingMode === 'user' ? 'user' : 'environment');
+          }
+        }
+      } catch (error) {
+        console.error('Error getting available cameras:', error);
+      }
+    };
+
+    getAvailableCameras();
+  }, [localParticipant]);
+
+  const switchCamera = async () => {
+    if (!localParticipant || isSwitching || availableCameras.length < 2) return;
+
+    setIsSwitching(true);
+    
+    try {
+      // Get current video track
+      const currentVideoPublication = localParticipant.videoTrackPublications.values().next().value;
+      
+      if (!currentVideoPublication?.track) {
+        console.error('No current video track found');
+        return;
+      }
+
+      // Determine target facing mode
+      const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+      
+      // Create LiveKit-compatible video capture options
+      const videoCaptureOptions = {
+        facingMode: targetFacingMode as 'user' | 'environment',
+        resolution: {
+          width: 1280,
+          height: 720
+        }
+      };
+
+      // Try to find a specific camera device if we have multiple cameras
+      if (availableCameras.length > 1) {
+        const currentTrack = currentVideoPublication.track as LocalVideoTrack;
+        const currentDeviceId = currentTrack.mediaStreamTrack?.getSettings().deviceId;
+        
+        // Find a different camera
+        const otherCamera = availableCameras.find(camera => 
+          camera.deviceId !== currentDeviceId && camera.deviceId !== ''
+        );
+        
+        if (otherCamera) {
+          // Use device ID instead of facing mode for more reliable switching
+          const deviceOptions = {
+            deviceId: otherCamera.deviceId,
+            resolution: {
+              width: 1280,
+              height: 720
+            }
+          };
+          
+          // Disable current camera and enable with new device
+          await localParticipant.setCameraEnabled(false);
+          await new Promise(resolve => setTimeout(resolve, 200));
+          await localParticipant.setCameraEnabled(true, deviceOptions);
+        } else {
+          // Fallback to facing mode
+          await localParticipant.setCameraEnabled(false);
+          await new Promise(resolve => setTimeout(resolve, 200));
+          await localParticipant.setCameraEnabled(true, videoCaptureOptions);
+        }
+      } else {
+        // Single camera switching by facing mode
+        await localParticipant.setCameraEnabled(false);
+        await new Promise(resolve => setTimeout(resolve, 200));
+        await localParticipant.setCameraEnabled(true, videoCaptureOptions);
+      }
+
+      setCurrentFacingMode(targetFacingMode);
+      toast.success(`Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
+      
+    } catch (error) {
+      console.error('Error switching camera:', error);
+      toast.error('Failed to switch camera. Please try again.');
+      
+      // Try to re-enable the camera if switching failed
+      try {
+        await localParticipant.setCameraEnabled(true);
+      } catch (e) {
+        console.error('Failed to re-enable camera:', e);
+      }
+    } finally {
+      setIsSwitching(false);
+    }
+  };
+
+  const hasMultipleCameras = availableCameras.length > 1;
+  
+  return {
+    switchCamera,
+    currentFacingMode,
+    hasMultipleCameras,
+    isSwitching,
+    availableCameras
+  };
 }
 
 // Mobile-friendly room selector component
@@ -141,6 +267,9 @@ function RoomContent({
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const room = useRoomContext();
+  
+  // Camera switching functionality
+  const { switchCamera, currentFacingMode, hasMultipleCameras, isSwitching } = useCameraSwitching();
 
   // Get tracks for the video grid
   const tracks = useTracks(
@@ -242,6 +371,25 @@ function RoomContent({
             {/* Desktop controls */}
             {!isMobile && (
               <div className="flex items-center gap-2">
+                {/* Camera switch button for desktop */}
+                {hasMultipleCameras && (
+                  <button
+                    onClick={switchCamera}
+                    disabled={isSwitching}
+                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
+                    title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
+                  >
+                    {isSwitching ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <SwitchCamera size={16} />
+                    )}
+                    <span className="hidden sm:inline">
+                      {currentFacingMode === 'user' ? 'Back' : 'Front'}
+                    </span>
+                  </button>
+                )}
+
                 {!isInventoryActive ? (
                   <button
                     onClick={startInventory}
@@ -292,6 +440,25 @@ function RoomContent({
           {/* Mobile menu */}
           {isMobile && showMobileMenu && (
             <div className="border-t pt-3 space-y-2">
+              {/* Camera switch button for mobile */}
+              {hasMultipleCameras && (
+                <button
+                  onClick={() => {
+                    switchCamera();
+                    setShowMobileMenu(false);
+                  }}
+                  disabled={isSwitching}
+                  className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSwitching ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <SwitchCamera size={16} />
+                  )}
+                  Switch to {currentFacingMode === 'user' ? 'Back' : 'Front'} Camera
+                </button>
+              )}
+
               {!isInventoryActive ? (
                 <button
                   onClick={() => {
@@ -377,6 +544,14 @@ function RoomContent({
                   <Package className="text-gray-400" size={16} />
                   <span className="text-gray-600">Items: <strong>{detectedItems.length}</strong></span>
                 </div>
+                {hasMultipleCameras && (
+                  <div className="flex items-center gap-2">
+                    <SwitchCamera className="text-gray-400" size={16} />
+                    <span className="text-gray-600">
+                      <strong>{currentFacingMode === 'user' ? 'Front' : 'Back'}</strong>
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -415,7 +590,29 @@ function RoomContent({
                     Paused
                   </div>
                 )}
+
+                {/* Camera indicator */}
+                <div className="bg-blue-500 text-white px-3 py-2 rounded-full flex items-center gap-2 shadow-lg text-sm">
+                  <Camera size={14} />
+                  {currentFacingMode === 'user' ? 'Front' : 'Back'} Camera
+                </div>
               </div>
+            )}
+
+            {/* Mobile camera switch floating button */}
+            {isMobile && hasMultipleCameras && !showMobileMenu && (
+              <button
+                onClick={switchCamera}
+                disabled={isSwitching}
+                className="absolute top-4 right-4 bg-black bg-opacity-50 text-white p-3 rounded-full shadow-lg disabled:opacity-50"
+                title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
+              >
+                {isSwitching ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <SwitchCamera size={20} />
+                )}
+              </button>
             )}
 
             {/* Mobile inventory button */}
@@ -599,6 +796,11 @@ export default function VideoCallInventory({
         onDisconnected={handleDisconnect}
         data-lk-theme="default"
         className="h-full"
+        options={{
+          publishDefaults: {
+            videoCodec: 'h264',
+          }
+        }}
       >
         <RoomContent
           projectId={projectId}
