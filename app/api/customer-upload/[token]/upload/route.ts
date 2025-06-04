@@ -1,4 +1,4 @@
-// app/api/customer-upload/[token]/upload/route.ts
+// app/api/customer-upload/[token]/upload/route.ts - Enhanced with better error handling
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
@@ -10,9 +10,13 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> }
 ) {
   try {
+    console.log('Upload route called');
+    
     await connectMongoDB();
+    console.log('MongoDB connected');
     
     const { token } = await params;
+    console.log('Token received:', token);
     
     // Validate customer upload token
     const customerUpload = await CustomerUpload.findOne({
@@ -20,6 +24,8 @@ export async function POST(
       isActive: true,
       expiresAt: { $gt: new Date() }
     });
+
+    console.log('Customer upload found:', !!customerUpload);
 
     if (!customerUpload) {
       return NextResponse.json(
@@ -32,6 +38,8 @@ export async function POST(
     const formData = await request.formData();
     const image = formData.get('image') as File;
     const description = formData.get('description') as string || '';
+
+    console.log('File received:', image?.name, 'Size:', image?.size);
 
     if (!image) {
       return NextResponse.json(
@@ -65,6 +73,8 @@ export async function POST(
     const timestamp = Date.now();
     const name = `customer-${timestamp}-${image.name}`;
 
+    console.log('Creating image document...');
+
     // Create the image document
     const imageDoc = await Image.create({
       name,
@@ -78,13 +88,24 @@ export async function POST(
       // Don't include analysisResult yet - will be added by background job
     });
 
+    console.log('Image document created:', imageDoc._id);
+
+    // Update project timestamp
+    await Project.findByIdAndUpdate(customerUpload.projectId, { 
+      updatedAt: new Date() 
+    });
+
     // Trigger background AI analysis (fire and forget)
-    fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/analyze-image-background`, {
+    const analysisUrl = `${process.env.NEXT_PUBLIC_APP_URL || request.url.split('/api')[0]}/api/analyze-image-background`;
+    
+    console.log('Triggering background analysis at:', analysisUrl);
+    
+    fetch(analysisUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        imageId: imageDoc._id,
-        projectId: customerUpload.projectId,
+        imageId: imageDoc._id.toString(),
+        projectId: customerUpload.projectId.toString(),
         userId: customerUpload.userId,
       }),
     }).catch(error => {
@@ -93,7 +114,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      imageId: imageDoc._id,
+      imageId: imageDoc._id.toString(),
       message: 'Image uploaded successfully. Analysis in progress.',
     });
 
@@ -104,4 +125,16 @@ export async function POST(
       { status: 500 }
     );
   }
+}
+
+// Add OPTIONS method for CORS if needed
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
 }
