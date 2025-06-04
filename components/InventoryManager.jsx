@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -14,6 +14,7 @@ import PhotoInventoryUploader from './PhotoInventoryUploader';
 import ImageGallery from './ImageGallery';
 import Spreadsheet from './sheets/Spreadsheet';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
+import SendUploadLinkModal from './SendUploadLinkModal';
 
 import {
   Menubar,
@@ -69,6 +70,7 @@ export default function InventoryManager() {
   const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of gallery
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 const [videoRoomId, setVideoRoomId] = useState(null);
+const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
   
   // Default columns setup
   const defaultColumns = [
@@ -505,6 +507,10 @@ const [videoRoomId, setVideoRoomId] = useState(null);
             }}
           ><Video size={16} className="mr-1" /> Inventory from Video</MenubarItem>
           <MenubarItem     onClick={() => setIsUploaderOpen(true)}><Camera size={16} className="mr-1" />Inventory from Photo</MenubarItem>
+          <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
+  <MessageSquare size={16} className="mr-1" />
+  Send Customer Upload Link
+</MenubarItem>
           {/* <MenubarSeparator />
           <MenubarItem inset>
             Reload <MenubarShortcut>⌘R</MenubarShortcut>
@@ -704,6 +710,14 @@ const [videoRoomId, setVideoRoomId] = useState(null);
     isOpen={isVideoModalOpen}
     onClose={() => setIsVideoModalOpen(false)}
     roomId={videoRoomId}
+    projectId={currentProject._id}
+    projectName={currentProject.name}
+  />
+)}
+{isSendLinkModalOpen && currentProject && (
+  <SendUploadLinkModal
+    isOpen={isSendLinkModalOpen}
+    onClose={() => setIsSendLinkModalOpen(false)}
     projectId={currentProject._id}
     projectName={currentProject.name}
   />
