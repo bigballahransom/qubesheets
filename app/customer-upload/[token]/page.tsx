@@ -1,10 +1,11 @@
-// app/customer-upload/[token]/page.tsx - Updated with better error handling
+// app/customer-upload/[token]/page.tsx - Updated with toast notifications
 'use client';
 
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { Camera, Upload, CheckCircle, AlertCircle, Loader2, ImageIcon } from 'lucide-react';
 import CustomerPhotoUploader from '@/components/CustomerPhotoUploader';
+import { toast } from 'sonner';
 
 interface UploadValidation {
   customerName: string;
@@ -99,12 +100,12 @@ export default function CustomerUploadPage() {
       
       setUploadedImages(prev => [...prev, newImage]);
       
-      // Show success message
-      alert('Photo uploaded successfully! We\'ll analyze it and add items to your inventory shortly.');
+      // Show success message with toast
+      toast.success('Photo uploaded successfully! We\'ll analyze it and add items to your inventory shortly.');
       
     } catch (err) {
       console.error('Upload error:', err);
-      alert(err instanceof Error ? err.message : 'Upload failed');
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setUploading(false);
     }
