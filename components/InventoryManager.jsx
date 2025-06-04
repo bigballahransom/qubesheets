@@ -71,6 +71,10 @@ export default function InventoryManager() {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 const [videoRoomId, setVideoRoomId] = useState(null);
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
+const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
+const [processingStatus, setProcessingStatus] = useState([]);
+const [showProcessingNotification, setShowProcessingNotification] = useState(false);
+const pollIntervalRef = useRef(null);
   
   // Default columns setup
   const defaultColumns = [
@@ -86,6 +90,102 @@ const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
   
   // Reference to track if data has been loaded
   const dataLoadedRef = useRef(false);
+
+  useEffect(() => {
+    if (!currentProject) return;
+  
+    const pollForUpdates = async () => {
+      try {
+        const response = await fetch(
+          `/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`
+        );
+        
+        if (response.ok) {
+          const syncData = await response.json();
+          
+          // Update processing status
+          setProcessingStatus(syncData.processingStatus || []);
+          
+          // Show/hide processing notification
+          setShowProcessingNotification(syncData.processingImages > 0);
+          
+          // If there are updates, reload the project data
+          if (syncData.hasUpdates) {
+            console.log('🔄 New updates detected, refreshing data...');
+            
+            // Reload inventory items
+            const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
+            if (itemsResponse.ok) {
+              const items = await itemsResponse.json();
+              setInventoryItems(items);
+              
+              // Reload spreadsheet data
+              const spreadsheetResponse = await fetch(`/api/projects/${currentProject._id}/spreadsheet`);
+              if (spreadsheetResponse.ok) {
+                const spreadsheetData = await spreadsheetResponse.json();
+                if (spreadsheetData.rows) {
+                  setSpreadsheetRows(spreadsheetData.rows);
+                }
+              }
+              
+              // Refresh image gallery
+              setImageGalleryKey(prev => prev + 1);
+              
+              // Show notification
+              if (syncData.recentItems > 0) {
+                // You can add a toast notification here
+                console.log(`✅ Added ${syncData.recentItems} new items from customer uploads`);
+              }
+            }
+            
+            // Update last check time
+            setLastUpdateCheck(syncData.lastChecked);
+          }
+        }
+      } catch (error) {
+        console.error('Error polling for updates:', error);
+      }
+    };
+  
+    // Start polling every 10 seconds when the component is active
+    pollIntervalRef.current = setInterval(pollForUpdates, 10000);
+    
+    // Poll immediately on mount
+    pollForUpdates();
+  
+    // Cleanup interval on unmount
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [currentProject, lastUpdateCheck]);
+
+  // Add this useEffect to handle visibility change (pause polling when tab is not active)
+useEffect(() => {
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      // Tab is not active, clear the interval
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    } else {
+      // Tab is active again, restart polling if we have a project
+      if (currentProject && !pollIntervalRef.current) {
+        pollIntervalRef.current = setInterval(async () => {
+          // Poll for updates logic here (same as above)
+        }, 10000);
+      }
+    }
+  };
+
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  
+  return () => {
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+  };
+}, [currentProject]);
   
   // Initialize with project from URL parameter
   useEffect(() => {
@@ -387,6 +487,20 @@ const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
         return null;
     }
   };
+
+  // Add this component to show processing status in the header
+const ProcessingNotification = () => {
+  if (!showProcessingNotification || processingStatus.length === 0) return null;
+  
+  return (
+    <div className="ml-4 flex items-center px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg">
+      <Loader2 className="w-4 h-4 mr-2 animate-spin text-blue-500" />
+      <span className="text-sm text-blue-700">
+        Processing {processingStatus.length} customer upload{processingStatus.length > 1 ? 's' : ''}...
+      </span>
+    </div>
+  );
+};
   
   // Only show loading while the project itself is loading
   if (loading && !currentProject) {
@@ -425,145 +539,55 @@ const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
       {/* Main content wrapper */}
       <div className="lg:pl-64"> {/* Add left padding for sidebar on large screens */}
         {/* Sleek top header bar */}
-        <header className="sticky top-10 z-10 bg-white border-b shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
-            {/* Project Name and Save Status */}
-            <div className="flex items-center">
-              {currentProject && (
-                <EditableProjectName 
-                  initialName={currentProject.name} 
-                  onNameChange={updateProjectName} 
-                />
-              )}
-              <div className="ml-4 text-sm">
-                {renderSavingStatus()}
-              </div>
-            </div>
-            
-            {/* Action Buttons */}
-            <div className="flex flex-wrap gap-2">
-            <Menubar>
-      {/* <MenubarMenu>
-        <MenubarTrigger>File</MenubarTrigger>
-        <MenubarContent>
-          <MenubarItem>
-            Nothing here yet...
-          </MenubarItem> */}
-          {/* <MenubarItem>
-            New Window <MenubarShortcut>⌘N</MenubarShortcut>
-          </MenubarItem>
-          <MenubarItem disabled>New Incognito Window</MenubarItem>
-          <MenubarSeparator />
-          <MenubarSub>
-            <MenubarSubTrigger>Share</MenubarSubTrigger>
-            <MenubarSubContent>
-              <MenubarItem>Email link</MenubarItem>
-              <MenubarItem>Messages</MenubarItem>
-              <MenubarItem>Notes</MenubarItem>
-            </MenubarSubContent>
-          </MenubarSub>
-          <MenubarSeparator />
-          <MenubarItem>
-            Print... <MenubarShortcut>⌘P</MenubarShortcut>
-          </MenubarItem> */}
-        {/* </MenubarContent>
-      </MenubarMenu> */}
-      {/* <MenubarMenu>
-        <MenubarTrigger>Edit</MenubarTrigger>
-        <MenubarContent>
-        <MenubarItem>Nothing here yet...</MenubarItem> */}
-          {/* <MenubarItem>
-            Undo <MenubarShortcut>⌘Z</MenubarShortcut>
-          </MenubarItem>
-          <MenubarItem>
-            Redo <MenubarShortcut>⇧⌘Z</MenubarShortcut>
-          </MenubarItem>
-          <MenubarSeparator />
-          <MenubarSub>
-            <MenubarSubTrigger>Find</MenubarSubTrigger>
-            <MenubarSubContent>
-              <MenubarItem>Search the web</MenubarItem>
-              <MenubarSeparator />
-              <MenubarItem>Find...</MenubarItem>
-              <MenubarItem>Find Next</MenubarItem>
-              <MenubarItem>Find Previous</MenubarItem>
-            </MenubarSubContent>
-          </MenubarSub>
-          <MenubarSeparator />
-          <MenubarItem>Cut</MenubarItem>
-          <MenubarItem>Copy</MenubarItem>
-          <MenubarItem>Paste</MenubarItem> */}
-        {/* </MenubarContent>
-      </MenubarMenu> */}
-      <MenubarMenu>
-        <MenubarTrigger className='gap-1'>
- Actions</MenubarTrigger>
-        <MenubarContent>
-          <MenubarItem 
-            onClick={() => {
-              const roomId = generateVideoRoomId(currentProject._id);
-              setVideoRoomId(roomId);
-              setIsVideoModalOpen(true);
-            }}
-          ><Video size={16} className="mr-1" /> Inventory from Video</MenubarItem>
-          <MenubarItem     onClick={() => setIsUploaderOpen(true)}><Camera size={16} className="mr-1" />Inventory from Photo</MenubarItem>
-          <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
-  <MessageSquare size={16} className="mr-1" />
-  Send Customer Upload Link
-</MenubarItem>
-          {/* <MenubarSeparator />
-          <MenubarItem inset>
-            Reload <MenubarShortcut>⌘R</MenubarShortcut>
-          </MenubarItem>
-          <MenubarItem disabled inset>
-            Force Reload <MenubarShortcut>⇧⌘R</MenubarShortcut>
-          </MenubarItem>
-          <MenubarSeparator />
-          <MenubarItem inset>Toggle Fullscreen</MenubarItem>
-          <MenubarSeparator />
-          <MenubarItem inset>Hide Sidebar</MenubarItem> */}
-        </MenubarContent>
-      </MenubarMenu>
-      {/* <MenubarMenu>
-        <MenubarTrigger>Share</MenubarTrigger>
-        <MenubarContent>
-          <MenubarRadioGroup value="benoit">
-            <MenubarRadioItem value="andy">Andy</MenubarRadioItem>
-            <MenubarRadioItem value="benoit">Benoit</MenubarRadioItem>
-            <MenubarRadioItem value="Luis">Luis</MenubarRadioItem>
-          </MenubarRadioGroup>
-          <MenubarSeparator />
-          <MenubarItem inset>Edit...</MenubarItem>
-          <MenubarSeparator />
-          <MenubarItem inset>Add Profile...</MenubarItem>
-        </MenubarContent>
-      </MenubarMenu> */}
-    </Menubar>
 
-            {/* <Button
-  onClick={() => {
-    const roomId = generateVideoRoomId(currentProject._id);
-    setVideoRoomId(roomId);
-    setIsVideoModalOpen(true);
-  }}
-  className="bg-green-500 hover:bg-green-600 text-white shadow-sm"
-  size="sm"
->
-  <Video size={16} className="mr-2" />
-  <span>Start Video Inventory</span>
-</Button> */}
-  
-  {/* <Button
-    onClick={() => setIsUploaderOpen(true)}
-    className="bg-blue-500 hover:bg-blue-600 text-white shadow-sm"
-    size="sm"
-  >
-    <Camera size={16} className="mr-2" />
-    <span>Add Items from Photo</span>
-  </Button> */}
-</div>
-          </div>
-        </header>
+{/* Sleek top header bar */}
+<header className="sticky top-10 z-10 bg-white border-b shadow-sm">
+  <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
+    {/* Project Name and Save Status */}
+    <div className="flex items-center">
+      {currentProject && (
+        <EditableProjectName 
+          initialName={currentProject.name} 
+          onNameChange={updateProjectName} 
+        />
+      )}
+      <div className="ml-4 text-sm">
+        {renderSavingStatus()}
+      </div>
+      {/* Add the processing notification here */}
+      <ProcessingNotification />
+    </div>
+    
+    {/* Action Buttons */}
+    <div className="flex flex-wrap gap-2">
+      <Menubar>
+        <MenubarMenu>
+          <MenubarTrigger className='gap-1'>
+            Actions
+          </MenubarTrigger>
+          <MenubarContent>
+            <MenubarItem 
+              onClick={() => {
+                const roomId = generateVideoRoomId(currentProject._id);
+                setVideoRoomId(roomId);
+                setIsVideoModalOpen(true);
+              }}
+            >
+              <Video size={16} className="mr-1" /> Inventory from Video
+            </MenubarItem>
+            <MenubarItem onClick={() => setIsUploaderOpen(true)}>
+              <Camera size={16} className="mr-1" />Inventory from Photo
+            </MenubarItem>
+            <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
+              <MessageSquare size={16} className="mr-1" />
+              Send Customer Upload Link
+            </MenubarItem>
+          </MenubarContent>
+        </MenubarMenu>
+      </Menubar>
+    </div>
+  </div>
+</header>
         
         {/* Main content container */}
         <div className="max-w-7xl mx-auto px-4 py-4">

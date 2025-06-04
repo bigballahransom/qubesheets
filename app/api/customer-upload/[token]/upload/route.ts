@@ -1,22 +1,24 @@
-// app/api/customer-upload/[token]/upload/route.ts - Enhanced with better error handling
+// app/api/customer-upload/[token]/upload/route.ts - Updated with queue system
+
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
+import { backgroundQueue } from '@/lib/backgroundQueue';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
   try {
-    console.log('Upload route called');
+    console.log('📤 Customer upload initiated');
     
     await connectMongoDB();
-    console.log('MongoDB connected');
+    console.log('🔗 MongoDB connected');
     
     const { token } = await params;
-    console.log('Token received:', token);
+    console.log('🎫 Token received:', token);
     
     // Validate customer upload token
     const customerUpload = await CustomerUpload.findOne({
@@ -25,7 +27,7 @@ export async function POST(
       expiresAt: { $gt: new Date() }
     });
 
-    console.log('Customer upload found:', !!customerUpload);
+    console.log('✅ Customer upload validated:', !!customerUpload);
 
     if (!customerUpload) {
       return NextResponse.json(
@@ -39,7 +41,7 @@ export async function POST(
     const image = formData.get('image') as File;
     const description = formData.get('description') as string || '';
 
-    console.log('File received:', image?.name, 'Size:', image?.size);
+    console.log('📁 File received:', image?.name, 'Size:', image?.size);
 
     if (!image) {
       return NextResponse.json(
@@ -71,9 +73,10 @@ export async function POST(
 
     // Generate unique name
     const timestamp = Date.now();
-    const name = `customer-${timestamp}-${image.name}`;
+    const cleanCustomerName = customerUpload.customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+    const name = `customer-${cleanCustomerName}-${timestamp}-${image.name}`;
 
-    console.log('Creating image document...');
+    console.log('💾 Creating image document...');
 
     // Create the image document
     const imageDoc = await Image.create({
@@ -84,50 +87,57 @@ export async function POST(
       data: buffer,
       projectId: customerUpload.projectId,
       userId: customerUpload.userId,
-      description: description ? `Customer upload: ${description}` : 'Customer uploaded image',
-      // Don't include analysisResult yet - will be added by background job
+      description: description ? `Customer upload by ${customerUpload.customerName}: ${description}` : `Image uploaded by ${customerUpload.customerName}`,
+      // Initialize with pending analysis status
+      analysisResult: {
+        summary: 'Analysis pending...',
+        itemsCount: 0,
+        totalBoxes: 0
+      }
     });
 
-    console.log('Image document created:', imageDoc._id);
+    console.log('✅ Image document created:', imageDoc._id);
 
     // Update project timestamp
     await Project.findByIdAndUpdate(customerUpload.projectId, { 
       updatedAt: new Date() 
     });
 
-    // Trigger background AI analysis (fire and forget)
-    const analysisUrl = `${process.env.NEXT_PUBLIC_APP_URL || request.url.split('/api')[0]}/api/analyze-image-background`;
+    // Queue background analysis (truly asynchronous)
+    console.log('🚀 Queueing background analysis...');
     
-    console.log('Triggering background analysis at:', analysisUrl);
-    
-    fetch(analysisUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        imageId: imageDoc._id.toString(),
-        projectId: customerUpload.projectId.toString(),
-        userId: customerUpload.userId,
-      }),
-    }).catch(error => {
-      console.error('Background analysis trigger failed:', error);
+    const jobId = backgroundQueue.enqueue('image_analysis', {
+      imageId: imageDoc._id.toString(),
+      projectId: customerUpload.projectId.toString(),
+      userId: customerUpload.userId
     });
 
+    console.log(`✅ Analysis job queued: ${jobId}`);
+
+    // Return immediately - don't wait for analysis
     return NextResponse.json({
       success: true,
       imageId: imageDoc._id.toString(),
-      message: 'Image uploaded successfully. Analysis in progress.',
+      jobId: jobId,
+      message: 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
+      customerName: customerUpload.customerName,
+      analysisStatus: 'queued'
     });
 
   } catch (error) {
-    console.error('Error uploading customer image:', error);
+    console.error('❌ Error uploading customer image:', error);
+    
     return NextResponse.json(
-      { error: 'Failed to upload image' },
+      { 
+        error: 'Failed to upload image',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }
 }
 
-// Add OPTIONS method for CORS if needed
+// Handle OPTIONS method for CORS
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
