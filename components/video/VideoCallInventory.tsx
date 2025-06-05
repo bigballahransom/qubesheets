@@ -1,4 +1,4 @@
-// components/video/VideoCallInventory.tsx - Clean version with fixed JSX
+// components/video/VideoCallInventory.tsx - Fixed with customer camera switching
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -145,26 +145,30 @@ function isAgent(participantName: string): boolean {
   return participantName.toLowerCase().includes('agent');
 }
 
-// Updated camera switching hook with better mobile support
+// Enhanced camera switching hook with better mobile support
 function useCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
-  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('environment'); // Start with back camera for customers
+  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('environment'); // Start with back camera
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [isSwitching, setIsSwitching] = useState(false);
 
-  // Get available cameras
+  // Get available cameras and detect current camera
   useEffect(() => {
     const getAvailableCameras = async () => {
       try {
+        // Request permissions first
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        
         const devices = await navigator.mediaDevices.enumerateDevices();
         const cameras = devices.filter(device => device.kind === 'videoinput');
         setAvailableCameras(cameras);
-        console.log('Available cameras:', cameras.length);
+        console.log('📹 Available cameras:', cameras.length);
         
-        // Detect current facing mode if we have a video track
+        // Try to detect current facing mode
         const videoTrack = localParticipant?.videoTrackPublications.values().next().value?.track;
         if (videoTrack instanceof LocalVideoTrack) {
           const settings = videoTrack.mediaStreamTrack?.getSettings();
+          console.log('📹 Current camera settings:', settings);
           if (settings?.facingMode) {
             setCurrentFacingMode(settings.facingMode === 'user' ? 'user' : 'environment');
           }
@@ -174,15 +178,16 @@ function useCameraSwitching() {
       }
     };
 
-    getAvailableCameras();
+    if (localParticipant) {
+      getAvailableCameras();
+    }
   }, [localParticipant]);
 
   const switchCamera = useCallback(async () => {
-    if (!localParticipant || isSwitching || availableCameras.length < 2) {
-      console.log('Cannot switch camera:', { 
+    if (!localParticipant || isSwitching) {
+      console.log('🚫 Cannot switch camera:', { 
         hasParticipant: !!localParticipant, 
-        isSwitching, 
-        cameraCount: availableCameras.length 
+        isSwitching
       });
       return;
     }
@@ -190,57 +195,152 @@ function useCameraSwitching() {
     setIsSwitching(true);
     
     try {
+      console.log('🔄 Starting camera switch...');
+      
       // Determine target facing mode
       const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-      console.log('Switching camera from', currentFacingMode, 'to', targetFacingMode);
+      console.log(`📹 Switching from ${currentFacingMode} to ${targetFacingMode}`);
       
       // Stop current camera
       await localParticipant.setCameraEnabled(false);
+      console.log('📹 Camera disabled');
       
-      // Wait a bit for the camera to fully stop
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for camera to fully stop
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Start camera with new facing mode
-      const videoCaptureOptions = {
-        facingMode: targetFacingMode as 'user' | 'environment',
-        resolution: {
-          width: 1280,
-          height: 720
+      // Try multiple approaches to switch camera
+      let success = false;
+      
+      // Approach 1: Try with facing mode constraint
+      if (!success) {
+        try {
+          const constraints = {
+            facingMode: targetFacingMode as 'user' | 'environment',
+            resolution: {
+              width: 1280,
+              height: 720
+            }
+          };
+          
+          console.log('📹 Trying facingMode constraint:', constraints);
+          await localParticipant.setCameraEnabled(true, constraints);
+          success = true;
+          console.log('✅ Camera switched using facingMode constraint');
+        } catch (error) {
+          console.log('❌ facingMode constraint failed:', error);
         }
-      };
+      }
 
-      await localParticipant.setCameraEnabled(true, videoCaptureOptions);
-      setCurrentFacingMode(targetFacingMode);
-      
-      toast.success(`Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
+      // Approach 2: Try with device ID if we have multiple cameras
+      if (!success && availableCameras.length > 1) {
+        try {
+          // Get current device ID
+          const currentTrack = localParticipant.videoTrackPublications.values().next().value?.track;
+          const currentSettings = currentTrack?.mediaStreamTrack?.getSettings();
+          const currentDeviceId = currentSettings?.deviceId;
+          
+          // Find a different camera
+          const otherCamera = availableCameras.find(camera => 
+            camera.deviceId !== currentDeviceId && 
+            camera.deviceId !== '' &&
+            camera.deviceId !== 'default'
+          );
+          
+          if (otherCamera) {
+            const constraints = {
+              deviceId: otherCamera.deviceId,
+              resolution: {
+                width: 1280,
+                height: 720
+              }
+            };
+            
+            console.log('📹 Trying deviceId constraint:', constraints);
+            await localParticipant.setCameraEnabled(true, constraints);
+            success = true;
+            console.log('✅ Camera switched using deviceId constraint');
+          }
+        } catch (error) {
+          console.log('❌ deviceId constraint failed:', error);
+        }
+      }
+
+      // Approach 3: Try with just facing mode
+      if (!success) {
+        try {
+          console.log('📹 Trying simple facingMode:', targetFacingMode);
+          await localParticipant.setCameraEnabled(true, {
+            facingMode: targetFacingMode as 'user' | 'environment'
+          });
+          success = true;
+          console.log('✅ Camera switched using simple facingMode');
+        } catch (error) {
+          console.log('❌ Simple facingMode failed:', error);
+        }
+      }
+
+      // Approach 4: Fallback - just enable camera with default settings
+      if (!success) {
+        try {
+          console.log('📹 Trying fallback - default camera settings');
+          await localParticipant.setCameraEnabled(true);
+          success = true;
+          console.log('✅ Camera enabled with fallback settings');
+        } catch (error) {
+          console.log('❌ Fallback failed:', error);
+        }
+      }
+
+      if (success) {
+        setCurrentFacingMode(targetFacingMode);
+        toast.success(`📹 Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
+        
+        // Update our camera list after successful switch
+        setTimeout(async () => {
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cameras = devices.filter(device => device.kind === 'videoinput');
+            setAvailableCameras(cameras);
+          } catch (error) {
+            console.error('Error updating camera list:', error);
+          }
+        }, 1000);
+      } else {
+        throw new Error('All camera switch attempts failed');
+      }
       
     } catch (error) {
-      console.error('Error switching camera:', error);
+      console.error('❌ Error switching camera:', error);
       toast.error('Failed to switch camera. Please try again.');
       
-      // Try to re-enable the camera if switching failed
+      // Try to re-enable the original camera
       try {
+        console.log('🔄 Attempting to restore original camera...');
         await localParticipant.setCameraEnabled(true);
+        console.log('✅ Original camera restored');
       } catch (e) {
-        console.error('Failed to re-enable camera:', e);
+        console.error('❌ Failed to restore original camera:', e);
+        toast.error('Camera may need to be manually re-enabled');
       }
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, isSwitching, availableCameras.length, currentFacingMode]);
+  }, [localParticipant, isSwitching, currentFacingMode, availableCameras]);
 
-  const hasMultipleCameras = availableCameras.length > 1;
+  // Check if we can switch cameras
+  const canSwitchCamera = availableCameras.length > 1 || 
+    (availableCameras.length === 1 && availableCameras[0].label.toLowerCase().includes('camera'));
   
   return {
     switchCamera,
     currentFacingMode,
-    hasMultipleCameras,
+    canSwitchCamera,
     isSwitching,
     availableCameras
   };
 }
 
-// Updated customer view with cleaner, more accessible UI
+// Enhanced customer view with prominent camera switching
 function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
@@ -249,14 +349,14 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   
-  // Camera switching for customers
-  const { switchCamera, currentFacingMode, hasMultipleCameras, isSwitching } = useCameraSwitching();
+  // Camera switching for customers - THIS IS THE KEY FIX
+  const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useCameraSwitching();
   
-  // Auto-hide instructions after 10 seconds
+  // Auto-hide instructions after 15 seconds (longer for camera switch explanation)
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowInstructions(false);
-    }, 10000); // 10 seconds
+    }, 15000); // 15 seconds
 
     return () => clearTimeout(timer);
   }, []);
@@ -279,15 +379,17 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
     
     window.addEventListener('touchstart', handleActivity);
     window.addEventListener('click', handleActivity);
+    window.addEventListener('mousemove', handleActivity);
     
     return () => {
       clearTimeout(hideTimer);
       window.removeEventListener('touchstart', handleActivity);
       window.removeEventListener('click', handleActivity);
+      window.removeEventListener('mousemove', handleActivity);
     };
   }, []);
 
-  // Get tracks for video rendering with more specific filtering to prevent glitches
+  // Get tracks for video rendering
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -331,7 +433,7 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
 
   return (
     <div className="h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-black flex flex-col relative overflow-hidden">
-      {/* Video area - Stabilized grid layout */}
+      {/* Video area */}
       <div className="absolute inset-0">
         <div className="w-full h-full">
           <GridLayout 
@@ -379,30 +481,30 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
         </div>
       )}
 
-      {/* Camera switch button - Always visible when available, positioned prominently */}
-      {hasMultipleCameras && (
-        <div className="absolute top-safe-or-20 right-4 z-30">
+      {/* PROMINENT CAMERA SWITCH BUTTON - Always visible when available */}
+      {canSwitchCamera && (
+        <div className="absolute top-20 right-4 z-30">
           <button
             onClick={switchCamera}
             disabled={isSwitching}
-            className="bg-black/60 backdrop-blur-md text-white p-4 rounded-2xl shadow-lg disabled:opacity-50 transition-all border border-white/20"
-            title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
+            className="bg-black/70 backdrop-blur-md text-white p-5 rounded-2xl shadow-2xl disabled:opacity-50 transition-all border-2 border-white/30 hover:border-white/50"
+            style={{ minWidth: '60px', minHeight: '60px' }}
           >
             {isSwitching ? (
-              <Loader2 size={24} className="animate-spin" />
+              <Loader2 size={28} className="animate-spin" />
             ) : (
-              <SwitchCamera size={24} />
+              <SwitchCamera size={28} />
             )}
           </button>
           
           {/* Camera mode indicator */}
-          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-2 py-1 rounded-full">
-            {currentFacingMode === 'user' ? 'Front' : 'Back'}
+          <div className="absolute -bottom-3 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-xs px-3 py-1 rounded-full border border-white/30">
+            {currentFacingMode === 'user' ? '🤳 Front' : '📱 Back'}
           </div>
         </div>
       )}
 
-      {/* Center instruction banner - Auto-hiding */}
+      {/* Center instruction banner - Enhanced with camera switching info */}
       {showInstructions && (
         <div className="absolute top-1/2 left-4 right-4 transform -translate-y-1/2 z-20">
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 text-center border border-white/20 relative">
@@ -416,15 +518,25 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
             
             <div className="text-3xl mb-3">📱</div>
             <h2 className="text-white text-lg font-bold mb-2">Video Inventory Walk-Through</h2>
-            <p className="text-white/90 text-sm leading-relaxed mb-3">
+            <p className="text-white/90 text-sm leading-relaxed mb-4">
               Show your items to the camera as you walk through your home. 
               Your moving agent will identify and catalog everything.
             </p>
-            {hasMultipleCameras && (
-              <p className="text-white/80 text-xs bg-black/30 rounded-lg p-2">
-                💡 Tip: Use the camera switch button (top-right) to switch between front and back cameras
-              </p>
+            
+            {/* Camera switching instructions */}
+            {canSwitchCamera && (
+              <div className="bg-blue-500/20 rounded-lg p-4 mb-4 border border-blue-400/30">
+                <div className="flex items-center justify-center gap-2 mb-2">
+                  <SwitchCamera size={20} className="text-blue-300" />
+                  <span className="text-blue-100 font-medium">Camera Tip</span>
+                </div>
+                <p className="text-blue-100 text-sm">
+                  Use the large switch button (top-right) to change between front and back cameras. 
+                  <strong> Use the back camera</strong> to show your items clearly!
+                </p>
+              </div>
             )}
+            
             {!hasAgent && (
               <div className="mt-3 flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin text-white" />
@@ -474,27 +586,31 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
         </div>
       )}
 
+      {/* Additional floating camera switch button for easier access */}
+      {canSwitchCamera && !showControls && (
+        <div className="absolute bottom-20 right-4 z-20">
+          <button
+            onClick={switchCamera}
+            disabled={isSwitching}
+            className="bg-blue-500/80 backdrop-blur-md text-white p-4 rounded-full shadow-xl disabled:opacity-50 transition-all border border-white/30"
+          >
+            {isSwitching ? (
+              <Loader2 size={24} className="animate-spin" />
+            ) : (
+              <SwitchCamera size={24} />
+            )}
+          </button>
+          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-2 py-1 rounded-full whitespace-nowrap">
+            {currentFacingMode === 'user' ? 'Front' : 'Back'}
+          </div>
+        </div>
+      )}
+
       {/* Tap to show controls hint */}
       {!showControls && (
         <div className="absolute bottom-safe-or-4 left-1/2 transform -translate-x-1/2 z-10">
           <div className="bg-black/40 backdrop-blur-md text-white text-xs px-3 py-1 rounded-full">
             Tap screen to show controls
-          </div>
-        </div>
-      )}
-
-      {/* Self-view pip in corner - only show if camera is enabled and controls are hidden */}
-      {cameraEnabled && !showControls && (
-        <div className="absolute bottom-20 right-4 w-24 h-32 bg-black/60 rounded-xl overflow-hidden border border-white/30 z-20">
-          <div className="w-full h-full flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-1">
-                <span className="text-white font-bold text-xs">You</span>
-              </div>
-              <p className="text-white/80 text-xs">
-                {currentFacingMode === 'user' ? 'Front' : 'Back'}
-              </p>
-            </div>
           </div>
         </div>
       )}
@@ -524,7 +640,7 @@ function AgentView({
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [screenshotCount, setScreenshotCount] = useState(0);
-  const [showInventory, setShowInventory] = useState(false); // Start with sidebar hidden on mobile
+  const [showInventory, setShowInventory] = useState(false);
   const [isInventoryActive, setIsInventoryActive] = useState(false);
   const [captureMode, setCaptureMode] = useState<'auto' | 'manual' | 'paused'>('paused');
   const [captureCount, setCaptureCount] = useState(0);
@@ -532,9 +648,9 @@ function AgentView({
   const remoteParticipants = useRemoteParticipants();
 
   // Camera switching functionality for agents
-  const { switchCamera, currentFacingMode, hasMultipleCameras, isSwitching } = useCameraSwitching();
+  const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useCameraSwitching();
 
-  // Get tracks for the video grid with stable rendering
+  // Get tracks for the video grid
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -551,7 +667,6 @@ function AgentView({
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
       
-      // On desktop, show sidebar by default. On mobile, keep it hidden for better UX
       if (!mobile && !showInventory) {
         setShowInventory(true);
       }
@@ -585,40 +700,35 @@ function AgentView({
     if (newItems.length > 0) {
       toast.success(`Found ${newItems.length} new items`);
       
-      // On mobile, show a subtle notification but don't auto-open sidebar
       if (isMobile && !showInventory) {
         toast.info(`${detectedItems.length + newItems.length} items detected. Tap to view inventory.`);
       }
     }
   }, [currentRoom, setDetectedItems, isMobile, showInventory, detectedItems.length]);
 
-  // Start inventory scanning
+  // Inventory control functions
   const startInventory = () => {
     setIsInventoryActive(true);
     setCaptureMode('auto');
     toast.success('Inventory scanning started');
   };
 
-  // Pause inventory scanning
   const pauseInventory = () => {
     setCaptureMode('paused');
     toast.info('Inventory scanning paused');
   };
 
-  // Resume inventory scanning
   const resumeInventory = () => {
     setCaptureMode('auto');
     toast.success('Inventory scanning resumed');
   };
 
-  // Stop inventory scanning
   const stopInventory = () => {
     setIsInventoryActive(false);
     setCaptureMode('paused');
     toast.info('Inventory scanning stopped');
   };
 
-  // Toggle sidebar visibility (especially important for mobile)
   const toggleSidebar = () => {
     setShowInventory(!showInventory);
     if (isMobile && showMobileMenu) {
@@ -626,7 +736,7 @@ function AgentView({
     }
   };
 
-  // Function to take screenshot of customer's video
+  // Screenshot function
   const takeScreenshot = async () => {
     if (isProcessing) {
       toast.warning('Please wait for the previous screenshot to finish processing');
@@ -769,7 +879,7 @@ function AgentView({
             {!isMobile && (
               <div className="flex items-center gap-2">
                 {/* Camera switch button for desktop */}
-                {hasMultipleCameras && (
+                {canSwitchCamera && (
                   <button
                     onClick={switchCamera}
                     disabled={isSwitching}
@@ -862,7 +972,7 @@ function AgentView({
           {isMobile && showMobileMenu && (
             <div className="border-t pt-3 space-y-2">
               {/* Camera switch button for mobile */}
-              {hasMultipleCameras && (
+              {canSwitchCamera && (
                 <button
                   onClick={() => {
                     switchCamera();
@@ -989,7 +1099,7 @@ function AgentView({
                   <Package className="text-gray-400" size={16} />
                   <span className="text-gray-600">Items: <strong>{detectedItems.length}</strong></span>
                 </div>
-                {hasMultipleCameras && (
+                {canSwitchCamera && (
                   <div className="flex items-center gap-2">
                     <SwitchCamera className="text-gray-400" size={16} />
                     <span className="text-gray-600">
@@ -1006,7 +1116,7 @@ function AgentView({
       {/* Video Grid and Controls */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0">
         <div className="flex-1 flex flex-col">
-          {/* Video Grid - Stabilized rendering */}
+          {/* Video Grid */}
           <div className="flex-1 relative bg-gray-900 rounded-lg m-2 md:m-4 overflow-hidden">
             <div className="w-full h-full">
               <GridLayout 
@@ -1063,7 +1173,7 @@ function AgentView({
             {isMobile && !showMobileMenu && (
               <div className="absolute bottom-4 right-4 flex flex-col gap-2">
                 {/* Camera switch button */}
-                {hasMultipleCameras && (
+                {canSwitchCamera && (
                   <button
                     onClick={switchCamera}
                     disabled={isSwitching}
@@ -1290,10 +1400,10 @@ export default function VideoCallInventory({
         width: 1280,
         height: 720
       },
-      videoSimulcast: false, // Disable simulcast to reduce complexity
+      videoSimulcast: false,
     },
-    adaptiveStream: false, // Disable adaptive streaming to prevent glitches
-    dynacast: false, // Disable dynacast for stability
+    adaptiveStream: false,
+    dynacast: false,
     autoSubscribe: true,
     disconnectOnPageLeave: true,
     reconnectPolicy: {
