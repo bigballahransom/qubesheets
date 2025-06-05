@@ -1,4 +1,4 @@
-// components/video/VideoCallInventory.tsx - Fixed with working video connection
+// components/video/VideoCallInventory.tsx - Fixed version
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -145,10 +145,10 @@ function isAgent(participantName: string): boolean {
   return participantName.toLowerCase().includes('agent');
 }
 
-// Camera switching hook
+// Updated camera switching hook with better mobile support
 function useCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
-  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('user');
+  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('environment'); // Start with back camera for customers
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [isSwitching, setIsSwitching] = useState(false);
 
@@ -159,6 +159,7 @@ function useCameraSwitching() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const cameras = devices.filter(device => device.kind === 'videoinput');
         setAvailableCameras(cameras);
+        console.log('Available cameras:', cameras.length);
         
         // Detect current facing mode if we have a video track
         const videoTrack = localParticipant?.videoTrackPublications.values().next().value?.track;
@@ -176,24 +177,30 @@ function useCameraSwitching() {
     getAvailableCameras();
   }, [localParticipant]);
 
-  const switchCamera = async () => {
-    if (!localParticipant || isSwitching || availableCameras.length < 2) return;
+  const switchCamera = useCallback(async () => {
+    if (!localParticipant || isSwitching || availableCameras.length < 2) {
+      console.log('Cannot switch camera:', { 
+        hasParticipant: !!localParticipant, 
+        isSwitching, 
+        cameraCount: availableCameras.length 
+      });
+      return;
+    }
 
     setIsSwitching(true);
     
     try {
-      // Get current video track
-      const currentVideoPublication = localParticipant.videoTrackPublications.values().next().value;
-      
-      if (!currentVideoPublication?.track) {
-        console.error('No current video track found');
-        return;
-      }
-
       // Determine target facing mode
       const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+      console.log('Switching camera from', currentFacingMode, 'to', targetFacingMode);
       
-      // Create LiveKit-compatible video capture options
+      // Stop current camera
+      await localParticipant.setCameraEnabled(false);
+      
+      // Wait a bit for the camera to fully stop
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Start camera with new facing mode
       const videoCaptureOptions = {
         facingMode: targetFacingMode as 'user' | 'environment',
         resolution: {
@@ -202,44 +209,9 @@ function useCameraSwitching() {
         }
       };
 
-      // Try to find a specific camera device if we have multiple cameras
-      if (availableCameras.length > 1) {
-        const currentTrack = currentVideoPublication.track as LocalVideoTrack;
-        const currentDeviceId = currentTrack.mediaStreamTrack?.getSettings().deviceId;
-        
-        // Find a different camera
-        const otherCamera = availableCameras.find(camera => 
-          camera.deviceId !== currentDeviceId && camera.deviceId !== ''
-        );
-        
-        if (otherCamera) {
-          // Use device ID instead of facing mode for more reliable switching
-          const deviceOptions = {
-            deviceId: otherCamera.deviceId,
-            resolution: {
-              width: 1280,
-              height: 720
-            }
-          };
-          
-          // Disable current camera and enable with new device
-          await localParticipant.setCameraEnabled(false);
-          await new Promise(resolve => setTimeout(resolve, 200));
-          await localParticipant.setCameraEnabled(true, deviceOptions);
-        } else {
-          // Fallback to facing mode
-          await localParticipant.setCameraEnabled(false);
-          await new Promise(resolve => setTimeout(resolve, 200));
-          await localParticipant.setCameraEnabled(true, videoCaptureOptions);
-        }
-      } else {
-        // Single camera switching by facing mode
-        await localParticipant.setCameraEnabled(false);
-        await new Promise(resolve => setTimeout(resolve, 200));
-        await localParticipant.setCameraEnabled(true, videoCaptureOptions);
-      }
-
+      await localParticipant.setCameraEnabled(true, videoCaptureOptions);
       setCurrentFacingMode(targetFacingMode);
+      
       toast.success(`Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
       
     } catch (error) {
@@ -255,7 +227,7 @@ function useCameraSwitching() {
     } finally {
       setIsSwitching(false);
     }
-  };
+  }, [localParticipant, isSwitching, availableCameras.length, currentFacingMode]);
 
   const hasMultipleCameras = availableCameras.length > 1;
   
@@ -268,20 +240,35 @@ function useCameraSwitching() {
   };
 }
 
-// Customer view component (FaceTime-like interface)
+// Updated customer view with camera switching and auto-hiding modal
 function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
+  const [showInstructions, setShowInstructions] = useState(true);
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   
-  // Get tracks for video rendering - same as working version
+  // Camera switching for customers
+  const { switchCamera, currentFacingMode, hasMultipleCameras, isSwitching } = useCameraSwitching();
+  
+  // Auto-hide instructions after 10 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowInstructions(false);
+    }, 10000); // 10 seconds
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Get tracks for video rendering with more specific filtering to prevent glitches
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
       { source: Track.Source.ScreenShare, withPlaceholder: false },
     ],
-    { onlySubscribed: false }
+    { 
+      onlySubscribed: false
+    }
   );
 
   const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
@@ -317,17 +304,25 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
 
   return (
     <div className="h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-black flex flex-col relative overflow-hidden">
-      {/* Video area - Use the same GridLayout as working version */}
+      {/* Video area - Stabilized grid layout */}
       <div className="absolute inset-0">
         <div className="w-full h-full">
-          <GridLayout tracks={tracks}>
-            <ParticipantTile />
+          <GridLayout 
+            tracks={tracks}
+            style={{ height: '100%', width: '100%' }}
+          >
+            <ParticipantTile 
+              style={{ 
+                borderRadius: '0px',
+                overflow: 'hidden'
+              }}
+            />
           </GridLayout>
         </div>
       </div>
 
       {/* Top overlay with call info */}
-      <div className="absolute top-8 left-4 right-4 z-20">
+      <div className="absolute top-safe-or-8 left-4 right-4 z-20">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 bg-black/40 backdrop-blur-md rounded-2xl px-6 py-3">
             <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
@@ -355,26 +350,59 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
         </div>
       </div>
 
-      {/* Center instruction banner */}
-      <div className="absolute top-1/2 left-4 right-4 transform -translate-y-1/2 z-20">
-        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 text-center border border-white/20">
-          <div className="text-4xl mb-4">📱</div>
-          <h2 className="text-white text-xl font-bold mb-2">Video Inventory Walk-Through</h2>
-          <p className="text-white/90 text-base leading-relaxed">
-            Show your items to the camera as you walk through your home. 
-            Your moving agent will identify and catalog everything for your inventory.
-          </p>
-          {!hasAgent && (
-            <div className="mt-4 flex items-center justify-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin text-white" />
-              <span className="text-white">Waiting for your moving agent...</span>
-            </div>
-          )}
+      {/* Camera switch button for customers */}
+      {hasMultipleCameras && (
+        <div className="absolute top-safe-or-24 right-4 z-20">
+          <button
+            onClick={switchCamera}
+            disabled={isSwitching}
+            className="bg-black/40 backdrop-blur-md text-white p-3 rounded-2xl shadow-lg disabled:opacity-50 transition-all"
+            title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
+          >
+            {isSwitching ? (
+              <Loader2 size={24} className="animate-spin" />
+            ) : (
+              <SwitchCamera size={24} />
+            )}
+          </button>
         </div>
-      </div>
+      )}
+
+      {/* Center instruction banner - Auto-hiding */}
+      {showInstructions && (
+        <div className="absolute top-1/2 left-4 right-4 transform -translate-y-1/2 z-20">
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 text-center border border-white/20 relative">
+            {/* Close button */}
+            <button
+              onClick={() => setShowInstructions(false)}
+              className="absolute top-4 right-4 text-white/70 hover:text-white"
+            >
+              <X size={20} />
+            </button>
+            
+            <div className="text-4xl mb-4">📱</div>
+            <h2 className="text-white text-xl font-bold mb-2">Video Inventory Walk-Through</h2>
+            <p className="text-white/90 text-base leading-relaxed mb-4">
+              Show your items to the camera as you walk through your home. 
+              Your moving agent will identify and catalog everything for your inventory.
+            </p>
+            {hasMultipleCameras && (
+              <p className="text-white/80 text-sm">
+                💡 Tip: Use the camera switch button to switch between front and back cameras
+              </p>
+            )}
+            {!hasAgent && (
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin text-white" />
+                <span className="text-white">Waiting for your moving agent...</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Control bar at bottom */}
-      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20">
+      <div className="absolute bottom-safe-or-8 left-1/2 transform -translate-x-1/2 z-20">
         <div className="flex items-center gap-6 bg-black/50 backdrop-blur-md rounded-2xl px-8 py-4">
           {/* Microphone */}
           <button 
@@ -410,26 +438,28 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
         </div>
       </div>
 
-      {/* Self-view pip in corner */}
-      <div className="absolute bottom-40 right-6 w-32 h-40 bg-black/60 rounded-2xl overflow-hidden border-2 border-white/30 z-20">
-        <div className="w-full h-full flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-2">
-              <span className="text-white font-bold">You</span>
+      {/* Self-view pip in corner - only show if camera is enabled */}
+      {cameraEnabled && (
+        <div className="absolute bottom-40 right-6 w-32 h-40 bg-black/60 rounded-2xl overflow-hidden border-2 border-white/30 z-20">
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="text-center">
+              <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-2">
+                <span className="text-white font-bold text-xs">You</span>
+              </div>
+              <p className="text-white/80 text-xs">
+                {currentFacingMode === 'user' ? 'Front' : 'Back'} Camera
+              </p>
             </div>
-            {!cameraEnabled && (
-              <p className="text-white/80 text-xs">Camera off</p>
-            )}
           </div>
         </div>
-      </div>
+      )}
 
       <RoomAudioRenderer />
     </div>
   );
 }
 
-// Agent view component - using your current inventory interface
+// Agent view component with stabilized video rendering
 function AgentView({ 
   projectId, 
   detectedItems, 
@@ -456,16 +486,18 @@ function AgentView({
   
   const remoteParticipants = useRemoteParticipants();
 
-  // Camera switching functionality
+  // Camera switching functionality for agents
   const { switchCamera, currentFacingMode, hasMultipleCameras, isSwitching } = useCameraSwitching();
 
-  // Get tracks for the video grid - same as working version
+  // Get tracks for the video grid with stable rendering
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
       { source: Track.Source.ScreenShare, withPlaceholder: false },
     ],
-    { onlySubscribed: false }
+    { 
+      onlySubscribed: false
+    }
   );
 
   // Detect mobile device
@@ -889,11 +921,26 @@ function AgentView({
       {/* Video Grid and Controls */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0">
         <div className="flex-1 flex flex-col">
-          {/* Video Grid */}
+          {/* Video Grid - Stabilized rendering */}
           <div className="flex-1 relative bg-gray-900 rounded-lg m-2 md:m-4 overflow-hidden">
-            <GridLayout tracks={tracks}>
-              <ParticipantTile />
-            </GridLayout>
+            <div className="w-full h-full">
+              <GridLayout 
+                tracks={tracks}
+                style={{ 
+                  height: '100%', 
+                  width: '100%',
+                  backgroundColor: '#1f2937'
+                }}
+              >
+                <ParticipantTile 
+                  style={{ 
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    backgroundColor: '#374151'
+                  }}
+                />
+              </GridLayout>
+            </div>
             
             {/* Status Indicators */}
             {isInventoryActive && (
@@ -1113,13 +1160,23 @@ export default function VideoCallInventory({
     }
   }, [onCallEnd]);
 
-  // Simplified LiveKit room options for better compatibility
+  // Enhanced LiveKit room options for better stability
   const roomOptions = {
     publishDefaults: {
       videoCodec: 'h264' as const,
+      videoResolution: {
+        width: 1280,
+        height: 720
+      },
+      videoSimulcast: false, // Disable simulcast to reduce complexity
     },
-    adaptiveStream: true,
-    dynacast: true,
+    adaptiveStream: false, // Disable adaptive streaming to prevent glitches
+    dynacast: false, // Disable dynacast for stability
+    autoSubscribe: true,
+    disconnectOnPageLeave: true,
+    reconnectPolicy: {
+      nextRetryDelayInMs: (context: any) => Math.min((context.retryCount || 0) * 2000, 10000)
+    }
   };
 
   if (isConnecting) {
@@ -1168,6 +1225,9 @@ export default function VideoCallInventory({
         onError={(error) => {
           console.error('LiveKit room error:', error);
           toast.error('Video call error occurred');
+        }}
+        onConnected={() => {
+          console.log('✅ Connected to LiveKit room');
         }}
       >
         {/* Render different views based on participant type */}
