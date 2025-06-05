@@ -105,6 +105,7 @@ export default function ProjectsPage() {
   return (
         <SidebarProvider>
           <AppSidebar />
+          <div className="h-16"></div>
     <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
       <h1 className="text-2xl font-bold mb-6">Projects</h1>
       

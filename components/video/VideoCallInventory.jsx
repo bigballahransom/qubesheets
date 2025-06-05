@@ -1,7 +1,7 @@
-// components/video/VideoCallInventory.jsx - Complete Enhanced Version with Robust Camera Switching
+// components/video/VideoCallInventory.jsx - Ultra Modern & Sleek UI
 'use client';
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   LiveKitRoom,
   GridLayout,
@@ -32,16 +32,37 @@ import {
   VideoOff,
   PhoneOff,
   Play,
-  Pause
+  Pause,
+  Sparkles,
+  Zap,
+  Target,
+  Layers,
+  Activity,
+  Scan,
+  Plus,
+  ArrowRight,
+  CheckCircle,
+  AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
-import InventorySidebar from './InventorySidebar';
 import FrameProcessor from './FrameProcessor';
 
-// Enhanced camera switching with multiple strategies
+// Modern glassmorphism utility class
+const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
+const darkGlassStyle = "backdrop-blur-xl bg-black/20 border border-white/10 shadow-2xl";
+
+// Enhanced camera switching with mobile-first approach
 function useAdvancedCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
-  const [currentFacingMode, setCurrentFacingMode] = useState('environment');
+  const [currentFacingMode, setCurrentFacingMode] = useState(() => {
+    // Default to front camera for agents on mobile, back camera for customers
+    const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+    const isAgent = typeof window !== 'undefined' && 
+      window.location.search.includes('name=') && 
+      window.location.search.toLowerCase().includes('agent');
+    
+    return (isMobile && isAgent) ? 'user' : 'environment';
+  });
   const [availableCameras, setAvailableCameras] = useState([]);
   const [isSwitching, setIsSwitching] = useState(false);
   const [hasBackCamera, setHasBackCamera] = useState(false);
@@ -51,28 +72,19 @@ function useAdvancedCameraSwitching() {
   useEffect(() => {
     const detectCameras = async () => {
       try {
-        // First, request camera permission to get accurate device enumeration
         console.log('📹 Requesting camera permissions...');
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         stream.getTracks().forEach(track => track.stop());
 
-        // Now enumerate devices
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
         
-        console.log('📹 Available video devices:', videoDevices.map(d => ({
-          deviceId: d.deviceId,
-          label: d.label,
-          groupId: d.groupId
-        })));
-
         setAvailableCameras(videoDevices);
 
-        // Try to detect camera capabilities
         let backCameraFound = false;
         let frontCameraFound = false;
 
-        // Method 1: Check device labels
+        // Detection methods
         for (const device of videoDevices) {
           const label = device.label.toLowerCase();
           if (label.includes('back') || label.includes('rear') || label.includes('environment')) {
@@ -83,48 +95,35 @@ function useAdvancedCameraSwitching() {
           }
         }
 
-        // Method 2: Try to access cameras with facingMode constraints
         if (!backCameraFound || !frontCameraFound) {
           try {
-            // Test back camera
             const backStream = await navigator.mediaDevices.getUserMedia({
               video: { facingMode: 'environment' }
             });
             backStream.getTracks().forEach(track => track.stop());
             backCameraFound = true;
-            console.log('📹 Back camera confirmed via facingMode');
           } catch (e) {
             console.log('📹 No back camera detected via facingMode');
           }
 
           try {
-            // Test front camera
             const frontStream = await navigator.mediaDevices.getUserMedia({
               video: { facingMode: 'user' }
             });
             frontStream.getTracks().forEach(track => track.stop());
             frontCameraFound = true;
-            console.log('📹 Front camera confirmed via facingMode');
           } catch (e) {
             console.log('📹 No front camera detected via facingMode');
           }
         }
 
-        // Method 3: Assume multiple cameras means front and back (common on mobile)
         if (videoDevices.length >= 2) {
           backCameraFound = true;
           frontCameraFound = true;
-          console.log('📹 Multiple cameras detected, assuming front and back available');
         }
 
         setHasBackCamera(backCameraFound);
         setHasFrontCamera(frontCameraFound);
-
-        console.log('📹 Camera capabilities:', {
-          totalDevices: videoDevices.length,
-          hasBack: backCameraFound,
-          hasFront: frontCameraFound
-        });
 
       } catch (error) {
         console.error('📹 Error detecting cameras:', error);
@@ -135,25 +134,17 @@ function useAdvancedCameraSwitching() {
   }, []);
 
   const switchCamera = useCallback(async () => {
-    if (!localParticipant || isSwitching) {
-      console.log('🚫 Cannot switch camera - participant or already switching');
-      return;
-    }
+    if (!localParticipant || isSwitching) return;
 
     if (!hasBackCamera && !hasFrontCamera) {
-      toast.error('Camera switching not available on this device');
+      toast.error('Camera switching not available');
       return;
     }
 
     setIsSwitching(true);
     const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
     
-    console.log(`📹 Attempting to switch from ${currentFacingMode} to ${targetFacingMode}`);
-
-    // Strategy implementations
-    const switchUsingLiveKitNative = async (targetFacingMode) => {
-      console.log('📹 Strategy 1: LiveKit native switching');
-      
+    try {
       await localParticipant.setCameraEnabled(false);
       await new Promise(resolve => setTimeout(resolve, 500));
       
@@ -161,149 +152,14 @@ function useAdvancedCameraSwitching() {
         facingMode: targetFacingMode,
         resolution: { width: 1280, height: 720 }
       });
-    };
-
-    const switchUsingDirectMediaAccess = async (targetFacingMode) => {
-      console.log('📹 Strategy 2: Direct getUserMedia');
-      
-      // Get new stream with target facing mode
-      const constraints = {
-        video: {
-          facingMode: { exact: targetFacingMode },
-          width: { ideal: 1280, max: 1920 },
-          height: { ideal: 720, max: 1080 }
-        }
-      };
-
-      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-      const videoTrack = newStream.getVideoTracks()[0];
-      
-      // Verify we got the right camera
-      const settings = videoTrack.getSettings();
-      console.log('📹 New track settings:', settings);
-      
-      if (settings.facingMode !== targetFacingMode) {
-        newStream.getTracks().forEach(track => track.stop());
-        throw new Error(`Got ${settings.facingMode} instead of ${targetFacingMode}`);
-      }
-
-      // Stop old camera and start new one
-      await localParticipant.setCameraEnabled(false);
-      newStream.getTracks().forEach(track => track.stop());
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      await localParticipant.setCameraEnabled(true, {
-        facingMode: targetFacingMode
-      });
-    };
-
-    const switchUsingDeviceIds = async () => {
-      console.log('📹 Strategy 3: Device ID cycling');
-      
-      if (availableCameras.length < 2) {
-        throw new Error('Not enough cameras for device ID switching');
-      }
-
-      const currentTrack = localParticipant.videoTrackPublications.values().next().value?.track;
-      const currentSettings = currentTrack?.mediaStreamTrack?.getSettings();
-      const currentDeviceId = currentSettings?.deviceId;
-
-      const otherCamera = availableCameras.find(camera => 
-        camera.deviceId !== currentDeviceId && 
-        camera.deviceId !== '' &&
-        camera.deviceId !== 'default'
-      );
-
-      if (!otherCamera) {
-        throw new Error('No alternative camera device found');
-      }
-
-      await localParticipant.setCameraEnabled(false);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      await localParticipant.setCameraEnabled(true, {
-        deviceId: otherCamera.deviceId,
-        resolution: { width: 1280, height: 720 }
-      });
-    };
-
-    const switchUsingRestart = async (targetFacingMode) => {
-      console.log('📹 Strategy 4: Full restart');
-      
-      // Disable camera completely
-      await localParticipant.setCameraEnabled(false);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Re-enable with new constraints
-      await localParticipant.setCameraEnabled(true, {
-        facingMode: targetFacingMode
-      });
-    };
-
-    const verifySwitch = (expectedMode) => {
-      try {
-        const videoTrack = localParticipant.videoTrackPublications.values().next().value?.track;
-        if (videoTrack instanceof LocalVideoTrack) {
-          const settings = videoTrack.mediaStreamTrack?.getSettings();
-          console.log('📹 Post-switch verification:', settings);
-          
-          if (settings?.facingMode && settings.facingMode !== expectedMode) {
-            console.log(`⚠️ Camera switch verification failed. Expected: ${expectedMode}, Got: ${settings.facingMode}`);
-            setCurrentFacingMode(settings.facingMode === 'user' ? 'user' : 'environment');
-          } else {
-            console.log('✅ Camera switch verified successfully');
-          }
-        }
-      } catch (error) {
-        console.log('Warning: Could not verify camera switch:', error);
-      }
-    };
-
-    // Main camera switching logic with try-catch
-    try {
-      try {
-        // Strategy 1: LiveKit's native camera switching with constraints
-        await switchUsingLiveKitNative(targetFacingMode);
-        
-      } catch (error) {
-        console.log('📹 LiveKit native failed, trying getUserMedia approach');
-        
-        try {
-          // Strategy 2: Direct getUserMedia with device selection
-          await switchUsingDirectMediaAccess(targetFacingMode);
-          
-        } catch (error2) {
-          console.log('📹 Direct media access failed, trying device ID approach');
-          
-          try {
-            // Strategy 3: Device ID cycling
-            await switchUsingDeviceIds();
-            
-          } catch (error3) {
-            console.log('📹 Device ID approach failed, trying restart approach');
-            
-            try {
-              // Strategy 4: Full restart approach
-              await switchUsingRestart(targetFacingMode);
-              
-            } catch (error4) {
-              throw new Error('All camera switching strategies failed');
-            }
-          }
-        }
-      }
 
       setCurrentFacingMode(targetFacingMode);
       toast.success(`📹 Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
-
-      // Verify the switch after a delay
-      setTimeout(() => verifySwitch(targetFacingMode), 1000);
 
     } catch (error) {
       console.error('📹 Camera switch failed:', error);
       toast.error('Failed to switch camera');
       
-      // Try to restore camera
       try {
         await localParticipant.setCameraEnabled(true);
       } catch (restoreError) {
@@ -312,7 +168,7 @@ function useAdvancedCameraSwitching() {
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, isSwitching, currentFacingMode, availableCameras, hasBackCamera, hasFrontCamera]);
+  }, [localParticipant, isSwitching, currentFacingMode, hasBackCamera, hasFrontCamera]);
 
   const canSwitchCamera = (hasBackCamera && hasFrontCamera) || availableCameras.length > 1;
 
@@ -346,9 +202,7 @@ async function extractFrameFromRemoteTrack(track) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    if (!ctx) {
-      throw new Error('Could not get canvas context');
-    }
+    if (!ctx) throw new Error('Could not get canvas context');
 
     canvas.width = videoElement.videoWidth || 640;
     canvas.height = videoElement.videoHeight || 480;
@@ -365,28 +219,65 @@ async function extractFrameFromRemoteTrack(track) {
   }
 }
 
-function RoomSelector({ 
-  currentRoom, 
-  onChange, 
-  isMobile 
-}) {
+// Modern Room Selector with sleek design
+function RoomSelector({ currentRoom, onChange, isMobile }) {
+  const [isOpen, setIsOpen] = useState(false);
   const rooms = [
-    'Living Room', 'Bedroom', 'Master Bedroom', 'Kitchen',
-    'Dining Room', 'Office', 'Garage', 'Basement', 'Attic', 'Bathroom', 'Other'
+    { value: 'Living Room', icon: '🛋️', color: 'from-blue-500 to-purple-600' },
+    { value: 'Bedroom', icon: '🛏️', color: 'from-purple-500 to-pink-600' },
+    { value: 'Master Bedroom', icon: '🏠', color: 'from-pink-500 to-red-600' },
+    { value: 'Kitchen', icon: '🍳', color: 'from-orange-500 to-yellow-600' },
+    { value: 'Dining Room', icon: '🍽️', color: 'from-yellow-500 to-green-600' },
+    { value: 'Office', icon: '💼', color: 'from-green-500 to-blue-600' },
+    { value: 'Garage', icon: '🚗', color: 'from-gray-500 to-blue-600' },
+    { value: 'Basement', icon: '🏚️', color: 'from-stone-500 to-gray-600' },
+    { value: 'Attic', icon: '🏠', color: 'from-amber-500 to-orange-600' },
+    { value: 'Bathroom', icon: '🚿', color: 'from-cyan-500 to-blue-600' },
+    { value: 'Other', icon: '📦', color: 'from-gray-500 to-slate-600' }
   ];
 
+  const currentRoomData = rooms.find(room => room.value === currentRoom) || rooms[0];
+
   return (
-    <select
-      value={currentRoom}
-      onChange={(e) => onChange(e.target.value)}
-      className={`w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-        isMobile ? 'text-sm' : 'text-sm'
-      }`}
-    >
-      {rooms.map(room => (
-        <option key={room} value={room}>{room}</option>
-      ))}
-    </select>
+    <div className="relative">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-white font-medium transition-all duration-300 transform hover:scale-[1.02] active:scale-98 ${glassStyle} bg-gradient-to-r ${currentRoomData.color}`}
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">{currentRoomData.icon}</span>
+          <span className="font-semibold">{currentRoom}</span>
+        </div>
+        <div className={`transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+      
+      {isOpen && (
+        <div className={`absolute top-full left-0 right-0 mt-2 z-50 rounded-2xl overflow-hidden ${glassStyle} max-h-80 overflow-y-auto`}>
+          {rooms.map((room) => (
+            <button
+              key={room.value}
+              onClick={() => {
+                onChange(room.value);
+                setIsOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-all duration-200 hover:bg-white/20 ${
+                room.value === currentRoom ? 'bg-white/30 text-white' : 'text-white/90'
+              }`}
+            >
+              <span className="text-xl">{room.icon}</span>
+              <span className="font-medium">{room.value}</span>
+              {room.value === currentRoom && (
+                <CheckCircle className="w-4 h-4 ml-auto text-green-400" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -394,7 +285,7 @@ function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
 }
 
-// Enhanced Customer View with better camera switching UX
+// Ultra Modern Customer View
 const CustomerView = React.memo(({ onCallEnd }) => {
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
@@ -407,29 +298,21 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     switchCamera, 
     currentFacingMode, 
     canSwitchCamera, 
-    isSwitching,
-    hasBackCamera,
-    hasFrontCamera 
+    isSwitching 
   } = useAdvancedCameraSwitching();
   
-  // Auto-hide instructions after 20 seconds
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowInstructions(false);
-    }, 20000);
+    const timer = setTimeout(() => setShowInstructions(false), 25000);
     return () => clearTimeout(timer);
   }, []);
 
-  // Auto-hide controls
   useEffect(() => {
     let hideTimer;
     
     const resetHideTimer = () => {
       setShowControls(true);
       clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => {
-        setShowControls(false);
-      }, 5000);
+      hideTimer = setTimeout(() => setShowControls(false), 6000);
     };
 
     resetHideTimer();
@@ -465,7 +348,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       await localParticipant.setMicrophoneEnabled(!micEnabled);
       setMicEnabled(!micEnabled);
     } catch (error) {
-      console.error('Error toggling microphone:', error);
       toast.error('Failed to toggle microphone');
     }
   };
@@ -476,21 +358,21 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       await localParticipant.setCameraEnabled(!cameraEnabled);
       setCameraEnabled(!cameraEnabled);
     } catch (error) {
-      console.error('Error toggling camera:', error);
       toast.error('Failed to toggle camera');
     }
   };
 
-  const endCall = () => {
-    if (onCallEnd) {
-      onCallEnd();
-    }
-  };
-
   return (
-    <div className="h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-black flex flex-col relative overflow-hidden">
+    <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col relative overflow-hidden">
+      {/* Animated background elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/30 rounded-full blur-3xl animate-pulse"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-pink-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '4s' }}></div>
+      </div>
+
       {/* Video area */}
-      <div className="absolute inset-0">
+      <div className="absolute inset-0 z-10">
         <div className="w-full h-full">
           <GridLayout 
             tracks={tracks}
@@ -503,29 +385,30 @@ const CustomerView = React.memo(({ onCallEnd }) => {
 
       {/* Top overlay */}
       {showControls && (
-        <div className="absolute top-safe-or-8 left-4 right-4 z-20">
+        <div className="absolute top-safe-or-6 left-4 right-4 z-20">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md rounded-2xl px-4 py-2">
-              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                <span className="text-xs font-bold text-white">
+            {/* Agent info card */}
+            <div className={`flex items-center gap-4 px-6 py-4 rounded-3xl ${glassStyle} transform transition-all duration-500 hover:scale-105`}>
+              <div className="relative">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-white bg-gradient-to-br ${hasAgent ? 'from-green-400 to-emerald-600' : 'from-gray-400 to-gray-600'} shadow-lg`}>
                   {agentName.charAt(0).toUpperCase()}
-                </span>
+                </div>
+                {hasAgent && (
+                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white animate-pulse"></div>
+                )}
               </div>
               <div>
-                <p className="text-white font-medium text-sm">
-                  {hasAgent ? agentName : 'Connecting...'}
-                </p>
-                <p className="text-white/80 text-xs">Moving Inventory</p>
+                <p className="text-white font-bold text-lg">{hasAgent ? agentName : 'Connecting...'}</p>
+                <p className="text-white/80 text-sm font-medium">Moving Inventory Specialist</p>
               </div>
             </div>
             
-            <div className="bg-black/60 backdrop-blur-md rounded-2xl px-3 py-2">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${hasAgent ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
-                <span className="text-white text-xs font-medium">
-                  {hasAgent ? 'LIVE' : 'Connecting...'}
-                </span>
-              </div>
+            {/* Connection status */}
+            <div className={`px-4 py-3 rounded-2xl ${glassStyle} flex items-center gap-3`}>
+              <div className={`w-3 h-3 rounded-full ${hasAgent ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'} shadow-lg`}></div>
+              <span className="text-white text-sm font-bold tracking-wider">
+                {hasAgent ? 'LIVE SESSION' : 'CONNECTING...'}
+              </span>
             </div>
           </div>
         </div>
@@ -533,35 +416,48 @@ const CustomerView = React.memo(({ onCallEnd }) => {
 
       {/* Enhanced Camera Switch Button */}
       {canSwitchCamera && (
-        <div className="absolute top-20 right-4 z-30">
-          <div className="relative">
+        <div className="absolute top-24 right-6 z-30">
+          <div className="relative group">
             <button
               onClick={switchCamera}
               disabled={isSwitching}
-              className={`bg-black/70 backdrop-blur-md text-white p-6 rounded-2xl shadow-2xl disabled:opacity-50 transition-all border-2 ${
-                currentFacingMode === 'environment' ? 'border-green-400' : 'border-blue-400'
-              } hover:border-white/50 transform active:scale-95`}
-              style={{ minWidth: '72px', minHeight: '72px' }}
+              className={`relative overflow-hidden bg-gradient-to-br ${
+                currentFacingMode === 'environment' 
+                  ? 'from-green-400 to-emerald-600 shadow-green-500/50' 
+                  : 'from-blue-400 to-purple-600 shadow-blue-500/50'
+              } text-white p-6 rounded-3xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
+              style={{ minWidth: '80px', minHeight: '80px' }}
             >
+              {/* Animated background */}
+              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              
               {isSwitching ? (
-                <Loader2 size={32} className="animate-spin" />
+                <Loader2 size={36} className="animate-spin relative z-10" />
               ) : (
-                <SwitchCamera size={32} />
+                <SwitchCamera size={36} className="relative z-10" />
+              )}
+              
+              {/* Pulse ring animation */}
+              {currentFacingMode === 'environment' && (
+                <div className="absolute inset-0 rounded-3xl border-2 border-green-400 animate-ping opacity-75"></div>
               )}
             </button>
             
             {/* Enhanced camera mode indicator */}
-            <div className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-sm px-4 py-2 rounded-full border border-white/30 whitespace-nowrap">
-              {currentFacingMode === 'user' ? '🤳 Front Camera' : '📱 Back Camera'}
-              {currentFacingMode === 'environment' && (
-                <div className="text-xs text-green-300 mt-1">✓ Best for items</div>
+            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-2xl bg-black/90 text-white text-sm font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
+              {currentFacingMode === 'user' ? (
+                <div className="flex items-center gap-2">
+                  <span>🤳</span>
+                  <span>Front Camera</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span>📱</span>
+                  <span>Back Camera</span>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                </div>
               )}
             </div>
-
-            {/* Pulse animation when back camera is active */}
-            {currentFacingMode === 'environment' && (
-              <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-pulse" />
-            )}
           </div>
         </div>
       )}
@@ -569,122 +465,140 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       {/* Enhanced instruction banner */}
       {showInstructions && (
         <div className="absolute top-1/2 left-4 right-4 transform -translate-y-1/2 z-20">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 text-center border border-white/20 relative">
+          <div className={`relative overflow-hidden rounded-3xl p-8 text-center border border-white/30 ${glassStyle} transform transition-all duration-500 hover:scale-105`}>
+            {/* Animated background gradient */}
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-pink-500/20 opacity-50"></div>
+            
             <button
               onClick={() => setShowInstructions(false)}
-              className="absolute top-3 right-3 text-white/70 hover:text-white bg-black/30 rounded-full p-1"
+              className="absolute top-4 right-4 text-white/70 hover:text-white bg-white/20 rounded-full p-2 backdrop-blur-sm transition-all duration-200 hover:scale-110"
             >
-              <X size={16} />
+              <X size={20} />
             </button>
             
-            <div className="text-3xl mb-3">📱</div>
-            <h2 className="text-white text-lg font-bold mb-2">Video Inventory Walk-Through</h2>
-            <p className="text-white/90 text-sm leading-relaxed mb-4">
-              Show your items to the camera as you walk through your home. 
-              Your moving agent will identify and catalog everything.
-            </p>
-            
-            {/* Enhanced camera switching instructions */}
-            {canSwitchCamera && (
-              <div className="bg-gradient-to-r from-blue-500/20 to-green-500/20 rounded-lg p-4 mb-4 border border-blue-400/30">
-                <div className="flex items-center justify-center gap-2 mb-3">
-                  <SwitchCamera size={20} className="text-green-300" />
-                  <span className="text-green-100 font-medium">Camera Setup</span>
+            <div className="relative z-10">
+              <div className="text-6xl mb-6 animate-bounce">🎥</div>
+              <h2 className="text-white text-2xl font-bold mb-4 bg-gradient-to-r from-white to-blue-200 bg-clip-text text-transparent">
+                AI-Powered Video Inventory
+              </h2>
+              <p className="text-white/90 text-lg leading-relaxed mb-6 font-medium">
+                Show your belongings to the camera as you walk through your home. 
+                Our AI will automatically identify and catalog everything for your move.
+              </p>
+              
+              {/* Enhanced camera switching instructions */}
+              {canSwitchCamera && (
+                <div className="bg-gradient-to-r from-blue-500/30 to-green-500/30 rounded-2xl p-6 mb-6 border border-blue-400/50 backdrop-blur-sm">
+                  <div className="flex items-center justify-center gap-3 mb-4">
+                    <div className="p-2 bg-white/20 rounded-full">
+                      <SwitchCamera size={24} className="text-green-300" />
+                    </div>
+                    <span className="text-green-100 font-bold text-lg">Camera Setup</span>
+                  </div>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 bg-blue-300 rounded-full"></div>
+                      <p className="text-blue-100 font-medium">
+                        <strong>Use the BACK camera</strong> for the clearest view of your items
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 bg-purple-300 rounded-full"></div>
+                      <p className="text-purple-100 font-medium">
+                        Tap the camera button (top-right) to switch between cameras
+                      </p>
+                    </div>
+                    {currentFacingMode === 'user' && (
+                      <div className="flex items-center gap-3 bg-yellow-500/20 rounded-lg p-3 border border-yellow-400/30">
+                        <AlertCircle className="w-5 h-5 text-yellow-300" />
+                        <p className="text-yellow-200 font-bold">
+                          Switch to back camera for optimal results
+                        </p>
+                      </div>
+                    )}
+                    {currentFacingMode === 'environment' && (
+                      <div className="flex items-center gap-3 bg-green-500/20 rounded-lg p-3 border border-green-400/30">
+                        <CheckCircle className="w-5 h-5 text-green-300" />
+                        <p className="text-green-200 font-bold">
+                          Perfect! Back camera is active
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="space-y-2 text-sm">
-                  <p className="text-blue-100">
-                    <strong>📱 Use the BACK camera</strong> to clearly show your items to the agent
-                  </p>
-                  <p className="text-blue-100">
-                    🔄 Tap the large camera button (top-right) to switch cameras
-                  </p>
-                  {currentFacingMode === 'user' && (
-                    <p className="text-yellow-200 font-medium">
-                      ⚠️ Currently using front camera - switch to back camera for best results
-                    </p>
-                  )}
-                  {currentFacingMode === 'environment' && (
-                    <p className="text-green-200 font-medium">
-                      ✅ Perfect! Back camera is active
-                    </p>
-                  )}
+              )}
+              
+              {!hasAgent && (
+                <div className="mt-6 flex items-center justify-center gap-3 bg-white/10 rounded-2xl p-4 backdrop-blur-sm">
+                  <Loader2 className="w-6 h-6 animate-spin text-white" />
+                  <span className="text-white text-lg font-medium">Waiting for your moving specialist...</span>
                 </div>
-              </div>
-            )}
-            
-            {!hasAgent && (
-              <div className="mt-3 flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-white" />
-                <span className="text-white text-sm">Waiting for your moving agent...</span>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Control bar */}
+      {/* Enhanced Control bar */}
       {showControls && (
         <div className="absolute bottom-safe-or-8 left-1/2 transform -translate-x-1/2 z-20">
-          <div className="flex items-center gap-4 bg-black/60 backdrop-blur-md rounded-2xl px-6 py-3 border border-white/20">
+          <div className={`flex items-center gap-6 px-8 py-4 rounded-3xl ${glassStyle} border border-white/30`}>
             <button 
               onClick={toggleMic}
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 ${
                 micEnabled 
-                  ? 'bg-white/20 text-white hover:bg-white/30' 
-                  : 'bg-red-500 text-white hover:bg-red-600'
+                  ? 'bg-white/20 text-white hover:bg-white/30 shadow-lg' 
+                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50'
               }`}
             >
-              {micEnabled ? <Mic size={20} /> : <MicOff size={20} />}
+              {micEnabled ? <Mic size={24} /> : <MicOff size={24} />}
             </button>
 
             <button 
-              onClick={endCall}
-              className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white transition-all duration-200 shadow-lg"
+              onClick={onCallEnd}
+              className="w-20 h-20 bg-gradient-to-br from-red-500 to-red-700 hover:from-red-600 hover:to-red-800 rounded-3xl flex items-center justify-center text-white transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl shadow-red-500/50 border border-red-400/50"
             >
-              <PhoneOff size={24} />
+              <PhoneOff size={28} />
             </button>
 
             <button 
               onClick={toggleCamera}
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 ${
                 cameraEnabled 
-                  ? 'bg-white/20 text-white hover:bg-white/30' 
-                  : 'bg-red-500 text-white hover:bg-red-600'
+                  ? 'bg-white/20 text-white hover:bg-white/30 shadow-lg' 
+                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50'
               }`}
             >
-              {cameraEnabled ? <Video size={20} /> : <VideoOff size={20} />}
+              {cameraEnabled ? <Video size={24} /> : <VideoOff size={24} />}
             </button>
           </div>
         </div>
       )}
 
-      {/* Secondary camera switch button when controls are hidden */}
+      {/* Secondary camera switch when controls are hidden */}
       {canSwitchCamera && !showControls && (
-        <div className="absolute bottom-20 right-4 z-20">
+        <div className="absolute bottom-24 right-6 z-20">
           <button
             onClick={switchCamera}
             disabled={isSwitching}
-            className={`backdrop-blur-md text-white p-4 rounded-full shadow-xl disabled:opacity-50 transition-all border border-white/30 ${
+            className={`backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30 ${
               currentFacingMode === 'environment' ? 'bg-green-500/80' : 'bg-blue-500/80'
             }`}
           >
             {isSwitching ? (
-              <Loader2 size={24} className="animate-spin" />
+              <Loader2 size={28} className="animate-spin" />
             ) : (
-              <SwitchCamera size={24} />
+              <SwitchCamera size={28} />
             )}
           </button>
-          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-2 py-1 rounded-full whitespace-nowrap">
-            {currentFacingMode === 'user' ? 'Front' : 'Back'}
-          </div>
         </div>
       )}
 
-      {/* Tap to show controls hint */}
+      {/* Elegant tap hint */}
       {!showControls && (
-        <div className="absolute bottom-safe-or-4 left-1/2 transform -translate-x-1/2 z-10">
-          <div className="bg-black/40 backdrop-blur-md text-white text-xs px-3 py-1 rounded-full">
-            Tap screen to show controls
+        <div className="absolute bottom-safe-or-6 left-1/2 transform -translate-x-1/2 z-10">
+          <div className={`px-6 py-3 rounded-2xl text-white text-sm font-medium ${glassStyle} border border-white/30 animate-pulse`}>
+            Tap anywhere to show controls
           </div>
         </div>
       )}
@@ -694,7 +608,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   );
 });
 
-// Enhanced Agent view component with full functionality
+// Ultra Modern Agent View
 const AgentView = React.memo(({ 
   projectId, 
   detectedItems, 
@@ -706,18 +620,14 @@ const AgentView = React.memo(({
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [screenshotCount, setScreenshotCount] = useState(0);
   const [showInventory, setShowInventory] = useState(false);
   const [isInventoryActive, setIsInventoryActive] = useState(false);
   const [captureMode, setCaptureMode] = useState('paused');
   const [captureCount, setCaptureCount] = useState(0);
   
   const remoteParticipants = useRemoteParticipants();
-
-  // Camera switching functionality for agents
   const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useAdvancedCameraSwitching();
 
-  // Get tracks for the video grid
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -726,15 +636,11 @@ const AgentView = React.memo(({
     { onlySubscribed: false }
   );
 
-  // Detect mobile device
   useEffect(() => {
     const checkMobile = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
-      
-      if (!mobile && !showInventory) {
-        setShowInventory(true);
-      }
+      if (!mobile && !showInventory) setShowInventory(true);
     };
     
     checkMobile();
@@ -742,7 +648,6 @@ const AgentView = React.memo(({
     return () => window.removeEventListener('resize', checkMobile);
   }, [showInventory]);
 
-  // Handle new detected items
   const handleItemsDetected = useCallback((items) => {
     const newItems = items.map(item => ({
       ...item,
@@ -763,35 +668,30 @@ const AgentView = React.memo(({
     });
 
     if (newItems.length > 0) {
-      toast.success(`Found ${newItems.length} new items`);
-      
-      if (isMobile && !showInventory) {
-        toast.info(`${detectedItems.length + newItems.length} items detected. Tap to view inventory.`);
-      }
+      toast.success(`✨ Discovered ${newItems.length} new items!`);
     }
-  }, [currentRoom, setDetectedItems, isMobile, showInventory, detectedItems.length]);
+  }, [currentRoom, setDetectedItems]);
 
-  // Inventory control functions
   const startInventory = () => {
     setIsInventoryActive(true);
     setCaptureMode('auto');
-    toast.success('Inventory scanning started');
+    toast.success('🚀 AI Inventory scanning activated!');
   };
 
   const pauseInventory = () => {
     setCaptureMode('paused');
-    toast.info('Inventory scanning paused');
+    toast.info('⏸️ Scanning paused');
   };
 
   const resumeInventory = () => {
     setCaptureMode('auto');
-    toast.success('Inventory scanning resumed');
+    toast.success('▶️ Scanning resumed');
   };
 
   const stopInventory = () => {
     setIsInventoryActive(false);
     setCaptureMode('paused');
-    toast.info('Inventory scanning stopped');
+    toast.info('⏹️ Inventory session completed');
   };
 
   const toggleSidebar = () => {
@@ -801,10 +701,9 @@ const AgentView = React.memo(({
     }
   };
 
-  // Screenshot function
   const takeScreenshot = async () => {
     if (isProcessing) {
-      toast.warning('Please wait for the previous screenshot to finish processing');
+      toast.warning('⏳ Please wait for current analysis to complete');
       return;
     }
 
@@ -813,25 +712,21 @@ const AgentView = React.memo(({
     )?.videoTrackPublications.values().next().value?.track;
 
     if (!customerTrack || !(customerTrack instanceof RemoteVideoTrack)) {
-      toast.error('No customer video feed available for screenshot');
+      toast.error('📹 No customer video feed available');
       return;
     }
 
     setIsProcessing(true);
     
     try {
-      console.log('📸 Taking screenshot of customer video...');
-      
       const frameBlob = await extractFrameFromRemoteTrack(customerTrack);
       
       if (!frameBlob) {
         throw new Error('Failed to capture video frame');
       }
 
-      console.log('🖼️ Frame captured, analyzing...');
-
       const formData = new FormData();
-      formData.append('image', frameBlob, `screenshot-${Date.now()}.jpg`);
+      formData.append('image', frameBlob, `ai-capture-${Date.now()}.jpg`);
       formData.append('projectId', projectId);
       formData.append('roomLabel', currentRoom);
       formData.append('existingItems', JSON.stringify(
@@ -844,11 +739,10 @@ const AgentView = React.memo(({
       });
 
       if (!response.ok) {
-        throw new Error('Failed to analyze screenshot');
+        throw new Error('Failed to analyze capture');
       }
 
       const result = await response.json();
-      console.log('✅ Analysis result:', result);
       
       if (result.items && result.items.length > 0) {
         const newItems = result.items.map((item) => ({
@@ -856,7 +750,7 @@ const AgentView = React.memo(({
           id: `${Date.now()}-${Math.random()}`,
           location: currentRoom,
           detectedAt: new Date().toISOString(),
-          frameId: `screenshot-${Date.now()}`,
+          frameId: `ai-capture-${Date.now()}`,
         }));
 
         setDetectedItems(prev => {
@@ -869,162 +763,172 @@ const AgentView = React.memo(({
           return [...prev, ...filtered];
         });
 
-        setScreenshotCount(prev => prev + 1);
-        
         if (newItems.length > 0) {
-          toast.success(`📸 Found ${newItems.length} new items!`);
+          toast.success(`🎯 AI found ${newItems.length} new items!`);
         } else {
-          toast.info('📸 Screenshot captured! No new items detected');
+          toast.info('📸 Capture analyzed - no new items detected');
         }
       } else {
-        setScreenshotCount(prev => prev + 1);
-        toast.info('📸 Screenshot captured! No items detected');
+        toast.info('📸 Frame captured and analyzed');
       }
 
     } catch (error) {
       console.error('Error taking screenshot:', error);
-      toast.error('Failed to take screenshot');
+      toast.error('❌ Failed to analyze frame');
     } finally {
       setIsProcessing(false);
     }
   };
 
   const hasCustomer = remoteParticipants.some(p => !isAgent(p.identity));
-  const customerName = remoteParticipants.find(p => !isAgent(p.identity))?.identity || 'Customer';
 
   return (
-    <div className="h-full flex flex-col bg-gray-50">
-      {/* Header - Mobile Optimized */}
-      <div className="bg-white shadow-sm">
-        <div className="px-4 py-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <h2 className="text-lg md:text-xl font-semibold text-gray-900">
-                Virtual Inventory
-              </h2>
-              {isInventoryActive && (
-                <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
-                  Active
-                </span>
-              )}
-              {/* Mobile: Show item count if sidebar is hidden */}
-              {isMobile && !showInventory && detectedItems.length > 0 && (
-                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">
-                  {detectedItems.length} items
-                </span>
-              )}
+    <div className="h-full flex flex-col bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+      {/* Ultra Modern Header */}
+      <div className="bg-white/80 backdrop-blur-xl shadow-xl border-b border-white/20">
+        <div className="px-6 py-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4">
+              {/* Main title with gradient */}
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl shadow-lg">
+                  <Sparkles className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                    AI Inventory Assistant
+                  </h2>
+                  <p className="text-sm text-gray-500 font-medium">Powered by Computer Vision</p>
+                </div>
+              </div>
+              
+              {/* Status badges */}
+              <div className="flex gap-3">
+                {isInventoryActive && (
+                  <div className="px-4 py-2 bg-gradient-to-r from-green-400 to-emerald-500 text-white text-sm font-bold rounded-2xl shadow-lg flex items-center gap-2">
+                    <Activity className="w-4 h-4" />
+                    <span>ACTIVE</span>
+                  </div>
+                )}
+                {isMobile && !showInventory && detectedItems.length > 0 && (
+                  <div className="px-4 py-2 bg-gradient-to-r from-blue-400 to-indigo-500 text-white text-sm font-bold rounded-2xl shadow-lg">
+                    {detectedItems.length} items detected
+                  </div>
+                )}
+              </div>
             </div>
             
-            {/* Mobile menu button */}
+            {/* Mobile controls */}
             {isMobile && (
-              <div className="flex items-center gap-2">
-                {/* Quick sidebar toggle for mobile */}
+              <div className="flex items-center gap-3">
                 <button
                   onClick={toggleSidebar}
-                  className="p-2 hover:bg-gray-100 rounded-lg relative"
+                  className="relative p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
                   title={showInventory ? 'Hide inventory' : 'Show inventory'}
                 >
-                  {showInventory ? <EyeOff size={20} /> : <Eye size={20} />}
+                  {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
                   {!showInventory && detectedItems.length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse">
                       {detectedItems.length}
                     </span>
                   )}
                 </button>
                 <button
                   onClick={() => setShowMobileMenu(!showMobileMenu)}
-                  className="text-black p-2 hover:bg-gray-100 rounded-lg"
+                  className="p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
                 >
-                  {showMobileMenu ? <X size={20} /> : <Menu size={20} />}
+                  {showMobileMenu ? <X size={24} /> : <Menu size={24} />}
                 </button>
               </div>
             )}
 
             {/* Desktop controls */}
             {!isMobile && (
-              <div className="flex items-center gap-2">
-                {/* Camera switch button for desktop */}
+              <div className="flex items-center gap-3">
+                {/* Camera switch */}
                 {canSwitchCamera && (
                   <button
                     onClick={switchCamera}
                     disabled={isSwitching}
-                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
-                    title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
+                    className="px-4 py-3 bg-gradient-to-r from-gray-100 to-gray-200 hover:from-gray-200 hover:to-gray-300 text-gray-700 rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 shadow-lg"
                   >
                     {isSwitching ? (
-                      <Loader2 size={16} className="animate-spin" />
+                      <Loader2 size={20} className="animate-spin" />
                     ) : (
-                      <SwitchCamera size={16} />
+                      <SwitchCamera size={20} />
                     )}
                     <span className="hidden sm:inline">
-                      {currentFacingMode === 'user' ? 'Back' : 'Front'}
+                      {currentFacingMode === 'user' ? 'Switch to Back' : 'Switch to Front'}
                     </span>
                   </button>
                 )}
 
+                {/* Main action buttons */}
                 {!isInventoryActive ? (
                   <button
                     onClick={startInventory}
-                    className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                    className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 shadow-lg"
                   >
-                    <Play size={16} />
-                    Start Inventory
+                    <Zap size={20} />
+                    Start AI Scanning
                   </button>
                 ) : (
-                  <>
+                  <div className="flex gap-2">
                     {captureMode === 'paused' ? (
                       <button
                         onClick={resumeInventory}
-                        className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                        className="px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
                       >
-                        <Play size={16} />
+                        <Play size={18} />
                         Resume
                       </button>
                     ) : (
                       <button
                         onClick={pauseInventory}
-                        className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                        className="px-4 py-3 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
                       >
-                        <Pause size={16} />
+                        <Pause size={18} />
                         Pause
                       </button>
                     )}
                     <button
                       onClick={stopInventory}
-                      className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                      className="px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
                     >
-                      <X size={16} />
+                      <X size={18} />
                       Stop
                     </button>
-                  </>
+                  </div>
                 )}
                 
+                {/* AI Capture button */}
                 <button
                   onClick={takeScreenshot}
                   disabled={isProcessing || !hasCustomer}
-                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                  className="px-6 py-3 bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:scale-100 shadow-lg"
                 >
                   {isProcessing ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" />
-                      Processing...
+                      <Loader2 size={20} className="animate-spin" />
+                      AI Analyzing...
                     </>
                   ) : (
                     <>
-                      <CameraIcon size={16} />
-                      Screenshot
+                      <Target size={20} />
+                      AI Capture
                     </>
                   )}
                 </button>
                 
+                {/* Inventory toggle */}
                 <button
                   onClick={toggleSidebar}
-                  className="p-2 hover:bg-gray-100 rounded-lg relative"
+                  className="relative p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
                   title={showInventory ? 'Hide inventory' : 'Show inventory'}
                 >
-                  {showInventory ? <EyeOff size={20} /> : <Eye size={20} />}
+                  {showInventory ? <EyeOff size={24} /> : <Layers size={24} />}
                   {!showInventory && detectedItems.length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    <span className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
                       {detectedItems.length}
                     </span>
                   )}
@@ -1033,10 +937,9 @@ const AgentView = React.memo(({
             )}
           </div>
 
-          {/* Mobile menu */}
+          {/* Enhanced Mobile Menu */}
           {isMobile && showMobileMenu && (
-            <div className="border-t pt-3 space-y-2">
-              {/* Camera switch button for mobile */}
+            <div className="mt-4 space-y-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-3xl border border-blue-200/50">
               {canSwitchCamera && (
                 <button
                   onClick={() => {
@@ -1044,12 +947,12 @@ const AgentView = React.memo(({
                     setShowMobileMenu(false);
                   }}
                   disabled={isSwitching}
-                  className="w-full px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="w-full px-6 py-4 bg-gradient-to-r from-gray-100 to-gray-200 hover:from-gray-200 hover:to-gray-300 text-gray-700 rounded-2xl font-bold flex items-center justify-center gap-3 disabled:opacity-50 transition-all duration-300"
                 >
                   {isSwitching ? (
-                    <Loader2 size={16} className="animate-spin" />
+                    <Loader2 size={20} className="animate-spin" />
                   ) : (
-                    <SwitchCamera size={16} />
+                    <SwitchCamera size={20} />
                   )}
                   Switch to {currentFacingMode === 'user' ? 'Back' : 'Front'} Camera
                 </button>
@@ -1061,22 +964,22 @@ const AgentView = React.memo(({
                     startInventory();
                     setShowMobileMenu(false);
                   }}
-                  className="w-full px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+                  className="w-full px-6 py-4 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
                 >
-                  <Play size={16} />
-                  Start Inventory Scan
+                  <Zap size={20} />
+                  Start AI Inventory Scan
                 </button>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {captureMode === 'paused' ? (
                     <button
                       onClick={() => {
                         resumeInventory();
                         setShowMobileMenu(false);
                       }}
-                      className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+                      className="w-full px-6 py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
                     >
-                      <Play size={16} />
+                      <Play size={20} />
                       Resume Scanning
                     </button>
                   ) : (
@@ -1085,9 +988,9 @@ const AgentView = React.memo(({
                         pauseInventory();
                         setShowMobileMenu(false);
                       }}
-                      className="w-full px-4 py-3 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+                      className="w-full px-6 py-4 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
                     >
-                      <Pause size={16} />
+                      <Pause size={20} />
                       Pause Scanning
                     </button>
                   )}
@@ -1096,9 +999,9 @@ const AgentView = React.memo(({
                       stopInventory();
                       setShowMobileMenu(false);
                     }}
-                    className="w-full px-4 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+                    className="w-full px-6 py-4 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
                   >
-                    <X size={16} />
+                    <X size={20} />
                     Stop Inventory
                   </button>
                 </div>
@@ -1110,42 +1013,42 @@ const AgentView = React.memo(({
                   setShowMobileMenu(false);
                 }}
                 disabled={isProcessing || !hasCustomer}
-                className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+                className="w-full px-6 py-4 bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
               >
                 {isProcessing ? (
                   <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Processing...
+                    <Loader2 size={20} className="animate-spin" />
+                    AI Processing...
                   </>
                 ) : (
                   <>
-                    <CameraIcon size={16} />
-                    Take Screenshot
+                    <Target size={20} />
+                    AI Capture Frame
                   </>
                 )}
               </button>
               
-              {/* View items button */}
               {detectedItems.length > 0 && (
                 <button
                   onClick={() => {
                     toggleSidebar();
                     setShowMobileMenu(false);
                   }}
-                  className="w-full px-4 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+                  className="w-full px-6 py-4 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
                 >
-                  <Package size={16} />
+                  <Package size={20} />
                   {showInventory ? 'Hide' : 'View'} Items ({detectedItems.length})
                 </button>
               )}
             </div>
           )}
 
-          {/* Room selector and stats */}
+          {/* Enhanced Room selector and stats */}
           {isInventoryActive && (
-            <div className="mt-3 space-y-3">
+            <div className="mt-4 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                  <Scan className="w-4 h-4" />
                   Current Room
                 </label>
                 <RoomSelector 
@@ -1155,164 +1058,189 @@ const AgentView = React.memo(({
                 />
               </div>
               
-              <div className="flex gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <Camera className="text-gray-400" size={16} />
-                  <span className="text-gray-600">Captures: <strong>{captureCount}</strong></span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Package className="text-gray-400" size={16} />
-                  <span className="text-gray-600">Items: <strong>{detectedItems.length}</strong></span>
-                </div>
-                {canSwitchCamera && (
-                  <div className="flex items-center gap-2">
-                    <SwitchCamera className="text-gray-400" size={16} />
-                    <span className="text-gray-600">
-                      <strong>{currentFacingMode === 'user' ? 'Front' : 'Back'}</strong>
-                    </span>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="bg-gradient-to-r from-blue-100 to-indigo-100 p-4 rounded-2xl border border-blue-200/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-500 rounded-xl">
+                      <Camera className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Captures</p>
+                      <p className="text-xl font-bold text-blue-600">{captureCount}</p>
+                    </div>
                   </div>
-                )}
+                </div>
+                <div className="bg-gradient-to-r from-green-100 to-emerald-100 p-4 rounded-2xl border border-green-200/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-green-500 rounded-xl">
+                      <Package className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Items</p>
+                      <p className="text-xl font-bold text-green-600">{detectedItems.length}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-gradient-to-r from-purple-100 to-violet-100 p-4 rounded-2xl border border-purple-200/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-purple-500 rounded-xl">
+                      <SwitchCamera className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Camera</p>
+                      <p className="text-lg font-bold text-purple-600">
+                        {currentFacingMode === 'user' ? 'Front' : 'Back'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Video Grid and Controls */}
+      {/* Enhanced Video Grid */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0">
         <div className="flex-1 flex flex-col">
-          {/* Video Grid - Stabilized with better error boundaries */}
-          <div className="flex-1 relative bg-gray-900 rounded-lg m-2 md:m-4 overflow-hidden">
+          <div className="flex-1 relative bg-gradient-to-br from-gray-900 via-slate-800 to-gray-900 rounded-3xl m-4 overflow-hidden shadow-2xl border border-gray-700/50">
             <div className="w-full h-full">
               <GridLayout 
                 tracks={tracks}
                 style={{ 
                   height: '100%', 
                   width: '100%',
-                  backgroundColor: '#1f2937'
+                  backgroundColor: 'transparent'
                 }}
               >
                 <ParticipantTile 
                   style={{ 
-                    borderRadius: '8px',
+                    borderRadius: '24px',
                     overflow: 'hidden',
-                    backgroundColor: '#374151'
+                    backgroundColor: '#1e293b',
+                    border: '1px solid rgba(255,255,255,0.1)'
                   }}
                 />
               </GridLayout>
             </div>
             
-            {/* Status Indicators */}
+            {/* Enhanced Status Indicators */}
             {isInventoryActive && (
-              <div className="absolute top-4 left-4 right-4 flex flex-wrap gap-2">
+              <div className="absolute top-6 left-6 right-6 flex flex-wrap gap-3 z-10">
                 {isProcessing && (
-                  <div className="bg-yellow-500 text-white px-3 py-2 rounded-full flex items-center gap-2 shadow-lg text-sm">
-                    <Loader2 size={14} className="animate-spin" />
-                    Analyzing...
+                  <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-yellow-400/30">
+                    <Loader2 size={16} className="animate-spin" />
+                    AI Analyzing Frame...
                   </div>
                 )}
 
                 {captureMode === 'auto' && !isProcessing && (
-                  <div className="bg-green-500 text-white px-3 py-2 rounded-full flex items-center gap-2 shadow-lg text-sm">
-                    <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-                    Scanning
+                  <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-green-400/30">
+                    <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
+                    AI Scanning Active
                   </div>
                 )}
 
                 {captureMode === 'paused' && (
-                  <div className="bg-gray-700 text-white px-3 py-2 rounded-full flex items-center gap-2 shadow-lg text-sm">
-                    <Pause size={14} />
-                    Paused
+                  <div className="bg-gradient-to-r from-gray-600 to-slate-600 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-gray-500/30">
+                    <Pause size={16} />
+                    Scanning Paused
                   </div>
                 )}
 
-                {/* Camera indicator */}
-                <div className="bg-blue-500 text-white px-3 py-2 rounded-full flex items-center gap-2 shadow-lg text-sm">
-                  <Camera size={14} />
-                  {currentFacingMode === 'user' ? 'Front' : 'Back'} Camera
+                <div className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-blue-400/30">
+                  <Camera size={16} />
+                  {currentFacingMode === 'user' ? 'Front Camera' : 'Back Camera'}
                 </div>
               </div>
             )}
 
-            {/* Mobile inventory toggle floating button - Enhanced */}
+            {/* Enhanced Mobile Floating Controls */}
             {isMobile && !showMobileMenu && (
-              <div className="absolute bottom-4 right-4 flex flex-col gap-2">
-                {/* Camera switch button */}
+              <div className="absolute bottom-6 right-6 flex flex-col gap-3">
                 {canSwitchCamera && (
                   <button
                     onClick={switchCamera}
                     disabled={isSwitching}
-                    className="bg-black bg-opacity-50 text-white p-3 rounded-full shadow-lg disabled:opacity-50 transition-all"
-                    title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
+                    className="bg-gradient-to-r from-gray-800/90 to-slate-800/90 backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/20"
                   >
                     {isSwitching ? (
-                      <Loader2 size={20} className="animate-spin" />
+                      <Loader2 size={24} className="animate-spin" />
                     ) : (
-                      <SwitchCamera size={20} />
+                      <SwitchCamera size={24} />
                     )}
                   </button>
                 )}
 
-                {/* Inventory toggle button */}
                 <button
                   onClick={toggleSidebar}
-                  className="bg-blue-500 text-white p-3 rounded-full shadow-lg relative transition-all"
-                  title={showInventory ? 'Hide inventory' : 'Show inventory'}
+                  className="relative bg-gradient-to-r from-blue-600/90 to-indigo-600/90 backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95 border border-blue-400/30"
                 >
-                  {showInventory ? <EyeOff size={20} /> : <Package size={20} />}
+                  {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
                   {!showInventory && detectedItems.length > 0 && (
-                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold">
+                    <span className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-sm rounded-full w-7 h-7 flex items-center justify-center font-bold animate-pulse shadow-lg">
                       {detectedItems.length}
                     </span>
                   )}
                 </button>
 
-                {/* Quick screenshot button */}
                 {!showInventory && hasCustomer && (
                   <button
                     onClick={takeScreenshot}
                     disabled={isProcessing}
-                    className="bg-green-500 text-white p-3 rounded-full shadow-lg disabled:opacity-50 transition-all"
-                    title="Take screenshot"
+                    className="bg-gradient-to-r from-purple-600/90 to-violet-600/90 backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-purple-400/30"
                   >
                     {isProcessing ? (
-                      <Loader2 size={20} className="animate-spin" />
+                      <Loader2 size={24} className="animate-spin" />
                     ) : (
-                      <CameraIcon size={20} />
+                      <Target size={24} />
                     )}
                   </button>
                 )}
               </div>
             )}
 
-            {/* Customer connection status */}
+            {/* Enhanced Customer Connection Status */}
             {!hasCustomer && (
-              <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-                <div className="bg-white p-6 rounded-lg text-center max-w-md">
-                  <Users size={48} className="mx-auto mb-4 text-gray-400" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Waiting for Customer</h3>
-                  <p className="text-gray-600">Share the video call link with your customer to start the inventory session.</p>
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
+                <div className="bg-white/95 backdrop-blur-xl p-8 rounded-3xl text-center max-w-md shadow-2xl border border-white/20">
+                  <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                    <Users size={40} className="text-blue-500" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-3 bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                    Waiting for Customer
+                  </h3>
+                  <p className="text-gray-600 leading-relaxed">
+                    Share the video call link with your customer to begin the AI-powered inventory session.
+                  </p>
+                  <div className="mt-6 flex items-center justify-center gap-2">
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  </div>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Control Bar */}
-          <div className="p-2 md:p-4">
-            <ControlBar 
-              variation={isMobile ? "minimal" : "verbose"}
-              controls={{
-                microphone: true,
-                camera: true,
-                chat: false,
-                screenShare: !isMobile,
-                leave: true,
-              }}
-            />
+          {/* Enhanced Control Bar */}
+          <div className="p-4">
+            <div className="bg-white/80 backdrop-blur-xl rounded-3xl p-4 shadow-2xl border border-white/20">
+              <ControlBar 
+                variation={isMobile ? "minimal" : "verbose"}
+                controls={{
+                  microphone: true,
+                  camera: true,
+                  chat: false,
+                  screenShare: !isMobile,
+                  leave: true,
+                }}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Frame Processor Component - only when auto mode is active */}
+        {/* Enhanced Frame Processor - only when active */}
         {isInventoryActive && captureMode === 'auto' && (
           <FrameProcessor
             projectId={projectId}
@@ -1325,26 +1253,24 @@ const AgentView = React.memo(({
           />
         )}
 
-        {/* Inventory Sidebar - Enhanced Mobile Support */}
+        {/* Enhanced Inventory Sidebar */}
         {showInventory && (
           <div className={`${
             isMobile 
-              ? 'fixed inset-0 z-50 bg-white' 
-              : 'w-96 border-l bg-white flex-shrink-0'
+              ? 'fixed inset-0 z-50' 
+              : 'w-96 flex-shrink-0'
           }`}>
-            {/* Mobile overlay backdrop */}
             {isMobile && (
               <div 
-                className="absolute inset-0 bg-black bg-opacity-50 z-40"
+                className="absolute inset-0 bg-black/50 backdrop-blur-sm z-40"
                 onClick={() => setShowInventory(false)}
               />
             )}
             
-            {/* Sidebar content */}
             <div className={`${
               isMobile 
-                ? 'absolute right-0 top-0 bottom-0 w-80 bg-white z-50 transform transition-transform duration-300 ease-in-out' 
-                : 'w-full h-full'
+                ? 'absolute right-0 top-0 bottom-0 w-80 bg-white/95 backdrop-blur-xl z-50 transform transition-transform duration-300 ease-in-out shadow-2xl' 
+                : 'w-full h-full bg-white/80 backdrop-blur-xl border-l border-white/20'
             }`}>
               <InventorySidebar
                 items={detectedItems}
@@ -1357,11 +1283,322 @@ const AgentView = React.memo(({
         )}
       </div>
 
-      {/* Audio Renderer */}
       <RoomAudioRenderer />
     </div>
   );
 });
+
+// Enhanced InventorySidebar component
+const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  const groupedItems = useMemo(() => {
+    const groups = {};
+    items.forEach(item => {
+      if (!groups[item.location]) groups[item.location] = [];
+      groups[item.location].push(item);
+    });
+    return groups;
+  }, [items]);
+
+  const totals = useMemo(() => {
+    return items.reduce(
+      (acc, item) => ({
+        items: acc.items + (item.quantity || 1),
+        cuft: acc.cuft + ((item.cuft || 0) * (item.quantity || 1)),
+        weight: acc.weight + ((item.weight || 0) * (item.quantity || 1)),
+      }),
+      { items: 0, cuft: 0, weight: 0 }
+    );
+  }, [items]);
+
+  const getRoomIcon = (location) => {
+    const icons = {
+      'Living Room': '🛋️',
+      'Bedroom': '🛏️',
+      'Master Bedroom': '🏠',
+      'Kitchen': '🍳',
+      'Dining Room': '🍽️',
+      'Office': '💼',
+      'Garage': '🚗',
+      'Basement': '🏚️',
+      'Attic': '🏠',
+      'Bathroom': '🚿',
+      'Other': '📦'
+    };
+    return icons[location] || '📦';
+  };
+
+  return (
+    <div className="h-full flex flex-col bg-gradient-to-br from-white via-blue-50 to-indigo-100">
+      {/* Enhanced Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white">
+        <div className="p-6 border-b border-blue-500/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              {isMobile && (
+                <button
+                  onClick={onClose}
+                  className="p-2 hover:bg-white/20 rounded-xl transition-all duration-200"
+                >
+                  <ArrowRight size={24} />
+                </button>
+              )}
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                  <Package className="text-white" size={24} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-xl">AI Detected Items</h3>
+                  <p className="text-blue-100 text-sm">Automatically cataloged</p>
+                </div>
+              </div>
+              <div className="px-4 py-2 bg-white/20 text-white rounded-2xl backdrop-blur-sm font-bold">
+                {items.length}
+              </div>
+            </div>
+            {!isMobile && (
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-white/20 rounded-xl transition-all duration-200"
+              >
+                <X size={24} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Enhanced Totals */}
+      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 border-b border-blue-200/50">
+        <div className="grid grid-cols-3 gap-4">
+          <div className="bg-white rounded-2xl p-4 text-center shadow-lg border border-blue-100">
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <Package className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-sm font-medium text-gray-600 mb-1">Total Items</p>
+            <p className="text-2xl font-bold text-gray-900">{totals.items}</p>
+          </div>
+          <div className="bg-white rounded-2xl p-4 text-center shadow-lg border border-green-100">
+            <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-gray-600 mb-1">Volume</p>
+            <p className="text-2xl font-bold text-gray-900">{totals.cuft.toFixed(1)}</p>
+            <p className="text-xs text-gray-500">cu ft</p>
+          </div>
+          <div className="bg-white rounded-2xl p-4 text-center shadow-lg border border-purple-100">
+            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16l3-3m-3 3l-3-3" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-gray-600 mb-1">Weight</p>
+            <p className="text-2xl font-bold text-gray-900">{totals.weight.toFixed(0)}</p>
+            <p className="text-xs text-gray-500">lbs</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Enhanced Items List */}
+      <div className="flex-1 overflow-y-auto bg-gray-50">
+        {items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full p-8">
+            <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-3xl flex items-center justify-center mb-6">
+              <Package size={48} className="text-blue-400" />
+            </div>
+            <h4 className="text-xl font-bold text-gray-900 mb-3">No Items Detected Yet</h4>
+            <p className="text-gray-600 text-center leading-relaxed max-w-sm">
+              Start the AI inventory scan to automatically detect and catalog items in each room
+            </p>
+            <div className="mt-6 flex items-center gap-2">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 space-y-4">
+            {Object.entries(groupedItems).map(([location, locationItems]) => (
+              <div key={location} className="bg-white rounded-3xl shadow-lg overflow-hidden border border-gray-100">
+                <div className="bg-gradient-to-r from-gray-50 to-blue-50 px-6 py-4 border-b border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{getRoomIcon(location)}</span>
+                      <div>
+                        <h4 className="font-bold text-gray-900 text-lg">{location}</h4>
+                        <p className="text-sm text-gray-600">{locationItems.length} items detected</p>
+                      </div>
+                    </div>
+                    <div className="px-3 py-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-2xl text-sm font-bold">
+                      {locationItems.length}
+                    </div>
+                  </div>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {locationItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-4 hover:bg-gray-50 transition-colors duration-200"
+                    >
+                      {editingId === item.id ? (
+                        // Enhanced Edit Mode
+                        <div className="space-y-4">
+                          <input
+                            type="text"
+                            value={editForm.name || ''}
+                            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                            placeholder="Item name"
+                          />
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <label className="text-xs font-medium text-gray-600 mb-1 block">Quantity</label>
+                              <input
+                                type="number"
+                                value={editForm.quantity || ''}
+                                onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 1 })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-gray-600 mb-1 block">Cu ft</label>
+                              <input
+                                type="number"
+                                value={editForm.cuft || ''}
+                                onChange={(e) => setEditForm({ ...editForm, cuft: parseFloat(e.target.value) || 0 })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-gray-600 mb-1 block">Weight</label>
+                              <input
+                                type="number"
+                                value={editForm.weight || ''}
+                                onChange={(e) => setEditForm({ ...editForm, weight: parseFloat(e.target.value) || 0 })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-3">
+                            <button
+                              onClick={() => setEditingId(null)}
+                              className="px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-all duration-200"
+                            >
+                              <X size={18} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                // Save logic would go here
+                                setEditingId(null);
+                              }}
+                              className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700 rounded-xl transition-all duration-200"
+                            >
+                              <CheckCircle size={18} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // Enhanced View Mode
+                        <div>
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h5 className="font-bold text-gray-900 text-lg mb-2">{item.name}</h5>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-bold bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700">
+                                  {item.quantity || 1}x
+                                </span>
+                                {item.category && (
+                                  <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-medium bg-gradient-to-r from-gray-100 to-slate-100 text-gray-700">
+                                    {item.category}
+                                  </span>
+                                )}
+                                {item.cuft && (
+                                  <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-medium bg-gradient-to-r from-green-100 to-emerald-100 text-green-700">
+                                    {item.cuft} cu ft
+                                  </span>
+                                )}
+                                {item.weight && (
+                                  <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-medium bg-gradient-to-r from-yellow-100 to-orange-100 text-orange-700">
+                                    {item.weight} lbs
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-2 ml-3">
+                              <button
+                                onClick={() => {
+                                  setEditingId(item.id);
+                                  setEditForm({
+                                    name: item.name,
+                                    quantity: item.quantity,
+                                    cuft: item.cuft,
+                                    weight: item.weight,
+                                  });
+                                }}
+                                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all duration-200"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={() => onRemoveItem(item.id)}
+                                className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Enhanced Save Button */}
+      {items.length > 0 && (
+        <div className="bg-white border-t border-gray-200 p-6">
+          <button
+            onClick={() => onSaveItems(items)}
+            className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white py-4 rounded-3xl font-bold flex items-center justify-center gap-3 transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-2xl text-lg"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            </svg>
+            Save {items.length} Items to Inventory
+          </button>
+          {isMobile && (
+            <button
+              onClick={onClose}
+              className="w-full mt-3 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-2xl font-medium transition-colors duration-200"
+            >
+              Continue Scanning
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 // Main VideoCallInventory component
 export default function VideoCallInventory({
@@ -1415,11 +1652,9 @@ export default function VideoCallInventory({
     }
 
     try {
-      console.log('🔄 Saving video inventory items:', items);
-
       const inventoryItems = items.map(item => ({
         name: item.name,
-        description: `Detected via video inventory in ${item.location}`,
+        description: `AI detected via video inventory in ${item.location}`,
         category: item.category,
         quantity: item.quantity || 1,
         location: item.location,
@@ -1440,11 +1675,11 @@ export default function VideoCallInventory({
         throw new Error(errorData.error || 'Failed to save items to inventory');
       }
 
-      toast.success(`Successfully saved ${items.length} items to inventory!`);
+      toast.success(`🎉 Successfully saved ${items.length} items to inventory!`);
       setDetectedItems([]);
 
     } catch (error) {
-      console.error('❌ Error saving video inventory items:', error);
+      console.error('Error saving video inventory items:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to save items to inventory');
     }
   };
@@ -1455,7 +1690,7 @@ export default function VideoCallInventory({
     }
   }, [onCallEnd]);
 
-  // Enhanced LiveKit room options optimized for camera switching
+  // Enhanced LiveKit room options with mobile camera optimization
   const roomOptions = {
     publishDefaults: {
       videoCodec: 'h264',
@@ -1463,18 +1698,22 @@ export default function VideoCallInventory({
         width: 1280,
         height: 720
       },
-      videoSimulcast: false, // Disable simulcast for better camera switching
+      videoSimulcast: false,
     },
-    adaptiveStream: false, // Disable adaptive streaming for more predictable behavior
-    dynacast: false, // Disable dynacast for camera switching stability
+    adaptiveStream: false,
+    dynacast: false,
     autoSubscribe: true,
     disconnectOnPageLeave: true,
     reconnectPolicy: {
       nextRetryDelayInMs: (context) => Math.min((context.retryCount || 0) * 2000, 10000)
     },
-    // Enhanced video capture options for better mobile camera handling
     videoCaptureDefaults: {
-      facingMode: 'environment', // Start with back camera by default
+      // Default to front camera for agents on mobile, back camera for customers
+      facingMode: (() => {
+        const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+        const isAgent = participantName.toLowerCase().includes('agent');
+        return (isMobile && isAgent) ? 'user' : 'environment';
+      })(),
       resolution: {
         width: 1280,
         height: 720
@@ -1484,10 +1723,22 @@ export default function VideoCallInventory({
 
   if (isConnecting) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-50">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-blue-500" />
-          <p className="text-gray-600">Connecting to video call...</p>
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
+        <div className="text-center bg-white/80 backdrop-blur-xl p-12 rounded-3xl shadow-2xl border border-white/20">
+          <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
+            <Loader2 className="w-10 h-10 animate-spin text-white" />
+          </div>
+          <h3 className="text-2xl font-bold text-gray-900 mb-3 bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+            Connecting to AI Video Call
+          </h3>
+          <p className="text-gray-600 leading-relaxed">
+            Initializing your intelligent inventory session...
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-2">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+          </div>
         </div>
       </div>
     );
@@ -1495,18 +1746,22 @@ export default function VideoCallInventory({
 
   if (!token) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-50">
-        <div className="bg-white p-8 rounded-xl shadow-lg text-center max-w-md">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <X className="w-8 h-8 text-red-600" />
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-red-50 via-orange-50 to-yellow-50">
+        <div className="bg-white/80 backdrop-blur-xl p-12 rounded-3xl shadow-2xl text-center max-w-md border border-white/20">
+          <div className="w-20 h-20 bg-gradient-to-br from-red-500 to-pink-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
+            <AlertCircle className="w-10 h-10 text-white" />
           </div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Connection Failed</h3>
-          <p className="text-gray-600 mb-4">Unable to connect to the video call. Please check your connection and try again.</p>
+          <h3 className="text-2xl font-bold text-gray-900 mb-3 bg-gradient-to-r from-red-600 to-pink-600 bg-clip-text text-transparent">
+            Connection Failed
+          </h3>
+          <p className="text-gray-600 mb-6 leading-relaxed">
+            Unable to establish connection to the video call. Please check your network and try again.
+          </p>
           <button
             onClick={() => window.location.reload()}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium transition-colors"
+            className="px-8 py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-2xl hover:from-blue-600 hover:to-indigo-700 font-bold transition-all duration-300 transform hover:scale-105 shadow-lg flex items-center gap-3 mx-auto"
           >
-            <RotateCcw className="inline-block w-4 h-4 mr-2" />
+            <RotateCcw className="w-5 h-5" />
             Retry Connection
           </button>
         </div>
@@ -1527,11 +1782,11 @@ export default function VideoCallInventory({
         options={roomOptions}
         onError={(error) => {
           console.error('LiveKit room error:', error);
-          toast.error('Video call error occurred');
+          toast.error('🚨 Video call error occurred');
         }}
         onConnected={() => {
           console.log('✅ Connected to LiveKit room');
-          toast.success('Connected to video call');
+          toast.success('🎉 Connected to AI video call!');
         }}
       >
         {/* Render different views based on participant type */}

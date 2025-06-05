@@ -76,6 +76,7 @@ export default function ProjectPage() {
   return (
     <SidebarProvider>
       <AppSidebar />
+      <div className="h-16"></div>
       <InventoryManager />
       <SidebarTrigger />
     </SidebarProvider>
