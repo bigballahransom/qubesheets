@@ -1459,7 +1459,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                             type="text"
                             value={editForm.name || ''}
                             onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                            className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                            className="w-full text-black px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
                             placeholder="Item name"
                           />
                           <div className="grid grid-cols-3 gap-3">
@@ -1469,7 +1469,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.quantity || ''}
                                 onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 1 })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full text-black px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -1478,7 +1478,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.cuft || ''}
                                 onChange={(e) => setEditForm({ ...editForm, cuft: parseFloat(e.target.value) || 0 })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full text-black px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -1487,7 +1487,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.weight || ''}
                                 onChange={(e) => setEditForm({ ...editForm, weight: parseFloat(e.target.value) || 0 })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full text-black px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                           </div>
