@@ -285,11 +285,10 @@ function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
 }
 
-// Ultra Modern Customer View
+// Ultra Modern Customer View - Fixed with proper video display and bottom controls
 const CustomerView = React.memo(({ onCallEnd }) => {
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
-  const [showInstructions, setShowInstructions] = useState(true);
   const [showControls, setShowControls] = useState(true);
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
@@ -301,11 +300,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     isSwitching 
   } = useAdvancedCameraSwitching();
   
-  useEffect(() => {
-    const timer = setTimeout(() => setShowInstructions(false), 25000);
-    return () => clearTimeout(timer);
-  }, []);
-
+  // Auto-hide controls after 6 seconds of inactivity
   useEffect(() => {
     let hideTimer;
     
@@ -331,6 +326,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     };
   }, []);
 
+  // Get all video tracks to display
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -340,7 +336,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   );
 
   const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
-  const agentName = remoteParticipants.find(p => isAgent(p.identity))?.identity || 'Moving Agent';
+  const agentName = remoteParticipants.find(p => isAgent(p.identity))?.name || 'Moving Agent';
 
   const toggleMic = async () => {
     if (!localParticipant) return;
@@ -371,19 +367,17 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-pink-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '4s' }}></div>
       </div>
 
-      {/* Video area */}
+      {/* Video area - Full screen for both participants */}
       <div className="absolute inset-0 z-10">
-        <div className="w-full h-full">
-          <GridLayout 
-            tracks={tracks}
-            style={{ height: '100%', width: '100%' }}
-          >
-            <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
-          </GridLayout>
-        </div>
+        <GridLayout 
+          tracks={tracks}
+          style={{ height: '100%', width: '100%' }}
+        >
+          <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
+        </GridLayout>
       </div>
 
-      {/* Top overlay */}
+      {/* Top overlay - Agent info and connection status */}
       {showControls && (
         <div className="absolute top-safe-or-6 left-4 right-4 z-20">
           <div className="flex items-center justify-between">
@@ -414,8 +408,8 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         </div>
       )}
 
-      {/* Enhanced Camera Switch Button */}
-      {canSwitchCamera && (
+      {/* Enhanced Camera Switch Button - Top Right */}
+      {canSwitchCamera && showControls && (
         <div className="absolute top-24 right-6 z-30">
           <div className="relative group">
             <button
@@ -462,137 +456,63 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         </div>
       )}
 
-      {/* Enhanced instruction banner */}
-      {showInstructions && (
-        <div className="absolute top-1/2 left-4 right-4 transform -translate-y-1/2 z-20">
-          <div className={`relative overflow-hidden rounded-3xl p-8 text-center border border-white/30 ${glassStyle} transform transition-all duration-500 hover:scale-105`}>
-            {/* Animated background gradient */}
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-500/20 via-purple-500/20 to-pink-500/20 opacity-50"></div>
-            
-            <button
-              onClick={() => setShowInstructions(false)}
-              className="absolute top-4 right-4 text-white/70 hover:text-white bg-white/20 rounded-full p-2 backdrop-blur-sm transition-all duration-200 hover:scale-110"
-            >
-              <X size={20} />
-            </button>
-            
-            <div className="relative z-10">
-              <div className="text-6xl mb-6 animate-bounce">🎥</div>
-              <h2 className="text-white text-2xl font-bold mb-4 bg-gradient-to-r from-white to-blue-200 bg-clip-text text-transparent">
-                AI-Powered Video Inventory
-              </h2>
-              <p className="text-white/90 text-lg leading-relaxed mb-6 font-medium">
-                Show your belongings to the camera as you walk through your home. 
-                Our AI will automatically identify and catalog everything for your move.
-              </p>
-              
-              {/* Enhanced camera switching instructions */}
-              {canSwitchCamera && (
-                <div className="bg-gradient-to-r from-blue-500/30 to-green-500/30 rounded-2xl p-6 mb-6 border border-blue-400/50 backdrop-blur-sm">
-                  <div className="flex items-center justify-center gap-3 mb-4">
-                    <div className="p-2 bg-white/20 rounded-full">
-                      <SwitchCamera size={24} className="text-green-300" />
-                    </div>
-                    <span className="text-green-100 font-bold text-lg">Camera Setup</span>
-                  </div>
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 bg-blue-300 rounded-full"></div>
-                      <p className="text-blue-100 font-medium">
-                        <strong>Use the BACK camera</strong> for the clearest view of your items
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 bg-purple-300 rounded-full"></div>
-                      <p className="text-purple-100 font-medium">
-                        Tap the camera button (top-right) to switch between cameras
-                      </p>
-                    </div>
-                    {currentFacingMode === 'user' && (
-                      <div className="flex items-center gap-3 bg-yellow-500/20 rounded-lg p-3 border border-yellow-400/30">
-                        <AlertCircle className="w-5 h-5 text-yellow-300" />
-                        <p className="text-yellow-200 font-bold">
-                          Switch to back camera for optimal results
-                        </p>
-                      </div>
-                    )}
-                    {currentFacingMode === 'environment' && (
-                      <div className="flex items-center gap-3 bg-green-500/20 rounded-lg p-3 border border-green-400/30">
-                        <CheckCircle className="w-5 h-5 text-green-300" />
-                        <p className="text-green-200 font-bold">
-                          Perfect! Back camera is active
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              
-              {!hasAgent && (
-                <div className="mt-6 flex items-center justify-center gap-3 bg-white/10 rounded-2xl p-4 backdrop-blur-sm">
-                  <Loader2 className="w-6 h-6 animate-spin text-white" />
-                  <span className="text-white text-lg font-medium">Waiting for your moving specialist...</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Enhanced Control bar */}
-      {showControls && (
-        <div className="absolute bottom-safe-or-8 left-1/2 transform -translate-x-1/2 z-20">
-          <div className={`flex items-center gap-6 px-8 py-4 rounded-3xl ${glassStyle} border border-white/30`}>
+      {/* Enhanced Control bar - Bottom of screen */}
+      <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
+        <div className="bg-gradient-to-t from-black/60 to-transparent p-8 pb-safe-or-8">
+          <div className="flex items-center justify-center gap-6">
             <button 
               onClick={toggleMic}
-              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 ${
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl ${
                 micEnabled 
-                  ? 'bg-white/20 text-white hover:bg-white/30 shadow-lg' 
-                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50'
+                  ? 'bg-white/20 backdrop-blur-xl text-white hover:bg-white/30 border border-white/30' 
+                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50 border border-red-400/50'
               }`}
             >
-              {micEnabled ? <Mic size={24} /> : <MicOff size={24} />}
+              {micEnabled ? <Mic size={28} /> : <MicOff size={28} />}
             </button>
 
             <button 
               onClick={onCallEnd}
-              className="w-20 h-20 bg-gradient-to-br from-red-500 to-red-700 hover:from-red-600 hover:to-red-800 rounded-3xl flex items-center justify-center text-white transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl shadow-red-500/50 border border-red-400/50"
+              className="w-24 h-24 bg-gradient-to-br from-red-500 to-red-700 hover:from-red-600 hover:to-red-800 rounded-3xl flex items-center justify-center text-white transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl shadow-red-500/50 border border-red-400/50"
             >
-              <PhoneOff size={28} />
+              <PhoneOff size={32} />
             </button>
 
             <button 
               onClick={toggleCamera}
-              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 ${
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl ${
                 cameraEnabled 
-                  ? 'bg-white/20 text-white hover:bg-white/30 shadow-lg' 
-                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50'
+                  ? 'bg-white/20 backdrop-blur-xl text-white hover:bg-white/30 border border-white/30' 
+                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50 border border-red-400/50'
               }`}
             >
-              {cameraEnabled ? <Video size={24} /> : <VideoOff size={24} />}
+              {cameraEnabled ? <Video size={28} /> : <VideoOff size={28} />}
             </button>
           </div>
+          
+          {/* Camera switch for smaller screens */}
+          {canSwitchCamera && (
+            <div className="mt-4 flex justify-center">
+              <button
+                onClick={switchCamera}
+                disabled={isSwitching}
+                className={`px-6 py-3 rounded-2xl backdrop-blur-xl text-white flex items-center gap-3 shadow-xl disabled:opacity-50 transition-all duration-300 transform hover:scale-105 active:scale-95 border border-white/30 ${
+                  currentFacingMode === 'environment' ? 'bg-green-500/60' : 'bg-blue-500/60'
+                }`}
+              >
+                {isSwitching ? (
+                  <Loader2 size={20} className="animate-spin" />
+                ) : (
+                  <SwitchCamera size={20} />
+                )}
+                <span className="font-medium">
+                  {currentFacingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
+                </span>
+              </button>
+            </div>
+          )}
         </div>
-      )}
-
-      {/* Secondary camera switch when controls are hidden */}
-      {canSwitchCamera && !showControls && (
-        <div className="absolute bottom-24 right-6 z-20">
-          <button
-            onClick={switchCamera}
-            disabled={isSwitching}
-            className={`backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30 ${
-              currentFacingMode === 'environment' ? 'bg-green-500/80' : 'bg-blue-500/80'
-            }`}
-          >
-            {isSwitching ? (
-              <Loader2 size={28} className="animate-spin" />
-            ) : (
-              <SwitchCamera size={28} />
-            )}
-          </button>
-        </div>
-      )}
+      </div>
 
       {/* Elegant tap hint */}
       {!showControls && (
