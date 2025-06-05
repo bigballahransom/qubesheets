@@ -1,4 +1,4 @@
-// components/video/VideoCallInventory.tsx - Fixed with customer camera switching
+// components/video/VideoCallInventory.jsx - Complete Enhanced Version with Robust Camera Switching
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -9,11 +9,10 @@ import {
   ControlBar,
   RoomAudioRenderer,
   useTracks,
-  useRoomContext,
   useLocalParticipant,
   useRemoteParticipants,
 } from '@livekit/components-react';
-import { Track, Room, LocalVideoTrack, RemoteVideoTrack, RemoteParticipant } from 'livekit-client';
+import { Track, LocalVideoTrack, RemoteVideoTrack } from 'livekit-client';
 import '@livekit/components-styles';
 import { 
   Camera, 
@@ -24,12 +23,9 @@ import {
   RotateCcw,
   Menu,
   X,
-  CheckCircle,
   SwitchCamera,
   Users,
   CameraIcon,
-  Home,
-  MapPin,
   Mic,
   MicOff,
   Video,
@@ -42,28 +38,297 @@ import { toast } from 'sonner';
 import InventorySidebar from './InventorySidebar';
 import FrameProcessor from './FrameProcessor';
 
-interface VideoCallInventoryProps {
-  projectId: string;
-  roomId: string;
-  participantName: string;
-  onCallEnd?: () => void;
+// Enhanced camera switching with multiple strategies
+function useAdvancedCameraSwitching() {
+  const { localParticipant } = useLocalParticipant();
+  const [currentFacingMode, setCurrentFacingMode] = useState('environment');
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [hasBackCamera, setHasBackCamera] = useState(false);
+  const [hasFrontCamera, setHasFrontCamera] = useState(false);
+
+  // Comprehensive camera detection
+  useEffect(() => {
+    const detectCameras = async () => {
+      try {
+        // First, request camera permission to get accurate device enumeration
+        console.log('📹 Requesting camera permissions...');
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop());
+
+        // Now enumerate devices
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        
+        console.log('📹 Available video devices:', videoDevices.map(d => ({
+          deviceId: d.deviceId,
+          label: d.label,
+          groupId: d.groupId
+        })));
+
+        setAvailableCameras(videoDevices);
+
+        // Try to detect camera capabilities
+        let backCameraFound = false;
+        let frontCameraFound = false;
+
+        // Method 1: Check device labels
+        for (const device of videoDevices) {
+          const label = device.label.toLowerCase();
+          if (label.includes('back') || label.includes('rear') || label.includes('environment')) {
+            backCameraFound = true;
+          }
+          if (label.includes('front') || label.includes('user') || label.includes('face')) {
+            frontCameraFound = true;
+          }
+        }
+
+        // Method 2: Try to access cameras with facingMode constraints
+        if (!backCameraFound || !frontCameraFound) {
+          try {
+            // Test back camera
+            const backStream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'environment' }
+            });
+            backStream.getTracks().forEach(track => track.stop());
+            backCameraFound = true;
+            console.log('📹 Back camera confirmed via facingMode');
+          } catch (e) {
+            console.log('📹 No back camera detected via facingMode');
+          }
+
+          try {
+            // Test front camera
+            const frontStream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'user' }
+            });
+            frontStream.getTracks().forEach(track => track.stop());
+            frontCameraFound = true;
+            console.log('📹 Front camera confirmed via facingMode');
+          } catch (e) {
+            console.log('📹 No front camera detected via facingMode');
+          }
+        }
+
+        // Method 3: Assume multiple cameras means front and back (common on mobile)
+        if (videoDevices.length >= 2) {
+          backCameraFound = true;
+          frontCameraFound = true;
+          console.log('📹 Multiple cameras detected, assuming front and back available');
+        }
+
+        setHasBackCamera(backCameraFound);
+        setHasFrontCamera(frontCameraFound);
+
+        console.log('📹 Camera capabilities:', {
+          totalDevices: videoDevices.length,
+          hasBack: backCameraFound,
+          hasFront: frontCameraFound
+        });
+
+      } catch (error) {
+        console.error('📹 Error detecting cameras:', error);
+      }
+    };
+
+    detectCameras();
+  }, []);
+
+  const switchCamera = useCallback(async () => {
+    if (!localParticipant || isSwitching) {
+      console.log('🚫 Cannot switch camera - participant or already switching');
+      return;
+    }
+
+    if (!hasBackCamera && !hasFrontCamera) {
+      toast.error('Camera switching not available on this device');
+      return;
+    }
+
+    setIsSwitching(true);
+    const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    
+    console.log(`📹 Attempting to switch from ${currentFacingMode} to ${targetFacingMode}`);
+
+    // Strategy implementations
+    const switchUsingLiveKitNative = async (targetFacingMode) => {
+      console.log('📹 Strategy 1: LiveKit native switching');
+      
+      await localParticipant.setCameraEnabled(false);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      await localParticipant.setCameraEnabled(true, {
+        facingMode: targetFacingMode,
+        resolution: { width: 1280, height: 720 }
+      });
+    };
+
+    const switchUsingDirectMediaAccess = async (targetFacingMode) => {
+      console.log('📹 Strategy 2: Direct getUserMedia');
+      
+      // Get new stream with target facing mode
+      const constraints = {
+        video: {
+          facingMode: { exact: targetFacingMode },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 }
+        }
+      };
+
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const videoTrack = newStream.getVideoTracks()[0];
+      
+      // Verify we got the right camera
+      const settings = videoTrack.getSettings();
+      console.log('📹 New track settings:', settings);
+      
+      if (settings.facingMode !== targetFacingMode) {
+        newStream.getTracks().forEach(track => track.stop());
+        throw new Error(`Got ${settings.facingMode} instead of ${targetFacingMode}`);
+      }
+
+      // Stop old camera and start new one
+      await localParticipant.setCameraEnabled(false);
+      newStream.getTracks().forEach(track => track.stop());
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      await localParticipant.setCameraEnabled(true, {
+        facingMode: targetFacingMode
+      });
+    };
+
+    const switchUsingDeviceIds = async () => {
+      console.log('📹 Strategy 3: Device ID cycling');
+      
+      if (availableCameras.length < 2) {
+        throw new Error('Not enough cameras for device ID switching');
+      }
+
+      const currentTrack = localParticipant.videoTrackPublications.values().next().value?.track;
+      const currentSettings = currentTrack?.mediaStreamTrack?.getSettings();
+      const currentDeviceId = currentSettings?.deviceId;
+
+      const otherCamera = availableCameras.find(camera => 
+        camera.deviceId !== currentDeviceId && 
+        camera.deviceId !== '' &&
+        camera.deviceId !== 'default'
+      );
+
+      if (!otherCamera) {
+        throw new Error('No alternative camera device found');
+      }
+
+      await localParticipant.setCameraEnabled(false);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      await localParticipant.setCameraEnabled(true, {
+        deviceId: otherCamera.deviceId,
+        resolution: { width: 1280, height: 720 }
+      });
+    };
+
+    const switchUsingRestart = async (targetFacingMode) => {
+      console.log('📹 Strategy 4: Full restart');
+      
+      // Disable camera completely
+      await localParticipant.setCameraEnabled(false);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Re-enable with new constraints
+      await localParticipant.setCameraEnabled(true, {
+        facingMode: targetFacingMode
+      });
+    };
+
+    const verifySwitch = (expectedMode) => {
+      try {
+        const videoTrack = localParticipant.videoTrackPublications.values().next().value?.track;
+        if (videoTrack instanceof LocalVideoTrack) {
+          const settings = videoTrack.mediaStreamTrack?.getSettings();
+          console.log('📹 Post-switch verification:', settings);
+          
+          if (settings?.facingMode && settings.facingMode !== expectedMode) {
+            console.log(`⚠️ Camera switch verification failed. Expected: ${expectedMode}, Got: ${settings.facingMode}`);
+            setCurrentFacingMode(settings.facingMode === 'user' ? 'user' : 'environment');
+          } else {
+            console.log('✅ Camera switch verified successfully');
+          }
+        }
+      } catch (error) {
+        console.log('Warning: Could not verify camera switch:', error);
+      }
+    };
+
+    // Main camera switching logic with try-catch
+    try {
+      try {
+        // Strategy 1: LiveKit's native camera switching with constraints
+        await switchUsingLiveKitNative(targetFacingMode);
+        
+      } catch (error) {
+        console.log('📹 LiveKit native failed, trying getUserMedia approach');
+        
+        try {
+          // Strategy 2: Direct getUserMedia with device selection
+          await switchUsingDirectMediaAccess(targetFacingMode);
+          
+        } catch (error2) {
+          console.log('📹 Direct media access failed, trying device ID approach');
+          
+          try {
+            // Strategy 3: Device ID cycling
+            await switchUsingDeviceIds();
+            
+          } catch (error3) {
+            console.log('📹 Device ID approach failed, trying restart approach');
+            
+            try {
+              // Strategy 4: Full restart approach
+              await switchUsingRestart(targetFacingMode);
+              
+            } catch (error4) {
+              throw new Error('All camera switching strategies failed');
+            }
+          }
+        }
+      }
+
+      setCurrentFacingMode(targetFacingMode);
+      toast.success(`📹 Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
+
+      // Verify the switch after a delay
+      setTimeout(() => verifySwitch(targetFacingMode), 1000);
+
+    } catch (error) {
+      console.error('📹 Camera switch failed:', error);
+      toast.error('Failed to switch camera');
+      
+      // Try to restore camera
+      try {
+        await localParticipant.setCameraEnabled(true);
+      } catch (restoreError) {
+        console.error('📹 Failed to restore camera:', restoreError);
+      }
+    } finally {
+      setIsSwitching(false);
+    }
+  }, [localParticipant, isSwitching, currentFacingMode, availableCameras, hasBackCamera, hasFrontCamera]);
+
+  const canSwitchCamera = (hasBackCamera && hasFrontCamera) || availableCameras.length > 1;
+
+  return {
+    switchCamera,
+    currentFacingMode,
+    canSwitchCamera,
+    isSwitching,
+    availableCameras,
+    hasBackCamera,
+    hasFrontCamera
+  };
 }
 
-interface DetectedItem {
-  id: string;
-  name: string;
-  category: string;
-  quantity: number;
-  location: string;
-  cuft?: number;
-  weight?: number;
-  confidence?: number;
-  detectedAt: string;
-  frameId: string;
-}
-
-// Helper function to extract frame from remote video track
-async function extractFrameFromRemoteTrack(track: RemoteVideoTrack): Promise<Blob | null> {
+// Helper functions
+async function extractFrameFromRemoteTrack(track) {
   try {
     const videoElement = document.createElement('video');
     videoElement.srcObject = new MediaStream([track.mediaStreamTrack]);
@@ -89,7 +354,6 @@ async function extractFrameFromRemoteTrack(track: RemoteVideoTrack): Promise<Blo
     canvas.height = videoElement.videoHeight || 480;
     ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
 
-    // Clean up
     videoElement.remove();
 
     return new Promise((resolve) => {
@@ -101,28 +365,14 @@ async function extractFrameFromRemoteTrack(track: RemoteVideoTrack): Promise<Blo
   }
 }
 
-// Room selector component
 function RoomSelector({ 
   currentRoom, 
   onChange, 
   isMobile 
-}: { 
-  currentRoom: string; 
-  onChange: (room: string) => void;
-  isMobile: boolean;
 }) {
   const rooms = [
-    'Living Room',
-    'Bedroom',
-    'Master Bedroom', 
-    'Kitchen',
-    'Dining Room',
-    'Office',
-    'Garage',
-    'Basement',
-    'Attic',
-    'Bathroom',
-    'Other'
+    'Living Room', 'Bedroom', 'Master Bedroom', 'Kitchen',
+    'Dining Room', 'Office', 'Garage', 'Basement', 'Attic', 'Bathroom', 'Other'
   ];
 
   return (
@@ -140,249 +390,12 @@ function RoomSelector({
   );
 }
 
-// Helper function to check if participant is an agent
-function isAgent(participantName: string): boolean {
+function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
 }
 
-// Enhanced camera switching hook with better iPhone support and stability
-function useCameraSwitching() {
-  const { localParticipant } = useLocalParticipant();
-  const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('environment'); // Start with back camera
-  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
-  const [isSwitching, setIsSwitching] = useState(false);
-
-  // Get available cameras and detect current camera
-  useEffect(() => {
-    const getAvailableCameras = async () => {
-      try {
-        // Request permissions first
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(track => track.stop()); // Clean up test stream
-        
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const cameras = devices.filter(device => device.kind === 'videoinput');
-        setAvailableCameras(cameras);
-        console.log('📹 Available cameras:', cameras.length, cameras.map(c => c.label));
-        
-        // Detect current facing mode from active track
-        setTimeout(() => {
-          const videoTrack = localParticipant?.videoTrackPublications.values().next().value?.track;
-          if (videoTrack instanceof LocalVideoTrack) {
-            const settings = videoTrack.mediaStreamTrack?.getSettings();
-            console.log('📹 Current camera settings:', settings);
-            if (settings?.facingMode) {
-              const detectedMode = settings.facingMode === 'user' ? 'user' : 'environment';
-              setCurrentFacingMode(detectedMode);
-              console.log('📹 Detected camera mode:', detectedMode);
-            }
-          }
-        }, 1000);
-      } catch (error) {
-        console.error('Error getting available cameras:', error);
-      }
-    };
-
-    if (localParticipant) {
-      getAvailableCameras();
-    }
-  }, [localParticipant]);
-
-  const switchCamera = useCallback(async () => {
-    if (!localParticipant || isSwitching) {
-      console.log('🚫 Cannot switch camera:', { 
-        hasParticipant: !!localParticipant, 
-        isSwitching
-      });
-      return;
-    }
-
-    setIsSwitching(true);
-    
-    try {
-      console.log('🔄 Starting camera switch...');
-      
-      const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-      console.log(`📹 Switching from ${currentFacingMode} to ${targetFacingMode}`);
-      
-      // iPhone-optimized approach: Use getUserMedia directly first
-      let success = false;
-      
-      // Approach 1: Direct getUserMedia with facingMode (best for iPhone)
-      if (!success) {
-        try {
-          console.log('📹 Trying direct getUserMedia approach for iPhone...');
-          
-          // Stop current camera gracefully
-          await localParticipant.setCameraEnabled(false);
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // Try to get media with specific facing mode
-          const constraints: MediaStreamConstraints = {
-            video: {
-              facingMode: targetFacingMode,
-              width: { ideal: 1280, max: 1920 },
-              height: { ideal: 720, max: 1080 }
-            }
-          };
-          
-          console.log('📹 getUserMedia constraints:', constraints);
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          
-          // Verify we got the right camera
-          const videoTrack = stream.getVideoTracks()[0];
-          const settings = videoTrack.getSettings();
-          console.log('📹 New camera settings:', settings);
-          
-          // Stop the test stream and use LiveKit to publish
-          stream.getTracks().forEach(track => track.stop());
-          
-          // Now enable camera through LiveKit with simpler constraints
-          await localParticipant.setCameraEnabled(true, {
-            facingMode: targetFacingMode,
-            resolution: { width: 1280, height: 720 }
-          });
-          
-          success = true;
-          console.log('✅ Camera switched using direct getUserMedia approach');
-        } catch (error) {
-          console.log('❌ Direct getUserMedia approach failed:', error);
-        }
-      }
-
-      // Approach 2: LiveKit native switching
-      if (!success) {
-        try {
-          console.log('📹 Trying LiveKit native approach...');
-          
-          await localParticipant.setCameraEnabled(false);
-          await new Promise(resolve => setTimeout(resolve, 800));
-          
-          await localParticipant.setCameraEnabled(true, {
-            facingMode: targetFacingMode,
-            resolution: { width: 1280, height: 720 }
-          });
-          
-          success = true;
-          console.log('✅ Camera switched using LiveKit native approach');
-        } catch (error) {
-          console.log('❌ LiveKit native approach failed:', error);
-        }
-      }
-
-      // Approach 3: Device ID switching for multi-camera devices
-      if (!success && availableCameras.length > 1) {
-        try {
-          console.log('📹 Trying device ID switching...');
-          
-          const currentTrack = localParticipant.videoTrackPublications.values().next().value?.track;
-          const currentSettings = currentTrack?.mediaStreamTrack?.getSettings();
-          const currentDeviceId = currentSettings?.deviceId;
-          
-          // Find a different camera
-          const otherCamera = availableCameras.find(camera => 
-            camera.deviceId !== currentDeviceId && 
-            camera.deviceId !== '' &&
-            camera.deviceId !== 'default'
-          );
-          
-          if (otherCamera) {
-            await localParticipant.setCameraEnabled(false);
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            await localParticipant.setCameraEnabled(true, {
-              deviceId: otherCamera.deviceId,
-              resolution: { width: 1280, height: 720 }
-            });
-            
-            success = true;
-            console.log('✅ Camera switched using device ID');
-          }
-        } catch (error) {
-          console.log('❌ Device ID switching failed:', error);
-        }
-      }
-
-      // Approach 4: Fallback with basic constraints
-      if (!success) {
-        try {
-          console.log('📹 Trying fallback approach...');
-          
-          await localParticipant.setCameraEnabled(false);
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          await localParticipant.setCameraEnabled(true, {
-            facingMode: targetFacingMode
-          });
-          
-          success = true;
-          console.log('✅ Camera enabled with fallback approach');
-        } catch (error) {
-          console.log('❌ Fallback approach failed:', error);
-        }
-      }
-
-      if (success) {
-        setCurrentFacingMode(targetFacingMode);
-        toast.success(`📹 Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
-        
-        // Verify the switch worked by checking settings after a delay
-        setTimeout(async () => {
-          try {
-            const videoTrack = localParticipant.videoTrackPublications.values().next().value?.track;
-            if (videoTrack instanceof LocalVideoTrack) {
-              const settings = videoTrack.mediaStreamTrack?.getSettings();
-              console.log('📹 Verified camera settings:', settings);
-              
-              if (settings?.facingMode && settings.facingMode !== targetFacingMode) {
-                console.log('⚠️ Camera switch verification failed, actual mode:', settings.facingMode);
-                setCurrentFacingMode(settings.facingMode === 'user' ? 'user' : 'environment');
-              }
-            }
-          } catch (error) {
-            console.log('Warning: Could not verify camera switch:', error);
-          }
-        }, 2000);
-        
-      } else {
-        throw new Error('All camera switch attempts failed');
-      }
-      
-    } catch (error) {
-      console.error('❌ Error switching camera:', error);
-      toast.error('Failed to switch camera. This may be a device limitation.');
-      
-      // Try to restore camera with original mode
-      try {
-        console.log('🔄 Attempting to restore camera...');
-        await localParticipant.setCameraEnabled(true);
-        console.log('✅ Camera restored');
-      } catch (e) {
-        console.error('❌ Failed to restore camera:', e);
-        toast.error('Camera may need to be manually re-enabled');
-      }
-    } finally {
-      setIsSwitching(false);
-    }
-  }, [localParticipant, isSwitching, currentFacingMode, availableCameras]);
-
-  // Enhanced camera availability detection
-  const canSwitchCamera = availableCameras.length > 1 || 
-    (typeof navigator !== 'undefined' && 
-     navigator.userAgent.includes('iPhone') && 
-     availableCameras.length >= 1); // iPhone often has multiple cameras but may only enumerate one
-  
-  return {
-    switchCamera,
-    currentFacingMode,
-    canSwitchCamera,
-    isSwitching,
-    availableCameras
-  };
-}
-
-// Enhanced customer view with prominent camera switching - Memoized for stability
-const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
+// Enhanced Customer View with better camera switching UX
+const CustomerView = React.memo(({ onCallEnd }) => {
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [showInstructions, setShowInstructions] = useState(true);
@@ -390,21 +403,26 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   
-  // Camera switching for customers - THIS IS THE KEY FIX
-  const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useCameraSwitching();
+  const { 
+    switchCamera, 
+    currentFacingMode, 
+    canSwitchCamera, 
+    isSwitching,
+    hasBackCamera,
+    hasFrontCamera 
+  } = useAdvancedCameraSwitching();
   
-  // Auto-hide instructions after 15 seconds (longer for camera switch explanation)
+  // Auto-hide instructions after 20 seconds
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowInstructions(false);
-    }, 15000); // 15 seconds
-
+    }, 20000);
     return () => clearTimeout(timer);
   }, []);
 
-  // Auto-hide controls after 5 seconds of inactivity, show on tap
+  // Auto-hide controls
   useEffect(() => {
-    let hideTimer: NodeJS.Timeout;
+    let hideTimer;
     
     const resetHideTimer = () => {
       setShowControls(true);
@@ -430,15 +448,12 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
     };
   }, []);
 
-  // Get tracks for video rendering with stability optimizations
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
       { source: Track.Source.ScreenShare, withPlaceholder: false },
     ],
-    { 
-      onlySubscribed: false
-    }
+    { onlySubscribed: false }
   );
 
   const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
@@ -474,24 +489,19 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
 
   return (
     <div className="h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-black flex flex-col relative overflow-hidden">
-      {/* Video area - Stabilized with better track handling */}
+      {/* Video area */}
       <div className="absolute inset-0">
         <div className="w-full h-full">
           <GridLayout 
             tracks={tracks}
             style={{ height: '100%', width: '100%' }}
           >
-            <ParticipantTile 
-              style={{ 
-                borderRadius: '0px',
-                overflow: 'hidden'
-              }}
-            />
+            <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
           </GridLayout>
         </div>
       </div>
 
-      {/* Top overlay with call info - Only show when controls are visible */}
+      {/* Top overlay */}
       {showControls && (
         <div className="absolute top-safe-or-8 left-4 right-4 z-20">
           <div className="flex items-center justify-between">
@@ -509,7 +519,6 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
               </div>
             </div>
             
-            {/* Call status */}
             <div className="bg-black/60 backdrop-blur-md rounded-2xl px-3 py-2">
               <div className="flex items-center gap-2">
                 <div className={`w-2 h-2 rounded-full ${hasAgent ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
@@ -522,34 +531,45 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
         </div>
       )}
 
-      {/* PROMINENT CAMERA SWITCH BUTTON - Always visible when available */}
+      {/* Enhanced Camera Switch Button */}
       {canSwitchCamera && (
         <div className="absolute top-20 right-4 z-30">
-          <button
-            onClick={switchCamera}
-            disabled={isSwitching}
-            className="bg-black/70 backdrop-blur-md text-white p-5 rounded-2xl shadow-2xl disabled:opacity-50 transition-all border-2 border-white/30 hover:border-white/50"
-            style={{ minWidth: '60px', minHeight: '60px' }}
-          >
-            {isSwitching ? (
-              <Loader2 size={28} className="animate-spin" />
-            ) : (
-              <SwitchCamera size={28} />
+          <div className="relative">
+            <button
+              onClick={switchCamera}
+              disabled={isSwitching}
+              className={`bg-black/70 backdrop-blur-md text-white p-6 rounded-2xl shadow-2xl disabled:opacity-50 transition-all border-2 ${
+                currentFacingMode === 'environment' ? 'border-green-400' : 'border-blue-400'
+              } hover:border-white/50 transform active:scale-95`}
+              style={{ minWidth: '72px', minHeight: '72px' }}
+            >
+              {isSwitching ? (
+                <Loader2 size={32} className="animate-spin" />
+              ) : (
+                <SwitchCamera size={32} />
+              )}
+            </button>
+            
+            {/* Enhanced camera mode indicator */}
+            <div className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-sm px-4 py-2 rounded-full border border-white/30 whitespace-nowrap">
+              {currentFacingMode === 'user' ? '🤳 Front Camera' : '📱 Back Camera'}
+              {currentFacingMode === 'environment' && (
+                <div className="text-xs text-green-300 mt-1">✓ Best for items</div>
+              )}
+            </div>
+
+            {/* Pulse animation when back camera is active */}
+            {currentFacingMode === 'environment' && (
+              <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-pulse" />
             )}
-          </button>
-          
-          {/* Camera mode indicator */}
-          <div className="absolute -bottom-3 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-xs px-3 py-1 rounded-full border border-white/30">
-            {currentFacingMode === 'user' ? '🤳 Front' : '📱 Back'}
           </div>
         </div>
       )}
 
-      {/* Center instruction banner - Enhanced with camera switching info */}
+      {/* Enhanced instruction banner */}
       {showInstructions && (
         <div className="absolute top-1/2 left-4 right-4 transform -translate-y-1/2 z-20">
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 text-center border border-white/20 relative">
-            {/* Close button */}
             <button
               onClick={() => setShowInstructions(false)}
               className="absolute top-3 right-3 text-white/70 hover:text-white bg-black/30 rounded-full p-1"
@@ -564,17 +584,31 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
               Your moving agent will identify and catalog everything.
             </p>
             
-            {/* Camera switching instructions */}
+            {/* Enhanced camera switching instructions */}
             {canSwitchCamera && (
-              <div className="bg-blue-500/20 rounded-lg p-4 mb-4 border border-blue-400/30">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <SwitchCamera size={20} className="text-blue-300" />
-                  <span className="text-blue-100 font-medium">Camera Tip</span>
+              <div className="bg-gradient-to-r from-blue-500/20 to-green-500/20 rounded-lg p-4 mb-4 border border-blue-400/30">
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <SwitchCamera size={20} className="text-green-300" />
+                  <span className="text-green-100 font-medium">Camera Setup</span>
                 </div>
-                <p className="text-blue-100 text-sm">
-                  Use the large switch button (top-right) to change between front and back cameras. 
-                  <strong> Use the back camera</strong> to show your items clearly!
-                </p>
+                <div className="space-y-2 text-sm">
+                  <p className="text-blue-100">
+                    <strong>📱 Use the BACK camera</strong> to clearly show your items to the agent
+                  </p>
+                  <p className="text-blue-100">
+                    🔄 Tap the large camera button (top-right) to switch cameras
+                  </p>
+                  {currentFacingMode === 'user' && (
+                    <p className="text-yellow-200 font-medium">
+                      ⚠️ Currently using front camera - switch to back camera for best results
+                    </p>
+                  )}
+                  {currentFacingMode === 'environment' && (
+                    <p className="text-green-200 font-medium">
+                      ✅ Perfect! Back camera is active
+                    </p>
+                  )}
+                </div>
               </div>
             )}
             
@@ -588,11 +622,10 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
         </div>
       )}
 
-      {/* Control bar at bottom - Show/hide with tap */}
+      {/* Control bar */}
       {showControls && (
         <div className="absolute bottom-safe-or-8 left-1/2 transform -translate-x-1/2 z-20">
           <div className="flex items-center gap-4 bg-black/60 backdrop-blur-md rounded-2xl px-6 py-3 border border-white/20">
-            {/* Microphone */}
             <button 
               onClick={toggleMic}
               className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
@@ -604,7 +637,6 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
               {micEnabled ? <Mic size={20} /> : <MicOff size={20} />}
             </button>
 
-            {/* End call */}
             <button 
               onClick={endCall}
               className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white transition-all duration-200 shadow-lg"
@@ -612,7 +644,6 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
               <PhoneOff size={24} />
             </button>
 
-            {/* Camera */}
             <button 
               onClick={toggleCamera}
               className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
@@ -627,13 +658,15 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
         </div>
       )}
 
-      {/* Additional floating camera switch button for easier access */}
+      {/* Secondary camera switch button when controls are hidden */}
       {canSwitchCamera && !showControls && (
         <div className="absolute bottom-20 right-4 z-20">
           <button
             onClick={switchCamera}
             disabled={isSwitching}
-            className="bg-blue-500/80 backdrop-blur-md text-white p-4 rounded-full shadow-xl disabled:opacity-50 transition-all border border-white/30"
+            className={`backdrop-blur-md text-white p-4 rounded-full shadow-xl disabled:opacity-50 transition-all border border-white/30 ${
+              currentFacingMode === 'environment' ? 'bg-green-500/80' : 'bg-blue-500/80'
+            }`}
           >
             {isSwitching ? (
               <Loader2 size={24} className="animate-spin" />
@@ -661,7 +694,7 @@ const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
   );
 });
 
-// Agent view component with better mobile sidebar management - Memoized for stability
+// Enhanced Agent view component with full functionality
 const AgentView = React.memo(({ 
   projectId, 
   detectedItems, 
@@ -669,13 +702,6 @@ const AgentView = React.memo(({
   currentRoom,
   setCurrentRoom,
   handleSaveItems
-}: {
-  projectId: string;
-  detectedItems: DetectedItem[];
-  setDetectedItems: React.Dispatch<React.SetStateAction<DetectedItem[]>>;
-  currentRoom: string;
-  setCurrentRoom: React.Dispatch<React.SetStateAction<string>>;
-  handleSaveItems: (items: DetectedItem[]) => Promise<void>;
 }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -683,23 +709,21 @@ const AgentView = React.memo(({
   const [screenshotCount, setScreenshotCount] = useState(0);
   const [showInventory, setShowInventory] = useState(false);
   const [isInventoryActive, setIsInventoryActive] = useState(false);
-  const [captureMode, setCaptureMode] = useState<'auto' | 'manual' | 'paused'>('paused');
+  const [captureMode, setCaptureMode] = useState('paused');
   const [captureCount, setCaptureCount] = useState(0);
   
   const remoteParticipants = useRemoteParticipants();
 
   // Camera switching functionality for agents
-  const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useCameraSwitching();
+  const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useAdvancedCameraSwitching();
 
-  // Get tracks for the video grid with stability optimizations  
+  // Get tracks for the video grid
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
       { source: Track.Source.ScreenShare, withPlaceholder: false },
     ],
-    { 
-      onlySubscribed: false
-    }
+    { onlySubscribed: false }
   );
 
   // Detect mobile device
@@ -719,8 +743,8 @@ const AgentView = React.memo(({
   }, [showInventory]);
 
   // Handle new detected items
-  const handleItemsDetected = useCallback((items: any[]) => {
-    const newItems: DetectedItem[] = items.map(item => ({
+  const handleItemsDetected = useCallback((items) => {
+    const newItems = items.map(item => ({
       ...item,
       id: `${Date.now()}-${Math.random()}`,
       location: currentRoom,
@@ -827,7 +851,7 @@ const AgentView = React.memo(({
       console.log('✅ Analysis result:', result);
       
       if (result.items && result.items.length > 0) {
-        const newItems: DetectedItem[] = result.items.map((item: any) => ({
+        const newItems = result.items.map((item) => ({
           ...item,
           id: `${Date.now()}-${Math.random()}`,
           location: currentRoom,
@@ -1345,11 +1369,11 @@ export default function VideoCallInventory({
   roomId,
   participantName,
   onCallEnd,
-}: VideoCallInventoryProps) {
-  const [token, setToken] = useState<string>('');
-  const [serverUrl, setServerUrl] = useState<string>('');
+}) {
+  const [token, setToken] = useState('');
+  const [serverUrl, setServerUrl] = useState('');
   const [isConnecting, setIsConnecting] = useState(true);
-  const [detectedItems, setDetectedItems] = useState<DetectedItem[]>([]);
+  const [detectedItems, setDetectedItems] = useState([]);
   const [currentRoom, setCurrentRoom] = useState('Living Room');
 
   // Fetch LiveKit token on mount
@@ -1384,7 +1408,7 @@ export default function VideoCallInventory({
   }, [roomId, participantName]);
 
   // Save items to inventory
-  const handleSaveItems = async (items: DetectedItem[]) => {
+  const handleSaveItems = async (items) => {
     if (!items || items.length === 0) {
       toast.error('No items to save');
       return;
@@ -1407,9 +1431,7 @@ export default function VideoCallInventory({
 
       const response = await fetch(`/api/projects/${projectId}/inventory`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(inventoryItems),
       });
 
@@ -1433,22 +1455,30 @@ export default function VideoCallInventory({
     }
   }, [onCallEnd]);
 
-  // Enhanced LiveKit room options for better stability
+  // Enhanced LiveKit room options optimized for camera switching
   const roomOptions = {
     publishDefaults: {
-      videoCodec: 'h264' as const,
+      videoCodec: 'h264',
       videoResolution: {
         width: 1280,
         height: 720
       },
-      videoSimulcast: false,
+      videoSimulcast: false, // Disable simulcast for better camera switching
     },
-    adaptiveStream: false,
-    dynacast: false,
+    adaptiveStream: false, // Disable adaptive streaming for more predictable behavior
+    dynacast: false, // Disable dynacast for camera switching stability
     autoSubscribe: true,
     disconnectOnPageLeave: true,
     reconnectPolicy: {
-      nextRetryDelayInMs: (context: any) => Math.min((context.retryCount || 0) * 2000, 10000)
+      nextRetryDelayInMs: (context) => Math.min((context.retryCount || 0) * 2000, 10000)
+    },
+    // Enhanced video capture options for better mobile camera handling
+    videoCaptureDefaults: {
+      facingMode: 'environment', // Start with back camera by default
+      resolution: {
+        width: 1280,
+        height: 720
+      }
     }
   };
 
@@ -1501,6 +1531,7 @@ export default function VideoCallInventory({
         }}
         onConnected={() => {
           console.log('✅ Connected to LiveKit room');
+          toast.success('Connected to video call');
         }}
       >
         {/* Render different views based on participant type */}
