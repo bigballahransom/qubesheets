@@ -1,4 +1,4 @@
-// components/video/VideoCallInventory.tsx
+// components/video/VideoCallInventory.tsx - Fixed with working video connection
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -11,8 +11,9 @@ import {
   useTracks,
   useRoomContext,
   useLocalParticipant,
+  useRemoteParticipants,
 } from '@livekit/components-react';
-import { Track, Room, LocalVideoTrack } from 'livekit-client';
+import { Track, Room, LocalVideoTrack, RemoteVideoTrack, RemoteParticipant } from 'livekit-client';
 import '@livekit/components-styles';
 import { 
   Camera, 
@@ -20,15 +21,22 @@ import {
   Eye, 
   EyeOff, 
   Loader2, 
-  Play,
-  Pause,
   RotateCcw,
   Menu,
   X,
-  Home,
   CheckCircle,
   SwitchCamera,
-  FlipHorizontal
+  Users,
+  CameraIcon,
+  Home,
+  MapPin,
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  PhoneOff,
+  Play,
+  Pause
 } from 'lucide-react';
 import { toast } from 'sonner';
 import InventorySidebar from './InventorySidebar';
@@ -52,6 +60,89 @@ interface DetectedItem {
   confidence?: number;
   detectedAt: string;
   frameId: string;
+}
+
+// Helper function to extract frame from remote video track
+async function extractFrameFromRemoteTrack(track: RemoteVideoTrack): Promise<Blob | null> {
+  try {
+    const videoElement = document.createElement('video');
+    videoElement.srcObject = new MediaStream([track.mediaStreamTrack]);
+    videoElement.muted = true;
+    videoElement.playsInline = true;
+    
+    await new Promise((resolve, reject) => {
+      videoElement.onloadedmetadata = resolve;
+      videoElement.onerror = reject;
+      videoElement.play().catch(reject);
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) {
+      throw new Error('Could not get canvas context');
+    }
+
+    canvas.width = videoElement.videoWidth || 640;
+    canvas.height = videoElement.videoHeight || 480;
+    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+    // Clean up
+    videoElement.remove();
+
+    return new Promise((resolve) => {
+      canvas.toBlob(resolve, 'image/jpeg', 0.8);
+    });
+  } catch (error) {
+    console.error('Error extracting frame from remote track:', error);
+    return null;
+  }
+}
+
+// Room selector component
+function RoomSelector({ 
+  currentRoom, 
+  onChange, 
+  isMobile 
+}: { 
+  currentRoom: string; 
+  onChange: (room: string) => void;
+  isMobile: boolean;
+}) {
+  const rooms = [
+    'Living Room',
+    'Bedroom',
+    'Master Bedroom', 
+    'Kitchen',
+    'Dining Room',
+    'Office',
+    'Garage',
+    'Basement',
+    'Attic',
+    'Bathroom',
+    'Other'
+  ];
+
+  return (
+    <select
+      value={currentRoom}
+      onChange={(e) => onChange(e.target.value)}
+      className={`w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+        isMobile ? 'text-sm' : 'text-sm'
+      }`}
+    >
+      {rooms.map(room => (
+        <option key={room} value={room}>{room}</option>
+      ))}
+    </select>
+  );
+}
+
+// Helper function to check if participant is an agent
+function isAgent(participantName: string): boolean {
+  return participantName.toLowerCase().includes('agent');
 }
 
 // Camera switching hook
@@ -177,101 +268,198 @@ function useCameraSwitching() {
   };
 }
 
-// Mobile-friendly room selector component
-function RoomSelector({ 
-  currentRoom, 
-  onChange, 
-  isMobile 
-}: { 
-  currentRoom: string; 
-  onChange: (room: string) => void;
-  isMobile: boolean;
-}) {
-  const rooms = [
-    'Living Room',
-    'Bedroom',
-    'Master Bedroom',
-    'Kitchen',
-    'Dining Room',
-    'Office',
-    'Garage',
-    'Basement',
-    'Attic',
-    'Bathroom',
-    'Other'
-  ];
+// Customer view component (FaceTime-like interface)
+function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [cameraEnabled, setCameraEnabled] = useState(true);
+  const { localParticipant } = useLocalParticipant();
+  const remoteParticipants = useRemoteParticipants();
+  
+  // Get tracks for video rendering - same as working version
+  const tracks = useTracks(
+    [
+      { source: Track.Source.Camera, withPlaceholder: true },
+      { source: Track.Source.ScreenShare, withPlaceholder: false },
+    ],
+    { onlySubscribed: false }
+  );
 
-  if (isMobile) {
-    return (
-      <select
-        value={currentRoom}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-      >
-        {rooms.map(room => (
-          <option key={room} value={room}>{room}</option>
-        ))}
-      </select>
-    );
-  }
+  const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
+  const agentName = remoteParticipants.find(p => isAgent(p.identity))?.identity || 'Moving Agent';
+
+  const toggleMic = async () => {
+    if (!localParticipant) return;
+    try {
+      await localParticipant.setMicrophoneEnabled(!micEnabled);
+      setMicEnabled(!micEnabled);
+    } catch (error) {
+      console.error('Error toggling microphone:', error);
+      toast.error('Failed to toggle microphone');
+    }
+  };
+
+  const toggleCamera = async () => {
+    if (!localParticipant) return;
+    try {
+      await localParticipant.setCameraEnabled(!cameraEnabled);
+      setCameraEnabled(!cameraEnabled);
+    } catch (error) {
+      console.error('Error toggling camera:', error);
+      toast.error('Failed to toggle camera');
+    }
+  };
+
+  const endCall = () => {
+    if (onCallEnd) {
+      onCallEnd();
+    }
+  };
 
   return (
-    <div className="flex flex-wrap gap-2">
-      {rooms.map(room => (
-        <button
-          key={room}
-          onClick={() => onChange(room)}
-          className={`px-4 py-2 rounded-lg font-medium transition-all ${
-            currentRoom === room
-              ? 'bg-green-500 text-white shadow-md'
-              : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-          }`}
-        >
-          {room}
-        </button>
-      ))}
+    <div className="h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-black flex flex-col relative overflow-hidden">
+      {/* Video area - Use the same GridLayout as working version */}
+      <div className="absolute inset-0">
+        <div className="w-full h-full">
+          <GridLayout tracks={tracks}>
+            <ParticipantTile />
+          </GridLayout>
+        </div>
+      </div>
+
+      {/* Top overlay with call info */}
+      <div className="absolute top-8 left-4 right-4 z-20">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 bg-black/40 backdrop-blur-md rounded-2xl px-6 py-3">
+            <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
+              <span className="text-sm font-bold text-white">
+                {agentName.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <p className="text-white font-semibold text-base">
+                {hasAgent ? agentName : 'Connecting...'}
+              </p>
+              <p className="text-white/80 text-sm">Moving Inventory Session</p>
+            </div>
+          </div>
+          
+          {/* Call duration / status */}
+          <div className="bg-black/40 backdrop-blur-md rounded-2xl px-4 py-2">
+            <div className="flex items-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${hasAgent ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+              <span className="text-white text-sm font-medium">
+                {hasAgent ? 'LIVE' : 'Connecting...'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Center instruction banner */}
+      <div className="absolute top-1/2 left-4 right-4 transform -translate-y-1/2 z-20">
+        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 text-center border border-white/20">
+          <div className="text-4xl mb-4">📱</div>
+          <h2 className="text-white text-xl font-bold mb-2">Video Inventory Walk-Through</h2>
+          <p className="text-white/90 text-base leading-relaxed">
+            Show your items to the camera as you walk through your home. 
+            Your moving agent will identify and catalog everything for your inventory.
+          </p>
+          {!hasAgent && (
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-white" />
+              <span className="text-white">Waiting for your moving agent...</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Control bar at bottom */}
+      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-20">
+        <div className="flex items-center gap-6 bg-black/50 backdrop-blur-md rounded-2xl px-8 py-4">
+          {/* Microphone */}
+          <button 
+            onClick={toggleMic}
+            className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
+              micEnabled 
+                ? 'bg-white/20 text-white hover:bg-white/30' 
+                : 'bg-red-500 text-white hover:bg-red-600'
+            }`}
+          >
+            {micEnabled ? <Mic size={28} /> : <MicOff size={28} />}
+          </button>
+
+          {/* End call */}
+          <button 
+            onClick={endCall}
+            className="w-20 h-20 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white transition-all duration-200 shadow-lg"
+          >
+            <PhoneOff size={32} />
+          </button>
+
+          {/* Camera */}
+          <button 
+            onClick={toggleCamera}
+            className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
+              cameraEnabled 
+                ? 'bg-white/20 text-white hover:bg-white/30' 
+                : 'bg-red-500 text-white hover:bg-red-600'
+            }`}
+          >
+            {cameraEnabled ? <Video size={28} /> : <VideoOff size={28} />}
+          </button>
+        </div>
+      </div>
+
+      {/* Self-view pip in corner */}
+      <div className="absolute bottom-40 right-6 w-32 h-40 bg-black/60 rounded-2xl overflow-hidden border-2 border-white/30 z-20">
+        <div className="w-full h-full flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-2">
+              <span className="text-white font-bold">You</span>
+            </div>
+            {!cameraEnabled && (
+              <p className="text-white/80 text-xs">Camera off</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <RoomAudioRenderer />
     </div>
   );
 }
 
-// Create a separate component for the room content
-function RoomContent({ 
+// Agent view component - using your current inventory interface
+function AgentView({ 
   projectId, 
   detectedItems, 
   setDetectedItems, 
-  showInventory, 
-  setShowInventory,
   currentRoom,
   setCurrentRoom,
-  isProcessing,
-  setIsProcessing,
-  captureCount,
-  setCaptureCount,
   handleSaveItems
 }: {
   projectId: string;
   detectedItems: DetectedItem[];
   setDetectedItems: React.Dispatch<React.SetStateAction<DetectedItem[]>>;
-  showInventory: boolean;
-  setShowInventory: React.Dispatch<React.SetStateAction<boolean>>;
   currentRoom: string;
   setCurrentRoom: React.Dispatch<React.SetStateAction<string>>;
-  isProcessing: boolean;
-  setIsProcessing: React.Dispatch<React.SetStateAction<boolean>>;
-  captureCount: number;
-  setCaptureCount: React.Dispatch<React.SetStateAction<number>>;
   handleSaveItems: (items: DetectedItem[]) => Promise<void>;
 }) {
-  const [isInventoryActive, setIsInventoryActive] = useState(false);
-  const [captureMode, setCaptureMode] = useState<'auto' | 'manual' | 'paused'>('paused');
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
-  const room = useRoomContext();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [screenshotCount, setScreenshotCount] = useState(0);
+  const [showInventory, setShowInventory] = useState(false);
+  const [isInventoryActive, setIsInventoryActive] = useState(false);
+  const [captureMode, setCaptureMode] = useState<'auto' | 'manual' | 'paused'>('paused');
+  const [captureCount, setCaptureCount] = useState(0);
   
+  const remoteParticipants = useRemoteParticipants();
+
   // Camera switching functionality
   const { switchCamera, currentFacingMode, hasMultipleCameras, isSwitching } = useCameraSwitching();
 
-  // Get tracks for the video grid
+  // Get tracks for the video grid - same as working version
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -289,6 +477,13 @@ function RoomContent({
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  // Show sidebar by default on desktop
+  useEffect(() => {
+    if (!isMobile) {
+      setShowInventory(true);
+    }
+  }, [isMobile]);
 
   // Handle new detected items
   const handleItemsDetected = useCallback((items: any[]) => {
@@ -340,6 +535,97 @@ function RoomContent({
     setCaptureMode('paused');
     toast.info('Inventory scanning stopped');
   };
+
+  // Function to take screenshot of customer's video
+  const takeScreenshot = async () => {
+    if (isProcessing) {
+      toast.warning('Please wait for the previous screenshot to finish processing');
+      return;
+    }
+
+    const customerTrack = remoteParticipants.find(participant => 
+      !isAgent(participant.identity) && participant.videoTrackPublications.size > 0
+    )?.videoTrackPublications.values().next().value?.track;
+
+    if (!customerTrack || !(customerTrack instanceof RemoteVideoTrack)) {
+      toast.error('No customer video feed available for screenshot');
+      return;
+    }
+
+    setIsProcessing(true);
+    
+    try {
+      console.log('📸 Taking screenshot of customer video...');
+      
+      const frameBlob = await extractFrameFromRemoteTrack(customerTrack);
+      
+      if (!frameBlob) {
+        throw new Error('Failed to capture video frame');
+      }
+
+      console.log('🖼️ Frame captured, analyzing...');
+
+      const formData = new FormData();
+      formData.append('image', frameBlob, `screenshot-${Date.now()}.jpg`);
+      formData.append('projectId', projectId);
+      formData.append('roomLabel', currentRoom);
+      formData.append('existingItems', JSON.stringify(
+        detectedItems.map(item => ({ name: item.name, location: item.location }))
+      ));
+
+      const response = await fetch('/api/analyze-video-frame', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to analyze screenshot');
+      }
+
+      const result = await response.json();
+      console.log('✅ Analysis result:', result);
+      
+      if (result.items && result.items.length > 0) {
+        const newItems: DetectedItem[] = result.items.map((item: any) => ({
+          ...item,
+          id: `${Date.now()}-${Math.random()}`,
+          location: currentRoom,
+          detectedAt: new Date().toISOString(),
+          frameId: `screenshot-${Date.now()}`,
+        }));
+
+        setDetectedItems(prev => {
+          const filtered = newItems.filter(newItem =>
+            !prev.some(existing =>
+              existing.name.toLowerCase() === newItem.name.toLowerCase() &&
+              existing.location === newItem.location
+            )
+          );
+          return [...prev, ...filtered];
+        });
+
+        setScreenshotCount(prev => prev + 1);
+        
+        if (newItems.length > 0) {
+          toast.success(`📸 Found ${newItems.length} new items!`);
+        } else {
+          toast.info('📸 Screenshot captured! No new items detected');
+        }
+      } else {
+        setScreenshotCount(prev => prev + 1);
+        toast.info('📸 Screenshot captured! No items detected');
+      }
+
+    } catch (error) {
+      console.error('Error taking screenshot:', error);
+      toast.error('Failed to take screenshot');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const hasCustomer = remoteParticipants.some(p => !isAgent(p.identity));
+  const customerName = remoteParticipants.find(p => !isAgent(p.identity))?.identity || 'Customer';
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
@@ -428,6 +714,24 @@ function RoomContent({
                 )}
                 
                 <button
+                  onClick={takeScreenshot}
+                  disabled={isProcessing || !hasCustomer}
+                  className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <CameraIcon size={16} />
+                      Screenshot
+                    </>
+                  )}
+                </button>
+                
+                <button
                   onClick={() => setShowInventory(!showInventory)}
                   className="p-2 hover:bg-gray-100 rounded-lg"
                 >
@@ -510,14 +814,38 @@ function RoomContent({
               
               <button
                 onClick={() => {
-                  setShowInventory(!showInventory);
+                  takeScreenshot();
                   setShowMobileMenu(false);
                 }}
-                className="w-full px-4 py-3 bg-gray-300 hover:bg-gray-200 rounded-lg font-medium flex items-center justify-center gap-2 text-blue-600"
+                disabled={isProcessing || !hasCustomer}
+                className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg font-medium flex items-center justify-center gap-2"
               >
-                {showInventory ? <EyeOff size={16} /> : <Eye size={16} />}
-                {showInventory ? 'Hide' : 'Show'} Items ({detectedItems.length})
+                {isProcessing ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <CameraIcon size={16} />
+                    Take Screenshot
+                  </>
+                )}
               </button>
+              
+              {/* View items button */}
+              {detectedItems.length > 0 && (
+                <button
+                  onClick={() => {
+                    setShowInventory(true);
+                    setShowMobileMenu(false);
+                  }}
+                  className="w-full px-4 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
+                >
+                  <Package size={16} />
+                  View Items ({detectedItems.length})
+                </button>
+              )}
             </div>
           )}
 
@@ -627,6 +955,17 @@ function RoomContent({
                 </span>
               </button>
             )}
+
+            {/* Customer connection status */}
+            {!hasCustomer && (
+              <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                <div className="bg-white p-6 rounded-lg text-center max-w-md">
+                  <Users size={48} className="mx-auto mb-4 text-gray-400" />
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Waiting for Customer</h3>
+                  <p className="text-gray-600">Share the video call link with your customer to start the inventory session.</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Control Bar */}
@@ -644,8 +983,8 @@ function RoomContent({
           </div>
         </div>
 
-        {/* Frame Processor Component */}
-        {isInventoryActive && (
+        {/* Frame Processor Component - only when auto mode is active */}
+        {isInventoryActive && captureMode === 'auto' && (
           <FrameProcessor
             projectId={projectId}
             captureMode={captureMode}
@@ -680,6 +1019,7 @@ function RoomContent({
   );
 }
 
+// Main VideoCallInventory component
 export default function VideoCallInventory({
   projectId,
   roomId,
@@ -690,10 +1030,7 @@ export default function VideoCallInventory({
   const [serverUrl, setServerUrl] = useState<string>('');
   const [isConnecting, setIsConnecting] = useState(true);
   const [detectedItems, setDetectedItems] = useState<DetectedItem[]>([]);
-  const [showInventory, setShowInventory] = useState(false);
   const [currentRoom, setCurrentRoom] = useState('Living Room');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [captureCount, setCaptureCount] = useState(0);
 
   // Fetch LiveKit token on mount
   useEffect(() => {
@@ -728,37 +1065,68 @@ export default function VideoCallInventory({
 
   // Save items to inventory
   const handleSaveItems = async (items: DetectedItem[]) => {
+    if (!items || items.length === 0) {
+      toast.error('No items to save');
+      return;
+    }
+
     try {
+      console.log('🔄 Saving video inventory items:', items);
+
+      const inventoryItems = items.map(item => ({
+        name: item.name,
+        description: `Detected via video inventory in ${item.location}`,
+        category: item.category,
+        quantity: item.quantity || 1,
+        location: item.location,
+        cuft: item.cuft || 3,
+        weight: item.weight || 21,
+        fragile: false,
+        special_handling: "",
+      }));
+
       const response = await fetch(`/api/projects/${projectId}/inventory`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(items),
+        headers: { 
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(inventoryItems),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to save items');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to save items to inventory');
       }
 
-      toast.success(`Saved ${items.length} items to inventory`);
+      toast.success(`Successfully saved ${items.length} items to inventory!`);
       setDetectedItems([]);
+
     } catch (error) {
-      console.error('Error saving items:', error);
-      toast.error('Failed to save items');
+      console.error('❌ Error saving video inventory items:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to save items to inventory');
     }
   };
 
-  // Handle room disconnection
   const handleDisconnect = useCallback(() => {
     if (onCallEnd) {
       onCallEnd();
     }
   }, [onCallEnd]);
 
+  // Simplified LiveKit room options for better compatibility
+  const roomOptions = {
+    publishDefaults: {
+      videoCodec: 'h264' as const,
+    },
+    adaptiveStream: true,
+    dynacast: true,
+  };
+
   if (isConnecting) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50">
         <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-green-500" />
+          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-blue-500" />
           <p className="text-gray-600">Connecting to video call...</p>
         </div>
       </div>
@@ -776,7 +1144,7 @@ export default function VideoCallInventory({
           <p className="text-gray-600 mb-4">Unable to connect to the video call. Please check your connection and try again.</p>
           <button
             onClick={() => window.location.reload()}
-            className="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium transition-colors"
+            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium transition-colors"
           >
             <RotateCcw className="inline-block w-4 h-4 mr-2" />
             Retry Connection
@@ -787,7 +1155,7 @@ export default function VideoCallInventory({
   }
 
   return (
-    <div className="h-screen bg-gray-50">
+    <div className="h-screen">
       <LiveKitRoom
         video={true}
         audio={true}
@@ -796,26 +1164,25 @@ export default function VideoCallInventory({
         onDisconnected={handleDisconnect}
         data-lk-theme="default"
         className="h-full"
-        options={{
-          publishDefaults: {
-            videoCodec: 'h264',
-          }
+        options={roomOptions}
+        onError={(error) => {
+          console.error('LiveKit room error:', error);
+          toast.error('Video call error occurred');
         }}
       >
-        <RoomContent
-          projectId={projectId}
-          detectedItems={detectedItems}
-          setDetectedItems={setDetectedItems}
-          showInventory={showInventory}
-          setShowInventory={setShowInventory}
-          currentRoom={currentRoom}
-          setCurrentRoom={setCurrentRoom}
-          isProcessing={isProcessing}
-          setIsProcessing={setIsProcessing}
-          captureCount={captureCount}
-          setCaptureCount={setCaptureCount}
-          handleSaveItems={handleSaveItems}
-        />
+        {/* Render different views based on participant type */}
+        {isAgent(participantName) ? (
+          <AgentView
+            projectId={projectId}
+            detectedItems={detectedItems}
+            setDetectedItems={setDetectedItems}
+            currentRoom={currentRoom}
+            setCurrentRoom={setCurrentRoom}
+            handleSaveItems={handleSaveItems}
+          />
+        ) : (
+          <CustomerView onCallEnd={onCallEnd} />
+        )}
       </LiveKitRoom>
     </div>
   );
