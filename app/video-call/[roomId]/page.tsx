@@ -21,16 +21,19 @@ export default function VideoCallPage() {
   const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isLoaded) return;
-    
     // For customers (non-authenticated users), we need different validation
     const isAgent = participantName.toLowerCase().includes('agent');
     
-    if (isAgent && !userId) {
+    if (isAgent) {
       // Agents must be authenticated
-      router.push('/sign-in');
-      return;
+      if (!isLoaded) return; // Wait for auth to load
+      
+      if (!userId) {
+        router.push('/sign-in');
+        return;
+      }
     }
+    // For customers, we don't need to wait for auth to load
 
     if (!projectId) {
       setValidationError('Invalid video call link - missing project information');
@@ -92,7 +95,7 @@ export default function VideoCallPage() {
     }
   };
 
-  if (!isLoaded || isValidating) {
+  if ((!isLoaded && participantName.toLowerCase().includes('agent')) || isValidating) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-100">
         <div className="text-center">

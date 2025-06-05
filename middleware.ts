@@ -1,9 +1,33 @@
+// middleware.ts
 import { clerkMiddleware } from "@clerk/nextjs/server";
 
-// This middleware protects ALL routes
 export default clerkMiddleware(async (auth, req) => {
-  // Protect all routes by default
-  await auth.protect();
+  const { pathname } = req.nextUrl;
+  
+  // Define public routes that don't require authentication
+  const publicRoutes = [
+    '/video-call', // Video call pages for customers
+    '/call-complete', // Call completion page
+    '/customer-upload', // Customer upload pages
+    '/sign-in',
+    '/sign-up',
+  ];
+
+  // Check if the current path matches any public route
+  const isPublicRoute = publicRoutes.some(route => {
+    return pathname.startsWith(route);
+  });
+
+  // Check for specific API routes that should be public
+  const isPublicApiRoute = 
+    pathname.startsWith('/api/customer-upload/') ||
+    pathname.startsWith('/api/livekit/token') ||
+    /^\/api\/projects\/[^/]+\/public-info/.test(pathname); // Public project info API
+
+  // Only protect routes that are not public
+  if (!isPublicRoute && !isPublicApiRoute) {
+    await auth.protect();
+  }
 });
 
 export const config = {

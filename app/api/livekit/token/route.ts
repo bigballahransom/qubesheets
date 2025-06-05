@@ -1,25 +1,31 @@
-// app/api/livekit/token/route.ts
+// app/api/livekit/token/route.ts - Updated for customer access
 import { NextRequest, NextResponse } from 'next/server';
 import { AccessToken } from 'livekit-server-sdk';
 import { auth } from '@clerk/nextjs/server';
 
 export async function POST(request: NextRequest) {
   try {
-    // Authenticate user
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Get room name from request
+    // Get room name and participant name from request
     const { roomName, participantName } = await request.json();
     
-    if (!roomName) {
+    if (!roomName || !participantName) {
       return NextResponse.json(
-        { error: 'Room name is required' },
+        { error: 'Room name and participant name are required' },
         { status: 400 }
       );
     }
+
+    // Check if this is an agent (agents need authentication)
+    const isAgent = participantName.toLowerCase().includes('agent');
+    
+    if (isAgent) {
+      // Agents must be authenticated
+      const { userId } = await auth();
+      if (!userId) {
+        return NextResponse.json({ error: 'Unauthorized - agents must be logged in' }, { status: 401 });
+      }
+    }
+    // Customers don't need authentication - they can join with just the link
 
     // Check environment variables
     const apiKey = process.env.LIVEKIT_API_KEY;
@@ -33,11 +39,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Generate a unique identity for the participant
+    // For agents, use their user ID; for customers, use a generated ID
+    let identity: string;
+    if (isAgent) {
+      const { userId } = await auth();
+      identity = `agent-${userId}`;
+    } else {
+      // For customers, create a unique ID based on room and timestamp
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substring(2, 8);
+      identity = `customer-${timestamp}-${randomSuffix}`;
+    }
+
     // Create access token
     const at = new AccessToken(apiKey, apiSecret, {
-      identity: participantName || userId,
-      // Token expires in 24 hours
-      ttl: '24h',
+      identity: identity,
+      name: participantName,
+      // Token expires in 4 hours (plenty of time for inventory session)
+      ttl: '4h',
     });
 
     // Grant permissions
@@ -47,15 +67,21 @@ export async function POST(request: NextRequest) {
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
+      // Customers get full permissions for video calls
+      canUpdateOwnMetadata: true,
     });
 
     // Generate token
     const token = await at.toJwt();
 
+    console.log(`✅ Generated LiveKit token for ${isAgent ? 'agent' : 'customer'}: ${participantName}`);
+
     return NextResponse.json({
       token,
       url: wsUrl,
       roomName,
+      identity,
+      participantType: isAgent ? 'agent' : 'customer',
     });
   } catch (error) {
     console.error('Error generating LiveKit token:', error);
