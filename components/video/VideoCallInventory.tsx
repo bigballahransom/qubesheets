@@ -1,4 +1,4 @@
-// components/video/VideoCallInventory.tsx - Fixed version
+// components/video/VideoCallInventory.tsx - Clean version with fixed JSX
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
@@ -240,11 +240,12 @@ function useCameraSwitching() {
   };
 }
 
-// Updated customer view with camera switching and auto-hiding modal
+// Updated customer view with cleaner, more accessible UI
 function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [showInstructions, setShowInstructions] = useState(true);
+  const [showControls, setShowControls] = useState(true);
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   
@@ -258,6 +259,32 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
     }, 10000); // 10 seconds
 
     return () => clearTimeout(timer);
+  }, []);
+
+  // Auto-hide controls after 5 seconds of inactivity, show on tap
+  useEffect(() => {
+    let hideTimer: NodeJS.Timeout;
+    
+    const resetHideTimer = () => {
+      setShowControls(true);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        setShowControls(false);
+      }, 5000);
+    };
+
+    resetHideTimer();
+
+    const handleActivity = () => resetHideTimer();
+    
+    window.addEventListener('touchstart', handleActivity);
+    window.addEventListener('click', handleActivity);
+    
+    return () => {
+      clearTimeout(hideTimer);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('click', handleActivity);
+    };
   }, []);
 
   // Get tracks for video rendering with more specific filtering to prevent glitches
@@ -321,42 +348,44 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
         </div>
       </div>
 
-      {/* Top overlay with call info */}
-      <div className="absolute top-safe-or-8 left-4 right-4 z-20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 bg-black/40 backdrop-blur-md rounded-2xl px-6 py-3">
-            <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center">
-              <span className="text-sm font-bold text-white">
-                {agentName.charAt(0).toUpperCase()}
-              </span>
+      {/* Top overlay with call info - Only show when controls are visible */}
+      {showControls && (
+        <div className="absolute top-safe-or-8 left-4 right-4 z-20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md rounded-2xl px-4 py-2">
+              <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
+                <span className="text-xs font-bold text-white">
+                  {agentName.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <div>
+                <p className="text-white font-medium text-sm">
+                  {hasAgent ? agentName : 'Connecting...'}
+                </p>
+                <p className="text-white/80 text-xs">Moving Inventory</p>
+              </div>
             </div>
-            <div>
-              <p className="text-white font-semibold text-base">
-                {hasAgent ? agentName : 'Connecting...'}
-              </p>
-              <p className="text-white/80 text-sm">Moving Inventory Session</p>
-            </div>
-          </div>
-          
-          {/* Call duration / status */}
-          <div className="bg-black/40 backdrop-blur-md rounded-2xl px-4 py-2">
-            <div className="flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${hasAgent ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
-              <span className="text-white text-sm font-medium">
-                {hasAgent ? 'LIVE' : 'Connecting...'}
-              </span>
+            
+            {/* Call status */}
+            <div className="bg-black/60 backdrop-blur-md rounded-2xl px-3 py-2">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${hasAgent ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+                <span className="text-white text-xs font-medium">
+                  {hasAgent ? 'LIVE' : 'Connecting...'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Camera switch button for customers */}
+      {/* Camera switch button - Always visible when available, positioned prominently */}
       {hasMultipleCameras && (
-        <div className="absolute top-safe-or-24 right-4 z-20">
+        <div className="absolute top-safe-or-20 right-4 z-30">
           <button
             onClick={switchCamera}
             disabled={isSwitching}
-            className="bg-black/40 backdrop-blur-md text-white p-3 rounded-2xl shadow-lg disabled:opacity-50 transition-all"
+            className="bg-black/60 backdrop-blur-md text-white p-4 rounded-2xl shadow-lg disabled:opacity-50 transition-all border border-white/20"
             title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
           >
             {isSwitching ? (
@@ -365,6 +394,11 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
               <SwitchCamera size={24} />
             )}
           </button>
+          
+          {/* Camera mode indicator */}
+          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-2 py-1 rounded-full">
+            {currentFacingMode === 'user' ? 'Front' : 'Back'}
+          </div>
         </div>
       )}
 
@@ -375,79 +409,90 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
             {/* Close button */}
             <button
               onClick={() => setShowInstructions(false)}
-              className="absolute top-4 right-4 text-white/70 hover:text-white"
+              className="absolute top-3 right-3 text-white/70 hover:text-white bg-black/30 rounded-full p-1"
             >
-              <X size={20} />
+              <X size={16} />
             </button>
             
-            <div className="text-4xl mb-4">📱</div>
-            <h2 className="text-white text-xl font-bold mb-2">Video Inventory Walk-Through</h2>
-            <p className="text-white/90 text-base leading-relaxed mb-4">
+            <div className="text-3xl mb-3">📱</div>
+            <h2 className="text-white text-lg font-bold mb-2">Video Inventory Walk-Through</h2>
+            <p className="text-white/90 text-sm leading-relaxed mb-3">
               Show your items to the camera as you walk through your home. 
-              Your moving agent will identify and catalog everything for your inventory.
+              Your moving agent will identify and catalog everything.
             </p>
             {hasMultipleCameras && (
-              <p className="text-white/80 text-sm">
-                💡 Tip: Use the camera switch button to switch between front and back cameras
+              <p className="text-white/80 text-xs bg-black/30 rounded-lg p-2">
+                💡 Tip: Use the camera switch button (top-right) to switch between front and back cameras
               </p>
             )}
             {!hasAgent && (
-              <div className="mt-4 flex items-center justify-center gap-2">
-                <Loader2 className="w-5 h-5 animate-spin text-white" />
-                <span className="text-white">Waiting for your moving agent...</span>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                <span className="text-white text-sm">Waiting for your moving agent...</span>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Control bar at bottom */}
-      <div className="absolute bottom-safe-or-8 left-1/2 transform -translate-x-1/2 z-20">
-        <div className="flex items-center gap-6 bg-black/50 backdrop-blur-md rounded-2xl px-8 py-4">
-          {/* Microphone */}
-          <button 
-            onClick={toggleMic}
-            className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
-              micEnabled 
-                ? 'bg-white/20 text-white hover:bg-white/30' 
-                : 'bg-red-500 text-white hover:bg-red-600'
-            }`}
-          >
-            {micEnabled ? <Mic size={28} /> : <MicOff size={28} />}
-          </button>
+      {/* Control bar at bottom - Show/hide with tap */}
+      {showControls && (
+        <div className="absolute bottom-safe-or-8 left-1/2 transform -translate-x-1/2 z-20">
+          <div className="flex items-center gap-4 bg-black/60 backdrop-blur-md rounded-2xl px-6 py-3 border border-white/20">
+            {/* Microphone */}
+            <button 
+              onClick={toggleMic}
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
+                micEnabled 
+                  ? 'bg-white/20 text-white hover:bg-white/30' 
+                  : 'bg-red-500 text-white hover:bg-red-600'
+              }`}
+            >
+              {micEnabled ? <Mic size={20} /> : <MicOff size={20} />}
+            </button>
 
-          {/* End call */}
-          <button 
-            onClick={endCall}
-            className="w-20 h-20 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white transition-all duration-200 shadow-lg"
-          >
-            <PhoneOff size={32} />
-          </button>
+            {/* End call */}
+            <button 
+              onClick={endCall}
+              className="w-16 h-16 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white transition-all duration-200 shadow-lg"
+            >
+              <PhoneOff size={24} />
+            </button>
 
-          {/* Camera */}
-          <button 
-            onClick={toggleCamera}
-            className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 ${
-              cameraEnabled 
-                ? 'bg-white/20 text-white hover:bg-white/30' 
-                : 'bg-red-500 text-white hover:bg-red-600'
-            }`}
-          >
-            {cameraEnabled ? <Video size={28} /> : <VideoOff size={28} />}
-          </button>
+            {/* Camera */}
+            <button 
+              onClick={toggleCamera}
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
+                cameraEnabled 
+                  ? 'bg-white/20 text-white hover:bg-white/30' 
+                  : 'bg-red-500 text-white hover:bg-red-600'
+              }`}
+            >
+              {cameraEnabled ? <Video size={20} /> : <VideoOff size={20} />}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Self-view pip in corner - only show if camera is enabled */}
-      {cameraEnabled && (
-        <div className="absolute bottom-40 right-6 w-32 h-40 bg-black/60 rounded-2xl overflow-hidden border-2 border-white/30 z-20">
+      {/* Tap to show controls hint */}
+      {!showControls && (
+        <div className="absolute bottom-safe-or-4 left-1/2 transform -translate-x-1/2 z-10">
+          <div className="bg-black/40 backdrop-blur-md text-white text-xs px-3 py-1 rounded-full">
+            Tap screen to show controls
+          </div>
+        </div>
+      )}
+
+      {/* Self-view pip in corner - only show if camera is enabled and controls are hidden */}
+      {cameraEnabled && !showControls && (
+        <div className="absolute bottom-20 right-4 w-24 h-32 bg-black/60 rounded-xl overflow-hidden border border-white/30 z-20">
           <div className="w-full h-full flex items-center justify-center">
             <div className="text-center">
-              <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-2">
+              <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-1">
                 <span className="text-white font-bold text-xs">You</span>
               </div>
               <p className="text-white/80 text-xs">
-                {currentFacingMode === 'user' ? 'Front' : 'Back'} Camera
+                {currentFacingMode === 'user' ? 'Front' : 'Back'}
               </p>
             </div>
           </div>
@@ -459,7 +504,7 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
   );
 }
 
-// Agent view component with stabilized video rendering
+// Agent view component with better mobile sidebar management
 function AgentView({ 
   projectId, 
   detectedItems, 
@@ -479,7 +524,7 @@ function AgentView({
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [screenshotCount, setScreenshotCount] = useState(0);
-  const [showInventory, setShowInventory] = useState(false);
+  const [showInventory, setShowInventory] = useState(false); // Start with sidebar hidden on mobile
   const [isInventoryActive, setIsInventoryActive] = useState(false);
   const [captureMode, setCaptureMode] = useState<'auto' | 'manual' | 'paused'>('paused');
   const [captureCount, setCaptureCount] = useState(0);
@@ -503,19 +548,19 @@ function AgentView({
   // Detect mobile device
   useEffect(() => {
     const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      
+      // On desktop, show sidebar by default. On mobile, keep it hidden for better UX
+      if (!mobile && !showInventory) {
+        setShowInventory(true);
+      }
     };
+    
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
-  // Show sidebar by default on desktop
-  useEffect(() => {
-    if (!isMobile) {
-      setShowInventory(true);
-    }
-  }, [isMobile]);
+  }, [showInventory]);
 
   // Handle new detected items
   const handleItemsDetected = useCallback((items: any[]) => {
@@ -539,8 +584,13 @@ function AgentView({
 
     if (newItems.length > 0) {
       toast.success(`Found ${newItems.length} new items`);
+      
+      // On mobile, show a subtle notification but don't auto-open sidebar
+      if (isMobile && !showInventory) {
+        toast.info(`${detectedItems.length + newItems.length} items detected. Tap to view inventory.`);
+      }
     }
-  }, [currentRoom, setDetectedItems]);
+  }, [currentRoom, setDetectedItems, isMobile, showInventory, detectedItems.length]);
 
   // Start inventory scanning
   const startInventory = () => {
@@ -566,6 +616,14 @@ function AgentView({
     setIsInventoryActive(false);
     setCaptureMode('paused');
     toast.info('Inventory scanning stopped');
+  };
+
+  // Toggle sidebar visibility (especially important for mobile)
+  const toggleSidebar = () => {
+    setShowInventory(!showInventory);
+    if (isMobile && showMobileMenu) {
+      setShowMobileMenu(false);
+    }
   };
 
   // Function to take screenshot of customer's video
@@ -674,16 +732,37 @@ function AgentView({
                   Active
                 </span>
               )}
+              {/* Mobile: Show item count if sidebar is hidden */}
+              {isMobile && !showInventory && detectedItems.length > 0 && (
+                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">
+                  {detectedItems.length} items
+                </span>
+              )}
             </div>
             
             {/* Mobile menu button */}
             {isMobile && (
-              <button
-                onClick={() => setShowMobileMenu(!showMobileMenu)}
-                className="text-black p-2 hover:bg-gray-100 rounded-lg"
-              >
-                {showMobileMenu ? <X size={20} /> : <Menu size={20} />}
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Quick sidebar toggle for mobile */}
+                <button
+                  onClick={toggleSidebar}
+                  className="p-2 hover:bg-gray-100 rounded-lg relative"
+                  title={showInventory ? 'Hide inventory' : 'Show inventory'}
+                >
+                  {showInventory ? <EyeOff size={20} /> : <Eye size={20} />}
+                  {!showInventory && detectedItems.length > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                      {detectedItems.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowMobileMenu(!showMobileMenu)}
+                  className="text-black p-2 hover:bg-gray-100 rounded-lg"
+                >
+                  {showMobileMenu ? <X size={20} /> : <Menu size={20} />}
+                </button>
+              </div>
             )}
 
             {/* Desktop controls */}
@@ -764,10 +843,16 @@ function AgentView({
                 </button>
                 
                 <button
-                  onClick={() => setShowInventory(!showInventory)}
-                  className="p-2 hover:bg-gray-100 rounded-lg"
+                  onClick={toggleSidebar}
+                  className="p-2 hover:bg-gray-100 rounded-lg relative"
+                  title={showInventory ? 'Hide inventory' : 'Show inventory'}
                 >
                   {showInventory ? <EyeOff size={20} /> : <Eye size={20} />}
+                  {!showInventory && detectedItems.length > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                      {detectedItems.length}
+                    </span>
+                  )}
                 </button>
               </div>
             )}
@@ -869,13 +954,13 @@ function AgentView({
               {detectedItems.length > 0 && (
                 <button
                   onClick={() => {
-                    setShowInventory(true);
+                    toggleSidebar();
                     setShowMobileMenu(false);
                   }}
                   className="w-full px-4 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium flex items-center justify-center gap-2"
                 >
                   <Package size={16} />
-                  View Items ({detectedItems.length})
+                  {showInventory ? 'Hide' : 'View'} Items ({detectedItems.length})
                 </button>
               )}
             </div>
@@ -974,33 +1059,55 @@ function AgentView({
               </div>
             )}
 
-            {/* Mobile camera switch floating button */}
-            {isMobile && hasMultipleCameras && !showMobileMenu && (
-              <button
-                onClick={switchCamera}
-                disabled={isSwitching}
-                className="absolute top-4 right-4 bg-black bg-opacity-50 text-white p-3 rounded-full shadow-lg disabled:opacity-50"
-                title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
-              >
-                {isSwitching ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : (
-                  <SwitchCamera size={20} />
+            {/* Mobile inventory toggle floating button - Enhanced */}
+            {isMobile && !showMobileMenu && (
+              <div className="absolute bottom-4 right-4 flex flex-col gap-2">
+                {/* Camera switch button */}
+                {hasMultipleCameras && (
+                  <button
+                    onClick={switchCamera}
+                    disabled={isSwitching}
+                    className="bg-black bg-opacity-50 text-white p-3 rounded-full shadow-lg disabled:opacity-50 transition-all"
+                    title={`Switch to ${currentFacingMode === 'user' ? 'back' : 'front'} camera`}
+                  >
+                    {isSwitching ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : (
+                      <SwitchCamera size={20} />
+                    )}
+                  </button>
                 )}
-              </button>
-            )}
 
-            {/* Mobile inventory button */}
-            {isMobile && !showInventory && detectedItems.length > 0 && (
-              <button
-                onClick={() => setShowInventory(true)}
-                className="absolute bottom-4 right-4 bg-blue-500 text-white p-3 rounded-full shadow-lg"
-              >
-                <Package size={20} />
-                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center">
-                  {detectedItems.length}
-                </span>
-              </button>
+                {/* Inventory toggle button */}
+                <button
+                  onClick={toggleSidebar}
+                  className="bg-blue-500 text-white p-3 rounded-full shadow-lg relative transition-all"
+                  title={showInventory ? 'Hide inventory' : 'Show inventory'}
+                >
+                  {showInventory ? <EyeOff size={20} /> : <Package size={20} />}
+                  {!showInventory && detectedItems.length > 0 && (
+                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold">
+                      {detectedItems.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Quick screenshot button */}
+                {!showInventory && hasCustomer && (
+                  <button
+                    onClick={takeScreenshot}
+                    disabled={isProcessing}
+                    className="bg-green-500 text-white p-3 rounded-full shadow-lg disabled:opacity-50 transition-all"
+                    title="Take screenshot"
+                  >
+                    {isProcessing ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : (
+                      <CameraIcon size={20} />
+                    )}
+                  </button>
+                )}
+              </div>
             )}
 
             {/* Customer connection status */}
@@ -1043,19 +1150,34 @@ function AgentView({
           />
         )}
 
-        {/* Inventory Sidebar - Responsive */}
+        {/* Inventory Sidebar - Enhanced Mobile Support */}
         {showInventory && (
           <div className={`${
             isMobile 
               ? 'fixed inset-0 z-50 bg-white' 
-              : 'w-96 border-l bg-white'
+              : 'w-96 border-l bg-white flex-shrink-0'
           }`}>
-            <InventorySidebar
-              items={detectedItems}
-              onRemoveItem={(id) => setDetectedItems(prev => prev.filter(item => item.id !== id))}
-              onSaveItems={() => handleSaveItems(detectedItems)}
-              onClose={() => setShowInventory(false)}
-            />
+            {/* Mobile overlay backdrop */}
+            {isMobile && (
+              <div 
+                className="absolute inset-0 bg-black bg-opacity-50 z-40"
+                onClick={() => setShowInventory(false)}
+              />
+            )}
+            
+            {/* Sidebar content */}
+            <div className={`${
+              isMobile 
+                ? 'absolute right-0 top-0 bottom-0 w-80 bg-white z-50 transform transition-transform duration-300 ease-in-out' 
+                : 'w-full h-full'
+            }`}>
+              <InventorySidebar
+                items={detectedItems}
+                onRemoveItem={(id) => setDetectedItems(prev => prev.filter(item => item.id !== id))}
+                onSaveItems={() => handleSaveItems(detectedItems)}
+                onClose={() => setShowInventory(false)}
+              />
+            </div>
           </div>
         )}
       </div>
