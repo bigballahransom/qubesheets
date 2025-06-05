@@ -1,4 +1,5 @@
-// components/video/VideoCallInventory.jsx - Ultra Modern & Sleek UI
+
+// components/video/VideoCallInventory.jsx - Ultra Modern & Sleek UI with Mobile-First Agent View
 'use client';
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
@@ -42,7 +43,9 @@ import {
   Plus,
   ArrowRight,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  ChevronLeft,
+  Home
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
@@ -528,7 +531,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   );
 });
 
-// Ultra Modern Agent View
+// Ultra Modern Agent View - Updated with mobile overlay design
 const AgentView = React.memo(({ 
   projectId, 
   detectedItems, 
@@ -538,7 +541,7 @@ const AgentView = React.memo(({
   handleSaveItems
 }) => {
   const [isMobile, setIsMobile] = useState(false);
-  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showControls, setShowControls] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [isInventoryActive, setIsInventoryActive] = useState(false);
@@ -567,6 +570,32 @@ const AgentView = React.memo(({
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, [showInventory]);
+
+  // Auto-hide controls on mobile after inactivity
+  useEffect(() => {
+    if (!isMobile) return;
+    
+    let hideTimer;
+    
+    const resetHideTimer = () => {
+      setShowControls(true);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => setShowControls(false), 6000);
+    };
+
+    resetHideTimer();
+
+    const handleActivity = () => resetHideTimer();
+    
+    window.addEventListener('touchstart', handleActivity);
+    window.addEventListener('click', handleActivity);
+    
+    return () => {
+      clearTimeout(hideTimer);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('click', handleActivity);
+    };
+  }, [isMobile]);
 
   const handleItemsDetected = useCallback((items) => {
     const newItems = items.map(item => ({
@@ -616,9 +645,6 @@ const AgentView = React.memo(({
 
   const toggleSidebar = () => {
     setShowInventory(!showInventory);
-    if (isMobile && showMobileMenu) {
-      setShowMobileMenu(false);
-    }
   };
 
   const takeScreenshot = async () => {
@@ -702,6 +728,253 @@ const AgentView = React.memo(({
 
   const hasCustomer = remoteParticipants.some(p => !isAgent(p.identity));
 
+  // Mobile view - full screen with overlays
+  if (isMobile) {
+    return (
+      <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900 relative overflow-hidden">
+        {/* Video area - Full screen */}
+        <div className="absolute inset-0 z-10">
+          <GridLayout 
+            tracks={tracks}
+            style={{ height: '100%', width: '100%' }}
+          >
+            <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
+          </GridLayout>
+        </div>
+
+        {/* Top overlay - Status and info */}
+        {showControls && (
+          <div className={`absolute top-safe-or-4 left-4 right-4 z-20 transition-all duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+            {/* Connection Status & Active Session */}
+            <div className="flex items-center justify-between mb-3">
+              <div className={`px-4 py-2 rounded-2xl ${glassStyle} flex items-center gap-3`}>
+                <div className={`w-3 h-3 rounded-full ${hasCustomer ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'} shadow-lg`}></div>
+                <span className="text-white text-sm font-bold">
+                  {hasCustomer ? 'CUSTOMER CONNECTED' : 'WAITING...'}
+                </span>
+              </div>
+              
+              {isInventoryActive && (
+                <div className={`px-4 py-2 rounded-2xl ${glassStyle} flex items-center gap-2 ${captureMode === 'auto' ? 'bg-green-500/20 border-green-400/50' : 'bg-gray-500/20 border-gray-400/50'}`}>
+                  <Activity className="w-4 h-4 text-white" />
+                  <span className="text-white text-sm font-bold">
+                    {captureMode === 'auto' ? 'SCANNING' : 'PAUSED'}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Room Selector - Only when inventory active */}
+            {isInventoryActive && (
+              <div className="mb-3">
+                <RoomSelector 
+                  currentRoom={currentRoom} 
+                  onChange={setCurrentRoom}
+                  isMobile={true}
+                />
+              </div>
+            )}
+
+            {/* Stats Row */}
+            {isInventoryActive && detectedItems.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
+                  <p className="text-white/70 text-xs">Items</p>
+                  <p className="text-white font-bold">{detectedItems.length}</p>
+                </div>
+                <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
+                  <p className="text-white/70 text-xs">Captures</p>
+                  <p className="text-white font-bold">{captureCount}</p>
+                </div>
+                <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
+                  <p className="text-white/70 text-xs">Camera</p>
+                  <p className="text-white font-bold text-sm">{currentFacingMode === 'user' ? 'Front' : 'Back'}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Floating Action Buttons - Right Side */}
+        {showControls && (
+          <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
+            {/* Camera Switch */}
+            {canSwitchCamera && (
+              <button
+                onClick={switchCamera}
+                disabled={isSwitching}
+                className={`p-4 rounded-2xl ${glassStyle} ${
+                  currentFacingMode === 'environment' 
+                    ? 'bg-green-500/30 border-green-400/50' 
+                    : 'bg-blue-500/30 border-blue-400/50'
+                } text-white shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95`}
+              >
+                {isSwitching ? (
+                  <Loader2 size={24} className="animate-spin" />
+                ) : (
+                  <SwitchCamera size={24} />
+                )}
+              </button>
+            )}
+
+            {/* AI Capture */}
+            {isInventoryActive && hasCustomer && (
+              <button
+                onClick={takeScreenshot}
+                disabled={isProcessing}
+                className={`p-4 rounded-2xl ${glassStyle} bg-purple-600/30 border-purple-400/50 text-white shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95`}
+              >
+                {isProcessing ? (
+                  <Loader2 size={24} className="animate-spin" />
+                ) : (
+                  <Target size={24} />
+                )}
+              </button>
+            )}
+
+            {/* Inventory Toggle */}
+            <button
+              onClick={toggleSidebar}
+              className={`relative p-4 rounded-2xl ${glassStyle} bg-indigo-600/30 border-indigo-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95`}
+            >
+              {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
+              {!showInventory && detectedItems.length > 0 && (
+                <span className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
+                  {detectedItems.length}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Bottom Control Bar with AI Controls */}
+        <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
+          <div className="bg-gradient-to-t from-black/60 to-transparent p-6 pb-safe-or-6">
+            {/* AI Inventory Controls */}
+            {hasCustomer && (
+              <div className="mb-6">
+                {!isInventoryActive ? (
+                  <button
+                    onClick={startInventory}
+                    className="w-full px-6 py-4 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-2xl transition-all duration-300 transform hover:scale-105 active:scale-95"
+                  >
+                    <Zap size={20} />
+                    Start AI Inventory Scan
+                  </button>
+                ) : (
+                  <div className="flex gap-3">
+                    {captureMode === 'paused' ? (
+                      <button
+                        onClick={resumeInventory}
+                        className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all duration-300"
+                      >
+                        <Play size={18} />
+                        Resume
+                      </button>
+                    ) : (
+                      <button
+                        onClick={pauseInventory}
+                        className="flex-1 px-4 py-3 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all duration-300"
+                      >
+                        <Pause size={18} />
+                        Pause
+                      </button>
+                    )}
+                    <button
+                      onClick={stopInventory}
+                      className="px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all duration-300"
+                    >
+                      <X size={18} />
+                      Stop
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Standard Controls */}
+            <ControlBar 
+              variation="minimal"
+              controls={{
+                microphone: true,
+                camera: true,
+                chat: false,
+                screenShare: false,
+                leave: true,
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Customer Not Connected Overlay */}
+        {!hasCustomer && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-40">
+            <div className={`p-8 rounded-3xl text-center max-w-md ${glassStyle}`}>
+              <div className="w-20 h-20 bg-white/20 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                <Users size={40} className="text-white" />
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-3">
+                Waiting for Customer
+              </h3>
+              <p className="text-white/80 leading-relaxed">
+                Share the video call link with your customer to begin the AI-powered inventory session.
+              </p>
+              <div className="mt-6 flex items-center justify-center gap-2">
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tap hint */}
+        {!showControls && (
+          <div className="absolute bottom-safe-or-6 left-1/2 transform -translate-x-1/2 z-10">
+            <div className={`px-6 py-3 rounded-2xl text-white text-sm font-medium ${glassStyle} border border-white/30 animate-pulse`}>
+              Tap to show controls
+            </div>
+          </div>
+        )}
+
+        {/* Enhanced Frame Processor - only when active */}
+        {isInventoryActive && captureMode === 'auto' && (
+          <FrameProcessor
+            projectId={projectId}
+            captureMode={captureMode}
+            currentRoom={currentRoom}
+            existingItems={detectedItems}
+            onItemsDetected={handleItemsDetected}
+            onProcessingChange={setIsProcessing}
+            onCaptureCountChange={setCaptureCount}
+          />
+        )}
+
+        {/* Inventory Sidebar - Full screen overlay on mobile */}
+        {showInventory && (
+          <div className="fixed inset-0 z-50">
+            <div 
+              className="absolute inset-0 bg-black/50 backdrop-blur-sm z-40"
+              onClick={() => setShowInventory(false)}
+            />
+            
+            <div className="absolute right-0 top-0 bottom-0 w-80 bg-white/95 backdrop-blur-xl z-50 transform transition-transform duration-300 ease-in-out shadow-2xl">
+              <InventorySidebar
+                items={detectedItems}
+                onRemoveItem={(id) => setDetectedItems(prev => prev.filter(item => item.id !== id))}
+                onSaveItems={() => handleSaveItems(detectedItems)}
+                onClose={() => setShowInventory(false)}
+              />
+            </div>
+          </div>
+        )}
+
+        <RoomAudioRenderer />
+      </div>
+    );
+  }
+
+  // Desktop view remains unchanged
   return (
     <div className="h-full flex flex-col bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
       {/* Ultra Modern Header */}
@@ -730,238 +1003,101 @@ const AgentView = React.memo(({
                     <span>ACTIVE</span>
                   </div>
                 )}
-                {isMobile && !showInventory && detectedItems.length > 0 && (
-                  <div className="px-4 py-2 bg-gradient-to-r from-blue-400 to-indigo-500 text-white text-sm font-bold rounded-2xl shadow-lg">
-                    {detectedItems.length} items detected
-                  </div>
-                )}
               </div>
             </div>
             
-            {/* Mobile controls */}
-            {isMobile && (
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={toggleSidebar}
-                  className="relative p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
-                  title={showInventory ? 'Hide inventory' : 'Show inventory'}
-                >
-                  {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
-                  {!showInventory && detectedItems.length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse">
-                      {detectedItems.length}
-                    </span>
-                  )}
-                </button>
-                <button
-                  onClick={() => setShowMobileMenu(!showMobileMenu)}
-                  className="p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
-                >
-                  {showMobileMenu ? <X size={24} /> : <Menu size={24} />}
-                </button>
-              </div>
-            )}
-
             {/* Desktop controls */}
-            {!isMobile && (
-              <div className="flex items-center gap-3">
-                {/* Camera switch */}
-                {canSwitchCamera && (
-                  <button
-                    onClick={switchCamera}
-                    disabled={isSwitching}
-                    className="px-4 py-3 bg-gradient-to-r from-gray-100 to-gray-200 hover:from-gray-200 hover:to-gray-300 text-gray-700 rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 shadow-lg"
-                  >
-                    {isSwitching ? (
-                      <Loader2 size={20} className="animate-spin" />
-                    ) : (
-                      <SwitchCamera size={20} />
-                    )}
-                    <span className="hidden sm:inline">
-                      {currentFacingMode === 'user' ? 'Switch to Back' : 'Switch to Front'}
-                    </span>
-                  </button>
-                )}
-
-                {/* Main action buttons */}
-                {!isInventoryActive ? (
-                  <button
-                    onClick={startInventory}
-                    className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                  >
-                    <Zap size={20} />
-                    Start AI Scanning
-                  </button>
-                ) : (
-                  <div className="flex gap-2">
-                    {captureMode === 'paused' ? (
-                      <button
-                        onClick={resumeInventory}
-                        className="px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                      >
-                        <Play size={18} />
-                        Resume
-                      </button>
-                    ) : (
-                      <button
-                        onClick={pauseInventory}
-                        className="px-4 py-3 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                      >
-                        <Pause size={18} />
-                        Pause
-                      </button>
-                    )}
-                    <button
-                      onClick={stopInventory}
-                      className="px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                    >
-                      <X size={18} />
-                      Stop
-                    </button>
-                  </div>
-                )}
-                
-                {/* AI Capture button */}
-                <button
-                  onClick={takeScreenshot}
-                  disabled={isProcessing || !hasCustomer}
-                  className="px-6 py-3 bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:scale-100 shadow-lg"
-                >
-                  {isProcessing ? (
-                    <>
-                      <Loader2 size={20} className="animate-spin" />
-                      AI Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      <Target size={20} />
-                      AI Capture
-                    </>
-                  )}
-                </button>
-                
-                {/* Inventory toggle */}
-                <button
-                  onClick={toggleSidebar}
-                  className="relative p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
-                  title={showInventory ? 'Hide inventory' : 'Show inventory'}
-                >
-                  {showInventory ? <EyeOff size={24} /> : <Layers size={24} />}
-                  {!showInventory && detectedItems.length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
-                      {detectedItems.length}
-                    </span>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Enhanced Mobile Menu */}
-          {isMobile && showMobileMenu && (
-            <div className="mt-4 space-y-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-3xl border border-blue-200/50">
+            <div className="flex items-center gap-3">
+              {/* Camera switch */}
               {canSwitchCamera && (
                 <button
-                  onClick={() => {
-                    switchCamera();
-                    setShowMobileMenu(false);
-                  }}
+                  onClick={switchCamera}
                   disabled={isSwitching}
-                  className="w-full px-6 py-4 bg-gradient-to-r from-gray-100 to-gray-200 hover:from-gray-200 hover:to-gray-300 text-gray-700 rounded-2xl font-bold flex items-center justify-center gap-3 disabled:opacity-50 transition-all duration-300"
+                  className="px-4 py-3 bg-gradient-to-r from-gray-100 to-gray-200 hover:from-gray-200 hover:to-gray-300 text-gray-700 rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 shadow-lg"
                 >
                   {isSwitching ? (
                     <Loader2 size={20} className="animate-spin" />
                   ) : (
                     <SwitchCamera size={20} />
                   )}
-                  Switch to {currentFacingMode === 'user' ? 'Back' : 'Front'} Camera
+                  <span className="hidden sm:inline">
+                    {currentFacingMode === 'user' ? 'Switch to Back' : 'Switch to Front'}
+                  </span>
                 </button>
               )}
 
+              {/* Main action buttons */}
               {!isInventoryActive ? (
                 <button
-                  onClick={() => {
-                    startInventory();
-                    setShowMobileMenu(false);
-                  }}
-                  className="w-full px-6 py-4 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
+                  onClick={startInventory}
+                  className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 shadow-lg"
                 >
                   <Zap size={20} />
-                  Start AI Inventory Scan
+                  Start AI Scanning
                 </button>
               ) : (
-                <div className="space-y-3">
+                <div className="flex gap-2">
                   {captureMode === 'paused' ? (
                     <button
-                      onClick={() => {
-                        resumeInventory();
-                        setShowMobileMenu(false);
-                      }}
-                      className="w-full px-6 py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
+                      onClick={resumeInventory}
+                      className="px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
                     >
-                      <Play size={20} />
-                      Resume Scanning
+                      <Play size={18} />
+                      Resume
                     </button>
                   ) : (
                     <button
-                      onClick={() => {
-                        pauseInventory();
-                        setShowMobileMenu(false);
-                      }}
-                      className="w-full px-6 py-4 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
+                      onClick={pauseInventory}
+                      className="px-4 py-3 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
                     >
-                      <Pause size={20} />
-                      Pause Scanning
+                      <Pause size={18} />
+                      Pause
                     </button>
                   )}
                   <button
-                    onClick={() => {
-                      stopInventory();
-                      setShowMobileMenu(false);
-                    }}
-                    className="w-full px-6 py-4 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
+                    onClick={stopInventory}
+                    className="px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
                   >
-                    <X size={20} />
-                    Stop Inventory
+                    <X size={18} />
+                    Stop
                   </button>
                 </div>
               )}
               
+              {/* AI Capture button */}
               <button
-                onClick={() => {
-                  takeScreenshot();
-                  setShowMobileMenu(false);
-                }}
+                onClick={takeScreenshot}
                 disabled={isProcessing || !hasCustomer}
-                className="w-full px-6 py-4 bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
+                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:scale-100 shadow-lg"
               >
                 {isProcessing ? (
                   <>
                     <Loader2 size={20} className="animate-spin" />
-                    AI Processing...
+                    AI Analyzing...
                   </>
                 ) : (
                   <>
                     <Target size={20} />
-                    AI Capture Frame
+                    AI Capture
                   </>
                 )}
               </button>
               
-              {detectedItems.length > 0 && (
-                <button
-                  onClick={() => {
-                    toggleSidebar();
-                    setShowMobileMenu(false);
-                  }}
-                  className="w-full px-6 py-4 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-lg transition-all duration-300"
-                >
-                  <Package size={20} />
-                  {showInventory ? 'Hide' : 'View'} Items ({detectedItems.length})
-                </button>
-              )}
+              {/* Inventory toggle */}
+              <button
+                onClick={toggleSidebar}
+                className="relative p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
+                title={showInventory ? 'Hide inventory' : 'Show inventory'}
+              >
+                {showInventory ? <EyeOff size={24} /> : <Layers size={24} />}
+                {!showInventory && detectedItems.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
+                    {detectedItems.length}
+                  </span>
+                )}
+              </button>
             </div>
-          )}
+          </div>
 
           {/* Enhanced Room selector and stats */}
           {isInventoryActive && (
@@ -1075,51 +1211,6 @@ const AgentView = React.memo(({
               </div>
             )}
 
-            {/* Enhanced Mobile Floating Controls */}
-            {isMobile && !showMobileMenu && (
-              <div className="absolute bottom-6 right-6 flex flex-col gap-3">
-                {canSwitchCamera && (
-                  <button
-                    onClick={switchCamera}
-                    disabled={isSwitching}
-                    className="bg-gradient-to-r from-gray-800/90 to-slate-800/90 backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/20"
-                  >
-                    {isSwitching ? (
-                      <Loader2 size={24} className="animate-spin" />
-                    ) : (
-                      <SwitchCamera size={24} />
-                    )}
-                  </button>
-                )}
-
-                <button
-                  onClick={toggleSidebar}
-                  className="relative bg-gradient-to-r from-blue-600/90 to-indigo-600/90 backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95 border border-blue-400/30"
-                >
-                  {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
-                  {!showInventory && detectedItems.length > 0 && (
-                    <span className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-sm rounded-full w-7 h-7 flex items-center justify-center font-bold animate-pulse shadow-lg">
-                      {detectedItems.length}
-                    </span>
-                  )}
-                </button>
-
-                {!showInventory && hasCustomer && (
-                  <button
-                    onClick={takeScreenshot}
-                    disabled={isProcessing}
-                    className="bg-gradient-to-r from-purple-600/90 to-violet-600/90 backdrop-blur-xl text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-purple-400/30"
-                  >
-                    {isProcessing ? (
-                      <Loader2 size={24} className="animate-spin" />
-                    ) : (
-                      <Target size={24} />
-                    )}
-                  </button>
-                )}
-              </div>
-            )}
-
             {/* Enhanced Customer Connection Status */}
             {!hasCustomer && (
               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
@@ -1208,7 +1299,7 @@ const AgentView = React.memo(({
   );
 });
 
-// Enhanced InventorySidebar component
+// Enhanced InventorySidebar component (unchanged)
 const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1262,27 +1353,27 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
     <div className="h-full flex flex-col bg-gradient-to-br from-white via-blue-50 to-indigo-100">
       {/* Enhanced Header */}
       <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white">
-        <div className="p-6 border-b border-blue-500/30">
+        <div className="p-4 md:p-6 border-b border-blue-500/30">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 md:gap-4">
               {isMobile && (
                 <button
                   onClick={onClose}
                   className="p-2 hover:bg-white/20 rounded-xl transition-all duration-200"
                 >
-                  <ArrowRight size={24} />
+                  <ChevronLeft size={24} />
                 </button>
               )}
               <div className="flex items-center gap-3">
-                <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
-                  <Package className="text-white" size={24} />
+                <div className="p-2 md:p-3 bg-white/20 rounded-xl md:rounded-2xl backdrop-blur-sm">
+                  <Package className="text-white w-5 h-5 md:w-6 md:h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-xl">AI Detected Items</h3>
-                  <p className="text-blue-100 text-sm">Automatically cataloged</p>
+                  <h3 className="font-bold text-lg md:text-xl">AI Detected Items</h3>
+                  <p className="text-blue-100 text-xs md:text-sm">Automatically cataloged</p>
                 </div>
               </div>
-              <div className="px-4 py-2 bg-white/20 text-white rounded-2xl backdrop-blur-sm font-bold">
+              <div className="px-3 md:px-4 py-1 md:py-2 bg-white/20 text-white rounded-xl md:rounded-2xl backdrop-blur-sm font-bold">
                 {items.length}
               </div>
             </div>
@@ -1299,33 +1390,33 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
       </div>
 
       {/* Enhanced Totals */}
-      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-6 border-b border-blue-200/50">
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-white rounded-2xl p-4 text-center shadow-lg border border-blue-100">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <Package className="w-6 h-6 text-white" />
+      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-4 md:p-6 border-b border-blue-200/50">
+        <div className="grid grid-cols-3 gap-3 md:gap-4">
+          <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-blue-100">
+            <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
+              <Package className="w-5 h-5 md:w-6 md:h-6 text-white" />
             </div>
-            <p className="text-sm font-medium text-gray-600 mb-1">Total Items</p>
-            <p className="text-2xl font-bold text-gray-900">{totals.items}</p>
+            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Total Items</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-900">{totals.items}</p>
           </div>
-          <div className="bg-white rounded-2xl p-4 text-center shadow-lg border border-green-100">
-            <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-green-100">
+            <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
+              <svg className="w-5 h-5 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-gray-600 mb-1">Volume</p>
-            <p className="text-2xl font-bold text-gray-900">{totals.cuft.toFixed(1)}</p>
+            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Volume</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-900">{totals.cuft.toFixed(1)}</p>
             <p className="text-xs text-gray-500">cu ft</p>
           </div>
-          <div className="bg-white rounded-2xl p-4 text-center shadow-lg border border-purple-100">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-violet-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-purple-100">
+            <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-purple-500 to-violet-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
+              <svg className="w-5 h-5 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16l3-3m-3 3l-3-3" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-gray-600 mb-1">Weight</p>
-            <p className="text-2xl font-bold text-gray-900">{totals.weight.toFixed(0)}</p>
+            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Weight</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-900">{totals.weight.toFixed(0)}</p>
             <p className="text-xs text-gray-500">lbs</p>
           </div>
         </div>
@@ -1335,33 +1426,33 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
       <div className="flex-1 overflow-y-auto bg-gray-50">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-8">
-            <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-3xl flex items-center justify-center mb-6">
-              <Package size={48} className="text-blue-400" />
+            <div className="w-20 md:w-24 h-20 md:h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-2xl md:rounded-3xl flex items-center justify-center mb-4 md:mb-6">
+              <Package size={40} className="text-blue-400 md:w-12 md:h-12" />
             </div>
-            <h4 className="text-xl font-bold text-gray-900 mb-3">No Items Detected Yet</h4>
-            <p className="text-gray-600 text-center leading-relaxed max-w-sm">
+            <h4 className="text-lg md:text-xl font-bold text-gray-900 mb-2 md:mb-3">No Items Detected Yet</h4>
+            <p className="text-sm md:text-base text-gray-600 text-center leading-relaxed max-w-sm">
               Start the AI inventory scan to automatically detect and catalog items in each room
             </p>
-            <div className="mt-6 flex items-center gap-2">
+            <div className="mt-4 md:mt-6 flex items-center gap-2">
               <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
               <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
               <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
             </div>
           </div>
         ) : (
-          <div className="p-4 space-y-4">
+          <div className="p-3 md:p-4 space-y-3 md:space-y-4">
             {Object.entries(groupedItems).map(([location, locationItems]) => (
-              <div key={location} className="bg-white rounded-3xl shadow-lg overflow-hidden border border-gray-100">
-                <div className="bg-gradient-to-r from-gray-50 to-blue-50 px-6 py-4 border-b border-gray-100">
+              <div key={location} className="bg-white rounded-2xl md:rounded-3xl shadow-lg overflow-hidden border border-gray-100">
+                <div className="bg-gradient-to-r from-gray-50 to-blue-50 px-4 md:px-6 py-3 md:py-4 border-b border-gray-100">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{getRoomIcon(location)}</span>
+                    <div className="flex items-center gap-2 md:gap-3">
+                      <span className="text-xl md:text-2xl">{getRoomIcon(location)}</span>
                       <div>
-                        <h4 className="font-bold text-gray-900 text-lg">{location}</h4>
-                        <p className="text-sm text-gray-600">{locationItems.length} items detected</p>
+                        <h4 className="font-bold text-gray-900 text-base md:text-lg">{location}</h4>
+                        <p className="text-xs md:text-sm text-gray-600">{locationItems.length} items detected</p>
                       </div>
                     </div>
-                    <div className="px-3 py-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-2xl text-sm font-bold">
+                    <div className="px-2 md:px-3 py-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl md:rounded-2xl text-xs md:text-sm font-bold">
                       {locationItems.length}
                     </div>
                   </div>
@@ -1370,26 +1461,26 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                   {locationItems.map((item) => (
                     <div
                       key={item.id}
-                      className="p-4 hover:bg-gray-50 transition-colors duration-200"
+                      className="p-3 md:p-4 hover:bg-gray-50 transition-colors duration-200"
                     >
                       {editingId === item.id ? (
                         // Enhanced Edit Mode
-                        <div className="space-y-4">
+                        <div className="space-y-3 md:space-y-4">
                           <input
                             type="text"
                             value={editForm.name || ''}
                             onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                            className="w-full text-black px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
+                            className="w-full px-3 md:px-4 py-2 md:py-3 border border-gray-300 rounded-xl md:rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium text-sm md:text-base"
                             placeholder="Item name"
                           />
-                          <div className="grid grid-cols-3 gap-3">
+                          <div className="grid grid-cols-3 gap-2 md:gap-3">
                             <div>
                               <label className="text-xs font-medium text-gray-600 mb-1 block">Quantity</label>
                               <input
                                 type="number"
                                 value={editForm.quantity || ''}
                                 onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 1 })}
-                                className="w-full text-black px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -1398,7 +1489,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.cuft || ''}
                                 onChange={(e) => setEditForm({ ...editForm, cuft: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-black px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -1407,25 +1498,25 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.weight || ''}
                                 onChange={(e) => setEditForm({ ...editForm, weight: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-black px-3 py-2 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                           </div>
-                          <div className="flex justify-end gap-3">
+                          <div className="flex justify-end gap-2 md:gap-3">
                             <button
                               onClick={() => setEditingId(null)}
-                              className="px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-all duration-200"
+                              className="px-3 md:px-4 py-1.5 md:py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg md:rounded-xl transition-all duration-200"
                             >
-                              <X size={18} />
+                              <X size={16} className="md:w-5 md:h-5" />
                             </button>
                             <button
                               onClick={() => {
                                 // Save logic would go here
                                 setEditingId(null);
                               }}
-                              className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700 rounded-xl transition-all duration-200"
+                              className="px-3 md:px-4 py-1.5 md:py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700 rounded-lg md:rounded-xl transition-all duration-200"
                             >
-                              <CheckCircle size={18} />
+                              <CheckCircle size={16} className="md:w-5 md:h-5" />
                             </button>
                           </div>
                         </div>
@@ -1434,29 +1525,29 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                         <div>
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
-                              <h5 className="font-bold text-gray-900 text-lg mb-2">{item.name}</h5>
-                              <div className="flex flex-wrap gap-2">
-                                <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-bold bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700">
+                              <h5 className="font-bold text-gray-900 text-base md:text-lg mb-1 md:mb-2">{item.name}</h5>
+                              <div className="flex flex-wrap gap-1.5 md:gap-2">
+                                <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700">
                                   {item.quantity || 1}x
                                 </span>
                                 {item.category && (
-                                  <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-medium bg-gradient-to-r from-gray-100 to-slate-100 text-gray-700">
+                                  <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-medium bg-gradient-to-r from-gray-100 to-slate-100 text-gray-700">
                                     {item.category}
                                   </span>
                                 )}
                                 {item.cuft && (
-                                  <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-medium bg-gradient-to-r from-green-100 to-emerald-100 text-green-700">
+                                  <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-medium bg-gradient-to-r from-green-100 to-emerald-100 text-green-700">
                                     {item.cuft} cu ft
                                   </span>
                                 )}
                                 {item.weight && (
-                                  <span className="inline-flex items-center px-3 py-1 rounded-2xl text-sm font-medium bg-gradient-to-r from-yellow-100 to-orange-100 text-orange-700">
+                                  <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-medium bg-gradient-to-r from-yellow-100 to-orange-100 text-orange-700">
                                     {item.weight} lbs
                                   </span>
                                 )}
                               </div>
                             </div>
-                            <div className="flex gap-2 ml-3">
+                            <div className="flex gap-1 md:gap-2 ml-2 md:ml-3">
                               <button
                                 onClick={() => {
                                   setEditingId(item.id);
@@ -1467,19 +1558,15 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                     weight: item.weight,
                                   });
                                 }}
-                                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all duration-200"
+                                className="p-1.5 md:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg md:rounded-xl transition-all duration-200"
                               >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                </svg>
+                                <Edit2 size={14} className="md:w-4 md:h-4" />
                               </button>
                               <button
                                 onClick={() => onRemoveItem(item.id)}
-                                className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all duration-200"
+                                className="p-1.5 md:p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg md:rounded-xl transition-all duration-200"
                               >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
+                                <Trash2 size={14} className="md:w-4 md:h-4" />
                               </button>
                             </div>
                           </div>
@@ -1496,14 +1583,12 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
 
       {/* Enhanced Save Button */}
       {items.length > 0 && (
-        <div className="bg-white border-t border-gray-200 p-6">
+        <div className="bg-white border-t border-gray-200 p-4 md:p-6">
           <button
             onClick={() => onSaveItems(items)}
-            className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white py-4 rounded-3xl font-bold flex items-center justify-center gap-3 transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-2xl text-lg"
+            className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white py-3 md:py-4 rounded-2xl md:rounded-3xl font-bold flex items-center justify-center gap-2 md:gap-3 transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-2xl text-base md:text-lg"
           >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-            </svg>
+            <Save className="w-5 h-5 md:w-6 md:h-6" />
             Save {items.length} Items to Inventory
           </button>
           {isMobile && (
