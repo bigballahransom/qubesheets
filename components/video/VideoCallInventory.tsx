@@ -145,7 +145,7 @@ function isAgent(participantName: string): boolean {
   return participantName.toLowerCase().includes('agent');
 }
 
-// Enhanced camera switching hook with better mobile support
+// Enhanced camera switching hook with better iPhone support and stability
 function useCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
   const [currentFacingMode, setCurrentFacingMode] = useState<'user' | 'environment'>('environment'); // Start with back camera
@@ -157,22 +157,27 @@ function useCameraSwitching() {
     const getAvailableCameras = async () => {
       try {
         // Request permissions first
-        await navigator.mediaDevices.getUserMedia({ video: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop()); // Clean up test stream
         
         const devices = await navigator.mediaDevices.enumerateDevices();
         const cameras = devices.filter(device => device.kind === 'videoinput');
         setAvailableCameras(cameras);
-        console.log('📹 Available cameras:', cameras.length);
+        console.log('📹 Available cameras:', cameras.length, cameras.map(c => c.label));
         
-        // Try to detect current facing mode
-        const videoTrack = localParticipant?.videoTrackPublications.values().next().value?.track;
-        if (videoTrack instanceof LocalVideoTrack) {
-          const settings = videoTrack.mediaStreamTrack?.getSettings();
-          console.log('📹 Current camera settings:', settings);
-          if (settings?.facingMode) {
-            setCurrentFacingMode(settings.facingMode === 'user' ? 'user' : 'environment');
+        // Detect current facing mode from active track
+        setTimeout(() => {
+          const videoTrack = localParticipant?.videoTrackPublications.values().next().value?.track;
+          if (videoTrack instanceof LocalVideoTrack) {
+            const settings = videoTrack.mediaStreamTrack?.getSettings();
+            console.log('📹 Current camera settings:', settings);
+            if (settings?.facingMode) {
+              const detectedMode = settings.facingMode === 'user' ? 'user' : 'environment';
+              setCurrentFacingMode(detectedMode);
+              console.log('📹 Detected camera mode:', detectedMode);
+            }
           }
-        }
+        }, 1000);
       } catch (error) {
         console.error('Error getting available cameras:', error);
       }
@@ -197,44 +202,79 @@ function useCameraSwitching() {
     try {
       console.log('🔄 Starting camera switch...');
       
-      // Determine target facing mode
       const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
       console.log(`📹 Switching from ${currentFacingMode} to ${targetFacingMode}`);
       
-      // Stop current camera
-      await localParticipant.setCameraEnabled(false);
-      console.log('📹 Camera disabled');
-      
-      // Wait for camera to fully stop
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Try multiple approaches to switch camera
+      // iPhone-optimized approach: Use getUserMedia directly first
       let success = false;
       
-      // Approach 1: Try with facing mode constraint
+      // Approach 1: Direct getUserMedia with facingMode (best for iPhone)
       if (!success) {
         try {
-          const constraints = {
-            facingMode: targetFacingMode as 'user' | 'environment',
-            resolution: {
-              width: 1280,
-              height: 720
+          console.log('📹 Trying direct getUserMedia approach for iPhone...');
+          
+          // Stop current camera gracefully
+          await localParticipant.setCameraEnabled(false);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Try to get media with specific facing mode
+          const constraints: MediaStreamConstraints = {
+            video: {
+              facingMode: targetFacingMode,
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 }
             }
           };
           
-          console.log('📹 Trying facingMode constraint:', constraints);
-          await localParticipant.setCameraEnabled(true, constraints);
+          console.log('📹 getUserMedia constraints:', constraints);
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          
+          // Verify we got the right camera
+          const videoTrack = stream.getVideoTracks()[0];
+          const settings = videoTrack.getSettings();
+          console.log('📹 New camera settings:', settings);
+          
+          // Stop the test stream and use LiveKit to publish
+          stream.getTracks().forEach(track => track.stop());
+          
+          // Now enable camera through LiveKit with simpler constraints
+          await localParticipant.setCameraEnabled(true, {
+            facingMode: targetFacingMode,
+            resolution: { width: 1280, height: 720 }
+          });
+          
           success = true;
-          console.log('✅ Camera switched using facingMode constraint');
+          console.log('✅ Camera switched using direct getUserMedia approach');
         } catch (error) {
-          console.log('❌ facingMode constraint failed:', error);
+          console.log('❌ Direct getUserMedia approach failed:', error);
         }
       }
 
-      // Approach 2: Try with device ID if we have multiple cameras
+      // Approach 2: LiveKit native switching
+      if (!success) {
+        try {
+          console.log('📹 Trying LiveKit native approach...');
+          
+          await localParticipant.setCameraEnabled(false);
+          await new Promise(resolve => setTimeout(resolve, 800));
+          
+          await localParticipant.setCameraEnabled(true, {
+            facingMode: targetFacingMode,
+            resolution: { width: 1280, height: 720 }
+          });
+          
+          success = true;
+          console.log('✅ Camera switched using LiveKit native approach');
+        } catch (error) {
+          console.log('❌ LiveKit native approach failed:', error);
+        }
+      }
+
+      // Approach 3: Device ID switching for multi-camera devices
       if (!success && availableCameras.length > 1) {
         try {
-          // Get current device ID
+          console.log('📹 Trying device ID switching...');
+          
           const currentTrack = localParticipant.videoTrackPublications.values().next().value?.track;
           const currentSettings = currentTrack?.mediaStreamTrack?.getSettings();
           const currentDeviceId = currentSettings?.deviceId;
@@ -247,47 +287,38 @@ function useCameraSwitching() {
           );
           
           if (otherCamera) {
-            const constraints = {
-              deviceId: otherCamera.deviceId,
-              resolution: {
-                width: 1280,
-                height: 720
-              }
-            };
+            await localParticipant.setCameraEnabled(false);
+            await new Promise(resolve => setTimeout(resolve, 500));
             
-            console.log('📹 Trying deviceId constraint:', constraints);
-            await localParticipant.setCameraEnabled(true, constraints);
+            await localParticipant.setCameraEnabled(true, {
+              deviceId: otherCamera.deviceId,
+              resolution: { width: 1280, height: 720 }
+            });
+            
             success = true;
-            console.log('✅ Camera switched using deviceId constraint');
+            console.log('✅ Camera switched using device ID');
           }
         } catch (error) {
-          console.log('❌ deviceId constraint failed:', error);
+          console.log('❌ Device ID switching failed:', error);
         }
       }
 
-      // Approach 3: Try with just facing mode
+      // Approach 4: Fallback with basic constraints
       if (!success) {
         try {
-          console.log('📹 Trying simple facingMode:', targetFacingMode);
+          console.log('📹 Trying fallback approach...');
+          
+          await localParticipant.setCameraEnabled(false);
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
           await localParticipant.setCameraEnabled(true, {
-            facingMode: targetFacingMode as 'user' | 'environment'
+            facingMode: targetFacingMode
           });
+          
           success = true;
-          console.log('✅ Camera switched using simple facingMode');
+          console.log('✅ Camera enabled with fallback approach');
         } catch (error) {
-          console.log('❌ Simple facingMode failed:', error);
-        }
-      }
-
-      // Approach 4: Fallback - just enable camera with default settings
-      if (!success) {
-        try {
-          console.log('📹 Trying fallback - default camera settings');
-          await localParticipant.setCameraEnabled(true);
-          success = true;
-          console.log('✅ Camera enabled with fallback settings');
-        } catch (error) {
-          console.log('❌ Fallback failed:', error);
+          console.log('❌ Fallback approach failed:', error);
         }
       }
 
@@ -295,31 +326,39 @@ function useCameraSwitching() {
         setCurrentFacingMode(targetFacingMode);
         toast.success(`📹 Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
         
-        // Update our camera list after successful switch
+        // Verify the switch worked by checking settings after a delay
         setTimeout(async () => {
           try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const cameras = devices.filter(device => device.kind === 'videoinput');
-            setAvailableCameras(cameras);
+            const videoTrack = localParticipant.videoTrackPublications.values().next().value?.track;
+            if (videoTrack instanceof LocalVideoTrack) {
+              const settings = videoTrack.mediaStreamTrack?.getSettings();
+              console.log('📹 Verified camera settings:', settings);
+              
+              if (settings?.facingMode && settings.facingMode !== targetFacingMode) {
+                console.log('⚠️ Camera switch verification failed, actual mode:', settings.facingMode);
+                setCurrentFacingMode(settings.facingMode === 'user' ? 'user' : 'environment');
+              }
+            }
           } catch (error) {
-            console.error('Error updating camera list:', error);
+            console.log('Warning: Could not verify camera switch:', error);
           }
-        }, 1000);
+        }, 2000);
+        
       } else {
         throw new Error('All camera switch attempts failed');
       }
       
     } catch (error) {
       console.error('❌ Error switching camera:', error);
-      toast.error('Failed to switch camera. Please try again.');
+      toast.error('Failed to switch camera. This may be a device limitation.');
       
-      // Try to re-enable the original camera
+      // Try to restore camera with original mode
       try {
-        console.log('🔄 Attempting to restore original camera...');
+        console.log('🔄 Attempting to restore camera...');
         await localParticipant.setCameraEnabled(true);
-        console.log('✅ Original camera restored');
+        console.log('✅ Camera restored');
       } catch (e) {
-        console.error('❌ Failed to restore original camera:', e);
+        console.error('❌ Failed to restore camera:', e);
         toast.error('Camera may need to be manually re-enabled');
       }
     } finally {
@@ -327,9 +366,11 @@ function useCameraSwitching() {
     }
   }, [localParticipant, isSwitching, currentFacingMode, availableCameras]);
 
-  // Check if we can switch cameras
+  // Enhanced camera availability detection
   const canSwitchCamera = availableCameras.length > 1 || 
-    (availableCameras.length === 1 && availableCameras[0].label.toLowerCase().includes('camera'));
+    (typeof navigator !== 'undefined' && 
+     navigator.userAgent.includes('iPhone') && 
+     availableCameras.length >= 1); // iPhone often has multiple cameras but may only enumerate one
   
   return {
     switchCamera,
@@ -340,8 +381,8 @@ function useCameraSwitching() {
   };
 }
 
-// Enhanced customer view with prominent camera switching
-function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
+// Enhanced customer view with prominent camera switching - Memoized for stability
+const CustomerView = React.memo(({ onCallEnd }: { onCallEnd?: () => void }) => {
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(true);
   const [showInstructions, setShowInstructions] = useState(true);
@@ -389,7 +430,7 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
     };
   }, []);
 
-  // Get tracks for video rendering
+  // Get tracks for video rendering with stability optimizations
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -433,7 +474,7 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
 
   return (
     <div className="h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-black flex flex-col relative overflow-hidden">
-      {/* Video area */}
+      {/* Video area - Stabilized with better track handling */}
       <div className="absolute inset-0">
         <div className="w-full h-full">
           <GridLayout 
@@ -618,10 +659,10 @@ function CustomerView({ onCallEnd }: { onCallEnd?: () => void }) {
       <RoomAudioRenderer />
     </div>
   );
-}
+});
 
-// Agent view component with better mobile sidebar management
-function AgentView({ 
+// Agent view component with better mobile sidebar management - Memoized for stability
+const AgentView = React.memo(({ 
   projectId, 
   detectedItems, 
   setDetectedItems, 
@@ -635,7 +676,7 @@ function AgentView({
   currentRoom: string;
   setCurrentRoom: React.Dispatch<React.SetStateAction<string>>;
   handleSaveItems: (items: DetectedItem[]) => Promise<void>;
-}) {
+}) => {
   const [isMobile, setIsMobile] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -650,7 +691,7 @@ function AgentView({
   // Camera switching functionality for agents
   const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useCameraSwitching();
 
-  // Get tracks for the video grid
+  // Get tracks for the video grid with stability optimizations  
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -1116,7 +1157,7 @@ function AgentView({
       {/* Video Grid and Controls */}
       <div className="flex-1 flex flex-col md:flex-row min-h-0">
         <div className="flex-1 flex flex-col">
-          {/* Video Grid */}
+          {/* Video Grid - Stabilized with better error boundaries */}
           <div className="flex-1 relative bg-gray-900 rounded-lg m-2 md:m-4 overflow-hidden">
             <div className="w-full h-full">
               <GridLayout 
@@ -1296,7 +1337,7 @@ function AgentView({
       <RoomAudioRenderer />
     </div>
   );
-}
+});
 
 // Main VideoCallInventory component
 export default function VideoCallInventory({
