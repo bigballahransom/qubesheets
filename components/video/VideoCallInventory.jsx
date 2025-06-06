@@ -58,15 +58,14 @@ const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2
 const darkGlassStyle = "backdrop-blur-xl bg-black/20 border border-white/10 shadow-2xl";
 
 // Enhanced camera switching with mobile-first approach
+// components/video/VideoCallInventory.jsx
 function useAdvancedCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
   const [currentFacingMode, setCurrentFacingMode] = useState(() => {
-    // Default to front camera for agents on mobile, back camera for customers
     const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
     const isAgent = typeof window !== 'undefined' && 
       window.location.search.includes('name=') && 
       window.location.search.toLowerCase().includes('agent');
-    
     return (isMobile && isAgent) ? 'user' : 'environment';
   });
   const [availableCameras, setAvailableCameras] = useState([]);
@@ -74,23 +73,26 @@ function useAdvancedCameraSwitching() {
   const [hasBackCamera, setHasBackCamera] = useState(false);
   const [hasFrontCamera, setHasFrontCamera] = useState(false);
 
-  // Comprehensive camera detection
+  // Detect iOS device
+  const isIOS = useMemo(() => {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  }, []);
+
   useEffect(() => {
     const detectCameras = async () => {
       try {
-        console.log('📹 Requesting camera permissions...');
+        // Request camera permissions
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         stream.getTracks().forEach(track => track.stop());
 
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
-        
         setAvailableCameras(videoDevices);
 
         let backCameraFound = false;
         let frontCameraFound = false;
 
-        // Detection methods
+        // Check for camera labels
         for (const device of videoDevices) {
           const label = device.label.toLowerCase();
           if (label.includes('back') || label.includes('rear') || label.includes('environment')) {
@@ -101,6 +103,7 @@ function useAdvancedCameraSwitching() {
           }
         }
 
+        // Fallback for iOS: Try accessing cameras with facingMode
         if (!backCameraFound || !frontCameraFound) {
           try {
             const backStream = await navigator.mediaDevices.getUserMedia({
@@ -109,7 +112,7 @@ function useAdvancedCameraSwitching() {
             backStream.getTracks().forEach(track => track.stop());
             backCameraFound = true;
           } catch (e) {
-            console.log('📹 No back camera detected via facingMode');
+            console.log('📹 No back camera detected via facingMode:', e);
           }
 
           try {
@@ -119,10 +122,11 @@ function useAdvancedCameraSwitching() {
             frontStream.getTracks().forEach(track => track.stop());
             frontCameraFound = true;
           } catch (e) {
-            console.log('📹 No front camera detected via facingMode');
+            console.log('📹 No front camera detected via facingMode:', e);
           }
         }
 
+        // Assume multiple cameras if enumeration shows multiple devices
         if (videoDevices.length >= 2) {
           backCameraFound = true;
           frontCameraFound = true;
@@ -133,6 +137,7 @@ function useAdvancedCameraSwitching() {
 
       } catch (error) {
         console.error('📹 Error detecting cameras:', error);
+        toast.error('Failed to detect cameras');
       }
     };
 
@@ -140,41 +145,76 @@ function useAdvancedCameraSwitching() {
   }, []);
 
   const switchCamera = useCallback(async () => {
-    if (!localParticipant || isSwitching) return;
-
-    if (!hasBackCamera && !hasFrontCamera) {
+    if (!localParticipant || isSwitching || (!hasBackCamera && !hasFrontCamera)) {
       toast.error('Camera switching not available');
       return;
     }
 
     setIsSwitching(true);
     const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-    
+
     try {
-      await localParticipant.setCameraEnabled(false);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      await localParticipant.setCameraEnabled(true, {
-        facingMode: targetFacingMode,
-        resolution: { width: 1280, height: 720 }
+      // Stop all existing video tracks
+      const videoTracks = localParticipant.videoTrackPublications;
+      for (const [, publication] of videoTracks) {
+        if (publication.track) {
+          await publication.track.stop();
+          await localParticipant.unpublishTrack(publication.track);
+        }
+      }
+
+      // Wait for tracks to fully stop
+      await new Promise(resolve => setTimeout(resolve, isIOS ? 1000 : 500));
+
+      // Request new camera with specific deviceId if available, otherwise use facingMode
+      const videoDevices = await navigator.mediaDevices.enumerateDevices();
+      const targetDevice = videoDevices.find(device => {
+        const label = device.label.toLowerCase();
+        return device.kind === 'videoinput' && (
+          (targetFacingMode === 'environment' && (label.includes('back') || label.includes('rear') || label.includes('environment'))) ||
+          (targetFacingMode === 'user' && (label.includes('front') || label.includes('user') || label.includes('face')))
+        );
       });
+
+      const constraints = {
+        video: {
+          facingMode: { ideal: targetFacingMode },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          ...(targetDevice ? { deviceId: { exact: targetDevice.deviceId } } : {}),
+        },
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const videoTrack = stream.getVideoTracks()[0];
+      const localVideoTrack = new LocalVideoTrack(videoTrack);
+
+      await localParticipant.publishTrack(localVideoTrack);
 
       setCurrentFacingMode(targetFacingMode);
       toast.success(`📹 Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
 
+      // Clean up the temporary stream
+      stream.getTracks().forEach(track => track.stop());
+
     } catch (error) {
       console.error('📹 Camera switch failed:', error);
       toast.error('Failed to switch camera');
-      
+
+      // Attempt to restore the previous camera
       try {
-        await localParticipant.setCameraEnabled(true);
+        await localParticipant.setCameraEnabled(true, {
+          facingMode: currentFacingMode,
+          resolution: { width: 1280, height: 720 }
+        });
       } catch (restoreError) {
         console.error('📹 Failed to restore camera:', restoreError);
+        toast.error('Failed to restore camera');
       }
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, isSwitching, currentFacingMode, hasBackCamera, hasFrontCamera]);
+  }, [localParticipant, isSwitching, currentFacingMode, hasBackCamera, hasFrontCamera, isIOS]);
 
   const canSwitchCamera = (hasBackCamera && hasFrontCamera) || availableCameras.length > 1;
 
@@ -413,6 +453,47 @@ const CustomerView = React.memo(({ onCallEnd }) => {
           </div>
         </div>
       )}
+
+
+{canSwitchCamera && showControls && (
+  <div className="absolute top-24 right-6 z-30">
+    <div className="relative group">
+      <button
+        onClick={switchCamera}
+        disabled={isSwitching}
+        className={`relative overflow-hidden bg-gradient-to-br ${
+          currentFacingMode === 'environment' 
+            ? 'from-green-400 to-emerald-600 shadow-green-500/50' 
+            : 'from-blue-400 to-purple-600 shadow-blue-500/50'
+        } text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
+      >
+        <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+        {isSwitching ? (
+          <Loader2 size={24} className="animate-spin relative z-10" />
+        ) : (
+          <SwitchCamera size={24} className="relative z-10" />
+        )}
+        {currentFacingMode === 'environment' && (
+          <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-ping opacity-75"></div>
+        )}
+      </button>
+      <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-xl bg-black/90 text-white text-xs font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
+        {currentFacingMode === 'user' ? (
+          <div className="flex items-center gap-2">
+            <span>🤳</span>
+            <span>Front Camera</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span>📱</span>
+            <span>Back Camera</span>
+            <CheckCircle className="w-4 h-4 text-green-400" />
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+)}
 
       {/* Enhanced Camera Switch Button - Top Right */}
       {/* {canSwitchCamera && showControls && (
@@ -802,6 +883,24 @@ const AgentView = React.memo(({
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
             {/* Camera Switch */}
+            // In AgentView mobile section, inside the Floating Action Buttons
+{canSwitchCamera && (
+  <button
+    onClick={switchCamera}
+    disabled={isSwitching}
+    className={`p-4 rounded-2xl ${glassStyle} ${
+      currentFacingMode === 'environment' 
+        ? 'bg-green-500/30 border-green-400/50' 
+        : 'bg-blue-500/30 border-blue-400/50'
+    } text-white shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95`}
+  >
+    {isSwitching ? (
+      <Loader2 size={24} className="animate-spin" />
+    ) : (
+      <SwitchCamera size={24} />
+    )}
+  </button>
+)}
             {/* {canSwitchCamera && (
               <button
                 onClick={switchCamera}
@@ -1707,16 +1806,16 @@ export default function VideoCallInventory({
         height: 720
       },
       videoSimulcast: false,
+      frameRate: 30, // Add explicit frame rate for better mobile performance
     },
-    adaptiveStream: false,
-    dynacast: false,
+    adaptiveStream: true, // Enable adaptive streaming for mobile
+    dynacast: true, // Enable dynamic casting for better bandwidth management
     autoSubscribe: true,
     disconnectOnPageLeave: true,
     reconnectPolicy: {
       nextRetryDelayInMs: (context) => Math.min((context.retryCount || 0) * 2000, 10000)
     },
     videoCaptureDefaults: {
-      // Default to front camera for agents on mobile, back camera for customers
       facingMode: (() => {
         const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
         const isAgent = participantName.toLowerCase().includes('agent');
@@ -1725,7 +1824,8 @@ export default function VideoCallInventory({
       resolution: {
         width: 1280,
         height: 720
-      }
+      },
+      frameRate: 30, // Add frame rate constraint
     }
   };
 
