@@ -768,7 +768,7 @@ const AgentView = React.memo(({
             </div>
 
             {/* Room Selector - Only when inventory active */}
-            {isInventoryActive && (
+            {/* {isInventoryActive && ( */}
               <div className="mb-3">
                 <RoomSelector 
                   currentRoom={currentRoom} 
@@ -776,7 +776,7 @@ const AgentView = React.memo(({
                   isMobile={true}
                 />
               </div>
-            )}
+            {/* )} */}
 
             {/* Stats Row */}
             {isInventoryActive && detectedItems.length > 0 && (
@@ -1473,7 +1473,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                             type="text"
                             value={editForm.name || ''}
                             onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                            className="w-full px-3 md:px-4 py-2 md:py-3 border border-gray-300 rounded-xl md:rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium text-sm md:text-base"
+                            className="w-full text-black px-3 md:px-4 py-2 md:py-3 border border-gray-300 rounded-xl md:rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium text-sm md:text-base"
                             placeholder="Item name"
                           />
                           <div className="grid grid-cols-3 gap-2 md:gap-3">
@@ -1483,7 +1483,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.quantity || ''}
                                 onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 1 })}
-                                className="w-full px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full text-black px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -1492,7 +1492,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.cuft || ''}
                                 onChange={(e) => setEditForm({ ...editForm, cuft: parseFloat(e.target.value) || 0 })}
-                                className="w-full px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full text-black px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                             <div>
@@ -1501,7 +1501,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
                                 type="number"
                                 value={editForm.weight || ''}
                                 onChange={(e) => setEditForm({ ...editForm, weight: parseFloat(e.target.value) || 0 })}
-                                className="w-full px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                className="w-full text-black px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
                             </div>
                           </div>
