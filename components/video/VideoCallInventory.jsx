@@ -331,9 +331,9 @@ function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
 }
 
-// Ultra Modern Customer View - Fixed with proper video display and bottom controls
 const CustomerView = React.memo(({ onCallEnd }) => {
   const [showControls, setShowControls] = useState(true);
+  const [isMobile, setIsMobile] = useState(true); // Default to true to avoid flash of content
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   
@@ -343,22 +343,86 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     canSwitchCamera, 
     isSwitching 
   } = useAdvancedCameraSwitching();
-  
-  // Auto-enable video track on mount
+
+  // Detect if the user is on a mobile device
   useEffect(() => {
-    if (localParticipant && !localParticipant.isCameraEnabled) {
-      localParticipant.setCameraEnabled(true, {
-        facingMode: currentFacingMode,
-        resolution: { width: 1280, height: 720 }
-      }).catch(error => {
-        console.error('Failed to enable camera:', error);
-        toast.error('Failed to start camera');
-      });
-    }
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Auto-enable video track on mount with retry logic
+  useEffect(() => {
+    if (!isMobile || !localParticipant) return;
+
+    const enableCamera = async () => {
+      try {
+        if (!localParticipant.isCameraEnabled) {
+          console.log('📹 Attempting to enable camera for local participant...');
+          await localParticipant.setCameraEnabled(true, {
+            facingMode: currentFacingMode,
+            resolution: { width: 1280, height: 720 }
+          });
+          console.log('📹 Camera enabled successfully:', localParticipant.isCameraEnabled);
+        } else {
+          console.log('📹 Camera already enabled:', localParticipant.isCameraEnabled);
+        }
+      } catch (error) {
+        console.error('📹 Failed to enable camera:', error);
+        toast.error('Failed to start camera. Please enable it manually.');
+        // Retry after a short delay
+        setTimeout(() => {
+          if (!localParticipant.isCameraEnabled) {
+            console.log('📹 Retrying to enable camera...');
+            enableCamera();
+          }
+        }, 2000);
+      }
+    };
+
+    enableCamera();
+  }, [localParticipant, currentFacingMode, isMobile]);
+
+  // Sync ControlBar camera toggle with useAdvancedCameraSwitching
+  useEffect(() => {
+    if (!localParticipant) return;
+
+    const handleTrackPublication = async () => {
+      if (!localParticipant.isCameraEnabled) {
+        // If camera is disabled via ControlBar, update our state
+        setCurrentFacingMode(currentFacingMode); // Keep the facing mode but camera is off
+        console.log('📹 Camera disabled via ControlBar');
+      } else {
+        // If camera is re-enabled, ensure it matches the current facing mode
+        try {
+          await localParticipant.setCameraEnabled(true, {
+            facingMode: currentFacingMode,
+            resolution: { width: 1280, height: 720 }
+          });
+          console.log('📹 Camera re-enabled with facingMode:', currentFacingMode);
+        } catch (error) {
+          console.error('📹 Failed to sync camera state:', error);
+        }
+      }
+    };
+
+    localParticipant.on('trackPublished', handleTrackPublication);
+    localParticipant.on('trackUnpublished', handleTrackPublication);
+    return () => {
+      localParticipant.off('trackPublished', handleTrackPublication);
+      localParticipant.off('trackUnpublished', handleTrackPublication);
+    };
   }, [localParticipant, currentFacingMode]);
 
-  // Auto-hide controls after 6 seconds of inactivity
+  // Auto-hide controls after 6 seconds of inactivity (only if on mobile)
   useEffect(() => {
+    if (!isMobile) return;
+
     let hideTimer;
     
     const resetHideTimer = () => {
@@ -381,9 +445,9 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       window.removeEventListener('click', handleActivity);
       window.removeEventListener('mousemove', handleActivity);
     };
-  }, []);
+  }, [isMobile]);
 
-  // Get all video tracks to display
+  // Get all video tracks to display (only if on mobile)
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -395,6 +459,31 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
   const agentName = remoteParticipants.find(p => isAgent(p.identity))?.name || 'Moving Agent';
 
+  // Render "Desktop not supported" message if not on mobile
+  if (!isMobile) {
+    return (
+      <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col items-center justify-center relative overflow-hidden">
+        {/* Animated background elements */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/30 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-pink-500/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '4s' }}></div>
+        </div>
+
+        {/* Message */}
+        <div className={`p-8 rounded-3xl text-center max-w-md ${glassStyle} z-10`}>
+          <h3 className="text-2xl font-bold text-white mb-3">
+            Desktop not supported
+          </h3>
+          <p className="text-white/80 leading-relaxed">
+            Thanks for coming! Please join with a mobile device, you'll need to give us a tour of your home.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Render the video call interface if on mobile
   return (
     <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col relative overflow-hidden">
       {/* Animated background elements */}
@@ -445,14 +534,56 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         </div>
       )}
 
-      {/* Control Bar - Using LiveKit's ControlBar with customization */}
+      {/* Camera Switch Button - Top Right */}
+      {canSwitchCamera && showControls && (
+        <div className="absolute top-24 right-6 z-30">
+          <div className="relative group">
+            <button
+              onClick={switchCamera}
+              disabled={isSwitching}
+              className={`relative overflow-hidden bg-gradient-to-br ${
+                currentFacingMode === 'environment' 
+                  ? 'from-green-400 to-emerald-600 shadow-green-500/50' 
+                  : 'from-blue-400 to-purple-600 shadow-blue-500/50'
+              } text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              {isSwitching ? (
+                <Loader2 size={24} className="animate-spin relative z-10" />
+              ) : (
+                <SwitchCamera size={24} className="relative z-10" />
+              )}
+              {currentFacingMode === 'environment' && (
+                <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-ping opacity-75"></div>
+              )}
+            </button>
+            
+            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-xl bg-black/90 text-white text-xs font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
+              {currentFacingMode === 'user' ? (
+                <div className="flex items-center gap-2">
+                  <span>🤳</span>
+                  <span>Front Camera</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span>📱</span>
+                  <span>Back Camera</span>
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Control Bar - Using LiveKit's ControlBar with camera control re-enabled */}
       <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
-        <div className="bg-gradient-to-t from-black/60 to-transparent p-8 pb-safe-or-8">
+        <div className="bg-gradient-to-t from-black/60 to-transparent p-6 pb-safe-or-6">
           <ControlBar 
             variation="minimal"
             controls={{
               microphone: true,
-              camera: !localParticipant?.isCameraEnabled, // Only show camera control if video is disabled
+              camera: true, // Re-enable camera control
               chat: false,
               screenShare: false,
               leave: true,
@@ -465,8 +596,8 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       {/* Tap hint */}
       {!showControls && (
         <div className="absolute bottom-safe-or-6 left-1/2 transform -translate-x-1/2 z-10">
-          <div className={`px-6 py-3 rounded-2xl text-white text-sm font-medium ${glassStyle} border border-white/30 animate-pulse`}>
-            Tap anywhere to show controls
+          <div className={`px-6 py-3 rounded-2xl text-center text-white text-sm font-medium ${glassStyle} border border-white/30 animate-pulse`}>
+            Tap to show controls
           </div>
         </div>
       )}
@@ -475,6 +606,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     </div>
   );
 });
+
 
 const AgentView = React.memo(({ 
   projectId, 
