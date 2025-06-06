@@ -883,7 +883,6 @@ const AgentView = React.memo(({
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
             {/* Camera Switch */}
-            // In AgentView mobile section, inside the Floating Action Buttons
 {canSwitchCamera && (
   <button
     onClick={switchCamera}
@@ -939,7 +938,7 @@ const AgentView = React.memo(({
               onClick={toggleSidebar}
               className={`relative p-4 rounded-2xl ${glassStyle} bg-indigo-600/30 border-indigo-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95`}
             >
-              {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
+              {showInventory ? <Camera size={24} /> : <Package size={24} />}
               {!showInventory && detectedItems.length > 0 && (
                 <span className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
                   {detectedItems.length}
