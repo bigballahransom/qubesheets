@@ -344,6 +344,19 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     isSwitching 
   } = useAdvancedCameraSwitching();
   
+  // Auto-enable video track on mount
+  useEffect(() => {
+    if (localParticipant && !localParticipant.isCameraEnabled) {
+      localParticipant.setCameraEnabled(true, {
+        facingMode: currentFacingMode,
+        resolution: { width: 1280, height: 720 }
+      }).catch(error => {
+        console.error('Failed to enable camera:', error);
+        toast.error('Failed to start camera');
+      });
+    }
+  }, [localParticipant, currentFacingMode]);
+
   // Auto-hide controls after 6 seconds of inactivity
   useEffect(() => {
     let hideTimer;
@@ -432,56 +445,14 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         </div>
       )}
 
-      {/* Camera Switch Button - Top Right */}
-      {canSwitchCamera && showControls && (
-        <div className="absolute top-24 right-6 z-30">
-          <div className="relative group">
-            <button
-              onClick={switchCamera}
-              disabled={isSwitching}
-              className={`relative overflow-hidden bg-gradient-to-br ${
-                currentFacingMode === 'environment' 
-                  ? 'from-green-400 to-emerald-600 shadow-green-500/50' 
-                  : 'from-blue-400 to-purple-600 shadow-blue-500/50'
-              } text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-              {isSwitching ? (
-                <Loader2 size={24} className="animate-spin relative z-10" />
-              ) : (
-                <SwitchCamera size={24} className="relative z-10" />
-              )}
-              {currentFacingMode === 'environment' && (
-                <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-ping opacity-75"></div>
-              )}
-            </button>
-            
-            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-xl bg-black/90 text-white text-xs font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
-              {currentFacingMode === 'user' ? (
-                <div className="flex items-center gap-2">
-                  <span>🤳</span>
-                  <span>Front Camera</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <span>📱</span>
-                  <span>Back Camera</span>
-                  <CheckCircle className="w-4 h-4 text-green-400" />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Control Bar - Using LiveKit's ControlBar */}
+      {/* Control Bar - Using LiveKit's ControlBar with customization */}
       <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
         <div className="bg-gradient-to-t from-black/60 to-transparent p-8 pb-safe-or-8">
           <ControlBar 
             variation="minimal"
             controls={{
               microphone: true,
-              camera: true,
+              camera: !localParticipant?.isCameraEnabled, // Only show camera control if video is disabled
               chat: false,
               screenShare: false,
               leave: true,
@@ -765,24 +736,6 @@ const AgentView = React.memo(({
         {/* Floating Action Buttons - Right Side */}
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
-            {/* Camera Switch */}
-            {canSwitchCamera && (
-              <button
-                onClick={switchCamera}
-                disabled={isSwitching}
-                className={`p-4 rounded-2xl ${glassStyle} ${
-                  currentFacingMode === 'environment' 
-                    ? 'bg-green-500/30 border-green-400/50' 
-                    : 'bg-blue-500/30 border-blue-400/50'
-                } text-white shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95`}
-              >
-                {isSwitching ? (
-                  <Loader2 size={24} className="animate-spin" />
-                ) : (
-                  <SwitchCamera size={24} />
-                )}
-              </button>
-            )}
 
             {/* AI Capture - Updated Icon */}
             {hasCustomer && (
