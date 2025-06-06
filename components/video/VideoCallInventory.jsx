@@ -336,13 +336,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   const [isMobile, setIsMobile] = useState(true); // Default to true to avoid flash of content
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
-  
-  const { 
-    switchCamera, 
-    currentFacingMode, 
-    canSwitchCamera, 
-    isSwitching 
-  } = useAdvancedCameraSwitching();
 
   // Detect if the user is on a mobile device
   useEffect(() => {
@@ -365,7 +358,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         if (!localParticipant.isCameraEnabled) {
           console.log('📹 Attempting to enable camera for local participant...');
           await localParticipant.setCameraEnabled(true, {
-            facingMode: currentFacingMode,
             resolution: { width: 1280, height: 720 }
           });
           console.log('📹 Camera enabled successfully:', localParticipant.isCameraEnabled);
@@ -386,38 +378,33 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     };
 
     enableCamera();
-  }, [localParticipant, currentFacingMode, isMobile]);
+  }, [localParticipant, isMobile]);
 
-  // Sync ControlBar camera toggle with useAdvancedCameraSwitching
+  // Sync video track state with ControlBar
   useEffect(() => {
     if (!localParticipant) return;
 
-    const handleTrackPublication = async () => {
-      if (!localParticipant.isCameraEnabled) {
-        // If camera is disabled via ControlBar, update our state
-        setCurrentFacingMode(currentFacingMode); // Keep the facing mode but camera is off
-        console.log('📹 Camera disabled via ControlBar');
-      } else {
-        // If camera is re-enabled, ensure it matches the current facing mode
+    const checkAndSyncVideo = async () => {
+      const videoTrack = localParticipant.getTrack(Track.Source.Camera);
+      if (videoTrack && videoTrack.isEnabled && !videoTrack.isMuted) {
+        console.log('📹 Video track is active and unmuted, syncing with ControlBar');
+      } else if (localParticipant.isCameraEnabled && (!videoTrack || videoTrack.isMuted)) {
+        console.log('📹 Video track out of sync, attempting to fix...');
         try {
           await localParticipant.setCameraEnabled(true, {
-            facingMode: currentFacingMode,
             resolution: { width: 1280, height: 720 }
           });
-          console.log('📹 Camera re-enabled with facingMode:', currentFacingMode);
+          console.log('📹 Video track synced:', localParticipant.isCameraEnabled);
         } catch (error) {
-          console.error('📹 Failed to sync camera state:', error);
+          console.error('📹 Failed to sync video track:', error);
         }
       }
     };
 
-    localParticipant.on('trackPublished', handleTrackPublication);
-    localParticipant.on('trackUnpublished', handleTrackPublication);
-    return () => {
-      localParticipant.off('trackPublished', handleTrackPublication);
-      localParticipant.off('trackUnpublished', handleTrackPublication);
-    };
-  }, [localParticipant, currentFacingMode]);
+    checkAndSyncVideo();
+    const interval = setInterval(checkAndSyncVideo, 1000); // Check every second
+    return () => clearInterval(interval);
+  }, [localParticipant]);
 
   // Auto-hide controls after 6 seconds of inactivity (only if on mobile)
   useEffect(() => {
@@ -534,56 +521,14 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         </div>
       )}
 
-      {/* Camera Switch Button - Top Right */}
-      {canSwitchCamera && showControls && (
-        <div className="absolute top-24 right-6 z-30">
-          <div className="relative group">
-            <button
-              onClick={switchCamera}
-              disabled={isSwitching}
-              className={`relative overflow-hidden bg-gradient-to-br ${
-                currentFacingMode === 'environment' 
-                  ? 'from-green-400 to-emerald-600 shadow-green-500/50' 
-                  : 'from-blue-400 to-purple-600 shadow-blue-500/50'
-              } text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
-            >
-              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-              {isSwitching ? (
-                <Loader2 size={24} className="animate-spin relative z-10" />
-              ) : (
-                <SwitchCamera size={24} className="relative z-10" />
-              )}
-              {currentFacingMode === 'environment' && (
-                <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-ping opacity-75"></div>
-              )}
-            </button>
-            
-            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-xl bg-black/90 text-white text-xs font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
-              {currentFacingMode === 'user' ? (
-                <div className="flex items-center gap-2">
-                  <span>🤳</span>
-                  <span>Front Camera</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <span>📱</span>
-                  <span>Back Camera</span>
-                  <CheckCircle className="w-4 h-4 text-green-400" />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Control Bar - Using LiveKit's ControlBar with camera control re-enabled */}
+      {/* Control Bar - Using LiveKit's ControlBar for camera control */}
       <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
         <div className="bg-gradient-to-t from-black/60 to-transparent p-6 pb-safe-or-6">
           <ControlBar 
             variation="minimal"
             controls={{
               microphone: true,
-              camera: true, // Re-enable camera control
+              camera: true, // Rely on ControlBar for camera toggle and switching
               chat: false,
               screenShare: false,
               leave: true,
