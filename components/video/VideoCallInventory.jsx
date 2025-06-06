@@ -42,15 +42,13 @@ import {
   Scan,
   Plus,
   ArrowRight,
-  Package,
-  EyeOff,
   CheckCircle,
   AlertCircle,
   ChevronLeft,
+  Home,
   Edit2,
-  Save,
   Trash2,
-  Home
+  Save
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
