@@ -333,8 +333,6 @@ function isAgent(participantName) {
 
 // Ultra Modern Customer View - Fixed with proper video display and bottom controls
 const CustomerView = React.memo(({ onCallEnd }) => {
-  const [micEnabled, setMicEnabled] = useState(true);
-  const [cameraEnabled, setCameraEnabled] = useState(true);
   const [showControls, setShowControls] = useState(true);
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
@@ -383,26 +381,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
 
   const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
   const agentName = remoteParticipants.find(p => isAgent(p.identity))?.name || 'Moving Agent';
-
-  const toggleMic = async () => {
-    if (!localParticipant) return;
-    try {
-      await localParticipant.setMicrophoneEnabled(!micEnabled);
-      setMicEnabled(!micEnabled);
-    } catch (error) {
-      toast.error('Failed to toggle microphone');
-    }
-  };
-
-  const toggleCamera = async () => {
-    if (!localParticipant) return;
-    try {
-      await localParticipant.setCameraEnabled(!cameraEnabled);
-      setCameraEnabled(!cameraEnabled);
-    } catch (error) {
-      toast.error('Failed to toggle camera');
-    }
-  };
 
   return (
     <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col relative overflow-hidden">
@@ -454,49 +432,8 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         </div>
       )}
 
-
-{canSwitchCamera && showControls && (
-  <div className="absolute top-24 right-6 z-30">
-    <div className="relative group">
-      <button
-        onClick={switchCamera}
-        disabled={isSwitching}
-        className={`relative overflow-hidden bg-gradient-to-br ${
-          currentFacingMode === 'environment' 
-            ? 'from-green-400 to-emerald-600 shadow-green-500/50' 
-            : 'from-blue-400 to-purple-600 shadow-blue-500/50'
-        } text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
-      >
-        <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-        {isSwitching ? (
-          <Loader2 size={24} className="animate-spin relative z-10" />
-        ) : (
-          <SwitchCamera size={24} className="relative z-10" />
-        )}
-        {currentFacingMode === 'environment' && (
-          <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-ping opacity-75"></div>
-        )}
-      </button>
-      <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-xl bg-black/90 text-white text-xs font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
-        {currentFacingMode === 'user' ? (
-          <div className="flex items-center gap-2">
-            <span>🤳</span>
-            <span>Front Camera</span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <span>📱</span>
-            <span>Back Camera</span>
-            <CheckCircle className="w-4 h-4 text-green-400" />
-          </div>
-        )}
-      </div>
-    </div>
-  </div>
-)}
-
-      {/* Enhanced Camera Switch Button - Top Right */}
-      {/* {canSwitchCamera && showControls && (
+      {/* Camera Switch Button - Top Right */}
+      {canSwitchCamera && showControls && (
         <div className="absolute top-24 right-6 z-30">
           <div className="relative group">
             <button
@@ -506,26 +443,20 @@ const CustomerView = React.memo(({ onCallEnd }) => {
                 currentFacingMode === 'environment' 
                   ? 'from-green-400 to-emerald-600 shadow-green-500/50' 
                   : 'from-blue-400 to-purple-600 shadow-blue-500/50'
-              } text-white p-6 rounded-3xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
-              style={{ minWidth: '80px', minHeight: '80px' }}
+              } text-white p-4 rounded-2xl shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95 border border-white/30`}
             >
-              {/* Animated background */}
-              {/* <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-              
+              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               {isSwitching ? (
-                <Loader2 size={36} className="animate-spin relative z-10" />
+                <Loader2 size={24} className="animate-spin relative z-10" />
               ) : (
-                <SwitchCamera size={36} className="relative z-10" />
+                <SwitchCamera size={24} className="relative z-10" />
               )}
-               */}
-              {/* Pulse ring animation */}
-              {/* {currentFacingMode === 'environment' && (
-                <div className="absolute inset-0 rounded-3xl border-2 border-green-400 animate-ping opacity-75"></div>
+              {currentFacingMode === 'environment' && (
+                <div className="absolute inset-0 rounded-2xl border-2 border-green-400 animate-ping opacity-75"></div>
               )}
-            </button> */}
+            </button>
             
-            {/* Enhanced camera mode indicator */}
-            {/* <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-2xl bg-black/90 text-white text-sm font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
+            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-xl bg-black/90 text-white text-xs font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
               {currentFacingMode === 'user' ? (
                 <div className="flex items-center gap-2">
                   <span>🤳</span>
@@ -541,67 +472,26 @@ const CustomerView = React.memo(({ onCallEnd }) => {
             </div>
           </div>
         </div>
-      )} */}
+      )}
 
-      {/* Enhanced Control bar - Bottom of screen */}
+      {/* Control Bar - Using LiveKit's ControlBar */}
       <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
         <div className="bg-gradient-to-t from-black/60 to-transparent p-8 pb-safe-or-8">
-          <div className="flex items-center justify-center gap-6">
-            <button 
-              onClick={toggleMic}
-              className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl ${
-                micEnabled 
-                  ? 'bg-white/20 backdrop-blur-xl text-white hover:bg-white/30 border border-white/30' 
-                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50 border border-red-400/50'
-              }`}
-            >
-              {micEnabled ? <Mic size={28} /> : <MicOff size={28} />}
-            </button>
-
-            <button 
-              onClick={onCallEnd}
-              className="w-24 h-24 bg-gradient-to-br from-red-500 to-red-700 hover:from-red-600 hover:to-red-800 rounded-3xl flex items-center justify-center text-white transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl shadow-red-500/50 border border-red-400/50"
-            >
-              <PhoneOff size={32} />
-            </button>
-
-            <button 
-              onClick={toggleCamera}
-              className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-300 transform hover:scale-110 active:scale-95 shadow-2xl ${
-                cameraEnabled 
-                  ? 'bg-white/20 backdrop-blur-xl text-white hover:bg-white/30 border border-white/30' 
-                  : 'bg-red-500 text-white hover:bg-red-600 shadow-red-500/50 border border-red-400/50'
-              }`}
-            >
-              {cameraEnabled ? <Video size={28} /> : <VideoOff size={28} />}
-            </button>
-          </div>
-          
-          {/* Camera switch for smaller screens */}
-          {/* {canSwitchCamera && (
-            <div className="mt-4 flex justify-center">
-              <button
-                onClick={switchCamera}
-                disabled={isSwitching}
-                className={`px-6 py-3 rounded-2xl backdrop-blur-xl text-white flex items-center gap-3 shadow-xl disabled:opacity-50 transition-all duration-300 transform hover:scale-105 active:scale-95 border border-white/30 ${
-                  currentFacingMode === 'environment' ? 'bg-green-500/60' : 'bg-blue-500/60'
-                }`}
-              >
-                {isSwitching ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : (
-                  <SwitchCamera size={20} />
-                )}
-                <span className="font-medium">
-                  {currentFacingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera'}
-                </span>
-              </button>
-            </div>
-          )} */}
+          <ControlBar 
+            variation="minimal"
+            controls={{
+              microphone: true,
+              camera: true,
+              chat: false,
+              screenShare: false,
+              leave: true,
+            }}
+            onLeave={onCallEnd}
+          />
         </div>
       </div>
 
-      {/* Elegant tap hint */}
+      {/* Tap hint */}
       {!showControls && (
         <div className="absolute bottom-safe-or-6 left-1/2 transform -translate-x-1/2 z-10">
           <div className={`px-6 py-3 rounded-2xl text-white text-sm font-medium ${glassStyle} border border-white/30 animate-pulse`}>
@@ -615,7 +505,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   );
 });
 
-// Ultra Modern Agent View - Updated with mobile overlay design
 const AgentView = React.memo(({ 
   projectId, 
   detectedItems, 
@@ -848,20 +737,18 @@ const AgentView = React.memo(({
               )}
             </div>
 
-            {/* Room Selector - Only when inventory active */}
-            {/* {isInventoryActive && ( */}
-              <div className="mb-3">
-                <RoomSelector 
-                  currentRoom={currentRoom} 
-                  onChange={setCurrentRoom}
-                  isMobile={true}
-                />
-              </div>
-            {/* )} */}
+            {/* Room Selector */}
+            <div className="mb-3">
+              <RoomSelector 
+                currentRoom={currentRoom} 
+                onChange={setCurrentRoom}
+                isMobile={true}
+              />
+            </div>
 
-            {/* Stats Row */}
+            {/* Stats Row - Simplified */}
             {isInventoryActive && detectedItems.length > 0 && (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
                   <p className="text-white/70 text-xs">Items</p>
                   <p className="text-white font-bold">{detectedItems.length}</p>
@@ -869,10 +756,6 @@ const AgentView = React.memo(({
                 <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
                   <p className="text-white/70 text-xs">Captures</p>
                   <p className="text-white font-bold">{captureCount}</p>
-                </div>
-                <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
-                  <p className="text-white/70 text-xs">Camera</p>
-                  <p className="text-white font-bold text-sm">{currentFacingMode === 'user' ? 'Front' : 'Back'}</p>
                 </div>
               </div>
             )}
@@ -883,24 +766,7 @@ const AgentView = React.memo(({
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
             {/* Camera Switch */}
-{canSwitchCamera && (
-  <button
-    onClick={switchCamera}
-    disabled={isSwitching}
-    className={`p-4 rounded-2xl ${glassStyle} ${
-      currentFacingMode === 'environment' 
-        ? 'bg-green-500/30 border-green-400/50' 
-        : 'bg-blue-500/30 border-blue-400/50'
-    } text-white shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95`}
-  >
-    {isSwitching ? (
-      <Loader2 size={24} className="animate-spin" />
-    ) : (
-      <SwitchCamera size={24} />
-    )}
-  </button>
-)}
-            {/* {canSwitchCamera && (
+            {canSwitchCamera && (
               <button
                 onClick={switchCamera}
                 disabled={isSwitching}
@@ -916,9 +782,9 @@ const AgentView = React.memo(({
                   <SwitchCamera size={24} />
                 )}
               </button>
-            )} */}
+            )}
 
-            {/* AI Capture */}
+            {/* AI Capture - Updated Icon */}
             {hasCustomer && (
               <button
                 onClick={takeScreenshot}
@@ -928,7 +794,7 @@ const AgentView = React.memo(({
                 {isProcessing ? (
                   <Loader2 size={24} className="animate-spin" />
                 ) : (
-                  <Target size={24} />
+                  <Camera size={24} />
                 )}
               </button>
             )}
@@ -938,7 +804,7 @@ const AgentView = React.memo(({
               onClick={toggleSidebar}
               className={`relative p-4 rounded-2xl ${glassStyle} bg-indigo-600/30 border-indigo-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95`}
             >
-              {showInventory ? <Camera size={24} /> : <Package size={24} />}
+              {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
               {!showInventory && detectedItems.length > 0 && (
                 <span className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
                   {detectedItems.length}
@@ -948,52 +814,9 @@ const AgentView = React.memo(({
           </div>
         )}
 
-        {/* Bottom Control Bar with AI Controls */}
+        {/* Bottom Control Bar */}
         <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
           <div className="bg-gradient-to-t from-black/60 to-transparent p-6 pb-safe-or-6">
-            {/* AI Inventory Controls
-            {hasCustomer && (
-              <div className="mb-6">
-                {!isInventoryActive ? (
-                  <button
-                    onClick={startInventory}
-                    className="w-full px-6 py-4 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center justify-center gap-3 shadow-2xl transition-all duration-300 transform hover:scale-105 active:scale-95"
-                  >
-                    <Zap size={20} />
-                    Start AI Inventory Scan
-                  </button>
-                ) : (
-                  <div className="flex gap-3">
-                    {captureMode === 'paused' ? (
-                      <button
-                        onClick={resumeInventory}
-                        className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all duration-300"
-                      >
-                        <Play size={18} />
-                        Resume
-                      </button>
-                    ) : (
-                      <button
-                        onClick={pauseInventory}
-                        className="flex-1 px-4 py-3 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all duration-300"
-                      >
-                        <Pause size={18} />
-                        Pause
-                      </button>
-                    )}
-                    <button
-                      onClick={stopInventory}
-                      className="px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all duration-300"
-                    >
-                      <X size={18} />
-                      Stop
-                    </button>
-                  </div>
-                )}
-              </div>
-            )} */}
-
-            {/* Standard Controls */}
             <ControlBar 
               variation="minimal"
               controls={{
@@ -1038,7 +861,7 @@ const AgentView = React.memo(({
           </div>
         )}
 
-        {/* Enhanced Frame Processor - only when active */}
+        {/* Frame Processor */}
         {isInventoryActive && captureMode === 'auto' && (
           <FrameProcessor
             projectId={projectId}
@@ -1051,7 +874,7 @@ const AgentView = React.memo(({
           />
         )}
 
-        {/* Inventory Sidebar - Full screen overlay on mobile */}
+        {/* Inventory Sidebar */}
         {showInventory && (
           <div className="fixed inset-0 z-50">
             <div 
