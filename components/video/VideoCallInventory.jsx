@@ -415,7 +415,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       )}
 
       {/* Enhanced Camera Switch Button - Top Right */}
-      {canSwitchCamera && showControls && (
+      {/* {canSwitchCamera && showControls && (
         <div className="absolute top-24 right-6 z-30">
           <div className="relative group">
             <button
@@ -429,22 +429,22 @@ const CustomerView = React.memo(({ onCallEnd }) => {
               style={{ minWidth: '80px', minHeight: '80px' }}
             >
               {/* Animated background */}
-              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              {/* <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               
               {isSwitching ? (
                 <Loader2 size={36} className="animate-spin relative z-10" />
               ) : (
                 <SwitchCamera size={36} className="relative z-10" />
               )}
-              
+               */}
               {/* Pulse ring animation */}
-              {currentFacingMode === 'environment' && (
+              {/* {currentFacingMode === 'environment' && (
                 <div className="absolute inset-0 rounded-3xl border-2 border-green-400 animate-ping opacity-75"></div>
               )}
-            </button>
+            </button> */}
             
             {/* Enhanced camera mode indicator */}
-            <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-2xl bg-black/90 text-white text-sm font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
+            {/* <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-2xl bg-black/90 text-white text-sm font-bold border border-white/30 whitespace-nowrap backdrop-blur-xl">
               {currentFacingMode === 'user' ? (
                 <div className="flex items-center gap-2">
                   <span>🤳</span>
@@ -460,7 +460,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
             </div>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* Enhanced Control bar - Bottom of screen */}
       <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
@@ -497,7 +497,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
           </div>
           
           {/* Camera switch for smaller screens */}
-          {canSwitchCamera && (
+          {/* {canSwitchCamera && (
             <div className="mt-4 flex justify-center">
               <button
                 onClick={switchCamera}
@@ -516,7 +516,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
                 </span>
               </button>
             </div>
-          )}
+          )} */}
         </div>
       </div>
 
@@ -802,7 +802,7 @@ const AgentView = React.memo(({
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
             {/* Camera Switch */}
-            {canSwitchCamera && (
+            {/* {canSwitchCamera && (
               <button
                 onClick={switchCamera}
                 disabled={isSwitching}
@@ -818,7 +818,7 @@ const AgentView = React.memo(({
                   <SwitchCamera size={24} />
                 )}
               </button>
-            )}
+            )} */}
 
             {/* AI Capture */}
             {hasCustomer && (
@@ -1012,7 +1012,7 @@ const AgentView = React.memo(({
             {/* Desktop controls */}
             <div className="flex items-center gap-3">
               {/* Camera switch */}
-              {canSwitchCamera && (
+              {/* {canSwitchCamera && (
                 <button
                   onClick={switchCamera}
                   disabled={isSwitching}
@@ -1027,7 +1027,7 @@ const AgentView = React.memo(({
                     {currentFacingMode === 'user' ? 'Switch to Back' : 'Switch to Front'}
                   </span>
                 </button>
-              )}
+              )} */}
 
               {/* Main action buttons */}
               {!isInventoryActive ? (
@@ -1140,7 +1140,7 @@ const AgentView = React.memo(({
                     </div>
                   </div>
                 </div>
-                <div className="bg-gradient-to-r from-purple-100 to-violet-100 p-4 rounded-2xl border border-purple-200/50">
+                {/* <div className="bg-gradient-to-r from-purple-100 to-violet-100 p-4 rounded-2xl border border-purple-200/50">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-purple-500 rounded-xl">
                       <SwitchCamera className="w-5 h-5 text-white" />
@@ -1152,7 +1152,7 @@ const AgentView = React.memo(({
                       </p>
                     </div>
                   </div>
-                </div>
+                </div> */}
               </div>
             </div>
           )}
