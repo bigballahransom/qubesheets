@@ -818,7 +818,7 @@ const AgentView = React.memo(({
             )}
 
             {/* AI Capture */}
-            {isInventoryActive && hasCustomer && (
+            {hasCustomer && (
               <button
                 onClick={takeScreenshot}
                 disabled={isProcessing}
@@ -850,7 +850,7 @@ const AgentView = React.memo(({
         {/* Bottom Control Bar with AI Controls */}
         <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
           <div className="bg-gradient-to-t from-black/60 to-transparent p-6 pb-safe-or-6">
-            {/* AI Inventory Controls */}
+            {/* AI Inventory Controls
             {hasCustomer && (
               <div className="mb-6">
                 {!isInventoryActive ? (
@@ -890,7 +890,7 @@ const AgentView = React.memo(({
                   </div>
                 )}
               </div>
-            )}
+            )} */}
 
             {/* Standard Controls */}
             <ControlBar 
