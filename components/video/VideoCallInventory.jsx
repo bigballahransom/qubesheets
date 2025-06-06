@@ -42,9 +42,14 @@ import {
   Scan,
   Plus,
   ArrowRight,
+  Package,
+  EyeOff,
   CheckCircle,
   AlertCircle,
   ChevronLeft,
+  Edit2,
+  Save,
+  Trash2,
   Home
 } from 'lucide-react';
 import { toast } from 'sonner';
