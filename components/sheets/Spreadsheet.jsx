@@ -778,7 +778,7 @@ useEffect(() => {
           {/* Add column button */}
           <div className="bg-white border-b flex items-center justify-center w-12 min-w-[48px]">
             <button 
-              className="p-1 rounded-full hover:bg-gray-100 flex items-center justify-center"
+              className="p-1 rounded-full hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-colors"
               onClick={handleAddColumn}
             >
               <Plus size={16} />
@@ -823,7 +823,7 @@ useEffect(() => {
               {/* Row actions */}
               <div className="w-12 min-w-[48px] border-b flex items-center justify-center">
                 <button 
-                  className="p-1 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500"
+                  className="p-1 rounded-full hover:bg-gray-100 hover:text-red-500 flex items-center justify-center text-gray-500 cursor-pointer transition-colors"
                   onClick={() => handleRemoveRow(row.id)}
                 >
                   <X size={12} />
@@ -835,7 +835,7 @@ useEffect(() => {
           {/* Add row button */}
           <div className="flex items-center border-b h-10 pl-8">
             <button 
-              className="flex items-center justify-center text-blue-500 hover:bg-gray-100 p-2 rounded-md"
+              className="flex items-center justify-center text-blue-500 hover:bg-gray-100 p-2 rounded-md cursor-pointer transition-colors"
               onClick={handleAddRow}
             >
               <Plus size={16} />
@@ -856,7 +856,7 @@ useEffect(() => {
       {/* Zoom controls */}
       <div className="fixed bottom-4 right-4 bg-white rounded-md shadow-md p-2 flex items-center gap-2 z-20">
         <button 
-          className="p-1 rounded-md hover:bg-gray-100"
+          className="p-1 rounded-md hover:bg-gray-100 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
           onClick={() => setZoom(Math.max(50, zoom - 10))}
           disabled={zoom <= 50}
         >
@@ -864,7 +864,7 @@ useEffect(() => {
         </button>
         <span className="text-sm w-12 text-center">{zoom}%</span>
         <button 
-          className="p-1 rounded-md hover:bg-gray-100"
+          className="p-1 rounded-md hover:bg-gray-100 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
           onClick={() => setZoom(Math.min(200, zoom + 10))}
           disabled={zoom >= 200}
         >
@@ -878,7 +878,7 @@ useEffect(() => {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{selectedRows.length} row{selectedRows.length > 1 ? 's' : ''} selected</span>
             <button 
-              className="p-1 px-2 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-sm"
+              className="p-1 px-2 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-sm cursor-pointer transition-colors"
               onClick={() => {
                 setRows(prev => prev.filter(row => !selectedRows.includes(row.id)));
                 setSelectedRows([]);
@@ -889,7 +889,7 @@ useEffect(() => {
               Delete
             </button>
             <button 
-              className="p-1 px-2 rounded-md bg-gray-100 hover:bg-gray-200 text-sm"
+              className="p-1 px-2 rounded-md bg-gray-100 hover:bg-gray-200 text-sm cursor-pointer transition-colors"
               onClick={() => setSelectedRows([])}
             >
               Cancel

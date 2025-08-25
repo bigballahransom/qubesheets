@@ -575,7 +575,7 @@ const ProcessingNotification = () => {
     <div className="flex flex-wrap gap-2">
       <Menubar>
         <MenubarMenu>
-          <MenubarTrigger className='gap-1'>
+          <MenubarTrigger className='gap-1 cursor-pointer'>
             Actions
           </MenubarTrigger>
           <MenubarContent>
@@ -727,7 +727,7 @@ const ProcessingNotification = () => {
               <h2 className="text-lg font-semibold text-slate-800">Add Items from Photo</h2>
               <button 
                 onClick={() => setIsUploaderOpen(false)}
-                className="p-2 rounded-full hover:bg-slate-100 transition-colors"
+                className="p-2 rounded-full hover:bg-slate-100 transition-colors cursor-pointer focus:ring-2 focus:ring-slate-500 focus:outline-none"
               >
                 <X size={20} className="text-slate-600" />
               </button>

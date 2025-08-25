@@ -387,7 +387,7 @@ export default function PhotoInventoryUploader({
         {!selectedFile ? (
           <div
             onClick={handleUploadClick}
-            className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors"
+            className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors focus:ring-2 focus:ring-blue-500 focus:outline-none"
           >
             <Camera className="mx-auto h-12 w-12 text-gray-400 mb-4" />
             <p className="text-lg font-medium text-gray-700 mb-2">
@@ -407,7 +407,7 @@ export default function PhotoInventoryUploader({
               />
               <button
                 onClick={handleReset}
-                className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors"
+                className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors cursor-pointer focus:ring-2 focus:ring-red-500 focus:outline-none"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -628,7 +628,7 @@ export default function PhotoInventoryUploader({
           <div className="mt-6 text-center">
             <button
               onClick={handleReset}
-              className="bg-gray-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-700 transition-colors"
+              className="bg-gray-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-700 transition-colors cursor-pointer focus:ring-2 focus:ring-gray-500 focus:outline-none"
             >
               Analyze Another Photo
             </button>

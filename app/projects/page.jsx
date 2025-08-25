@@ -6,6 +6,7 @@ import { Folder, Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import CreateProjectModal from '@/components/modals/CreateProjectModal';
 // Define Project type (optional in JSX but helpful for documentation)
 // interface Project {
 //   _id: string;
@@ -18,8 +19,6 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
   
   const router = useRouter();
   
@@ -62,42 +61,9 @@ export default function ProjectsPage() {
     }
   };
   
-  const createProject = async () => {
-    if (!newProjectName.trim()) return;
-    
-    try {
-      setIsCreating(true);
-      
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: newProjectName.trim(),
-        }),
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to create project: ${response.status} ${response.statusText}`);
-      }
-      
-      const project = await response.json();
-      
-      // Add the new project to the list
-      setProjects(prev => [project, ...prev]);
-      
-      // Clear the form
-      setNewProjectName('');
-      setIsCreating(false);
-      
-      // Navigate to the new project
-      router.push(`/projects/${project._id}`);
-    } catch (err) {
-      console.error('Error creating project:', err);
-      setError('Failed to create project. Please try again.');
-      setIsCreating(false);
-    }
+  const handleProjectCreated = (project) => {
+    // Add the new project to the list
+    setProjects(prev => [project, ...prev]);
   };
   
   const handleProjectClick = (projectId) => {
@@ -118,40 +84,15 @@ export default function ProjectsPage() {
           <AppSidebar />
           <div className="h-16"></div>
     <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
-      <h1 className="text-2xl font-bold mb-6">Projects</h1>
-      
-      {/* Create new project form */}
-      <div className="mb-6">
-        <div className="bg-white p-4 rounded-lg shadow-sm border">
-          <h2 className="text-lg font-medium mb-3">Create New Project</h2>
-          <div className="flex">
-            <input
-              type="text"
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="Enter project name"
-              className="flex-1 p-2 border rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isCreating}
-            />
-            <Button
-              onClick={createProject}
-              disabled={!newProjectName.trim() || isCreating}
-              className="rounded-l-none"
-            >
-              {isCreating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
+      {/* Header with create button */}
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <h1 className="text-2xl font-bold">Projects</h1>
+        <CreateProjectModal onProjectCreated={handleProjectCreated}>
+          <Button size="lg" className="flex-shrink-0 bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 hover:border-blue-300 cursor-pointer transition-colors">
+            <Plus className="mr-2 h-4 w-4" />
+            Create New Project
+          </Button>
+        </CreateProjectModal>
       </div>
       
       {/* Projects list */}

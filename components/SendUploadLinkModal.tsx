@@ -93,7 +93,7 @@ export default function SendUploadLinkModal({
             </h2>
             <button
               onClick={handleClose}
-              className="p-1 hover:bg-gray-100 rounded-md"
+              className="p-1 hover:bg-gray-100 rounded-md cursor-pointer transition-colors focus:ring-2 focus:ring-gray-500 focus:outline-none"
             >
               <X size={20} />
             </button>
@@ -125,7 +125,7 @@ export default function SendUploadLinkModal({
               </div>
               <button
                 onClick={handleClose}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg"
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg cursor-pointer transition-colors focus:ring-2 focus:ring-blue-500 focus:outline-none"
               >
                 Done
               </button>

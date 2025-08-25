@@ -17,6 +17,7 @@ import { Folder, Plus, Settings, Inbox, Check, X, ArrowRight, Loader2 } from 'lu
 import { Sidebar } from '@/components/ui/sidebar';
 import { useAuth } from '@clerk/nextjs';
 import { useOrganizationData } from '@/components/providers/OrganizationDataProvider';
+import CreateProjectModal from '@/components/modals/CreateProjectModal';
 
 interface Project {
   _id: string;
@@ -29,8 +30,6 @@ export function AppSidebar() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   
   const router = useRouter();
@@ -93,44 +92,9 @@ export function AppSidebar() {
     }
   };
   
-  const createProject = async () => {
-    if (!newProjectName.trim()) {
-      return;
-    }
-    
-    try {
-      setIsCreating(true);
-      
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: newProjectName.trim(),
-        }),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to create project');
-      }
-      
-      const project = await response.json();
-      
-      // Add the new project to the list
-      setProjects([project, ...projects]);
-      
-      // Clear the form
-      setNewProjectName('');
-      setIsCreating(false);
-      
-      // Navigate to the new project
-      router.push(`/projects/${project._id}`);
-    } catch (err) {
-      console.error('Error creating project:', err);
-      setError('Failed to create project. Please try again.');
-      setIsCreating(false);
-    }
+  const handleProjectCreated = (project: Project) => {
+    // Add the new project to the list
+    setProjects([project, ...projects]);
   };
   
   const handleProjectClick = (projectId: string) => {
@@ -149,43 +113,14 @@ export function AppSidebar() {
   return (
     <Sidebar>
 
-      {/* Add new project form */}
+      {/* Add new project button */}
       <div className="p-4 border-b">
-        {isCreating ? (
-          <div className="bg-blue-50 p-3 rounded-md">
-            <input
-              type="text"
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              placeholder="Project name"
-              className="w-full p-2 mb-2 text-sm border rounded"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setIsCreating(false)}
-                className="p-1.5 rounded hover:bg-gray-200"
-              >
-                <X size={16} />
-              </button>
-              <button
-                onClick={createProject}
-                disabled={!newProjectName.trim()}
-                className="p-1.5 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:bg-blue-300 flex items-center"
-              >
-                <Check size={16} />
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => setIsCreating(true)}
-            className="flex items-center gap-2 w-full p-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors"
-          >
+        <CreateProjectModal onProjectCreated={handleProjectCreated}>
+          <button className="flex items-center gap-2 w-full p-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors cursor-pointer">
             <Plus size={16} />
             <span>New Project</span>
           </button>
-        )}
+        </CreateProjectModal>
       </div>
       
       {/* Project list */}
@@ -208,7 +143,7 @@ export function AppSidebar() {
               <li key={project._id}>
                 <button
                   onClick={() => handleProjectClick(project._id)}
-                  className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 ${
+                  className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
                     activeProjectId === project._id ? 'bg-gray-100' : ''
                   }`}
                 >
