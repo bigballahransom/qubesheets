@@ -28,6 +28,17 @@ export default function ProjectsPage() {
     fetchProjects();
   }, []);
   
+  // Listen for organization data refresh events
+  useEffect(() => {
+    const handleDataRefresh = () => {
+      console.log('Refreshing projects data due to organization change');
+      fetchProjects();
+    };
+    
+    window.addEventListener('organizationDataRefresh', handleDataRefresh);
+    return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
+  }, []);
+  
   const fetchProjects = async () => {
     setLoading(true);
     setError(null);

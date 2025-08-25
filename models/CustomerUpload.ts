@@ -4,6 +4,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface ICustomerUpload extends Document {
   projectId: mongoose.Types.ObjectId | string;
   userId: string; // The business owner
+  organizationId?: string;
   customerName: string;
   customerPhone: string;
   uploadToken: string; // Unique token for customer access
@@ -22,6 +23,7 @@ const CustomerUploadSchema: Schema = new Schema(
       index: true
     },
     userId: { type: String, required: true, index: true },
+    organizationId: { type: String, required: false, index: true },
     customerName: { type: String, required: true },
     customerPhone: { type: String, required: true },
     uploadToken: { type: String, required: true, unique: true, index: true },

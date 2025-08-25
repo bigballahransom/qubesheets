@@ -87,6 +87,7 @@ export async function POST(
       data: buffer,
       projectId: customerUpload.projectId,
       userId: customerUpload.userId,
+      organizationId: customerUpload.organizationId,
       description: description ? `Customer upload by ${customerUpload.customerName}: ${description}` : `Image uploaded by ${customerUpload.customerName}`,
       // Initialize with pending analysis status
       analysisResult: {
@@ -109,7 +110,8 @@ export async function POST(
     const jobId = backgroundQueue.enqueue('image_analysis', {
       imageId: imageDoc._id.toString(),
       projectId: customerUpload.projectId.toString(),
-      userId: customerUpload.userId
+      userId: customerUpload.userId,
+      organizationId: customerUpload.organizationId
     });
 
     console.log(`✅ Analysis job queued: ${jobId}`);

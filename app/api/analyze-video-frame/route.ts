@@ -1,6 +1,6 @@
 // app/api/analyze-video-frame/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import OpenAI from 'openai';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
@@ -32,10 +32,11 @@ function generateImageHash(buffer: Buffer): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     const formData = await request.formData();
     const image = formData.get('image') as File;
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     // Verify project ownership
     await connectMongoDB();
-    const project = await Project.findOne({ _id: projectId, userId });
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
@@ -193,7 +194,7 @@ Only include items you're confident about (confidence > 0.7). Keep the response 
         const frameName = `video-frame-${roomLabel.toLowerCase().replace(/\s+/g, '-')}-${timestamp}.jpg`;
 
         // Create the image document
-        const imageDoc = await Image.create({
+        const imageData: any = {
           name: frameName,
           originalName: frameName,
           mimeType: 'image/jpeg',
@@ -207,7 +208,14 @@ Only include items you're confident about (confidence > 0.7). Keep the response 
             itemsCount: result.items.length,
             totalBoxes: 0
           }
-        });
+        };
+        
+        // Only add organizationId if user is in an organization
+        if (!authContext.isPersonalAccount) {
+          imageData.organizationId = authContext.organizationId;
+        }
+        
+        const imageDoc = await Image.create(imageData);
 
         savedImageId = imageDoc._id;
         console.log(`Saved video frame as image: ${frameName}`);

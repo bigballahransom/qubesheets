@@ -1,20 +1,20 @@
 // app/api/projects/[projectId]/inventory/route.js - Fixed version with better error handling
 
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/inventory - Get all inventory items for a project
 export async function GET(request, { params }) {
   try {
     console.log('📥 GET /api/projects/[projectId]/inventory called');
     
-    const { userId } = await auth();
-    if (!userId) {
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
       console.log('❌ Unauthorized request');
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return authContext;
     }
 
     await connectMongoDB();
@@ -24,18 +24,17 @@ export async function GET(request, { params }) {
     const { projectId } = await params;
     console.log('📋 Project ID:', projectId);
     
-    // Check if project exists and belongs to the user
-    const project = await Project.findOne({ _id: projectId, userId });
+    // Check if project exists and belongs to the organization
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
       console.log('❌ Project not found or unauthorized');
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
     
     // Get all inventory items for the project
-    const items = await InventoryItem.find({ 
-      projectId: projectId,
-      userId 
-    }).sort({ createdAt: -1 });
+    const items = await InventoryItem.find(
+      getProjectFilter(authContext, projectId)
+    ).sort({ createdAt: -1 });
     
     console.log(`✅ Found ${items.length} inventory items`);
     return NextResponse.json(items);
@@ -53,11 +52,12 @@ export async function POST(request, { params }) {
   try {
     console.log('📥 POST /api/projects/[projectId]/inventory called');
     
-    const { userId } = await auth();
-    if (!userId) {
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
       console.log('❌ Unauthorized request');
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     console.log('✅ MongoDB connected');
@@ -66,8 +66,8 @@ export async function POST(request, { params }) {
     const { projectId } = await params;
     console.log('📋 Project ID:', projectId);
     
-    // Check if project exists and belongs to the user
-    const project = await Project.findOne({ _id: projectId, userId });
+    // Check if project exists and belongs to the organization
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
       console.log('❌ Project not found or unauthorized');
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
@@ -101,7 +101,7 @@ export async function POST(request, { params }) {
       }
     }
     
-    // Add projectId and userId to each item
+    // Add projectId, userId, and organizationId to each item
     items = items.map((item, index) => {
       const processedItem = {
         ...item,
@@ -114,6 +114,11 @@ export async function POST(request, { params }) {
         fragile: item.fragile || false,
         special_handling: item.special_handling || "",
       };
+      
+      // Only include organizationId if the user is in an organization
+      if (!authContext.isPersonalAccount) {
+        processedItem.organizationId = authContext.organizationId;
+      }
       
       console.log(`✅ Processed item ${index + 1}:`, processedItem);
       return processedItem;

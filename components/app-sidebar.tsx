@@ -7,12 +7,16 @@ import {
   SignedIn,
   SignedOut,
   UserButton,
+  OrganizationSwitcher,
+  useOrganization,
+  useUser
 } from '@clerk/nextjs'
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Folder, Plus, Settings, Inbox, Check, X, ArrowRight, Loader2 } from 'lucide-react';
 import { Sidebar } from '@/components/ui/sidebar';
 import { useAuth } from '@clerk/nextjs';
+import { useOrganizationData } from '@/components/providers/OrganizationDataProvider';
 
 interface Project {
   _id: string;
@@ -32,13 +36,26 @@ export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const { isLoaded, userId } = useAuth();
+  const { organization } = useOrganization();
+  const { user } = useUser();
   
-  // Fetch projects on component mount
+  // Fetch projects when auth state loads initially
   useEffect(() => {
     if (isLoaded && userId) {
       fetchProjects();
     }
   }, [isLoaded, userId]);
+  
+  // Listen for organization data refresh events
+  useEffect(() => {
+    const handleDataRefresh = () => {
+      console.log('Refreshing projects data due to organization change');
+      fetchProjects();
+    };
+    
+    window.addEventListener('organizationDataRefresh', handleDataRefresh);
+    return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
+  }, []);
   
   // Set active project based on URL
   useEffect(() => {
@@ -131,6 +148,7 @@ export function AppSidebar() {
   
   return (
     <Sidebar>
+
       {/* Add new project form */}
       <div className="p-4 border-b">
         {isCreating ? (
@@ -212,14 +230,43 @@ export function AppSidebar() {
       {/* Footer menu */}
       <ClerkProvider>
       <div className="absolute bottom-0 left-0 right-0 border-t bg-white">
-        <div className="p-4">
-            
-                      {/* Desktop Action Buttons */}
-                      <div className="flex items-center space-x-4">
-                      <SignedIn>
-                          <UserButton />
-                        </SignedIn>
-                      </div>
+        <div className="p-3">
+          <SignedIn>
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* User Button - Left */}
+              <div className="flex-shrink-0">
+                <UserButton 
+                  userProfileMode="modal"
+                  appearance={{
+                    elements: {
+                      rootBox: "flex items-center",
+                      avatarBox: "h-7 w-7 sm:h-8 sm:w-8"
+                    }
+                  }}
+                />
+              </div>
+              
+              {/* Organization Switcher - Right */}
+              <div className="flex-1 min-w-0 max-w-[180px] sm:max-w-none">
+                <OrganizationSwitcher
+                  organizationProfileMode="modal"
+                  createOrganizationMode="modal"
+                  afterCreateOrganizationUrl="/projects"
+                  afterSelectOrganizationUrl="/projects"
+                  hidePersonal={false}
+                  appearance={{
+                    elements: {
+                      rootBox: "w-full",
+                      organizationSwitcherTrigger: "w-full justify-start text-left px-2 py-1.5 border rounded-md hover:bg-gray-100 text-xs sm:text-sm truncate min-h-[32px]",
+                      organizationPreviewTextContainer: "text-xs sm:text-sm font-medium truncate",
+                      organizationSwitcherPreviewMainIdentifier: "truncate max-w-[120px] sm:max-w-none",
+                      organizationSwitcherTriggerIcon: "w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0"
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </SignedIn>
         </div>
       </div>
       </ClerkProvider>

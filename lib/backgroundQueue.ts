@@ -7,6 +7,7 @@ interface QueueItem {
       imageId: string;
       projectId: string;
       userId: string;
+      organizationId?: string | null;
     };
     retries: number;
     maxRetries: number;
@@ -99,7 +100,8 @@ interface QueueItem {
           const result = await processImageAnalysis(
             item.data.imageId,
             item.data.projectId,
-            item.data.userId
+            item.data.userId,
+            item.data.organizationId
           );
           console.log(`✅ Job completed: ${item.id}`, result);
         }

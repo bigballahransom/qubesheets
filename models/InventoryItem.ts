@@ -20,6 +20,7 @@ export interface IInventoryItem extends Document {
   box_recommendation?: IBoxRecommendation;
   projectId: mongoose.Types.ObjectId | string;
   userId: string;
+  organizationId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,6 +53,7 @@ const InventoryItemSchema: Schema = new Schema(
       index: true
     },
     userId: { type: String, required: true, index: true },
+    organizationId: { type: String, required: false, index: true },
   },
   { timestamps: true }
 );

@@ -19,6 +19,7 @@ export interface IColumn {
 export interface ISpreadsheetData extends Document {
   projectId: mongoose.Types.ObjectId | string;
   userId: string;
+  organizationId?: string;
   columns: IColumn[];
   rows: IRow[];
   updatedAt: Date;
@@ -51,6 +52,7 @@ const SpreadsheetDataSchema: Schema = new Schema(
       index: true
     },
     userId: { type: String, required: true, index: true },
+    organizationId: { type: String, required: false, index: true },
     columns: [ColumnSchema],
     rows: [RowSchema],
   },

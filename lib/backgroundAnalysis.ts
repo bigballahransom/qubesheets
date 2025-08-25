@@ -123,15 +123,20 @@ function convertItemsToSpreadsheetRows(items: any[]): any[] {
 }
 
 // Function to update spreadsheet data
-async function updateSpreadsheetWithNewItems(projectId: string, userId: string, newItems: any[]): Promise<void> {
+async function updateSpreadsheetWithNewItems(projectId: string, userId: string, organizationId: string | null | undefined, newItems: any[]): Promise<void> {
   try {
     console.log('📊 Updating spreadsheet with new items...');
     
-    // Get existing spreadsheet data
-    const existingSpreadsheet = await SpreadsheetData.findOne({ 
-      projectId, 
-      userId 
-    });
+    // Get existing spreadsheet data - handle both personal and organization accounts
+    const spreadsheetQuery: any = { projectId };
+    if (organizationId) {
+      spreadsheetQuery.organizationId = organizationId;
+    } else {
+      spreadsheetQuery.userId = userId;
+      spreadsheetQuery.organizationId = { $exists: false };
+    }
+    
+    const existingSpreadsheet = await SpreadsheetData.findOne(spreadsheetQuery);
 
     // Default columns if none exist
     const defaultColumns = [
@@ -149,7 +154,7 @@ async function updateSpreadsheetWithNewItems(projectId: string, userId: string, 
       const updatedRows = [...existingSpreadsheet.rows, ...newRows];
       
       await SpreadsheetData.findOneAndUpdate(
-        { projectId, userId },
+        { projectId, organizationId },
         {
           $set: {
             rows: updatedRows,
@@ -161,12 +166,19 @@ async function updateSpreadsheetWithNewItems(projectId: string, userId: string, 
       console.log(`📊 Updated existing spreadsheet with ${newRows.length} new rows`);
     } else {
       // Create new spreadsheet with default columns and new rows
-      await SpreadsheetData.create({
+      const spreadsheetData: any = {
         projectId,
         userId,
         columns: defaultColumns,
         rows: newRows,
-      });
+      };
+      
+      // Only add organizationId if user is in an organization
+      if (organizationId) {
+        spreadsheetData.organizationId = organizationId;
+      }
+      
+      await SpreadsheetData.create(spreadsheetData);
       
       console.log(`📊 Created new spreadsheet with ${newRows.length} rows`);
     }
@@ -219,7 +231,7 @@ async function updateImageStatus(imageId: string, status: 'processing' | 'comple
 }
 
 // Main analysis function that can be called directly
-export async function processImageAnalysis(imageId: string, projectId: string, userId: string) {
+export async function processImageAnalysis(imageId: string, projectId: string, userId: string, organizationId?: string | null) {
   const startTime = Date.now();
   console.log(`🔄 Background analysis started for image: ${imageId}`);
   
@@ -230,12 +242,22 @@ export async function processImageAnalysis(imageId: string, projectId: string, u
     // Update status to processing
     await updateImageStatus(imageId, 'processing');
 
-    // Get the image from database
-    const image = await Image.findOne({
+    // Get the image from database - handle both personal and organization accounts
+    const imageQuery: any = {
       _id: imageId,
       projectId,
-      userId,
-    });
+    };
+    
+    // For organization accounts, filter by organizationId
+    // For personal accounts, filter by userId and ensure no organizationId
+    if (organizationId) {
+      imageQuery.organizationId = organizationId;
+    } else {
+      imageQuery.userId = userId;
+      imageQuery.organizationId = { $exists: false };
+    }
+    
+    const image = await Image.findOne(imageQuery);
 
     if (!image) {
       console.log('❌ Image not found');
@@ -399,19 +421,27 @@ Focus on clearly identifiable objects that would typically be included in a hous
         // Create inventory items if any were found
         let createdItems: any[] = [];
         if (enhancedItems.length > 0) {
-          const itemsToCreate = enhancedItems.map((item: any) => ({
-            ...item,
-            projectId,
-            userId,
-            // Add a flag to indicate this came from customer upload
-            description: `${item.description || ''} (Customer uploaded)`.trim(),
-          }));
+          const itemsToCreate = enhancedItems.map((item: any) => {
+            const itemData: any = {
+              ...item,
+              projectId,
+              userId,
+              // Add a flag to indicate this came from customer upload
+            };
+            
+            // Only add organizationId if user is in an organization
+            if (organizationId) {
+              itemData.organizationId = organizationId;
+            }
+            
+            return itemData;
+          });
 
           createdItems = await InventoryItem.insertMany(itemsToCreate);
           console.log(`💾 Created ${createdItems.length} inventory items`);
 
           // Update spreadsheet with new items
-          await updateSpreadsheetWithNewItems(projectId, userId, enhancedItems);
+          await updateSpreadsheetWithNewItems(projectId, userId, organizationId, enhancedItems);
         }
 
         // Update project timestamp

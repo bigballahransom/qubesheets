@@ -1,9 +1,9 @@
 // app/api/projects/[projectId]/images/[imageId]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/images/:imageId - Get a specific image (with binary data)
 export async function GET(
@@ -11,20 +11,19 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string; imageId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
     const { projectId, imageId } = await params;
     
-    const image = await Image.findOne({
-      _id: imageId,
-      projectId: projectId,
-      userId
-    });
+    const image = await Image.findOne(
+      getProjectFilter(authContext, projectId, { _id: imageId })
+    );
     
     if (!image) {
       return NextResponse.json({ error: 'Image not found' }, { status: 404 });
@@ -56,21 +55,20 @@ export async function DELETE(
   { params }: { params: Promise<{ projectId: string; imageId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
     const { projectId, imageId } = await params;
     
     // Delete the image
-    const image = await Image.findOneAndDelete({
-      _id: imageId,
-      projectId: projectId,
-      userId
-    });
+    const image = await Image.findOneAndDelete(
+      getProjectFilter(authContext, projectId, { _id: imageId })
+    );
     
     if (!image) {
       return NextResponse.json({ error: 'Image not found' }, { status: 404 });
@@ -97,10 +95,11 @@ export async function PATCH(
   { params }: { params: Promise<{ projectId: string; imageId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
@@ -110,7 +109,7 @@ export async function PATCH(
     
     // Find and update the image metadata
     const image = await Image.findOneAndUpdate(
-      { _id: imageId, projectId: projectId, userId },
+      getProjectFilter(authContext, projectId, { _id: imageId }),
       { $set: { description: data.description } },
       { new: true }
     ).select('name originalName mimeType size description analysisResult createdAt updatedAt');

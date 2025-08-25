@@ -9,6 +9,7 @@ export interface IImage extends Document {
   data: Buffer; // Store image as binary data
   projectId: mongoose.Types.ObjectId | string;
   userId: string;
+  organizationId?: string;
   description?: string;
   analysisResult?: {
     summary: string;
@@ -33,6 +34,7 @@ const ImageSchema: Schema = new Schema(
       index: true
     },
     userId: { type: String, required: true, index: true },
+    organizationId: { type: String, required: false, index: true },
     description: { type: String },
     analysisResult: {
       summary: { type: String },

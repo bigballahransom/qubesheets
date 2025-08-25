@@ -194,6 +194,19 @@ useEffect(() => {
     }
   }, [projectId]);
   
+  // Listen for organization data refresh events
+  useEffect(() => {
+    const handleDataRefresh = () => {
+      if (projectId) {
+        console.log('Refreshing inventory data due to organization change');
+        fetchProject(projectId);
+      }
+    };
+    
+    window.addEventListener('organizationDataRefresh', handleDataRefresh);
+    return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
+  }, [projectId]);
+  
   // Function to fetch project details
   const fetchProject = async (id) => {
     setLoading(true);

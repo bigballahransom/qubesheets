@@ -1,32 +1,50 @@
 // middleware.ts
-import { clerkMiddleware } from "@clerk/nextjs/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+
+// Create route matchers for different types of routes
+const isPublicRoute = createRouteMatcher([
+  '/video-call(.*)',
+  '/call-complete(.*)', 
+  '/customer-upload(.*)',
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/organization-selection(.*)'
+]);
+
+const isPublicApiRoute = createRouteMatcher([
+  '/api/customer-upload/(.*)',
+  '/api/livekit/token(.*)',
+  '/api/projects/(.*)/public-info'
+]);
+
+// Routes that require organization context
+const isOrganizationRoute = createRouteMatcher([
+  '/projects(.*)',
+  '/api/projects(.*)',
+  '/api/inventory(.*)',
+  '/api/images(.*)'
+]);
 
 export default clerkMiddleware(async (auth, req) => {
-  const { pathname } = req.nextUrl;
-  
-  // Define public routes that don't require authentication
-  const publicRoutes = [
-    '/video-call', // Video call pages for customers
-    '/call-complete', // Call completion page
-    '/customer-upload', // Customer upload pages
-    '/sign-in',
-    '/sign-up',
-  ];
+  // Allow public routes without authentication
+  if (isPublicRoute(req) || isPublicApiRoute(req)) {
+    return;
+  }
 
-  // Check if the current path matches any public route
-  const isPublicRoute = publicRoutes.some(route => {
-    return pathname.startsWith(route);
-  });
+  // Protect all other routes - but allow personal accounts
+  const { userId } = await auth.protect();
 
-  // Check for specific API routes that should be public
-  const isPublicApiRoute = 
-    pathname.startsWith('/api/customer-upload/') ||
-    pathname.startsWith('/api/livekit/token') ||
-    /^\/api\/projects\/[^/]+\/public-info/.test(pathname); // Public project info API
+  // Get orgId separately (might be null for personal accounts)
+  const { orgId } = await auth();
 
-  // Only protect routes that are not public
-  if (!isPublicRoute && !isPublicApiRoute) {
-    await auth.protect();
+  // For organization-specific routes, allow both personal accounts (no orgId) 
+  // and organization accounts (with orgId)
+  // Only redirect if user is not in any organization AND there are organizations available
+  if (isOrganizationRoute(req) && !orgId) {
+    // Allow personal account usage - they will use userId in the database
+    // Only redirect if we need to force organization selection
+    // For now, let personal accounts work with userId-based data
+    return;
   }
 });
 

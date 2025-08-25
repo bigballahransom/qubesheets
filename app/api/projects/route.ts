@@ -1,20 +1,19 @@
 // app/api/projects/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 
-// GET /api/projects - Get all projects for the authenticated user
+// GET /api/projects - Get all projects for the authenticated organization
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
-
     await connectMongoDB();
     
-    const projects = await Project.find({ userId }).sort({ updatedAt: -1 });
+    const projects = await Project.find(getOrgFilter(authContext)).sort({ updatedAt: -1 });
     
     return NextResponse.json(projects);
   } catch (error) {
@@ -29,10 +28,11 @@ export async function GET(request: NextRequest) {
 // POST /api/projects - Create a new project
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
@@ -46,12 +46,19 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Create the project
-    const project = await Project.create({
+    // Create the project with appropriate context
+    const projectData: any = {
       name: data.name,
       description: data.description,
       userId,
-    });
+    };
+    
+    // Only add organizationId if user is in an organization
+    if (!authContext.isPersonalAccount) {
+      projectData.organizationId = authContext.organizationId;
+    }
+    
+    const project = await Project.create(projectData);
     
     return NextResponse.json(project, { status: 201 });
   } catch (error) {

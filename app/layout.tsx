@@ -1,18 +1,12 @@
 import { type Metadata } from 'next'
 import {
   ClerkProvider,
-  SignInButton,
-  SignUpButton,
-  SignedIn,
-  SignedOut,
-  UserButton,
 } from '@clerk/nextjs'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
-import Navbar from '../components/nav/navbar'
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
-import { AppSidebar } from "@/components/app-sidebar"
-import '@livekit/components-styles';
+import '@livekit/components-styles'
+import { OrganizationDataProvider } from '@/components/providers/OrganizationDataProvider'
+import { Toaster } from 'sonner';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -39,17 +33,12 @@ export default function RootLayout({
     <ClerkProvider>
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-          {/* <Navbar/> */}
-          {/* <header className="flex justify-end items-center p-4 gap-4 h-16">
-          </header> */}
-          {/* <SidebarProvider>
-      <AppSidebar /> */}
-      <main>
-        {/* <SidebarTrigger /> */}
-        
-          {children}
-          </main>
-          {/* </SidebarProvider> */}
+          <OrganizationDataProvider>
+            <main>
+              {children}
+            </main>
+            <Toaster />
+          </OrganizationDataProvider>
         </body>
       </html>
     </ClerkProvider>

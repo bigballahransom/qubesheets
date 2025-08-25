@@ -1,9 +1,9 @@
 // app/api/projects/[projectId]/images/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/images - Get all images for a project
 export async function GET(
@@ -11,26 +11,26 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
     const { projectId } = await params;
     
-    // Check if project exists and belongs to the user
-    const project = await Project.findOne({ _id: projectId, userId });
+    // Check if project exists and belongs to the organization
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
     
     // Get all images for the project (exclude binary data for list view)
-    const images = await Image.find({ 
-      projectId: projectId,
-      userId 
-    }).select('name originalName mimeType size description analysisResult createdAt updatedAt').sort({ createdAt: -1 });
+    const images = await Image.find(
+      getProjectFilter(authContext, projectId)
+    ).select('name originalName mimeType size description analysisResult createdAt updatedAt').sort({ createdAt: -1 });
     
     return NextResponse.json(images);
   } catch (error) {
@@ -48,17 +48,18 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
     const { projectId } = await params;
     
-    // Check if project exists and belongs to the user
-    const project = await Project.findOne({ _id: projectId, userId });
+    // Check if project exists and belongs to the organization
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
@@ -112,7 +113,7 @@ export async function POST(
     }
 
     // Create the image document
-    const imageDoc = await Image.create({
+    const imageData: any = {
       name,
       originalName: image.name,
       mimeType: image.type,
@@ -127,7 +128,14 @@ export async function POST(
         totalBoxes: parsedAnalysisResult.total_boxes ? 
           Object.values(parsedAnalysisResult.total_boxes).reduce((a: number, b: unknown) => a + (typeof b === 'number' ? b : 0), 0) : 0
       } : undefined
-    });
+    };
+    
+    // Only add organizationId if user is in an organization
+    if (!authContext.isPersonalAccount) {
+      imageData.organizationId = authContext.organizationId;
+    }
+    
+    const imageDoc = await Image.create(imageData);
 
     // Update project's updatedAt timestamp
     await Project.findByIdAndUpdate(projectId, { 

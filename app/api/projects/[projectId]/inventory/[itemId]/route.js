@@ -1,9 +1,9 @@
 // app/api/projects/[projectId]/inventory/[itemId]/route.js
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/inventory/:itemId - Get a specific inventory item
 export async function GET(
@@ -11,21 +11,20 @@ export async function GET(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
     // IMPORTANT: Await params before using its properties
     const { projectId, itemId } = await params;
     
-    const item = await InventoryItem.findOne({
-      _id: itemId,
-      projectId: projectId,
-      userId
-    });
+    const item = await InventoryItem.findOne(
+      getProjectFilter(authContext, projectId, { _id: itemId })
+    );
     
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 });
@@ -47,10 +46,11 @@ export async function PATCH(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
@@ -61,7 +61,7 @@ export async function PATCH(
     
     // Find and update the item
     const item = await InventoryItem.findOneAndUpdate(
-      { _id: itemId, projectId: projectId, userId },
+      getProjectFilter(authContext, projectId, { _id: itemId }),
       { $set: data },
       { new: true }
     );
@@ -91,10 +91,11 @@ export async function DELETE(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
@@ -102,11 +103,9 @@ export async function DELETE(
     const { projectId, itemId } = await params;
     
     // Delete the item
-    const item = await InventoryItem.findOneAndDelete({
-      _id: itemId,
-      projectId: projectId,
-      userId
-    });
+    const item = await InventoryItem.findOneAndDelete(
+      getProjectFilter(authContext, projectId, { _id: itemId })
+    );
     
     if (!item) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 });

@@ -2,7 +2,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import InventoryManager from '@/components/InventoryManager';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -10,36 +10,57 @@ import { Loader2 } from 'lucide-react';
 
 export default function ProjectPage() {
   const params = useParams();
+  const router = useRouter();
   const projectId = params.projectId;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [project, setProject] = useState(null);
 
-  useEffect(() => {
-    const fetchProject = async () => {
-      if (!projectId) return;
-      
-      try {
-        const response = await fetch(`/api/projects/${projectId}`, {
-          cache: 'no-store' // Prevent caching issues
-        });
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch project details');
-        }
-        
-        const data = await response.json();
-        setProject(data);
-        setLoading(false);
-      } catch (err) {
-        console.error('Error loading project:', err);
-        setError('Failed to load project. Please try again.');
-        setLoading(false);
-      }
-    };
+  const fetchProject = async () => {
+    if (!projectId) return;
     
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        cache: 'no-store' // Prevent caching issues
+      });
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          // Project not found in current account, redirect to projects
+          console.log('Project not found in current account, redirecting to projects');
+          router.push('/projects');
+          return;
+        }
+        throw new Error('Failed to fetch project details');
+      }
+      
+      const data = await response.json();
+      setProject(data);
+      setLoading(false);
+    } catch (err) {
+      console.error('Error loading project:', err);
+      setError('Failed to load project. Please try again.');
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchProject();
   }, [projectId]);
+  
+  // Listen for organization data refresh events
+  useEffect(() => {
+    const handleDataRefresh = () => {
+      console.log('Refreshing project data due to organization change');
+      fetchProject();
+    };
+    
+    window.addEventListener('organizationDataRefresh', handleDataRefresh);
+    return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
+  }, []);
 
   if (loading) {
     return (

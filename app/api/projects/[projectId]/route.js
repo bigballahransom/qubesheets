@@ -1,8 +1,8 @@
 // app/api/projects/[projectId]/route.js
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId - Get a specific project
 export async function GET(
@@ -10,20 +10,18 @@ export async function GET(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
-
     await connectMongoDB();
     
     // IMPORTANT: Await params before using its properties
     const { projectId } = await params;
     
-    const project = await Project.findOne({
-      _id: projectId,
-      userId
-    });
+    const project = await Project.findOne(getOrgFilter(authContext, {
+      _id: projectId
+    }));
     
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
@@ -45,11 +43,10 @@ export async function PATCH(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
-
     await connectMongoDB();
     
     // IMPORTANT: Await params before using its properties
@@ -59,7 +56,7 @@ export async function PATCH(
     
     // Find and update the project
     const project = await Project.findOneAndUpdate(
-      { _id: projectId, userId },
+      getOrgFilter(authContext, { _id: projectId }),
       { $set: data },
       { new: true }
     );
@@ -84,21 +81,19 @@ export async function DELETE(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
-
     await connectMongoDB();
     
     // IMPORTANT: Await params before using its properties
     const { projectId } = await params;
     
     // Delete the project
-    const project = await Project.findOneAndDelete({
-      _id: projectId,
-      userId
-    });
+    const project = await Project.findOneAndDelete(getOrgFilter(authContext, {
+      _id: projectId
+    }));
     
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });

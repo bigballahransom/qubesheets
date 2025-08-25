@@ -1,6 +1,6 @@
 // app/api/analyze-image/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import OpenAI from 'openai';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
@@ -146,14 +146,12 @@ interface AnalysisResult {
 
 export async function POST(request: NextRequest) {
   try {
-    // Get auth from Clerk
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    // Get auth context
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     // Check if OpenAI API key is configured
     if (!process.env.OPENAI_API_KEY) {
@@ -451,18 +449,27 @@ For box recommendations, consider how items would be packed efficiently. For exa
         // Connect to MongoDB
         await connectMongoDB();
         
-        // Check if project exists and belongs to the user
-        const project = await Project.findOne({ _id: projectId, userId });
+        // Check if project exists and belongs to the organization
+        const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
         if (!project) {
           return NextResponse.json({ error: 'Project not found' }, { status: 404 });
         }
 
         // Prepare items for database
-        const itemsToCreate = analysisResult.items.map(item => ({
-          ...item,
-          projectId,
-          userId
-        }));
+        const itemsToCreate = analysisResult.items.map(item => {
+          const itemData: any = {
+            ...item,
+            projectId,
+            userId
+          };
+          
+          // Only add organizationId if user is in an organization
+          if (!authContext.isPersonalAccount) {
+            itemData.organizationId = authContext.organizationId;
+          }
+          
+          return itemData;
+        });
         
         // Insert all items to the database
         await InventoryItem.insertMany(itemsToCreate);

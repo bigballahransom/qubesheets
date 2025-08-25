@@ -7,18 +7,18 @@ export async function POST(request: NextRequest) {
   console.log('🔄 Background analysis API route called (fallback method)');
   
   try {
-    const { imageId, projectId, userId } = await request.json();
-    console.log('📝 API Route - Processing:', { imageId, projectId, userId });
+    const { imageId, projectId, userId, organizationId } = await request.json();
+    console.log('📝 API Route - Processing:', { imageId, projectId, userId, organizationId });
 
-    if (!imageId || !projectId || !userId) {
+    if (!imageId || !projectId || !userId || !organizationId) {
       return NextResponse.json(
-        { error: 'Missing required parameters: imageId, projectId, userId' },
+        { error: 'Missing required parameters: imageId, projectId, userId, organizationId' },
         { status: 400 }
       );
     }
 
     // Call the processing function directly
-    const result = await processImageAnalysis(imageId, projectId, userId);
+    const result = await processImageAnalysis(imageId, projectId, userId, organizationId);
     
     console.log('✅ API Route - Analysis completed:', result);
     
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     message: 'Background analysis endpoint is working',
-    usage: 'POST with { imageId, projectId, userId }',
+    usage: 'POST with { imageId, projectId, userId, organizationId }',
     timestamp: new Date().toISOString(),
     note: 'This is the fallback HTTP-based background processing route'
   });

@@ -1,6 +1,6 @@
 // app/api/projects/[projectId]/send-upload-link/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import CustomerUpload from '@/models/CustomerUpload';
@@ -12,17 +12,18 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
+    const { userId } = authContext;
 
     await connectMongoDB();
     
     const { projectId } = await params;
     
     // Verify project ownership
-    const project = await Project.findOne({ _id: projectId, userId });
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
@@ -44,7 +45,7 @@ export async function POST(
     expiresAt.setDate(expiresAt.getDate() + 7);
 
     // Create customer upload record
-    const customerUpload = await CustomerUpload.create({
+    const customerUploadData: any = {
       projectId,
       userId,
       customerName,
@@ -52,7 +53,14 @@ export async function POST(
       uploadToken,
       expiresAt,
       isActive: true,
-    });
+    };
+    
+    // Only add organizationId if user is in an organization
+    if (!authContext.isPersonalAccount) {
+      customerUploadData.organizationId = authContext.organizationId;
+    }
+    
+    const customerUpload = await CustomerUpload.create(customerUploadData);
 
     // Create upload URL
     const uploadUrl = `${process.env.NEXT_PUBLIC_APP_URL}/customer-upload/${uploadToken}`;

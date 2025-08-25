@@ -1,9 +1,9 @@
 // app/api/projects/[projectId]/spreadsheet/route.js
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import SpreadsheetData from '@/models/SpreadsheetData';
 import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/spreadsheet - Get spreadsheet data for a project
 export async function GET(
@@ -11,9 +11,9 @@ export async function GET(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
 
     await connectMongoDB();
@@ -21,17 +21,19 @@ export async function GET(
     // IMPORTANT: Await params before using its properties
     const { projectId } = await params;
     
-    // Check if project exists and belongs to the user
-    const project = await Project.findOne({ _id: projectId, userId });
+    // Check if project exists and belongs to the organization
+    const project = await Project.findOne(getOrgFilter(authContext, {
+      _id: projectId
+    }));
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
     
     // Get spreadsheet data for the project
-    const spreadsheetData = await SpreadsheetData.findOne({ 
-      projectId: projectId,
-      userId 
-    });
+    const spreadsheetData = await SpreadsheetData.findOne(getProjectFilter(
+      authContext,
+      projectId
+    ));
     
     if (!spreadsheetData) {
       return NextResponse.json({ 
@@ -59,9 +61,9 @@ export async function PUT(
   { params }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
     }
 
     await connectMongoDB();
@@ -69,8 +71,10 @@ export async function PUT(
     // IMPORTANT: Await params before using its properties
     const { projectId } = await params;
     
-    // Check if project exists and belongs to the user
-    const project = await Project.findOne({ _id: projectId, userId });
+    // Check if project exists and belongs to the organization
+    const project = await Project.findOne(getOrgFilter(authContext, {
+      _id: projectId
+    }));
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
@@ -103,15 +107,20 @@ export async function PUT(
     }
     
     // Update or create spreadsheet data
+    const updateData = {
+      columns: data.columns,
+      rows: data.rows,
+      updatedAt: new Date()
+    };
+    
+    // Only add organizationId if user is in an organization
+    if (!authContext.isPersonalAccount) {
+      updateData.organizationId = authContext.organizationId;
+    }
+    
     const updatedData = await SpreadsheetData.findOneAndUpdate(
-      { projectId: projectId, userId },
-      {
-        $set: {
-          columns: data.columns,
-          rows: data.rows,
-          updatedAt: new Date()
-        }
-      },
+      getProjectFilter(authContext, projectId),
+      { $set: updateData },
       { new: true, upsert: true }
     );
     
