@@ -42,6 +42,122 @@ interface PhotoInventoryUploaderProps {
   projectId?: string;
 }
 
+// Helper function to detect HEIC files
+function isHeicFile(file: File): boolean {
+  const fileName = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+  
+  return (
+    fileName.endsWith('.heic') || 
+    fileName.endsWith('.heif') ||
+    mimeType === 'image/heic' ||
+    mimeType === 'image/heif'
+  );
+}
+
+// Modern HEIC to JPEG conversion using heic-to library
+async function convertHeicToJpeg(file: File): Promise<File> {
+  // Ensure we're running on client-side
+  if (typeof window === 'undefined') {
+    throw new Error('HEIC conversion only available on client-side');
+  }
+  
+  let retryCount = 0;
+  const maxRetries = 2;
+  
+  while (retryCount <= maxRetries) {
+    try {
+      console.log(`🔄 Starting HEIC conversion attempt ${retryCount + 1} for:`, file.name, 'Size:', file.size);
+      
+      // Validate that we have a valid File object
+      if (!file || !(file instanceof File)) {
+        throw new Error('Invalid file object provided for conversion');
+      }
+      
+      // Check if file is actually HEIC
+      if (!isHeicFile(file)) {
+        throw new Error('File is not a valid HEIC/HEIF file');
+      }
+      
+      console.log('🔧 Loading heic-to library...');
+      
+      // Dynamic import with timeout - heic-to is more reliable than heic2any
+      const importPromise = import('heic-to');
+      const timeoutPromise = new Promise((_, timeoutReject) => {
+        setTimeout(() => timeoutReject(new Error('Library import timeout')), 15000);
+      });
+      
+      const { heicTo } = await Promise.race([importPromise, timeoutPromise]) as any;
+      
+      console.log('📦 heic-to loaded, starting conversion...');
+      
+      // Set up conversion with timeout - heic-to uses a simpler API
+      const conversionPromise = heicTo({
+        blob: file,
+        type: 'image/jpeg',
+        quality: 0.85 // Good balance of quality and compatibility
+      });
+      
+      const conversionTimeoutPromise = new Promise((_, timeoutReject) => {
+        setTimeout(() => timeoutReject(new Error('HEIC conversion timeout after 45 seconds')), 45000);
+      });
+      
+      const convertedBlob = await Promise.race([conversionPromise, conversionTimeoutPromise]);
+      
+      if (!convertedBlob || convertedBlob.size === 0) {
+        throw new Error('Conversion resulted in empty blob');
+      }
+      
+      // Create a new File object with converted data
+      const convertedFile = new File(
+        [convertedBlob],
+        file.name.replace(/\.(heic|heif)$/i, '.jpg'),
+        { 
+          type: 'image/jpeg',
+          lastModified: Date.now()
+        }
+      );
+      
+      console.log('✅ HEIC conversion successful:', convertedFile.name, 'Size:', convertedFile.size);
+      return convertedFile;
+      
+    } catch (error) {
+      console.error(`❌ HEIC conversion attempt ${retryCount + 1} failed:`, error);
+      
+      retryCount++;
+      
+      if (retryCount > maxRetries) {
+        // Handle different error types and provide meaningful messages
+        let errorMessage = 'Failed to convert HEIC image after multiple attempts.';
+        
+        if (error instanceof Error && error.message) {
+          if (error.message.includes('timeout')) {
+            errorMessage = 'HEIC conversion timed out. This file may be too large or complex. Try reducing file size or using a different image.';
+          } else if (error.message.includes('Library import')) {
+            errorMessage = 'Failed to load HEIC conversion library. Please check your internet connection and try again.';
+          } else {
+            errorMessage = `HEIC conversion failed: ${error.message}`;
+          }
+        } else if (error && typeof error === 'object' && Object.keys(error).length === 0) {
+          errorMessage = 'HEIC conversion failed due to an internal library error. This may be due to browser compatibility, memory constraints, or a corrupted HEIC file.';
+        } else if (typeof error === 'string') {
+          errorMessage = `HEIC conversion failed: ${error}`;
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      // Wait before retry with exponential backoff
+      const waitTime = Math.pow(2, retryCount) * 1000; // 2s, 4s, 8s
+      console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+  
+  // This should never be reached, but TypeScript requires it
+  throw new Error('HEIC conversion failed after all retry attempts');
+}
+
 // Helper functions to match those in the API route
 function isFurniture(category?: string): boolean {
   const furnitureKeywords = [
@@ -145,23 +261,75 @@ export default function PhotoInventoryUploader({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isConverting, setIsConverting] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [imageDescription, setImageDescription] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      if (file.type.startsWith('image/')) {
-        setSelectedFile(file);
-        setPreviewUrl(URL.createObjectURL(file));
-        setError(null);
-        setAnalysisResult(null);
-        setImageDescription('');
-      } else {
-        setError('Please select a valid image file');
+    if (!file) return;
+
+    // Reset states
+    setError(null);
+    setAnalysisResult(null);
+    setImageDescription('');
+    setPreviewUrl(null);
+    setSelectedFile(null);
+
+    try {
+      // Check if file is a supported image type or HEIC
+      const isRegularImage = file.type.startsWith('image/');
+      const isHeic = isHeicFile(file);
+      
+      if (!isRegularImage && !isHeic) {
+        setError('Please select a valid image file (JPEG, PNG, GIF, HEIC, or HEIF)');
+        return;
       }
+
+      let finalFile = file;
+
+      // Try client-side HEIC conversion with proper error handling
+      if (isHeic) {
+        setIsConverting(true);
+        try {
+          console.log('🔍 Attempting client-side HEIC conversion...');
+          finalFile = await convertHeicToJpeg(file);
+          console.log('✅ Client-side HEIC conversion successful');
+        } catch (conversionError) {
+          console.log('⚠️ Client-side HEIC conversion failed:', conversionError);
+          console.log('📤 Server will attempt conversion as fallback');
+          
+          // Show a user-friendly warning but still proceed
+          setError('HEIC conversion is having issues. The server will attempt to process your file, but for best results, consider converting to JPEG first.');
+          
+          finalFile = file; // Keep original HEIC file for server processing
+        } finally {
+          setIsConverting(false);
+        }
+      }
+
+      // Set the file and create preview
+      setSelectedFile(finalFile);
+      
+      // Try to create preview URL (may fail for HEIC if conversion failed)
+      try {
+        setPreviewUrl(URL.createObjectURL(finalFile));
+      } catch (previewError) {
+        console.log('Could not create preview for HEIC file, will show placeholder');
+        // For HEIC files where client conversion failed, show placeholder
+        if (isHeic && finalFile === file) {
+          setPreviewUrl(null); // We'll show a placeholder in the UI
+        } else {
+          setPreviewUrl(URL.createObjectURL(finalFile));
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error processing file:', error);
+      setError('Failed to process the selected file. Please try again.');
+      setIsConverting(false);
     }
   };
 
@@ -347,6 +515,7 @@ export default function PhotoInventoryUploader({
     setAnalysisResult(null);
     setError(null);
     setImageDescription('');
+    setIsConverting(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -379,12 +548,12 @@ export default function PhotoInventoryUploader({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.heic,.heif"
           onChange={handleFileSelect}
           className="hidden"
         />
 
-        {!selectedFile ? (
+        {!selectedFile && !isConverting ? (
           <div
             onClick={handleUploadClick}
             className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors focus:ring-2 focus:ring-blue-500 focus:outline-none"
@@ -394,17 +563,39 @@ export default function PhotoInventoryUploader({
               Click to upload a photo
             </p>
             <p className="text-sm text-gray-500">
-              Support for JPG, PNG, GIF up to 10MB
+              Support for JPG, PNG, GIF, HEIC, HEIF up to 10MB
             </p>
           </div>
-        ) : (
+        ) : isConverting ? (
+          <div className="border-2 border-dashed border-blue-300 rounded-lg p-8 text-center bg-blue-50">
+            <Loader2 className="mx-auto h-12 w-12 text-blue-500 animate-spin mb-4" />
+            <p className="text-lg font-medium text-blue-700 mb-2">
+              Converting HEIC image...
+            </p>
+            <p className="text-sm text-blue-600">
+              Please wait while we convert your image to a compatible format
+            </p>
+          </div>
+        ) : selectedFile ? (
           <div className="space-y-4">
             <div className="relative">
-              <img
-                src={previewUrl!}
-                alt="Preview"
-                className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
-              />
+              {previewUrl ? (
+                <img
+                  src={previewUrl}
+                  alt="Preview"
+                  className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
+                />
+              ) : (
+                <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-gray-100 border-2 border-dashed border-gray-300 flex flex-col items-center justify-center p-8">
+                  <Camera className="h-12 w-12 text-gray-400 mb-2" />
+                  <p className="text-sm font-medium text-gray-600">HEIC Image Selected</p>
+                  <p className="text-xs text-gray-500 text-center mt-1">
+                    {selectedFile.name}
+                    <br />
+                    Preview will be available after analysis
+                  </p>
+                </div>
+              )}
               <button
                 onClick={handleReset}
                 className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors cursor-pointer focus:ring-2 focus:ring-red-500 focus:outline-none"
@@ -428,7 +619,7 @@ export default function PhotoInventoryUploader({
               />
             </div>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Action Buttons */}
@@ -436,7 +627,7 @@ export default function PhotoInventoryUploader({
         <div className="text-center mb-6">
           <button
             onClick={handleAnalyze}
-            disabled={isAnalyzing}
+            disabled={isAnalyzing || isConverting}
             className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-2"
           >
             {isAnalyzing ? (
@@ -459,9 +650,35 @@ export default function PhotoInventoryUploader({
 
       {/* Error Display */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-          <p className="text-red-800 font-medium">Error</p>
-          <p className="text-red-600">{error}</p>
+        <div className={`border rounded-lg p-4 mb-6 ${
+          error.includes('HEIC conversion is having issues') 
+            ? 'bg-yellow-50 border-yellow-200' 
+            : 'bg-red-50 border-red-200'
+        }`}>
+          <p className={`font-medium ${
+            error.includes('HEIC conversion is having issues')
+              ? 'text-yellow-800'
+              : 'text-red-800'
+          }`}>
+            {error.includes('HEIC conversion is having issues') ? 'Notice' : 'Error'}
+          </p>
+          <p className={
+            error.includes('HEIC conversion is having issues')
+              ? 'text-yellow-600'
+              : 'text-red-600'
+          }>
+            {error}
+          </p>
+          {error.includes('HEIC') && (
+            <div className="mt-3 text-sm text-gray-700">
+              <p className="font-medium">Tips for HEIC files:</p>
+              <ul className="list-disc list-inside mt-1 space-y-1">
+                <li>Try using Safari browser (better HEIC support)</li>
+                <li>Convert to JPEG using your iPhone's Photos app</li>
+                <li>Take new photos in JPEG format (iPhone Settings → Camera → Formats → Most Compatible)</li>
+              </ul>
+            </div>
+          )}
         </div>
       )}
 

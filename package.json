@@ -26,6 +26,9 @@
     "clsx": "^2.1.1",
     "formidable": "^3.5.4",
     "framer-motion": "^12.9.2",
+    "heic-convert": "^2.1.0",
+    "heic-to": "^1.2.2",
+    "libheif-js": "^1.19.8",
     "livekit-client": "^2.13.3",
     "livekit-server-sdk": "^2.13.0",
     "lucide-react": "^0.503.0",
@@ -35,6 +38,7 @@
     "openai": "^4.100.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sharp": "^0.34.3",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.2.0",
     "twilio": "^5.7.0"

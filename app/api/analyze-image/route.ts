@@ -144,6 +144,73 @@ interface AnalysisResult {
   dbError?: string;
 }
 
+// Helper function to detect HEIC files server-side
+function isHeicFile(file: File): boolean {
+  const fileName = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+  
+  return (
+    fileName.endsWith('.heic') || 
+    fileName.endsWith('.heif') ||
+    mimeType === 'image/heic' ||
+    mimeType === 'image/heif'
+  );
+}
+
+// Server-side HEIC conversion with multiple fallbacks
+async function handleHeicFile(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string }> {
+  console.log('🔧 Attempting server-side HEIC conversion...');
+  
+  // Try heic-convert first (more reliable for HEIC)
+  try {
+    console.log('📦 Attempting conversion with heic-convert...');
+    const convert = require('heic-convert');
+    
+    const convertedBuffer = await convert({
+      buffer: buffer,
+      format: 'JPEG',
+      quality: 0.8
+    });
+    
+    console.log('✅ Server-side heic-convert conversion successful');
+    return {
+      buffer: Buffer.from(convertedBuffer),
+      mimeType: 'image/jpeg'
+    };
+    
+  } catch (heicConvertError) {
+    console.log('⚠️ heic-convert failed, trying Sharp...', heicConvertError);
+    
+    // Fallback to Sharp (may work if libheif is compiled)
+    try {
+      const sharp = require('sharp');
+      const convertedBuffer = await sharp(buffer)
+        .jpeg({ quality: 80 })
+        .toBuffer();
+      
+      console.log('✅ Server-side Sharp HEIC conversion successful');
+      return {
+        buffer: convertedBuffer,
+        mimeType: 'image/jpeg'
+      };
+      
+    } catch (sharpError) {
+      console.log('❌ Both heic-convert and Sharp failed:', { heicConvertError, sharpError });
+      
+      // If both fail, provide comprehensive guidance
+      const errorDetails: string[] = [];
+      if (heicConvertError && typeof heicConvertError === 'object' && 'message' in heicConvertError && heicConvertError.message) {
+        errorDetails.push(`heic-convert: ${heicConvertError.message}`);
+      }
+      if (sharpError && typeof sharpError === 'object' && 'message' in sharpError && sharpError.message) {
+        errorDetails.push(`sharp: ${sharpError.message}`);
+      }
+      
+      throw new Error(`Server-side HEIC conversion failed with multiple methods. ${errorDetails.join('; ')}. Please try: 1) Using Safari browser (better HEIC support), 2) Converting to JPEG using your phone's camera app, or 3) Changing iPhone settings to save photos as JPEG (Settings → Camera → Formats → Most Compatible).`);
+    }
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Get auth context
@@ -173,10 +240,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file type
-    if (!image.type.startsWith('image/')) {
+    // Validate file type (accept regular images and HEIC)
+    const isRegularImage = image.type.startsWith('image/');
+    const isHeic = isHeicFile(image);
+    
+    if (!isRegularImage && !isHeic) {
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image.' },
+        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, or HEIF).' },
         { status: 400 }
       );
     }
@@ -190,11 +260,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Convert image to base64
+    // Process image (handle HEIC if needed)
     const bytes = await image.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    let buffer = Buffer.from(bytes);
+    let mimeType = image.type;
+
+    // For HEIC files, attempt server-side handling as fallback
+    if (isHeic) {
+      try {
+        const converted = await handleHeicFile(buffer);
+        buffer = Buffer.from(converted.buffer);
+        mimeType = converted.mimeType;
+        console.log('✅ Server-side HEIC conversion successful');
+      } catch (conversionError) {
+        console.error('❌ Server HEIC conversion failed:', conversionError);
+        
+        // Extract meaningful error message
+        const errorMsg = conversionError instanceof Error ? conversionError.message : 'Unknown conversion error';
+        
+        return NextResponse.json(
+          { error: `HEIC processing failed: ${errorMsg}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Convert to base64 for OpenAI API
     const base64Image = buffer.toString('base64');
-    const mimeType = image.type;
     const imageUrl = `data:${mimeType};base64,${base64Image}`;
 
     // Prepare the prompt for moving inventory analysis
