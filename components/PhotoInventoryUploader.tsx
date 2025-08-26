@@ -297,102 +297,107 @@ export default function PhotoInventoryUploader({
   onImageSaved,
   projectId 
 }: PhotoInventoryUploaderProps) {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [imageDescription, setImageDescription] = useState('');
+  const [processingStatus, setProcessingStatus] = useState<{[key: string]: 'processing' | 'completed' | 'failed'}>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
 
     // Reset states
     setError(null);
     setAnalysisResult(null);
     setImageDescription('');
     setPreviewUrl(null);
-    setSelectedFile(null);
+    setSelectedFiles([]);
+    setProcessingStatus({});
 
     try {
-      // Check if file is a supported image type or HEIC
-      const isRegularImage = file.type.startsWith('image/');
-      const isHeic = isHeicFile(file);
+      const validFiles: File[] = [];
+      const invalidFiles: string[] = [];
       
-      // Special handling for iPhone photos that may have empty MIME types
-      const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
-      const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
+      setIsConverting(true);
       
-      if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
-        setError('Please select a valid image file (JPEG, PNG, GIF, HEIC, or HEIF). Note: Some iPhone photos may need to be converted to JPEG first.');
-        return;
-      }
-      
-      console.log('📷 File validation passed:', {
-        isRegularImage,
-        isHeic,
-        isPotentialImage,
-        hasImageExtension,
-        proceeding: true
-      });
-
-      let finalFile = file;
-
-      // Smart HEIC conversion: Mobile-first strategy
-      if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
-        setIsConverting(true);
-        const isMobile = isMobileDevice();
+      // Process each file
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
         
-        if (isMobile) {
-          // Mobile Strategy: Skip client conversion, use server-side
-          console.log('📱 Mobile device detected - skipping client conversion, using server-side processing');
-          finalFile = file; // Send HEIC directly to server
-          setError('📱 Processing HEIC image on server...');
-          setTimeout(() => setError(null), 2000);
-        } else {
-          // Desktop Strategy: Try client conversion first
-          try {
-            console.log('💻 Desktop device - attempting client-side HEIC conversion...');
-            
-            finalFile = await convertHeicToJpeg(file);
-            console.log('✅ Client-side HEIC conversion successful');
-          } catch (conversionError) {
-            console.log('⚠️ Client-side HEIC conversion failed:', conversionError);
-            console.log('📤 Server will attempt conversion as fallback');
-            
-            // Show a user-friendly message
-            setError('🔄 Using server-side HEIC processing...');
-            setTimeout(() => setError(null), 3000);
-            
-            finalFile = file; // Keep original HEIC file for server processing
+        // Check if file is a supported image type or HEIC
+        const isRegularImage = file.type.startsWith('image/');
+        const isHeic = isHeicFile(file);
+        
+        // Special handling for iPhone photos that may have empty MIME types
+        const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
+        const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
+        
+        if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
+          invalidFiles.push(file.name);
+          continue;
+        }
+        
+        let finalFile = file;
+
+        // Smart HEIC conversion: Mobile-first strategy
+        if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
+          const isMobile = isMobileDevice();
+          
+          if (isMobile) {
+            // Mobile Strategy: Skip client conversion, use server-side
+            console.log('📱 Mobile device detected - skipping client conversion for', file.name);
+            finalFile = file; // Send HEIC directly to server
+          } else {
+            // Desktop Strategy: Try client conversion first
+            try {
+              console.log('💻 Converting HEIC file:', file.name);
+              finalFile = await convertHeicToJpeg(file);
+              console.log('✅ Client-side HEIC conversion successful for', file.name);
+            } catch (conversionError) {
+              console.log('⚠️ Client-side HEIC conversion failed for', file.name, '- server will handle');
+              finalFile = file; // Keep original HEIC file for server processing
+            }
           }
         }
-        
-        setIsConverting(false);
+
+        validFiles.push(finalFile);
+      }
+      
+      setIsConverting(false);
+      
+      // Show errors for invalid files
+      if (invalidFiles.length > 0) {
+        setError(`Invalid files skipped: ${invalidFiles.join(', ')}. Please select valid image files.`);
+      }
+      
+      if (validFiles.length === 0) {
+        setError('No valid image files selected. Please select JPEG, PNG, GIF, HEIC, or HEIF files.');
+        return;
       }
 
-      // Set the file and create preview
-      setSelectedFile(finalFile);
+      // Set selected files
+      setSelectedFiles(validFiles);
       
-      // Try to create preview URL (may fail for HEIC if conversion failed)
-      try {
-        setPreviewUrl(URL.createObjectURL(finalFile));
-      } catch (previewError) {
-        console.log('Could not create preview for HEIC file, will show placeholder');
-        // For HEIC files where client conversion failed, show placeholder
-        if (isHeic && finalFile === file) {
-          setPreviewUrl(null); // We'll show a placeholder in the UI
-        } else {
-          setPreviewUrl(URL.createObjectURL(finalFile));
+      // Create preview for single file, or show count for multiple
+      if (validFiles.length === 1) {
+        try {
+          setPreviewUrl(URL.createObjectURL(validFiles[0]));
+        } catch (previewError) {
+          console.log('Could not create preview, will show placeholder');
+          setPreviewUrl(null);
         }
+      } else {
+        setPreviewUrl(null); // No preview for multiple files
       }
       
     } catch (error) {
-      console.error('Error processing file:', error);
-      setError('Failed to process the selected file. Please try again.');
+      console.error('Error processing files:', error);
+      setError('Failed to process the selected files. Please try again.');
       setIsConverting(false);
     }
   };
@@ -430,76 +435,105 @@ export default function PhotoInventoryUploader({
   };
 
   const handleAnalyze = async () => {
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
 
     setIsAnalyzing(true);
     setError(null);
 
     try {
-      console.log('🚀 Starting async image processing...', {
-        fileName: selectedFile.name,
-        fileSize: selectedFile.size,
-        fileType: selectedFile.type,
-        projectId: projectId
-      });
+      console.log(`🚀 Starting async processing for ${selectedFiles.length} images...`);
 
-      // Step 1: Save image to MongoDB first
-      const formData = new FormData();
-      formData.append('image', selectedFile);
-      formData.append('description', imageDescription);
-      
-      if (projectId) {
-        formData.append('projectId', projectId);
+      // Process each file sequentially
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        const fileNum = i + 1;
+        
+        console.log(`📸 Processing image ${fileNum}/${selectedFiles.length}: ${file.name}`);
+        
+        // Update processing status for this file
+        setProcessingStatus(prev => ({
+          ...prev,
+          [file.name]: 'processing'
+        }));
+
+        try {
+          // Step 1: Save image to MongoDB first
+          const formData = new FormData();
+          formData.append('image', file);
+          formData.append('description', imageDescription);
+          
+          if (projectId) {
+            formData.append('projectId', projectId);
+          }
+
+          console.log(`💾 Saving image ${fileNum} to MongoDB...`);
+          const saveResponse = await fetch(`/api/projects/${projectId}/images`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!saveResponse.ok) {
+            const errorText = await saveResponse.text();
+            console.error(`❌ Failed to save image ${fileNum}:`, errorText);
+            setProcessingStatus(prev => ({
+              ...prev,
+              [file.name]: 'failed'
+            }));
+            continue; // Skip to next file
+          }
+
+          const savedImage = await saveResponse.json();
+          console.log(`✅ Image ${fileNum} saved to MongoDB:`, savedImage._id);
+
+          // Step 2: Queue background analysis job
+          console.log(`📋 Queueing background analysis job for image ${fileNum}...`);
+          const queueResponse = await fetch('/api/background-queue', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              type: 'image_analysis',
+              imageId: savedImage._id,
+              projectId: projectId,
+              useRailwayService: file.size > 4 * 1024 * 1024 || 
+                               file.name.toLowerCase().match(/\.(heic|heif)$/) || 
+                               file.type.includes('heic')
+            }),
+          });
+
+          if (!queueResponse.ok) {
+            console.error(`⚠️ Failed to queue background job for image ${fileNum}, but image was saved`);
+            setProcessingStatus(prev => ({
+              ...prev,
+              [file.name]: 'completed'
+            }));
+          } else {
+            const queueResult = await queueResponse.json();
+            console.log(`✅ Background job queued for image ${fileNum}:`, queueResult.jobId);
+            setProcessingStatus(prev => ({
+              ...prev,
+              [file.name]: 'completed'
+            }));
+          }
+
+        } catch (fileError) {
+          console.error(`❌ Error processing file ${fileNum}:`, fileError);
+          setProcessingStatus(prev => ({
+            ...prev,
+            [file.name]: 'failed'
+          }));
+        }
       }
 
-      console.log('💾 Saving image to MongoDB...');
-      const saveResponse = await fetch(`/api/projects/${projectId}/images`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!saveResponse.ok) {
-        const errorText = await saveResponse.text();
-        console.error('❌ Failed to save image:', errorText);
-        throw new Error(`Failed to save image: ${saveResponse.statusText}`);
-      }
-
-      const savedImage = await saveResponse.json();
-      console.log('✅ Image saved to MongoDB:', savedImage.id);
-
-      // Step 2: Queue background analysis job
-      console.log('📋 Queueing background analysis job...');
-      const queueResponse = await fetch('/api/background-queue', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          type: 'image_analysis',
-          imageId: savedImage.id,
-          projectId: projectId,
-          useRailwayService: selectedFile.size > 4 * 1024 * 1024 || 
-                           selectedFile.name.toLowerCase().match(/\.(heic|heif)$/) || 
-                           selectedFile.type.includes('heic')
-        }),
-      });
-
-      if (!queueResponse.ok) {
-        console.error('⚠️ Failed to queue background job, but image was saved');
-        // Don't throw error here - image was saved successfully
-      } else {
-        const queueResult = await queueResponse.json();
-        console.log('✅ Background job queued:', queueResult.jobId);
-      }
-
-      // Step 3: Show success and close modal
+      // All files processed
       setIsAnalyzing(false);
       setError(null);
 
       // Import toast dynamically
       const { toast } = await import('sonner');
-      toast.success('Thank you! Saved and analyzing inventory', {
-        description: 'Your image has been saved and analysis is running in the background.',
+      toast.success(`Processing ${selectedFiles.length} images completed!`, {
+        description: 'Your images have been saved and analysis is running in the background.',
         duration: 5000,
       });
 
@@ -538,7 +572,7 @@ export default function PhotoInventoryUploader({
 
   // Legacy function kept for backward compatibility (not used in new async flow)
   const handleLegacyAnalyze = async () => {
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
 
     setIsAnalyzing(true);
     setError(null);
@@ -546,7 +580,7 @@ export default function PhotoInventoryUploader({
     try {
       // Legacy blocking analysis code (kept for reference/fallback)
       const formData = new FormData();
-      formData.append('image', selectedFile);
+      formData.append('image', selectedFiles[0]);
       
       if (projectId) {
         formData.append('projectId', projectId);
@@ -676,7 +710,7 @@ export default function PhotoInventoryUploader({
       setAnalysisResult(enhancedResult);
       
       // Save image to database
-      await saveImageToDatabase(selectedFile, enhancedResult);
+      await saveImageToDatabase(selectedFiles[0], enhancedResult);
       
       // Call the items analyzed callback
       if (onItemsAnalyzed) {
@@ -706,11 +740,12 @@ export default function PhotoInventoryUploader({
   };
 
   const handleReset = () => {
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setPreviewUrl(null);
     setAnalysisResult(null);
     setError(null);
     setImageDescription('');
+    setProcessingStatus({});
     setIsConverting(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -747,48 +782,57 @@ export default function PhotoInventoryUploader({
           accept="image/*,.heic,.heif"
           onChange={handleFileSelect}
           className="hidden"
+          multiple
         />
 
-        {!selectedFile && !isConverting ? (
+        {selectedFiles.length === 0 && !isConverting ? (
           <div
             onClick={handleUploadClick}
             className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors focus:ring-2 focus:ring-blue-500 focus:outline-none"
           >
             <Camera className="mx-auto h-12 w-12 text-gray-400 mb-4" />
             <p className="text-lg font-medium text-gray-700 mb-2">
-              Click to upload a photo
+              Click to upload photos
             </p>
             <p className="text-sm text-gray-500">
-              Support for JPG, PNG, GIF, HEIC, HEIF up to 10MB
+              Select single or multiple images (JPG, PNG, GIF, HEIC, HEIF up to 10MB each)
             </p>
           </div>
         ) : isConverting ? (
           <div className="border-2 border-dashed border-blue-300 rounded-lg p-8 text-center bg-blue-50">
             <Loader2 className="mx-auto h-12 w-12 text-blue-500 animate-spin mb-4" />
             <p className="text-lg font-medium text-blue-700 mb-2">
-              Converting HEIC image...
+              Processing images...
             </p>
             <p className="text-sm text-blue-600">
-              Please wait while we convert your image to a compatible format
+              Please wait while we process your images
             </p>
           </div>
-        ) : selectedFile ? (
+        ) : selectedFiles.length > 0 ? (
           <div className="space-y-4">
             <div className="relative">
-              {previewUrl ? (
+              {selectedFiles.length === 1 && previewUrl ? (
                 <img
                   src={previewUrl}
                   alt="Preview"
                   className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
                 />
-              ) : (
+              ) : selectedFiles.length === 1 ? (
                 <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-gray-100 border-2 border-dashed border-gray-300 flex flex-col items-center justify-center p-8">
                   <Camera className="h-12 w-12 text-gray-400 mb-2" />
                   <p className="text-sm font-medium text-gray-600">HEIC Image Selected</p>
                   <p className="text-xs text-gray-500 text-center mt-1">
-                    {selectedFile.name}
+                    {selectedFiles[0].name}
                     <br />
                     Preview will be available after analysis
+                  </p>
+                </div>
+              ) : (
+                <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-blue-100 border-2 border-dashed border-blue-300 flex flex-col items-center justify-center p-8">
+                  <Package className="h-12 w-12 text-blue-500 mb-2" />
+                  <p className="text-lg font-medium text-blue-700">{selectedFiles.length} Images Selected</p>
+                  <p className="text-sm text-blue-600 text-center mt-1">
+                    Ready to analyze multiple images
                   </p>
                 </div>
               )}
@@ -819,7 +863,7 @@ export default function PhotoInventoryUploader({
       </div>
 
       {/* Action Buttons */}
-      {selectedFile && !analysisResult && (
+      {selectedFiles.length > 0 && !analysisResult && (
         <div className="text-center mb-6">
           <button
             onClick={handleAnalyze}

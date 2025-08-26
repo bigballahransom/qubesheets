@@ -292,3 +292,277 @@ Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allow
  ✓ Compiled in 205ms (1029 modules)
  ✓ Compiled in 168ms (1029 modules)
  ✓ Compiled in 356ms (1239 modules)
+🧹 Cleaned up SSE connection: 68adfa6fdff85832fc7fd9df-1756235148737-tb7i9ogvn
+ GET /api/processing-complete?projectId=68adfa6fdff85832fc7fd9df 200 in 600340ms
+ ✓ Compiled /api/processing-complete in 143ms (84 modules)
+📡 New SSE connection established: 68adfa6fdff85832fc7fd9df-1756235752348-gsxahtlm1
+🧹 Cleaned up SSE connection: 68adfa6fdff85832fc7fd9df-1756235752348-gsxahtlm1
+ GET /api/processing-complete?projectId=68adfa6fdff85832fc7fd9df 200 in 600194ms
+📡 New SSE connection established: 68adfa6fdff85832fc7fd9df-1756236355946-6oiebtlda
+ ✓ Compiled in 243ms (1029 modules)
+ ✓ Compiled in 121ms (1029 modules)
+ ✓ Compiled in 108ms (1029 modules)
+ ✓ Compiled in 124ms (1029 modules)
+ ✓ Compiled in 117ms (1029 modules)
+ ✓ Compiled in 105ms (1029 modules)
+ ✓ Compiled in 340ms (1029 modules)
+ ✓ Compiled in 290ms (1029 modules)
+ ✓ Compiled in 119ms (1029 modules)
+ ✓ Compiled in 113ms (1029 modules)
+ ✓ Compiled in 129ms (1029 modules)
+ ✓ Compiled in 114ms (1029 modules)
+ ✓ Compiled in 117ms (1029 modules)
+ ✓ Compiled in 129ms (1029 modules)
+🧹 Cleaned up SSE connection: 68adfa6fdff85832fc7fd9df-1756236355946-6oiebtlda
+ GET /api/processing-complete?projectId=68adfa6fdff85832fc7fd9df 200 in 600020ms
+ ✓ Compiled /api/processing-complete in 39ms (84 modules)
+ ⨯ Error: Cannot find module './chunks/vendor-chunks/next.js'
+Require stack:
+- /Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js
+- /Users/andrewransom/Desktop/qubesheets/.next/server/app/api/processing-complete/route.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/require.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/load-components.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/utils.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/swc/options.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/swc/index.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/analysis/parse-module.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/analysis/get-page-static-info.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/lib/router-server.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/lib/start-server.js
+    at t.f.require (.next/server/webpack-runtime.js:1:1430)
+    at <unknown> (.next/server/webpack-runtime.js:1:889)
+    at Array.reduce (<anonymous>)
+    at t.e (.next/server/webpack-runtime.js:1:868)
+    at Array.map (<anonymous>)
+    at t.X (.next/server/webpack-runtime.js:1:1189)
+    at <unknown> (.next/server/app/api/processing-complete/route.js:119:47)
+    at Object.<anonymous> (.next/server/app/api/processing-complete/route.js:122:3) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [Array],
+  page: '/api/processing-complete'
+}
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 618ms (1433 modules)
+ ⨯ Error: Cannot find module './chunks/vendor-chunks/next.js'
+Require stack:
+- /Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js
+- /Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/require.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/load-components.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/utils.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/swc/options.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/swc/index.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/analysis/parse-module.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/build/analysis/get-page-static-info.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/lib/router-utils/setup-dev-bundler.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/lib/router-server.js
+- /Users/andrewransom/Desktop/qubesheets/node_modules/next/dist/server/lib/start-server.js
+    at t.f.require (.next/server/webpack-runtime.js:1:1430)
+    at <unknown> (.next/server/webpack-runtime.js:1:889)
+    at Array.reduce (<anonymous>)
+    at t.e (.next/server/webpack-runtime.js:1:868)
+    at Array.map (<anonymous>)
+    at t.X (.next/server/webpack-runtime.js:1:1189)
+    at <unknown> (.next/server/pages/_document.js:63:47)
+    at Object.<anonymous> (.next/server/pages/_document.js:66:3) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [Array]
+}
+ GET /api/processing-complete?projectId=68adfa6fdff85832fc7fd9df 500 in 1484ms
+ ✓ Compiled in 291ms (1274 modules)
+ ✓ Compiled in 214ms (1274 modules)
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1402ms (2018 modules)
+ GET /api/processing-complete?projectId=68adfa6fdff85832fc7fd9df 404 in 1561ms
+📡 New SSE connection established: 68adfa6fdff85832fc7fd9df-1756239468559-cqfky19ai
+ ✓ Compiled in 758ms (1274 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/2.pack.gz_' -> '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/2.pack.gz'
+   Reload env: .env.local
+ ✓ Compiled in 304ms (1538 modules)
+ ✓ Compiled /api/processing-complete in 35ms (130 modules)
+📡 New SSE connection established: 68adfa6fdff85832fc7fd9df-1756239978142-ebj2rz7ha
+ ✓ Compiled /api/projects/[projectId]/sync-status in 190ms (262 modules)
+ GET /api/projects/68adfa6fdff85832fc7fd9df/sync-status?lastUpdate=2025-08-26T20%3A25%3A51.365Z 200 in 1027ms
+ GET /api/projects/68adfa6fdff85832fc7fd9df/sync-status?lastUpdate=2025-08-26T20%3A25%3A51.365Z 200 in 416ms
+ GET /api/processing-complete?projectId=68adfa6fdff85832fc7fd9df 200 in 551262ms
+TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException: TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException:  TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+🧹 Cleaned up SSE connection: 68adfa6fdff85832fc7fd9df-1756239978142-ebj2rz7ha
+ GET /api/processing-complete?projectId=68adfa6fdff85832fc7fd9df 200 in 600115ms
+   Reload env: .env.local
+ ✓ Compiled in 406ms (1538 modules)
+ ✓ Compiled in 531ms (1274 modules)
+ ✓ Compiled in 290ms (1274 modules)
+ ✓ Compiled in 332ms (1274 modules)
+ ✓ Compiled in 727ms (1274 modules)
+ ✓ Compiled in 575ms (1274 modules)
+ ✓ Compiled in 175ms (1274 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/3.pack.gz_' -> '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/3.pack.gz'
+ ✓ Compiled in 491ms (1274 modules)
+ ✓ Compiled in 164ms (1274 modules)
+ ✓ Compiled in 280ms (1274 modules)
+ ✓ Compiled in 228ms (1274 modules)
+ ✓ Compiled in 373ms (1274 modules)
+ ✓ Compiled in 254ms (1274 modules)
+ ✓ Compiled in 202ms (1274 modules)
+ ✓ Compiled in 173ms (1274 modules)
+ ✓ Compiled in 258ms (1274 modules)
+ ✓ Compiled /api/projects/[projectId]/spreadsheet in 232ms (260 modules)
+ ⨯ SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>) {
+  page: '/api/projects/68adfa6fdff85832fc7fd9df/spreadsheet'
+}
+ ✓ Compiled /api/projects/[projectId]/sync-status in 135ms (1567 modules)
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'
+}
+ PUT /api/projects/68adfa6fdff85832fc7fd9df/spreadsheet 500 in 484ms
+ ⨯ Failed to generate static paths for /api/projects/[projectId]/sync-status:
+[Error [PageNotFoundError]: Cannot find module for page: /api/projects/[projectId]/sync-status/route] {
+  type: 'PageNotFoundError',
+  code: 'ENOENT'
+}
+ GET /api/projects/68adfa6fdff85832fc7fd9df/sync-status?lastUpdate=2025-08-26T21%3A17%3A23.651Z 200 in 768ms
+ ⨯ ./components/PhotoInventoryUploader.tsx
+Error:   [31mx[0m Expected a semicolon
+      ,-[[36;1;4m/Users/andrewransom/Desktop/qubesheets/components/PhotoInventoryUploader.tsx[0m:1077:1]
+ [2m1074[0m |       )}
+ [2m1075[0m |     </div>
+ [2m1076[0m |   );
+ [2m1077[0m | }
+      `----
+  [31mx[0m Expected '}', got '<eof>'
+      ,-[[36;1;4m/Users/andrewransom/Desktop/qubesheets/components/PhotoInventoryUploader.tsx[0m:1077:1]
+ [2m1074[0m |       )}
+ [2m1075[0m |     </div>
+ [2m1076[0m |   );
+ [2m1077[0m | }
+      : [35;1m^[0m
+      `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./components/PhotoInventoryUploader.tsx
+./components/InventoryManager.jsx
+./app/projects/[projectId]/page.jsx
+ ✓ Compiled in 902ms (1274 modules)
+ ✓ Compiled in 673ms (1274 modules)
+ ✓ Compiled in 190ms (1274 modules)
+ ✓ Compiled in 178ms (1274 modules)
+ ✓ Compiled in 386ms (1274 modules)
+ ✓ Compiled in 194ms (1274 modules)
+ ✓ Compiled in 167ms (1274 modules)
+ ✓ Compiled in 196ms (1274 modules)
+ ✓ Compiled in 439ms (1274 modules)
+ PUT /api/projects/68ae285fea688e613d7266d7/spreadsheet 200 in 224ms
+ ✓ Compiled /api/processing-complete in 178ms (262 modules)
+ ⨯ Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js'
+    at <unknown> (.next/server/app/api/processing-complete/route.js:116:27)
+    at Object.<anonymous> (.next/server/app/api/processing-complete/route.js:122:3) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js',
+  page: '/api/processing-complete'
+}
+ ⨯ Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js'
+    at <unknown> (.next/server/app/api/processing-complete/route.js:116:27)
+    at Object.<anonymous> (.next/server/app/api/processing-complete/route.js:122:3) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js',
+  page: '/api/processing-complete'
+}
+ ✓ Compiled /_error in 91ms (1565 modules)
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'
+}
+ GET /api/processing-complete?projectId=68aca1d10eec32d77ca08b9a 500 in 539ms
+ GET /api/processing-complete?projectId=68ae285fea688e613d7266d7 500 in 540ms
+ ✓ Compiled /api/projects/[projectId]/sync-status in 30ms (308 modules)
+ ⨯ Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js'
+    at <unknown> (.next/server/app/api/projects/[projectId]/sync-status/route.js:215:27)
+    at Object.<anonymous> (.next/server/app/api/projects/[projectId]/sync-status/route.js:221:3) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js',
+  page: '/api/projects/68ae285fea688e613d7266d7/sync-status'
+}
+ ⨯ Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js'
+    at <unknown> (.next/server/app/api/projects/[projectId]/spreadsheet/route.js:215:27)
+    at Object.<anonymous> (.next/server/app/api/projects/[projectId]/spreadsheet/route.js:221:3) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/webpack-runtime.js',
+  page: '/api/projects/68ae285fea688e613d7266d7/spreadsheet'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'
+}
+ GET /api/projects/68ae285fea688e613d7266d7/sync-status?lastUpdate=2025-08-26T21%3A48%3A28.336Z 500 in 104ms
+ PUT /api/projects/68ae285fea688e613d7266d7/spreadsheet 500 in 104ms
+ ✓ Compiled in 446ms (1274 modules)
+ ✓ Compiled in 179ms (1274 modules)
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1107ms (2040 modules)
+ PUT /api/projects/68ae2cbed800ca27e0ac7ce4/spreadsheet 404 in 1487ms
+ ✓ Compiled in 437ms (1274 modules)
+ ✓ Compiled in 211ms (1274 modules)

@@ -81,8 +81,9 @@ const sseRef = useRef(null);
   const defaultColumns = [
     { id: 'col1', name: 'Location', type: 'text' },
     { id: 'col2', name: 'Item', type: 'company' },
-    { id: 'col3', name: 'Cuft', type: 'url' },
-    { id: 'col4', name: 'Weight', type: 'url' },
+    { id: 'col3', name: 'Count', type: 'text' },
+    { id: 'col4', name: 'Cuft', type: 'url' },
+    { id: 'col5', name: 'Weight', type: 'url' },
   ];
   
   // Initialize with default empty spreadsheet
@@ -111,23 +112,25 @@ const sseRef = useRef(null);
         console.log('📨 Received SSE message:', data);
 
         if (data.type === 'processing-complete') {
-          console.log('✅ Processing completed via SSE, refreshing data...');
+          console.log(`${data.success ? '✅' : '❌'} Processing ${data.success ? 'completed' : 'failed'} via SSE, refreshing data...`);
           
-          // Immediately refresh all data
+          // Always refresh data and UI
           loadProjectData(currentProject._id);
-          
-          // Refresh image gallery
           setImageGalleryKey(prev => prev + 1);
-          
-          // Hide processing notification
           setShowProcessingNotification(false);
           setProcessingStatus([]);
           
-          // Show success notification
+          // Show appropriate notification
           if (typeof window !== 'undefined' && window.sonner) {
-            window.sonner.toast.success(
-              `Analysis complete! Added ${data.itemsProcessed} items ${data.totalBoxes > 0 ? `(${data.totalBoxes} boxes recommended)` : ''}`
-            );
+            if (data.success) {
+              window.sonner.toast.success(
+                `Analysis complete! Added ${data.itemsProcessed} items ${data.totalBoxes > 0 ? `(${data.totalBoxes} boxes recommended)` : ''}`
+              );
+            } else {
+              window.sonner.toast.error(
+                `Analysis failed: ${data.error || 'Unknown error'}. Please try again.`
+              );
+            }
           }
         }
       } catch (error) {
@@ -307,14 +310,64 @@ useEffect(() => {
       if (spreadsheetResponse.ok) {
         const spreadsheetData = await spreadsheetResponse.json();
         
+        let hasCountColumn = false;
+        let rowsAlreadyMigrated = false;
+        
         if (spreadsheetData.columns && spreadsheetData.columns.length > 0) {
-          setSpreadsheetColumns(spreadsheetData.columns);
+          // Check if we need to migrate columns to include Count column
+          hasCountColumn = spreadsheetData.columns.some(col => col.name === 'Count');
+          
+          if (!hasCountColumn) {
+            // Migrate existing columns by inserting Count column at position 3
+            const migratedColumns = [
+              ...spreadsheetData.columns.slice(0, 2), // Location, Item
+              { id: 'col3', name: 'Count', type: 'text' }, // Insert Count
+              ...spreadsheetData.columns.slice(2).map(col => ({
+                ...col,
+                id: `col${parseInt(col.id.replace('col', '')) + 1}` // Shift IDs by 1
+              }))
+            ];
+            
+            // Migrate existing rows to include Count column
+            const migratedRows = spreadsheetData.rows?.map(row => ({
+              ...row,
+              cells: {
+                col1: row.cells?.col1 || '', // Location stays
+                col2: row.cells?.col2 || '', // Item stays  
+                col3: '1', // New Count column - default to 1
+                col4: row.cells?.col3 || '', // Old col3 (Cuft) moves to col4
+                col5: row.cells?.col4 || '', // Old col4 (Weight) moves to col5
+                // Preserve any additional columns
+                ...Object.fromEntries(
+                  Object.entries(row.cells || {})
+                    .filter(([key]) => !['col1', 'col2', 'col3', 'col4'].includes(key))
+                    .map(([key, value]) => [
+                      key.startsWith('col') ? `col${parseInt(key.replace('col', '')) + 1}` : key,
+                      value
+                    ])
+                )
+              }
+            })) || [];
+            
+            setSpreadsheetColumns(migratedColumns);
+            setSpreadsheetRows(migratedRows);
+            rowsAlreadyMigrated = true;
+            dataLoadedRef.current = true;
+            
+            // Save migrated data to database
+            await saveSpreadsheetData(id, migratedColumns, migratedRows);
+            
+            console.log('✅ Migrated spreadsheet to include Count column');
+          } else {
+            setSpreadsheetColumns(spreadsheetData.columns);
+          }
         } else {
           // Use default columns if none are stored
           setSpreadsheetColumns(defaultColumns);
         }
         
-        if (spreadsheetData.rows && spreadsheetData.rows.length > 0) {
+        if (spreadsheetData.rows && spreadsheetData.rows.length > 0 && !rowsAlreadyMigrated) {
+          // Only set rows if we didn't already migrate them above
           setSpreadsheetRows(spreadsheetData.rows);
           dataLoadedRef.current = true;
         } else if (items.length > 0) {
@@ -397,15 +450,25 @@ useEffect(() => {
   
   // Function to convert inventory items to spreadsheet rows
   const convertItemsToRows = useCallback((items) => {
-    return items.map(item => ({
-      id: generateId(),
-      cells: {
-        col1: item.location || '',
-        col2: item.name || '',
-        col3: item.cuft?.toString() || '',
-        col4: item.weight?.toString() || '',
-      }
-    }));
+    console.log('🔄 Converting items to rows:', items);
+    return items.map(item => {
+      console.log('📝 Converting item:', {
+        name: item.name,
+        quantity: item.quantity,
+        cuft: item.cuft,
+        weight: item.weight
+      });
+      return {
+        id: generateId(),
+        cells: {
+          col1: item.location || '',
+          col2: item.name || '',
+          col3: item.quantity?.toString() || '1',
+          col4: item.cuft?.toString() || '',
+          col5: item.weight?.toString() || '',
+        }
+      };
+    });
   }, []);
   
   // Create a stable debounced save function
@@ -750,17 +813,18 @@ const ProcessingNotification = () => {
                     <Spreadsheet 
                       initialRows={showProcessingNotification ? [
                         {
-                          id: 'analyzing-row',
+                          id: `analyzing-row-${Date.now()}`,
                           cells: {
                             col1: 'Analyzing...',
                             col2: 'Analyzing...',
                             col3: 'Analyzing...',
                             col4: 'Analyzing...',
+                            col5: 'Analyzing...',
                           },
                           isAnalyzing: true
                         },
-                        ...spreadsheetRows
-                      ] : spreadsheetRows} 
+                        ...spreadsheetRows.filter(row => !row.isAnalyzing)
+                      ] : spreadsheetRows.filter(row => !row.isAnalyzing)} 
                       initialColumns={spreadsheetColumns}
                       onRowsChange={handleSpreadsheetRowsChange}
                       onColumnsChange={handleSpreadsheetColumnsChange}

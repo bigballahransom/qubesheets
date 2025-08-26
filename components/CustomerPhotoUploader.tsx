@@ -227,14 +227,22 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
     e.stopPropagation();
     setDragActive(false);
     
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFile(e.dataTransfer.files[0]);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length > 0) {
+      // Process multiple files
+      files.forEach((file) => {
+        handleFile(file);
+      });
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleFile(e.target.files[0]);
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      // Process multiple files
+      files.forEach((file) => {
+        handleFile(file);
+      });
     }
   };
 
@@ -276,6 +284,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
           onChange={handleFileSelect}
           className="hidden"
           disabled={uploading || isConverting}
+          multiple
         />
 
         {uploading ? (

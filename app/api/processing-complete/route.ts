@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { imageId, projectId, success, itemsProcessed, totalBoxes, timestamp } = body;
+    const { imageId, projectId, success, itemsProcessed, totalBoxes, timestamp, error } = body;
 
     console.log('🔔 Received processing completion webhook:', {
       imageId,
@@ -30,8 +30,9 @@ export async function POST(request: NextRequest) {
       projectId,
       imageId,
       success,
-      itemsProcessed,
-      totalBoxes,
+      itemsProcessed: itemsProcessed || 0,
+      totalBoxes: totalBoxes || 0,
+      error: error || null,
       timestamp
     };
 

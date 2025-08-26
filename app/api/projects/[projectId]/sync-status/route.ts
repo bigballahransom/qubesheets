@@ -51,8 +51,11 @@ export async function GET(
       projectId,
       userId,
       $or: [
+        { 'analysisResult.status': 'processing' },
+        { 'analysisResult.status': 'pending' },
         { 'analysisResult.summary': 'Analysis pending...' },
-        { 'analysisResult.summary': /processing|analyzing/i }
+        { 'analysisResult.summary': /processing|analyzing/i },
+        { 'analysisResult.summary': 'AI analysis in progress...' }
       ]
     }).select('_id name analysisResult').sort({ createdAt: -1 });
 
