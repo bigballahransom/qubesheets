@@ -409,6 +409,13 @@ export default function PhotoInventoryUploader({
     setError(null);
 
     try {
+      console.log('🚀 Starting image analysis...', {
+        fileName: selectedFile.name,
+        fileSize: selectedFile.size,
+        fileType: selectedFile.type,
+        projectId: projectId
+      });
+
       const formData = new FormData();
       formData.append('image', selectedFile);
       
@@ -416,16 +423,38 @@ export default function PhotoInventoryUploader({
         formData.append('projectId', projectId);
       }
 
+      console.log('📤 Sending POST request to /api/analyze-image...');
+      
       const response = await fetch('/api/analyze-image', {
         method: 'POST',
         body: formData,
       });
 
+      console.log('📥 Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok
+      });
+
       if (!response.ok) {
-        throw new Error(`Failed to analyze image: ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('❌ Response not ok:', errorText);
+        throw new Error(`Failed to analyze image: ${response.statusText} - ${errorText}`);
       }
 
-      const result = await response.json();
+      console.log('📊 Parsing response JSON...');
+      const responseText = await response.text();
+      console.log('📄 Raw response text (first 200 chars):', responseText.substring(0, 200));
+      
+      let result;
+      try {
+        result = JSON.parse(responseText);
+        console.log('✅ Analysis result received:', result);
+      } catch (parseError) {
+        console.error('❌ Failed to parse JSON response:', parseError);
+        console.log('🔍 Full response text:', responseText);
+        throw new Error(`Server returned invalid JSON: ${parseError.message}`);
+      }
       
       // Only enhance items if fields are missing from the API response
       const enhancedItems = result.items.map((item: InventoryItem) => {
@@ -539,8 +568,23 @@ export default function PhotoInventoryUploader({
         onItemsAnalyzed(enhancedResult);
       }
     } catch (err) {
-      console.error('Error analyzing image:', err);
-      setError(err instanceof Error ? err.message : 'Failed to analyze image');
+      console.error('❌ Error analyzing image:', err);
+      
+      // Enhanced error logging for debugging
+      if (err instanceof Error) {
+        console.error('Error details:', {
+          name: err.name,
+          message: err.message,
+          stack: err.stack
+        });
+        setError(`Analysis failed: ${err.message}`);
+      } else if (err && typeof err === 'object') {
+        console.error('Non-Error object:', JSON.stringify(err));
+        setError(`Analysis failed: ${JSON.stringify(err)}`);
+      } else {
+        console.error('Unknown error type:', typeof err, err);
+        setError(`Analysis failed: ${String(err)}`);
+      }
     } finally {
       setIsAnalyzing(false);
     }

@@ -174,3 +174,7 @@ Import trace for requested module:
  ○ Compiling /_not-found ...
  ✓ Compiled /_not-found in 1073ms (1183 modules)
  HEAD / 404 in 1229ms
+ ✓ Compiled in 241ms (476 modules)
+ ✓ Compiled in 107ms (476 modules)
+ ✓ Compiled in 100ms (476 modules)
+ ✓ Compiled in 158ms (476 modules)
