@@ -443,6 +443,11 @@ export default function PhotoInventoryUploader({
         projectId: projectId
       });
 
+      // Smart routing: Use Railway service for large files or HEIC files
+      const isLargeFile = selectedFile.size > 4 * 1024 * 1024; // > 4MB
+      const isHeicFile = selectedFile.name.toLowerCase().match(/\.(heic|heif)$/) || selectedFile.type.includes('heic');
+      const shouldUseRailwayService = isLargeFile || isHeicFile;
+      
       const formData = new FormData();
       formData.append('image', selectedFile);
       
@@ -450,14 +455,24 @@ export default function PhotoInventoryUploader({
         formData.append('projectId', projectId);
       }
 
-      console.log('📤 Sending POST request to /api/analyze-image...');
+      let apiUrl;
+      if (shouldUseRailwayService) {
+        // Use Railway service for large files and HEIC files
+        apiUrl = `${process.env.NEXT_PUBLIC_IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app'}/api/analyze`;
+        console.log('📤 Using Railway service for large/HEIC file:', apiUrl);
+      } else {
+        // Use Vercel service for smaller files
+        apiUrl = '/api/analyze-image';
+        console.log('📤 Using Vercel service for small file:', apiUrl);
+      }
       
-      const response = await fetch('/api/analyze-image', {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
       });
 
       console.log('📥 Response received:', {
+        service: shouldUseRailwayService ? 'Railway' : 'Vercel',
         status: response.status,
         statusText: response.statusText,
         ok: response.ok

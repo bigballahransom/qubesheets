@@ -182,3 +182,69 @@ Import trace for requested module:
  ✓ Compiled in 152ms (476 modules)
  ✓ Compiled in 95ms (476 modules)
  ✓ Compiled in 141ms (476 modules)
+   Reload env: .env.local
+ ✓ Compiled in 150ms (686 modules)
+ ✓ Compiled in 112ms (476 modules)
+   Reload env: .env.local
+ ✓ Compiled in 978ms (731 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (117kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+ ✓ Compiled in 228ms (476 modules)
+ ✓ Compiled in 127ms (476 modules)
+ ✓ Compiled in 99ms (476 modules)
+ ✓ Compiled in 103ms (476 modules)
+ ✓ Compiled in 103ms (476 modules)
+ ✓ Compiled in 136ms (476 modules)
+ ✓ Compiled in 124ms (476 modules)
+ ✓ Compiled in 115ms (476 modules)
+ ✓ Compiled in 172ms (476 modules)
+ ✓ Compiled in 121ms (476 modules)
+ ✓ Compiled in 96ms (476 modules)
+ ✓ Compiled in 187ms (476 modules)
+ ○ Compiling /projects ...
+ ✓ Compiled /projects in 1601ms (2156 modules)
+ GET /projects 200 in 1827ms
+ ⚠ Blocked cross-origin request from 10.0.0.32 to /_next/* resource. To allow this, configure "allowedDevOrigins" in next.config
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+ ✓ Compiled /api/projects in 127ms (2183 modules)
+ GET /api/projects 200 in 282ms
+ GET /api/projects 200 in 87ms
+ ○ Compiling /projects/[projectId] ...
+ ✓ Compiled /projects/[projectId] in 617ms (2351 modules)
+ GET /projects/68aca1d10eec32d77ca08b9a 200 in 1024ms
+ ✓ Compiled /api/projects/[projectId] in 154ms (2353 modules)
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 624ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 631ms
+ GET /api/projects 200 in 85ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 93ms
+ GET /api/projects 200 in 87ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 89ms
+ ✓ Compiled /api/projects/[projectId]/sync-status in 87ms (1341 modules)
+ ✓ Compiled (1344 modules)
+📥 GET /api/projects/[projectId]/inventory called
+📥 GET /api/projects/[projectId]/inventory called
+✅ MongoDB connected
+📋 Project ID: 68aca1d10eec32d77ca08b9a
+✅ MongoDB connected
+📋 Project ID: 68aca1d10eec32d77ca08b9a
+✅ Found 25 inventory items
+ GET /api/projects/68aca1d10eec32d77ca08b9a/inventory 200 in 345ms
+✅ Found 25 inventory items
+ GET /api/projects/68aca1d10eec32d77ca08b9a/inventory 200 in 397ms
+ ✓ Compiled /api/projects/[projectId]/spreadsheet in 147ms (1347 modules)
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 700ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 737ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 294ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 344ms
+ PUT /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 263ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 517ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 511ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 519ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 523ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 588ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 673ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 633ms
+ ✓ Compiled in 522ms (1029 modules)
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 688ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 611ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 624ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T15%3A53%3A19.604Z 200 in 552ms
