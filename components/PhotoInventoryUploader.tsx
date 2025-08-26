@@ -42,17 +42,36 @@ interface PhotoInventoryUploaderProps {
   projectId?: string;
 }
 
-// Helper function to detect HEIC files
+// Enhanced HEIC file detection for iPhone compatibility
 function isHeicFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
   const mimeType = file.type.toLowerCase();
   
-  return (
-    fileName.endsWith('.heic') || 
-    fileName.endsWith('.heif') ||
-    mimeType === 'image/heic' ||
-    mimeType === 'image/heif'
-  );
+  // Log file details for debugging iPhone issues
+  console.log('🔍 File analysis:', {
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    lastModified: file.lastModified
+  });
+  
+  const isHeicByExtension = fileName.endsWith('.heic') || fileName.endsWith('.heif');
+  const isHeicByMimeType = mimeType === 'image/heic' || mimeType === 'image/heif';
+  
+  // iPhone sometimes doesn't set proper MIME types, so check for empty MIME type with HEIC extension
+  const isPotentialIPhoneHeic = (mimeType === '' || mimeType === 'application/octet-stream') && 
+                                isHeicByExtension;
+  
+  const result = isHeicByExtension || isHeicByMimeType || isPotentialIPhoneHeic;
+  
+  console.log('📱 HEIC detection result:', {
+    isHeicByExtension,
+    isHeicByMimeType,
+    isPotentialIPhoneHeic,
+    finalResult: result
+  });
+  
+  return result;
 }
 
 // Modern HEIC to JPEG conversion using heic-to library
@@ -283,18 +302,36 @@ export default function PhotoInventoryUploader({
       const isRegularImage = file.type.startsWith('image/');
       const isHeic = isHeicFile(file);
       
-      if (!isRegularImage && !isHeic) {
-        setError('Please select a valid image file (JPEG, PNG, GIF, HEIC, or HEIF)');
+      // Special handling for iPhone photos that may have empty MIME types
+      const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
+      const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
+      
+      if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
+        setError('Please select a valid image file (JPEG, PNG, GIF, HEIC, or HEIF). Note: Some iPhone photos may need to be converted to JPEG first.');
         return;
       }
+      
+      console.log('📷 File validation passed:', {
+        isRegularImage,
+        isHeic,
+        isPotentialImage,
+        hasImageExtension,
+        proceeding: true
+      });
 
       let finalFile = file;
 
       // Try client-side HEIC conversion with proper error handling
-      if (isHeic) {
+      if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
         setIsConverting(true);
         try {
           console.log('🔍 Attempting client-side HEIC conversion...');
+          
+          // For iPhone photos, ensure we have the right file object
+          if (file.type === '' && file.name.toLowerCase().endsWith('.heic')) {
+            console.log('📱 Detected iPhone HEIC file with empty MIME type, forcing conversion');
+          }
+          
           finalFile = await convertHeicToJpeg(file);
           console.log('✅ Client-side HEIC conversion successful');
         } catch (conversionError) {

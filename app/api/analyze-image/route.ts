@@ -144,17 +144,34 @@ interface AnalysisResult {
   dbError?: string;
 }
 
-// Helper function to detect HEIC files server-side
+// Enhanced HEIC file detection for iPhone compatibility (server-side)
 function isHeicFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
   const mimeType = file.type.toLowerCase();
   
-  return (
-    fileName.endsWith('.heic') || 
-    fileName.endsWith('.heif') ||
-    mimeType === 'image/heic' ||
-    mimeType === 'image/heif'
-  );
+  console.log('🔍 Server-side file analysis:', {
+    name: file.name,
+    type: file.type,
+    size: file.size
+  });
+  
+  const isHeicByExtension = fileName.endsWith('.heic') || fileName.endsWith('.heif');
+  const isHeicByMimeType = mimeType === 'image/heic' || mimeType === 'image/heif';
+  
+  // iPhone photos sometimes have empty or generic MIME types
+  const isPotentialIPhoneHeic = (mimeType === '' || mimeType === 'application/octet-stream') && 
+                                isHeicByExtension;
+  
+  const result = isHeicByExtension || isHeicByMimeType || isPotentialIPhoneHeic;
+  
+  console.log('📱 Server HEIC detection:', {
+    isHeicByExtension,
+    isHeicByMimeType,
+    isPotentialIPhoneHeic,
+    finalResult: result
+  });
+  
+  return result;
 }
 
 // Server-side HEIC conversion with multiple fallbacks
@@ -240,13 +257,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file type (accept regular images and HEIC)
+    // Enhanced validation for iPhone photos and HEIC files
     const isRegularImage = image.type.startsWith('image/');
     const isHeic = isHeicFile(image);
     
-    if (!isRegularImage && !isHeic) {
+    // Special handling for iPhone photos that may have empty MIME types
+    const isPotentialImage = image.type === '' || image.type === 'application/octet-stream';
+    const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(image.name);
+    const isPotentialIPhonePhoto = isPotentialImage && hasImageExtension;
+    
+    console.log('📷 Server-side file validation:', {
+      isRegularImage,
+      isHeic,
+      isPotentialIPhonePhoto,
+      fileName: image.name,
+      mimeType: image.type
+    });
+    
+    if (!isRegularImage && !isHeic && !isPotentialIPhonePhoto) {
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, or HEIF).' },
+        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, or HEIF). If this is an iPhone photo, it may need to be saved in a different format.' },
         { status: 400 }
       );
     }
@@ -265,15 +295,30 @@ export async function POST(request: NextRequest) {
     let buffer = Buffer.from(bytes);
     let mimeType = image.type;
 
-    // For HEIC files, attempt server-side handling as fallback
-    if (isHeic) {
+    // Enhanced HEIC processing for iPhone photos and regular HEIC files
+    if (isHeic || isPotentialIPhonePhoto) {
+      console.log('🔄 Processing HEIC or potential iPhone photo...');
+      
       try {
+        // For iPhone photos with empty MIME types, let's try HEIC conversion anyway
+        if (isPotentialIPhonePhoto && !isHeic) {
+          console.log('📱 Attempting conversion of potential iPhone HEIC photo');
+        }
+        
         const converted = await handleHeicFile(buffer);
         buffer = Buffer.from(converted.buffer);
         mimeType = converted.mimeType;
         console.log('✅ Server-side HEIC conversion successful');
       } catch (conversionError) {
         console.error('❌ Server HEIC conversion failed:', conversionError);
+        
+        // For iPhone photos, provide specific guidance
+        if (isPotentialIPhonePhoto && !isHeic) {
+          return NextResponse.json(
+            { error: 'This appears to be an iPhone photo that could not be processed. Please try: 1) Taking a new photo with JPEG format, 2) Converting the photo to JPEG using the Photos app, or 3) Changing iPhone settings to save photos as JPEG (Settings → Camera → Formats → Most Compatible).' },
+            { status: 400 }
+          );
+        }
         
         // Extract meaningful error message
         const errorMsg = conversionError instanceof Error ? conversionError.message : 'Unknown conversion error';
