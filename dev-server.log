@@ -287,3 +287,8 @@ Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allow
  ✓ Compiled in 156ms (1029 modules)
  ✓ Compiled in 137ms (1029 modules)
  ✓ Compiled in 343ms (1029 modules)
+ ✓ Compiled /api/processing-complete in 293ms (1099 modules)
+📡 New SSE connection established: 68adfa6fdff85832fc7fd9df-1756235148737-tb7i9ogvn
+ ✓ Compiled in 205ms (1029 modules)
+ ✓ Compiled in 168ms (1029 modules)
+ ✓ Compiled in 356ms (1239 modules)

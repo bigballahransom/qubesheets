@@ -124,7 +124,7 @@ interface QueueItem {
       
       try {
         // Get the image data from MongoDB
-        const { connectMongoDB } = await import('@/lib/mongodb');
+        const { default: connectMongoDB } = await import('@/lib/mongodb');
         const Image = (await import('@/models/Image')).default;
         
         await connectMongoDB();
