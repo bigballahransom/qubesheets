@@ -96,13 +96,8 @@ interface QueueItem {
       
       try {
         if (item.type === 'image_analysis') {
-          const { processImageAnalysis } = await import('./backgroundAnalysis');
-          const result = await processImageAnalysis(
-            item.data.imageId,
-            item.data.projectId,
-            item.data.userId,
-            item.data.organizationId
-          );
+          // Always use Railway for background processing
+          const result = await this.processWithRailway(item.data);
           console.log(`✅ Job completed: ${item.id}`, result);
         }
       } catch (error) {
@@ -120,6 +115,68 @@ interface QueueItem {
         } else {
           console.error(`💀 Job permanently failed: ${item.id} after ${item.maxRetries} attempts`);
         }
+      }
+    }
+
+    // Process with Railway service
+    private async processWithRailway(data: any) {
+      console.log('🚂 Sending job to Railway background service...');
+      
+      try {
+        // Get the image data from MongoDB
+        const { connectMongoDB } = await import('@/lib/mongodb');
+        const Image = (await import('@/models/Image')).default;
+        
+        await connectMongoDB();
+        const image = await Image.findById(data.imageId);
+        
+        if (!image) {
+          throw new Error('Image not found');
+        }
+
+        // Prepare form data for Railway
+        const formData = new FormData();
+        
+        // Create a Blob from the image buffer
+        const imageBlob = new Blob([image.data], { type: image.mimeType });
+        formData.append('image', imageBlob, image.originalName);
+        
+        // Add metadata
+        formData.append('imageId', data.imageId);
+        formData.append('projectId', data.projectId);
+        formData.append('userId', data.userId);
+        
+        if (data.organizationId) {
+          formData.append('organizationId', data.organizationId);
+        }
+        
+        // Add MongoDB connection string
+        formData.append('mongoUri', process.env.MONGODB_URI!);
+        
+        // Add Twilio config
+        formData.append('twilioAccountSid', process.env.TWILIO_ACCOUNT_SID!);
+        formData.append('twilioAuthToken', process.env.TWILIO_AUTH_TOKEN!);
+        formData.append('twilioPhoneNumber', process.env.TWILIO_PHONE_NUMBER!);
+
+        // Call Railway background service
+        const railwayUrl = process.env.IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app';
+        const response = await fetch(`${railwayUrl}/api/background`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Railway service failed: ${response.status} ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        console.log('✅ Railway background processing initiated:', result);
+        
+        return result;
+        
+      } catch (error) {
+        console.error('❌ Railway background processing failed:', error);
+        throw error;
       }
     }
   

@@ -75,6 +75,7 @@ const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString())
 const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
 const pollIntervalRef = useRef(null);
+const sseRef = useRef(null);
   
   // Default columns setup
   const defaultColumns = [
@@ -90,6 +91,62 @@ const pollIntervalRef = useRef(null);
   
   // Reference to track if data has been loaded
   const dataLoadedRef = useRef(false);
+
+  // Setup Server-Sent Events for real-time updates
+  useEffect(() => {
+    if (!currentProject) return;
+
+    console.log('🔌 Setting up SSE connection for project:', currentProject._id);
+    
+    const eventSource = new EventSource(`/api/processing-complete?projectId=${currentProject._id}`);
+    sseRef.current = eventSource;
+
+    eventSource.onopen = () => {
+      console.log('📡 SSE connection established');
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('📨 Received SSE message:', data);
+
+        if (data.type === 'processing-complete') {
+          console.log('✅ Processing completed via SSE, refreshing data...');
+          
+          // Immediately refresh all data
+          loadProjectData(currentProject._id);
+          
+          // Refresh image gallery
+          setImageGalleryKey(prev => prev + 1);
+          
+          // Hide processing notification
+          setShowProcessingNotification(false);
+          setProcessingStatus([]);
+          
+          // Show success notification
+          if (typeof window !== 'undefined' && window.sonner) {
+            window.sonner.toast.success(
+              `Analysis complete! Added ${data.itemsProcessed} items ${data.totalBoxes > 0 ? `(${data.totalBoxes} boxes recommended)` : ''}`
+            );
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error parsing SSE message:', error);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('❌ SSE connection error:', error);
+    };
+
+    // Cleanup on unmount
+    return () => {
+      if (sseRef.current) {
+        sseRef.current.close();
+        console.log('🔌 SSE connection closed');
+      }
+    };
+  }, [currentProject]);
 
   useEffect(() => {
     if (!currentProject) return;
@@ -691,7 +748,19 @@ const ProcessingNotification = () => {
                 <div className="h-[calc(100vh-320px)]">
                   {currentProject && (
                     <Spreadsheet 
-                      initialRows={spreadsheetRows} 
+                      initialRows={showProcessingNotification ? [
+                        {
+                          id: 'analyzing-row',
+                          cells: {
+                            col1: 'Analyzing...',
+                            col2: 'Analyzing...',
+                            col3: 'Analyzing...',
+                            col4: 'Analyzing...',
+                          },
+                          isAnalyzing: true
+                        },
+                        ...spreadsheetRows
+                      ] : spreadsheetRows} 
                       initialColumns={spreadsheetColumns}
                       onRowsChange={handleSpreadsheetRowsChange}
                       onColumnsChange={handleSpreadsheetColumnsChange}

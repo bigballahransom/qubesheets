@@ -54,6 +54,8 @@ interface ImageData {
     summary: string;
     itemsCount: number;
     totalBoxes?: number;
+    status?: 'pending' | 'processing' | 'completed' | 'failed';
+    error?: string;
   };
   createdAt: string;
   updatedAt: string;
@@ -347,19 +349,37 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
                     </div>
                   )}
 
-                  {image.analysisResult && (
-                    <div className="flex flex-wrap gap-1">
-                      <Badge variant="secondary" className="text-xs">
-                        <Package size={10} className="mr-1" />
-                        {image.analysisResult.itemsCount} items
+                  {/* Analysis Status */}
+                  <div className="flex flex-wrap gap-1">
+                    {image.analysisResult?.status === 'processing' ? (
+                      <Badge variant="secondary" className="text-xs animate-pulse">
+                        <Loader2 size={10} className="mr-1 animate-spin" />
+                        Processing...
                       </Badge>
-                      {image.analysisResult.totalBoxes && image.analysisResult.totalBoxes > 0 && (
-                        <Badge variant="outline" className="text-xs">
-                          {image.analysisResult.totalBoxes} boxes
+                    ) : image.analysisResult?.status === 'failed' ? (
+                      <Badge variant="destructive" className="text-xs">
+                        <X size={10} className="mr-1" />
+                        Analysis failed
+                      </Badge>
+                    ) : image.analysisResult?.status === 'completed' ? (
+                      <>
+                        <Badge variant="secondary" className="text-xs">
+                          <Package size={10} className="mr-1" />
+                          {image.analysisResult.itemsCount} items
                         </Badge>
-                      )}
-                    </div>
-                  )}
+                        {image.analysisResult.totalBoxes && image.analysisResult.totalBoxes > 0 && (
+                          <Badge variant="outline" className="text-xs">
+                            {image.analysisResult.totalBoxes} boxes
+                          </Badge>
+                        )}
+                      </>
+                    ) : (
+                      <Badge variant="outline" className="text-xs">
+                        <Loader2 size={10} className="mr-1 animate-spin" />
+                        Analyzing...
+                      </Badge>
+                    )}
+                  </div>
 
                   <div className="text-xs text-gray-500">
                     {formatFileSize(image.size)}

@@ -6,6 +6,7 @@ import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
 import SpreadsheetData from '@/models/SpreadsheetData';
 import OpenAI from 'openai';
+import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -231,7 +232,7 @@ async function updateImageStatus(imageId: string, status: 'processing' | 'comple
 }
 
 // Main analysis function that can be called directly
-export async function processImageAnalysis(imageId: string, projectId: string, userId: string, organizationId?: string | null) {
+export async function processImageAnalysis(imageId: string, projectId: string, userId: string, organizationId?: string | null, useRailwayService = false) {
   const startTime = Date.now();
   console.log(`🔄 Background analysis started for image: ${imageId}`);
   
@@ -265,6 +266,15 @@ export async function processImageAnalysis(imageId: string, projectId: string, u
     }
 
     console.log('🖼️ Image found, starting AI analysis...');
+
+    // Route to appropriate service based on useRailwayService flag
+    if (useRailwayService) {
+      console.log('🚂 Using Railway service for analysis...');
+      return await processWithRailwayService(image, projectId, userId, organizationId);
+    }
+
+    // Default: Use local OpenAI processing
+    console.log('🏠 Using local OpenAI processing...');
 
     // Convert image buffer to base64
     const base64Image = image.data.toString('base64');
@@ -459,6 +469,13 @@ Focus on clearly identifiable objects that would typically be included in a hous
         const processingTime = Date.now() - startTime;
         console.log(`✅ Background analysis completed in ${processingTime}ms: ${enhancedItems.length} items processed`);
         
+        // Send SMS notification
+        await sendCompletionSMS({
+          summary: analysisResult.summary,
+          items: enhancedItems,
+          total_boxes: { total: totalBoxes }
+        }, projectId);
+        
         return { 
           success: true, 
           itemsProcessed: enhancedItems.length,
@@ -495,5 +512,163 @@ Focus on clearly identifiable objects that would typically be included in a hous
     }
     
     throw error;
+  }
+}
+
+// Process image using Railway service
+async function processWithRailwayService(image: any, projectId: string, userId: string, organizationId?: string | null) {
+  console.log('🚂 Processing with Railway service...');
+  
+  try {
+    // Prepare form data for Railway service
+    const formData = new FormData();
+    
+    // Create a Blob from the image buffer
+    const imageBlob = new Blob([image.data], { type: image.mimeType });
+    formData.append('image', imageBlob, image.originalName);
+
+    // Call Railway service
+    const railwayUrl = process.env.IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app';
+    const response = await fetch(`${railwayUrl}/api/analyze`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Railway service failed: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    console.log('✅ Railway service analysis complete:', { itemsFound: result.items?.length || 0 });
+
+    // Process the result same as local processing
+    await processAnalysisResult(result, image._id, projectId, userId, organizationId);
+    
+    // Send SMS notification
+    await sendCompletionSMS(result, projectId);
+
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Railway service processing failed:', error);
+    await updateImageStatus(image._id, 'failed', {
+      error: error instanceof Error ? error.message : 'Railway service error'
+    });
+    throw error;
+  }
+}
+
+// Process analysis result and save to database
+async function processAnalysisResult(analysisResult: any, imageId: string, projectId: string, userId: string, organizationId?: string | null) {
+  console.log('💾 Processing analysis result...');
+  
+  try {
+    // Save inventory items
+    const itemsToCreate = analysisResult.items.map((item: any) => {
+      const itemData: any = {
+        ...item,
+        projectId,
+        userId
+      };
+      
+      // Only add organizationId if user is in an organization
+      if (organizationId) {
+        itemData.organizationId = organizationId;
+      }
+      
+      return itemData;
+    });
+    
+    if (itemsToCreate.length > 0) {
+      await InventoryItem.insertMany(itemsToCreate);
+      console.log(`✅ Saved ${itemsToCreate.length} inventory items`);
+    }
+
+    // Update spreadsheet data
+    await updateSpreadsheetData(projectId, analysisResult.items);
+    
+    // Update project timestamp
+    await Project.findByIdAndUpdate(projectId, { updatedAt: new Date() });
+    
+    // Update image with final analysis result
+    await updateImageStatus(imageId, 'completed', {
+      summary: analysisResult.summary,
+      itemsCount: analysisResult.items.length,
+      totalBoxes: Object.values(analysisResult.total_boxes || {}).reduce((sum: any, count: any) => sum + count, 0)
+    });
+
+    console.log('✅ Analysis result processing complete');
+    
+  } catch (error) {
+    console.error('❌ Error processing analysis result:', error);
+    throw error;
+  }
+}
+
+// Update spreadsheet data with new items
+async function updateSpreadsheetData(projectId: string, items: any[]) {
+  try {
+    // Get existing spreadsheet data
+    let spreadsheetData = await SpreadsheetData.findOne({ projectId });
+    
+    if (!spreadsheetData) {
+      // Create new spreadsheet if it doesn't exist
+      spreadsheetData = new SpreadsheetData({
+        projectId,
+        data: []
+      });
+    }
+
+    // Add new items to spreadsheet
+    const newRows = items.map(item => ({
+      id: generateId(),
+      'Item Name': item.name || '',
+      'Description': item.description || '',
+      'Category': item.category || '',
+      'Quantity': item.quantity || 1,
+      'Location/Room': item.location || '',
+      'Cu Ft': item.cuft || 0,
+      'Weight (lbs)': item.weight || 0,
+      'Fragile': item.fragile ? 'Yes' : 'No',
+      'Special Handling': item.special_handling || '',
+      'Box Type': item.box_recommendation?.box_type || '',
+      'Box Quantity': item.box_recommendation?.box_quantity || 0
+    }));
+
+    spreadsheetData.data.unshift(...newRows); // Add to beginning
+    await spreadsheetData.save();
+    
+    console.log(`📊 Updated spreadsheet with ${newRows.length} new rows`);
+    
+  } catch (error) {
+    console.error('❌ Error updating spreadsheet data:', error);
+    // Don't throw - this is not critical for the main flow
+  }
+}
+
+// Send SMS notification when analysis is complete
+async function sendCompletionSMS(analysisResult: any, projectId: string) {
+  try {
+    const itemCount = analysisResult.items?.length || 0;
+    const totalBoxes = Object.values(analysisResult.total_boxes || {}).reduce((sum: any, count: any) => sum + count, 0);
+    
+    const message = `🏠 QubeSheets Inventory Update Complete!\n\n` +
+                   `✅ Analysis finished\n` +
+                   `📦 ${itemCount} items identified\n` +
+                   `📦 ${totalBoxes} boxes recommended\n\n` +
+                   `Project: ${projectId.slice(-8)}\n` +
+                   `View: https://app.qubesheets.com/projects/${projectId}`;
+
+    await twilioClient.messages.create({
+      body: message,
+      from: twilioPhoneNumber,
+      to: '+15015519948'
+    });
+
+    console.log('📱 SMS notification sent successfully');
+    
+  } catch (error) {
+    console.error('❌ Failed to send SMS notification:', error);
+    // Don't throw - SMS failure shouldn't fail the entire process
   }
 }

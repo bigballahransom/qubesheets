@@ -15,6 +15,8 @@ export interface IImage extends Document {
     summary: string;
     itemsCount: number;
     totalBoxes?: number;
+    status?: 'pending' | 'processing' | 'completed' | 'failed';
+    error?: string;
   };
   createdAt: Date;
   updatedAt: Date;
@@ -39,7 +41,9 @@ const ImageSchema: Schema = new Schema(
     analysisResult: {
       summary: { type: String },
       itemsCount: { type: Number },
-      totalBoxes: { type: Number }
+      totalBoxes: { type: Number },
+      status: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
+      error: { type: String }
     }
   },
   { timestamps: true }

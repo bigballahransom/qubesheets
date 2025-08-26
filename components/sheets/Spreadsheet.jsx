@@ -789,45 +789,72 @@ useEffect(() => {
 {/* Spreadsheet Body */}
 <div>
           {filteredRows.map((row, rowIndex) => (
-            <div key={row.id} className={`flex ${selectedRows.includes(row.id) ? 'bg-blue-50' : rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
+            <div key={row.id} className={`flex ${
+              row.isAnalyzing 
+                ? 'bg-blue-50 border-l-4 border-l-blue-500' 
+                : selectedRows.includes(row.id) 
+                  ? 'bg-blue-50' 
+                  : rowIndex % 2 === 0 
+                    ? 'bg-white' 
+                    : 'bg-gray-50'
+            }`}>
               {/* Row number */}
               <div 
                 className="w-8 min-w-[32px] border-r border-b flex items-center justify-center cursor-pointer"
-                onClick={(e) => handleRowSelect(row.id, e)}
+                onClick={(e) => !row.isAnalyzing && handleRowSelect(row.id, e)}
               >
-                <input 
-                  type="checkbox" 
-                  className="w-4 h-4"
-                  checked={selectedRows.includes(row.id)}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setSelectedRows(prev => [...prev, row.id]);
-                    } else {
-                      setSelectedRows(prev => prev.filter(id => id !== row.id));
-                    }
-                  }}
-                />
+                {row.isAnalyzing ? (
+                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                ) : (
+                  <input 
+                    type="checkbox" 
+                    className="w-4 h-4"
+                    checked={selectedRows.includes(row.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedRows(prev => [...prev, row.id]);
+                      } else {
+                        setSelectedRows(prev => prev.filter(id => id !== row.id));
+                      }
+                    }}
+                  />
+                )}
               </div>
               
               {/* Cells */}
               {columns.map((column) => (
                 <div 
                   key={`${row.id}-${column.id}`}
-                  className={`min-w-[150px] w-60 p-2 border-r border-b h-10 ${activeCell && activeCell.rowId === row.id && activeCell.colId === column.id ? 'bg-blue-100 border-2 border-blue-500' : ''}`}
-                  onClick={() => handleCellClick(row.id, column.id, row.cells[column.id] || '')}
+                  className={`min-w-[150px] w-60 p-2 border-r border-b h-10 ${
+                    row.isAnalyzing 
+                      ? 'text-blue-600 font-medium animate-pulse' 
+                      : activeCell && activeCell.rowId === row.id && activeCell.colId === column.id 
+                        ? 'bg-blue-100 border-2 border-blue-500' 
+                        : ''
+                  }`}
+                  onClick={() => !row.isAnalyzing && handleCellClick(row.id, column.id, row.cells[column.id] || '')}
                 >
-                  {renderCellContent(column.type, row.cells[column.id] || '', row.id, column.id)}
+                  {row.isAnalyzing ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                      <span>Analyzing...</span>
+                    </div>
+                  ) : (
+                    renderCellContent(column.type, row.cells[column.id] || '', row.id, column.id)
+                  )}
                 </div>
               ))}
               
               {/* Row actions */}
               <div className="w-12 min-w-[48px] border-b flex items-center justify-center">
-                <button 
-                  className="p-1 rounded-full hover:bg-gray-100 hover:text-red-500 flex items-center justify-center text-gray-500 cursor-pointer transition-colors"
-                  onClick={() => handleRemoveRow(row.id)}
-                >
-                  <X size={12} />
-                </button>
+                {!row.isAnalyzing && (
+                  <button 
+                    className="p-1 rounded-full hover:bg-gray-100 hover:text-red-500 flex items-center justify-center text-gray-500 cursor-pointer transition-colors"
+                    onClick={() => handleRemoveRow(row.id)}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
               </div>
             </div>
           ))}

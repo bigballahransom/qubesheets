@@ -436,18 +436,115 @@ export default function PhotoInventoryUploader({
     setError(null);
 
     try {
-      console.log('🚀 Starting image analysis...', {
+      console.log('🚀 Starting async image processing...', {
         fileName: selectedFile.name,
         fileSize: selectedFile.size,
         fileType: selectedFile.type,
         projectId: projectId
       });
 
-      // Smart routing: Use Railway service for large files or HEIC files
-      const isLargeFile = selectedFile.size > 4 * 1024 * 1024; // > 4MB
-      const isHeicFile = selectedFile.name.toLowerCase().match(/\.(heic|heif)$/) || selectedFile.type.includes('heic');
-      const shouldUseRailwayService = isLargeFile || isHeicFile;
+      // Step 1: Save image to MongoDB first
+      const formData = new FormData();
+      formData.append('image', selectedFile);
+      formData.append('description', imageDescription);
       
+      if (projectId) {
+        formData.append('projectId', projectId);
+      }
+
+      console.log('💾 Saving image to MongoDB...');
+      const saveResponse = await fetch(`/api/projects/${projectId}/images`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!saveResponse.ok) {
+        const errorText = await saveResponse.text();
+        console.error('❌ Failed to save image:', errorText);
+        throw new Error(`Failed to save image: ${saveResponse.statusText}`);
+      }
+
+      const savedImage = await saveResponse.json();
+      console.log('✅ Image saved to MongoDB:', savedImage.id);
+
+      // Step 2: Queue background analysis job
+      console.log('📋 Queueing background analysis job...');
+      const queueResponse = await fetch('/api/background-queue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'image_analysis',
+          imageId: savedImage.id,
+          projectId: projectId,
+          useRailwayService: selectedFile.size > 4 * 1024 * 1024 || 
+                           selectedFile.name.toLowerCase().match(/\.(heic|heif)$/) || 
+                           selectedFile.type.includes('heic')
+        }),
+      });
+
+      if (!queueResponse.ok) {
+        console.error('⚠️ Failed to queue background job, but image was saved');
+        // Don't throw error here - image was saved successfully
+      } else {
+        const queueResult = await queueResponse.json();
+        console.log('✅ Background job queued:', queueResult.jobId);
+      }
+
+      // Step 3: Show success and close modal
+      setIsAnalyzing(false);
+      setError(null);
+
+      // Import toast dynamically
+      const { toast } = await import('sonner');
+      toast.success('Thank you! Saved and analyzing inventory', {
+        description: 'Your image has been saved and analysis is running in the background.',
+        duration: 5000,
+      });
+
+      // Call success callback to refresh gallery
+      if (onImageSaved) {
+        onImageSaved();
+      }
+
+      // Reset form and close
+      handleReset();
+
+      return; // Exit here - no blocking analysis
+
+    } catch (err) {
+      console.error('❌ Error in async image processing:', err);
+      
+      // Enhanced error logging for debugging
+      if (err instanceof Error) {
+        console.error('Error details:', {
+          name: err.name,
+          message: err.message,
+          stack: err.stack
+        });
+        setError(`Upload failed: ${err.message}`);
+      } else if (err && typeof err === 'object') {
+        console.error('Non-Error object:', JSON.stringify(err));
+        setError(`Upload failed: ${JSON.stringify(err)}`);
+      } else {
+        console.error('Unknown error type:', typeof err, err);
+        setError(`Upload failed: ${String(err)}`);
+      }
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Legacy function kept for backward compatibility (not used in new async flow)
+  const handleLegacyAnalyze = async () => {
+    if (!selectedFile) return;
+
+    setIsAnalyzing(true);
+    setError(null);
+
+    try {
+      // Legacy blocking analysis code (kept for reference/fallback)
       const formData = new FormData();
       formData.append('image', selectedFile);
       
@@ -455,46 +552,21 @@ export default function PhotoInventoryUploader({
         formData.append('projectId', projectId);
       }
 
-      let apiUrl;
-      if (shouldUseRailwayService) {
-        // Use Railway service for large files and HEIC files
-        apiUrl = `${process.env.NEXT_PUBLIC_IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app'}/api/analyze`;
-        console.log('📤 Using Railway service for large/HEIC file:', apiUrl);
-      } else {
-        // Use Vercel service for smaller files
-        apiUrl = '/api/analyze-image';
-        console.log('📤 Using Vercel service for small file:', apiUrl);
-      }
-      
-      const response = await fetch(apiUrl, {
+      const response = await fetch('/api/analyze-image', {
         method: 'POST',
         body: formData,
       });
 
-      console.log('📥 Response received:', {
-        service: shouldUseRailwayService ? 'Railway' : 'Vercel',
-        status: response.status,
-        statusText: response.statusText,
-        ok: response.ok
-      });
-
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('❌ Response not ok:', errorText);
         throw new Error(`Failed to analyze image: ${response.statusText} - ${errorText}`);
       }
 
-      console.log('📊 Parsing response JSON...');
       const responseText = await response.text();
-      console.log('📄 Raw response text (first 200 chars):', responseText.substring(0, 200));
-      
       let result;
       try {
         result = JSON.parse(responseText);
-        console.log('✅ Analysis result received:', result);
       } catch (parseError) {
-        console.error('❌ Failed to parse JSON response:', parseError);
-        console.log('🔍 Full response text:', responseText);
         const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown JSON parse error';
         throw new Error(`Server returned invalid JSON: ${errorMessage}`);
       }
