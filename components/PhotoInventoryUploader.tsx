@@ -480,7 +480,8 @@ export default function PhotoInventoryUploader({
       } catch (parseError) {
         console.error('❌ Failed to parse JSON response:', parseError);
         console.log('🔍 Full response text:', responseText);
-        throw new Error(`Server returned invalid JSON: ${parseError.message}`);
+        const errorMessage = parseError instanceof Error ? parseError.message : 'Unknown JSON parse error';
+        throw new Error(`Server returned invalid JSON: ${errorMessage}`);
       }
       
       // Only enhance items if fields are missing from the API response
