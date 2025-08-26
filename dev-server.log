@@ -171,3 +171,6 @@ Import trace for requested module:
  GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 539ms
  GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 513ms
  ✓ Compiled /api/projects/[projectId]/spreadsheet in 13ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1073ms (1183 modules)
+ HEAD / 404 in 1229ms

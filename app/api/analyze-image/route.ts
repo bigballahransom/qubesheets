@@ -238,27 +238,43 @@ async function handleHeicFile(buffer: Buffer): Promise<{ buffer: Buffer; mimeTyp
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('🚀 POST /api/analyze-image - Request received');
+    
     // Get auth context
     const authContext = await getAuthContext();
     if (authContext instanceof NextResponse) {
+      console.log('❌ Auth context failed');
       return authContext;
     }
     const { userId } = authContext;
+    console.log('✅ Auth successful, userId:', userId);
 
     // Check if OpenAI API key is configured
     if (!process.env.OPENAI_API_KEY) {
+      console.log('❌ OpenAI API key not configured');
       return NextResponse.json(
         { error: 'OpenAI API key not configured' },
         { status: 500 }
       );
     }
+    console.log('✅ OpenAI API key configured');
 
     // Parse the form data
+    console.log('📋 Parsing form data...');
     const formData = await request.formData();
     const image = formData.get('image') as File;
     const projectId = formData.get('projectId') as string;
 
+    console.log('📄 Form data parsed:', {
+      hasImage: !!image,
+      imageName: image?.name,
+      imageType: image?.type,
+      imageSize: image?.size,
+      projectId: projectId
+    });
+
     if (!image) {
+      console.log('❌ No image file provided');
       return NextResponse.json(
         { error: 'No image file provided' },
         { status: 400 }
@@ -414,6 +430,13 @@ Use standard industry estimates for cubic footage and weight. Ensure that weight
 For box recommendations, consider how items would be packed efficiently. For example, books should go in Small or Book Boxes due to weight, while clothing might go in Large Boxes. Include a summary count of total boxes needed in the "total_boxes" field.`;
 
     // Call OpenAI Vision API
+    console.log('🤖 Calling OpenAI Vision API...');
+    console.log('📊 Image details for OpenAI:', {
+      mimeType: mimeType,
+      bufferSize: buffer.length,
+      imageUrlLength: imageUrl.length
+    });
+    
     const response = await openai.chat.completions.create({
       model: "gpt-4o", // Updated to current model
       messages: [
@@ -646,17 +669,39 @@ For box recommendations, consider how items would be packed efficiently. For exa
   } catch (error) {
     console.error('Error analyzing image:', error);
 
-    // Handle specific OpenAI errors
+    // Enhanced error handling with more details
+    let errorMessage = 'Internal server error';
+    let statusCode = 500;
+
     if (error instanceof OpenAI.APIError) {
-      return NextResponse.json(
-        { error: `OpenAI API error: ${error.message}` },
-        { status: error.status || 500 }
-      );
+      errorMessage = `OpenAI API error: ${error.message}`;
+      statusCode = error.status || 500;
+      console.error('OpenAI API Error Details:', {
+        message: error.message,
+        status: error.status,
+        code: error.code,
+        type: error.type
+      });
+    } else if (error instanceof Error) {
+      errorMessage = `Analysis error: ${error.message}`;
+      console.error('Analysis Error Details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+    } else {
+      console.error('Unknown error type:', error);
+      errorMessage = 'Unknown error occurred during image analysis';
+    }
+
+    // In development, provide more detailed errors
+    if (process.env.NODE_ENV === 'development') {
+      errorMessage += ` (Dev info: ${JSON.stringify(error)})`;
     }
 
     return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
+      { error: errorMessage },
+      { status: statusCode }
     );
   }
 }
