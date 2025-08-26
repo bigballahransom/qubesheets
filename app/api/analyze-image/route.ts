@@ -178,12 +178,36 @@ function isHeicFile(file: File): boolean {
 async function handleHeicFile(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string }> {
   console.log('🔧 Attempting server-side HEIC conversion...');
   
-  // In production, prioritize stability over server-side conversion
   const isProduction = process.env.NODE_ENV === 'production';
+  console.log(`🏭 Environment: ${isProduction ? 'production' : 'development'}`);
   
-  if (isProduction) {
-    console.log('🏭 Production environment detected - skipping complex HEIC conversion');
-    throw new Error('HEIC files require client-side conversion in production. Please ensure your browser converted this file before upload, or try converting to JPEG using your device\'s photo app.');
+  // Try lightweight Sharp conversion first (works in both dev and prod)
+  try {
+    console.log('📦 Attempting Sharp HEIC conversion...');
+    const sharp = require('sharp');
+    
+    // Sharp with basic HEIC support (production-safe)
+    const convertedBuffer = await sharp(buffer)
+      .jpeg({ quality: 80, mozjpeg: true })
+      .toBuffer();
+    
+    console.log('✅ Sharp HEIC conversion successful');
+    return {
+      buffer: convertedBuffer,
+      mimeType: 'image/jpeg'
+    };
+    
+  } catch (sharpError) {
+    console.log('⚠️ Sharp HEIC conversion failed:', sharpError);
+    
+    if (isProduction) {
+      // Production fallback: Try sending original HEIC to OpenAI (sometimes works)
+      console.log('🔄 Production fallback - sending original HEIC to OpenAI');
+      return {
+        buffer: buffer,
+        mimeType: 'image/heic'
+      };
+    }
   }
   
   // Development environment - try full conversion

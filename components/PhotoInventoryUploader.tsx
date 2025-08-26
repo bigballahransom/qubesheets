@@ -42,6 +42,26 @@ interface PhotoInventoryUploaderProps {
   projectId?: string;
 }
 
+// Mobile device detection
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  
+  const userAgent = window.navigator.userAgent.toLowerCase();
+  const isMobile = /iphone|ipad|android|mobile/i.test(userAgent);
+  const isIOS = /iphone|ipad/i.test(userAgent);
+  const isSafari = /safari/i.test(userAgent) && !/chrome/i.test(userAgent);
+  
+  console.log('📱 Device detection:', {
+    userAgent: userAgent.substring(0, 50) + '...',
+    isMobile,
+    isIOS,
+    isSafari,
+    shouldSkipClientConversion: isMobile || (isIOS && isSafari)
+  });
+  
+  return isMobile;
+}
+
 // Enhanced HEIC file detection for iPhone compatibility
 function isHeicFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
@@ -321,30 +341,37 @@ export default function PhotoInventoryUploader({
 
       let finalFile = file;
 
-      // Try client-side HEIC conversion with proper error handling
+      // Smart HEIC conversion: Mobile-first strategy
       if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
         setIsConverting(true);
-        try {
-          console.log('🔍 Attempting client-side HEIC conversion...');
-          
-          // For iPhone photos, ensure we have the right file object
-          if (file.type === '' && file.name.toLowerCase().endsWith('.heic')) {
-            console.log('📱 Detected iPhone HEIC file with empty MIME type, forcing conversion');
+        const isMobile = isMobileDevice();
+        
+        if (isMobile) {
+          // Mobile Strategy: Skip client conversion, use server-side
+          console.log('📱 Mobile device detected - skipping client conversion, using server-side processing');
+          finalFile = file; // Send HEIC directly to server
+          setError('📱 Processing HEIC image on server...');
+          setTimeout(() => setError(null), 2000);
+        } else {
+          // Desktop Strategy: Try client conversion first
+          try {
+            console.log('💻 Desktop device - attempting client-side HEIC conversion...');
+            
+            finalFile = await convertHeicToJpeg(file);
+            console.log('✅ Client-side HEIC conversion successful');
+          } catch (conversionError) {
+            console.log('⚠️ Client-side HEIC conversion failed:', conversionError);
+            console.log('📤 Server will attempt conversion as fallback');
+            
+            // Show a user-friendly message
+            setError('🔄 Using server-side HEIC processing...');
+            setTimeout(() => setError(null), 3000);
+            
+            finalFile = file; // Keep original HEIC file for server processing
           }
-          
-          finalFile = await convertHeicToJpeg(file);
-          console.log('✅ Client-side HEIC conversion successful');
-        } catch (conversionError) {
-          console.log('⚠️ Client-side HEIC conversion failed:', conversionError);
-          console.log('📤 Server will attempt conversion as fallback');
-          
-          // Show a user-friendly warning but still proceed
-          setError('HEIC conversion is having issues. The server will attempt to process your file, but for best results, consider converting to JPEG first.');
-          
-          finalFile = file; // Keep original HEIC file for server processing
-        } finally {
-          setIsConverting(false);
         }
+        
+        setIsConverting(false);
       }
 
       // Set the file and create preview
