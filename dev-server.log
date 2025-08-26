@@ -1,0 +1,172 @@
+
+> qube-sheets@0.1.0 dev:external
+> next dev -H 0.0.0.0
+
+   ▲ Next.js 15.3.1
+   - Local:        http://localhost:3000
+   - Network:      http://0.0.0.0:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 929ms
+ ⚠ Cross origin request detected from 10.0.0.32 to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+ ○ Compiling /_not-found ...
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ ✓ Compiled /middleware in 5.3s (1437 modules)
+ HEAD / 404 in 13ms
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (117kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+ ✓ Compiled / in 169ms (1196 modules)
+ GET / 200 in 277ms
+ ○ Compiling /projects ...
+ ✓ Compiled /projects in 951ms (2166 modules)
+ GET /projects 200 in 1056ms
+ ✓ Compiled /api/projects in 161ms (2194 modules)
+MongoDB connection established
+ GET /api/projects 200 in 1888ms
+ GET /api/projects 200 in 1984ms
+ GET /api/projects 200 in 2308ms
+ GET /api/projects 200 in 2362ms
+ ○ Compiling /projects/[projectId] ...
+ ✓ Compiled /projects/[projectId] in 631ms (2362 modules)
+ GET /projects/68aca1d10eec32d77ca08b9a 200 in 1009ms
+ ✓ Compiled /api/projects/[projectId] in 136ms (2364 modules)
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 616ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 619ms
+ GET /api/projects 200 in 90ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 96ms
+ GET /api/projects 200 in 103ms
+ ✓ Compiled /api/projects/[projectId]/sync-status in 274ms (2370 modules)
+ GET /api/projects/68aca1d10eec32d77ca08b9a 200 in 610ms
+📥 GET /api/projects/[projectId]/inventory called
+📥 GET /api/projects/[projectId]/inventory called
+✅ MongoDB connected
+📋 Project ID: 68aca1d10eec32d77ca08b9a
+✅ MongoDB connected
+📋 Project ID: 68aca1d10eec32d77ca08b9a
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A17%3A38.890Z 200 in 654ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A17%3A38.890Z 200 in 1174ms
+✅ Found 15 inventory items
+ GET /api/projects/68aca1d10eec32d77ca08b9a/inventory 200 in 799ms
+✅ Found 15 inventory items
+ GET /api/projects/68aca1d10eec32d77ca08b9a/inventory 200 in 1334ms
+ ○ Compiling /api/projects/[projectId]/spreadsheet ...
+ ✓ Compiled /api/projects/[projectId]/spreadsheet in 916ms (2373 modules)
+ GET /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 1425ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 1426ms
+ ⚠ Found a change in next.config.js. Restarting the server to apply the changes...
+   ▲ Next.js 15.3.1
+   - Local:        http://localhost:3000
+   - Network:      http://0.0.0.0:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 958ms
+ ✓ Compiled /middleware in 140ms (224 modules)
+ ○ Compiling /api/projects/[projectId]/sync-status ...
+ ✓ Compiled /api/projects/[projectId]/sync-status in 582ms (493 modules)
+ ⚠ ./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./node_modules/heic-convert/index.js
+./app/api/analyze-image/route.ts
+(node:43830) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+🔍 Server-side file analysis: { name: 'IMG_9463.jpeg', type: 'image/jpeg', size: 4907498 }
+📱 Server HEIC detection: {
+  isHeicByExtension: false,
+  isHeicByMimeType: false,
+  isPotentialIPhoneHeic: false,
+  finalResult: false
+}
+📷 Server-side file validation: {
+  isRegularImage: true,
+  isHeic: false,
+  isPotentialIPhonePhoto: false,
+  fileName: 'IMG_9463.jpeg',
+  mimeType: 'image/jpeg'
+}
+ ○ Compiling /api/analyze-image ...
+MongoDB connection established
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A17%3A38.890Z 200 in 3783ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A17%3A38.890Z 200 in 527ms
+OpenAI API usage: { prompt_tokens: 1872, completion_tokens: 340, total_tokens: 2212 }
+ POST /api/analyze-image 200 in 16117ms
+ ⚠ ./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./node_modules/heic-convert/index.js
+./app/api/analyze-image/route.ts
+ ⚠ ./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./node_modules/heic-convert/index.js
+./app/api/analyze-image/route.ts
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A17%3A38.890Z 200 in 528ms
+ ⚠ ./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./node_modules/heic-convert/index.js
+./app/api/analyze-image/route.ts
+ ⚠ ./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./node_modules/heic-convert/index.js
+./app/api/analyze-image/route.ts
+📥 GET /api/projects/[projectId]/inventory called
+✅ MongoDB connected
+📋 Project ID: 68aca1d10eec32d77ca08b9a
+✅ Found 17 inventory items
+ GET /api/projects/68aca1d10eec32d77ca08b9a/inventory 200 in 647ms
+ ⚠ ./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./node_modules/heic-convert/index.js
+./app/api/analyze-image/route.ts
+ ⚠ ./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+Critical dependency: require function is used in a way in which dependencies cannot be statically extracted
+
+Import trace for requested module:
+./node_modules/libheif-js/libheif-wasm/libheif-bundle.js
+./node_modules/libheif-js/wasm-bundle.js
+./node_modules/heic-decode/index.js
+./node_modules/heic-convert/index.js
+./app/api/analyze-image/route.ts
+ GET /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 515ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 501ms
+ PUT /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 253ms
+ POST /api/projects/68aca1d10eec32d77ca08b9a/images 201 in 7188ms
+ PUT /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 283ms
+ PUT /api/projects/68aca1d10eec32d77ca08b9a/spreadsheet 200 in 291ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 527ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 518ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 503ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 509ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 524ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 519ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 539ms
+ GET /api/projects/68aca1d10eec32d77ca08b9a/sync-status?lastUpdate=2025-08-26T14%3A18%3A10.070Z 200 in 513ms
