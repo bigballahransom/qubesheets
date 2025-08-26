@@ -21,11 +21,19 @@ function isHeicFile(file: File): boolean {
   );
 }
 
-// Server-side HEIC conversion with multiple fallbacks
+// Production-safe server-side HEIC handling
 async function convertHeicToJpeg(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string; originalName: string; convertedName: string }> {
   console.log('🔧 Attempting server-side HEIC conversion...');
   
-  // Try heic-convert first (more reliable for HEIC)
+  // In production (Vercel), prioritize stability over server-side conversion
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (isProduction) {
+    console.log('🏭 Vercel production environment detected - skipping complex HEIC conversion');
+    throw new Error('HEIC files require client-side conversion in production. Please ensure your browser converted this file before upload, or try converting to JPEG using your device\'s photo app.');
+  }
+  
+  // Development environment - try full conversion
   try {
     console.log('📦 Attempting conversion with heic-convert...');
     const convert = require('heic-convert');
@@ -73,7 +81,7 @@ async function convertHeicToJpeg(buffer: Buffer): Promise<{ buffer: Buffer; mime
         errorDetails.push(`sharp: ${sharpError.message}`);
       }
       
-      throw new Error(`Server-side HEIC conversion failed with multiple methods. ${errorDetails.join('; ')}. Please try: 1) Using Safari browser (better HEIC support), 2) Converting to JPEG using your phone's camera app, or 3) Changing iPhone settings to save photos as JPEG (Settings → Camera → Formats → Most Compatible).`);
+      throw new Error(`Server-side HEIC conversion failed. ${errorDetails.join('; ')}. Client-side conversion should handle this automatically.`);
     }
   }
 }
