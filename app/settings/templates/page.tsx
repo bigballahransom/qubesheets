@@ -1,46 +1,104 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { FileText, Plus, Edit, Trash2, MessageSquare } from 'lucide-react';
+import { useUser, useOrganization } from '@clerk/nextjs';
+import { Save, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { toast } from 'sonner';
 
-interface Template {
-  id: string;
-  name: string;
-  type: 'sms' | 'email';
-  content: string;
-  createdAt: string;
-}
+const DEFAULT_INSTRUCTIONS = `📸 Upload Tips from {companyName}
+
+• Take clear, well-lit photos of your items
+• Include multiple angles for large furniture  
+• Group similar items together when possible
+• Add descriptions to help with identification
+• Upload as many photos as needed`;
 
 export default function TemplatesPage() {
-  const [templates, setTemplates] = useState<Template[]>([
-    {
-      id: '1',
-      name: 'SMS Upload Link',
-      type: 'sms',
-      content: 'Hi {customerName}! Please upload your photos using this secure link: {uploadLink}. Link expires in 7 days.',
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '2',
-      name: 'Email Welcome',
-      type: 'email',
-      content: 'Welcome {customerName}! We\'re excited to help with your move. Your project "{projectName}" is ready.',
-      createdAt: '2024-01-10'
+  const { user } = useUser();
+  const { organization } = useOrganization();
+  
+  const [instructions, setInstructions] = useState(DEFAULT_INSTRUCTIONS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // Load template data on component mount
+  useEffect(() => {
+    loadTemplateData();
+  }, [user, organization]);
+
+  const loadTemplateData = async () => {
+    try {
+      const response = await fetch('/api/templates/customer_instructions');
+      if (response.ok) {
+        const template = await response.json();
+        setInstructions(template.content || getDefaultInstructions());
+      } else {
+        // No existing template, use defaults
+        setInstructions(getDefaultInstructions());
+      }
+    } catch (error) {
+      console.error('Error loading template:', error);
+      // Use defaults on error
+      setInstructions(getDefaultInstructions());
+    } finally {
+      setLoading(false);
     }
-  ]);
-
-
-  const handleEdit = (template: Template) => {
-    // TODO: Implement template editing
-    console.log('Edit template:', template);
   };
 
-  const handleDelete = (templateId: string) => {
-    setTemplates(templates.filter(t => t.id !== templateId));
+  const getDefaultInstructions = () => {
+    const companyName = getCompanyName();
+    return DEFAULT_INSTRUCTIONS.replace('{companyName}', companyName);
   };
+
+  const getCompanyName = () => {
+    if (organization) {
+      return organization.name || 'Your Company';
+    }
+    return user?.fullName || user?.firstName || 'Your Company';
+  };
+
+  const saveTemplate = async () => {
+    console.log('💾 Saving template:', { length: instructions.length });
+    setSaving(true);
+    try {
+      const response = await fetch('/api/templates/customer_instructions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content: instructions,
+        }),
+      });
+      
+      console.log('📡 Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('❌ API Error:', errorData);
+        throw new Error(`Failed to save template: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Save successful:', result);
+      toast.success('Customer instructions saved successfully!');
+    } catch (error) {
+      console.error('❌ Error saving template:', error);
+      toast.error(`Failed to save template. ${error instanceof Error ? error.message : 'Please try again.'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetToDefault = () => {
+    setInstructions(getDefaultInstructions());
+    toast.info('Reset to default instructions');
+  };
+
 
   return (
     <SidebarProvider>
@@ -50,65 +108,72 @@ export default function TemplatesPage() {
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <FileText className="h-6 w-6 text-blue-600" />
             <h1 className="text-2xl font-bold">Templates</h1>
           </div>
-          <Button className="bg-blue-600 hover:bg-blue-700">
-            <Plus className="mr-2 h-4 w-4" />
-            Create Template
-          </Button>
         </div>
         
-        <div className="max-w-4xl">
-          {/* Templates List */}
-          <div className="bg-white rounded-lg shadow-sm border p-6">
-            <h2 className="text-lg font-medium mb-4">Message Templates</h2>
-            
-            <div className="space-y-4">
-              {templates.map((template) => (
-                <div key={template.id} className="border rounded-lg p-4 hover:bg-gray-50">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-medium">{template.name}</h3>
-                        <span className={`px-2 py-1 text-xs rounded-full ${
-                          template.type === 'sms' 
-                            ? 'bg-green-100 text-green-700' 
-                            : 'bg-blue-100 text-blue-700'
-                        }`}>
-                          {template.type.toUpperCase()}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-600 line-clamp-2">
-                        {template.content}
-                      </p>
-                      <p className="text-xs text-gray-400 mt-2">
-                        Created {new Date(template.createdAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <div className="flex gap-2 ml-4">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleEdit(template)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleDelete(template.id)}
-                        className="text-red-600 hover:text-red-700"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
+        {loading ? (
+          <div className="flex justify-center py-8">
+            <div className="text-gray-500">Loading template...</div>
+          </div>
+        ) : (
+          <div className="max-w-2xl">
+            <div className="space-y-6">
+              {/* Organization/User Info */}
+              {organization && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h3 className="font-medium text-blue-900 mb-1">Organization Template</h3>
+                  <p className="text-sm text-blue-700">
+                    This template will apply to all customer upload pages for <strong>{organization.name}</strong>.
+                  </p>
                 </div>
-              ))}
+              )}
+              
+              {/* Template Editor */}
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-medium">Edit Instructions</h2>
+                  <Button
+                    onClick={resetToDefault}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Reset to Default
+                  </Button>
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">
+                      Customer Instructions Template
+                    </label>
+                    <Textarea
+                      value={instructions}
+                      onChange={(e) => setInstructions(e.target.value)}
+                      placeholder="Enter your custom upload instructions..."
+                      className="min-h-[300px] font-mono text-sm"
+                      disabled={saving}
+                    />
+                  </div>
+                  
+                </div>
+
+                {/* Save Button */}
+                <div className="mt-6">
+                  <Button 
+                    onClick={saveTemplate}
+                    disabled={saving}
+                    className="w-full"
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    {saving ? 'Saving...' : 'Save Instructions Template'}
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
       <SidebarTrigger />
     </SidebarProvider>

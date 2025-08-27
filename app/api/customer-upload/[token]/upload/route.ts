@@ -118,7 +118,6 @@ export async function POST(
     // Parse the form data
     const formData = await request.formData();
     const image = formData.get('image') as File;
-    const description = formData.get('description') as string || '';
 
     console.log('📁 File received:', image?.name, 'Size:', image?.size);
 
@@ -197,7 +196,7 @@ export async function POST(
       projectId: customerUpload.projectId,
       userId: customerUpload.userId,
       organizationId: customerUpload.organizationId,
-      description: description ? `Customer upload by ${customerUpload.customerName}: ${description}` : `Image uploaded by ${customerUpload.customerName}`,
+      description: `Image uploaded by ${customerUpload.customerName}`,
       // Initialize with pending analysis status
       analysisResult: {
         summary: 'Analysis pending...',

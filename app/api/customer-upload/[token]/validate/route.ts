@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Project from '@/models/Project';
+import Branding from '@/models/Branding';
+import Template from '@/models/Template';
 
 export async function GET(
   request: NextRequest,
@@ -64,15 +66,69 @@ export async function GET(
     console.log('Customer upload details:', {
       customerName: customerUpload.customerName,
       projectName: customerUpload.projectId?.name,
-      expiresAt: customerUpload.expiresAt
+      expiresAt: customerUpload.expiresAt,
+      userId: customerUpload.userId,
+      organizationId: customerUpload.organizationId
     });
 
-    // Return customer upload info without sensitive data
+    // Fetch branding data based on user/org
+    let branding = null;
+    try {
+      const brandingQuery: any = {};
+      if (customerUpload.organizationId) {
+        brandingQuery.organizationId = customerUpload.organizationId;
+      } else {
+        brandingQuery.userId = customerUpload.userId;
+      }
+      
+      branding = await Branding.findOne(brandingQuery);
+      console.log('Branding found:', !!branding, branding?.companyName);
+    } catch (brandingError) {
+      console.warn('Error fetching branding:', brandingError);
+      // Continue without branding - it's optional
+    }
+
+    // Fetch custom instructions template based on user/org
+    let instructions = null;
+    try {
+      let template = null;
+      
+      // First try org template if available
+      if (customerUpload.organizationId) {
+        template = await Template.findOne({
+          organizationId: customerUpload.organizationId,
+          templateType: 'customer_instructions'
+        });
+      }
+      
+      // If no org template or not in org, try user template
+      if (!template) {
+        template = await Template.findOne({
+          userId: customerUpload.userId,
+          templateType: 'customer_instructions'
+        });
+      }
+      
+      if (template) {
+        instructions = template.content;
+        console.log('Custom instructions found:', !!instructions);
+      }
+    } catch (templateError) {
+      console.warn('Error fetching custom instructions:', templateError);
+      // Continue without custom instructions - will use default
+    }
+
+    // Return customer upload info with branding data and instructions
     return NextResponse.json({
       customerName: customerUpload.customerName,
       projectName: customerUpload.projectId.name,
       expiresAt: customerUpload.expiresAt,
       isValid: true,
+      branding: branding ? {
+        companyName: branding.companyName,
+        companyLogo: branding.companyLogo,
+      } : null,
+      instructions: instructions,
     });
 
   } catch (error) {

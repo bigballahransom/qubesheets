@@ -860,3 +860,117 @@ TypeError: Invalid state: Controller is already closed
  ✓ Compiled in 328ms (1280 modules)
  ✓ Compiled /api/processing-complete in 201ms (130 modules)
 📡 New SSE connection established: 68ae55c2d848efd0657473de-1756257939928-hbwclkw4i
+ ✓ Compiled /api/projects/[projectId]/sync-status in 240ms (262 modules)
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 1682ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 500ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 502ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 514ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 502ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 499ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 561ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T01%3A25%3A25.762Z 200 in 504ms
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 184273ms
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756258126960-x9rfl22s7
+TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException: TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException:  TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+🧹 Cleaned up SSE connection: 68ae55c2d848efd0657473de-1756258126960-x9rfl22s7
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 946359ms
+ ○ Compiling /_not-found ...
+ ✓ Compiled /_not-found in 1516ms (2018 modules)
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 404 in 1656ms
+ ✓ Compiled in 235ms (1280 modules)
+ ✓ Compiled in 709ms (1280 modules)
+ ✓ Compiled in 185ms (1280 modules)
+ ✓ Compiled in 137ms (1280 modules)
+ ✓ Compiled in 347ms (1280 modules)
+ ✓ Compiled in 900ms (1558 modules)
+ ✓ Compiled in 483ms (1280 modules)
+ ✓ Compiled in 373ms (1280 modules)
+ ✓ Compiled in 265ms (1280 modules)
+ ✓ Compiled in 324ms (1280 modules)
+ ✓ Compiled in 164ms (1280 modules)
+ ✓ Compiled in 228ms (1280 modules)
+ ✓ Compiled in 157ms (1280 modules)
+ ✓ Compiled in 671ms (1280 modules)
+ ✓ Compiled in 458ms (1280 modules)
+ ✓ Compiled in 230ms (1280 modules)
+ ✓ Compiled in 252ms (1280 modules)
+ ✓ Compiled in 189ms (1280 modules)
+ ✓ Compiled in 143ms (1280 modules)
+ ✓ Compiled in 168ms (1280 modules)
+ ✓ Compiled in 232ms (1280 modules)
+ ✓ Compiled in 191ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/0.pack.gz_' -> '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/0.pack.gz'
+ ✓ Compiled in 581ms (1280 modules)
+ ✓ Compiled in 316ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 282ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 690ms (1558 modules)
+ ✓ Compiled in 213ms (1280 modules)
+ ✓ Compiled in 229ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 417ms (1280 modules)
+ ✓ Compiled in 185ms (1280 modules)
+ ✓ Compiled in 188ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 357ms (1280 modules)
+ ✓ Compiled in 183ms (1280 modules)
+ ✓ Compiled in 193ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 408ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 444ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 512ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 454ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 277ms (1280 modules)
+ ✓ Compiled in 205ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 313ms (1280 modules)
+ ✓ Compiled in 433ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 408ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 222ms (1280 modules)
+ ✓ Compiled in 225ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 333ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 227ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 243ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set

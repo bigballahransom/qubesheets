@@ -5,7 +5,7 @@ import { useState, useRef } from 'react';
 import { Camera, Upload, Loader2 } from 'lucide-react';
 
 interface CustomerPhotoUploaderProps {
-  onUpload: (file: File, description?: string) => Promise<void>;
+  onUpload: (file: File) => Promise<void>;
   uploading: boolean;
 }
 
@@ -145,7 +145,6 @@ async function convertHeicToJpeg(file: File): Promise<File> {
 }
 
 export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerPhotoUploaderProps) {
-  const [description, setDescription] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -200,8 +199,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       }
 
       // Upload the processed file
-      await onUpload(finalFile, description);
-      setDescription('');
+      await onUpload(finalFile);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -248,21 +246,6 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
 
   return (
     <div className="space-y-4">
-      {/* Description Input */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Photo Description (Optional)
-        </label>
-        <input
-          type="text"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="e.g., Living room items, Kitchen appliances..."
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          disabled={uploading || isConverting}
-        />
-      </div>
-
       {/* Upload Area */}
       <div
         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
