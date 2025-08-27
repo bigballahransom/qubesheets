@@ -974,3 +974,6 @@ TypeError: Invalid state: Controller is already closed
 <w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
  ✓ Compiled in 243ms (1280 modules)
 <w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 365ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 179ms (1280 modules)

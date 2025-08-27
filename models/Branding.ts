@@ -53,7 +53,7 @@ const BrandingSchema: Schema = new Schema(
 
 // Pre-save validation to ensure either userId OR organizationId is set, but not both
 BrandingSchema.pre('save', function(next) {
-  const branding = this as IBranding;
+  const branding = this as unknown as IBranding;
   
   // Ensure exactly one of userId or organizationId is set
   const hasUserId = !!branding.userId;

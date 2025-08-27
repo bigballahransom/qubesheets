@@ -379,7 +379,7 @@ export default function CustomerUploadPage() {
         <div className="text-center py-6">
           <div className="inline-flex items-center text-slate-400 text-sm">
             <span>Powered by</span>
-            <div className="scale-[0.8] origin-center -ml-1">
+            <div className="scale-[0.8] origin-center -ml-2">
               <Logo />
             </div>
           </div>
