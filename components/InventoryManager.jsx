@@ -76,6 +76,7 @@ const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
+const sseRetryTimeoutRef = useRef(null);
   
   // Default columns setup
   const defaultColumns = [
@@ -93,54 +94,80 @@ const sseRef = useRef(null);
   // Reference to track if data has been loaded
   const dataLoadedRef = useRef(false);
 
-  // Setup Server-Sent Events for real-time updates
+  // Setup Server-Sent Events for real-time updates with mobile optimization
   useEffect(() => {
     if (!currentProject) return;
 
     console.log('🔌 Setting up SSE connection for project:', currentProject._id);
     
-    const eventSource = new EventSource(`/api/processing-complete?projectId=${currentProject._id}`);
-    sseRef.current = eventSource;
+    const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
+    
+    // Mobile-optimized EventSource setup with retry logic
+    const setupSSE = () => {
+      const eventSource = new EventSource(`/api/processing-complete?projectId=${currentProject._id}`);
+      sseRef.current = eventSource;
 
-    eventSource.onopen = () => {
-      console.log('📡 SSE connection established');
-    };
+      eventSource.onopen = () => {
+        console.log('📡 SSE connection established');
+        if (sseRetryTimeoutRef.current) {
+          clearTimeout(sseRetryTimeoutRef.current);
+          sseRetryTimeoutRef.current = null;
+        }
+      };
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('📨 Received SSE message:', data);
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('📨 Received SSE message:', data);
 
-        if (data.type === 'processing-complete') {
-          console.log(`${data.success ? '✅' : '❌'} Processing ${data.success ? 'completed' : 'failed'} via SSE, refreshing data...`);
-          
-          // Always refresh data and UI
-          loadProjectData(currentProject._id);
-          setImageGalleryKey(prev => prev + 1);
-          setShowProcessingNotification(false);
-          setProcessingStatus([]);
-          
-          // Show appropriate notification
-          if (typeof window !== 'undefined' && window.sonner) {
-            if (data.success) {
-              window.sonner.toast.success(
-                `Analysis complete! Added ${data.itemsProcessed} items ${data.totalBoxes > 0 ? `(${data.totalBoxes} boxes recommended)` : ''}`
-              );
-            } else {
-              window.sonner.toast.error(
-                `Analysis failed: ${data.error || 'Unknown error'}. Please try again.`
-              );
+          if (data.type === 'processing-complete') {
+            console.log(`${data.success ? '✅' : '❌'} Processing ${data.success ? 'completed' : 'failed'} via SSE, refreshing data...`);
+            
+            // Immediate UI feedback - update processing status first
+            setProcessingStatus([]);
+            setShowProcessingNotification(false);
+            
+            // Then refresh data and UI
+            loadProjectData(currentProject._id);
+            setImageGalleryKey(prev => prev + 1);
+            
+            // Show appropriate notification
+            if (typeof window !== 'undefined' && window.sonner) {
+              if (data.success) {
+                window.sonner.toast.success(
+                  `Analysis complete! Added ${data.itemsProcessed} items ${data.totalBoxes > 0 ? `(${data.totalBoxes} boxes recommended)` : ''}`
+                );
+              } else {
+                window.sonner.toast.error(
+                  `Analysis failed: ${data.error || 'Unknown error'}. Please try again.`
+                );
+              }
             }
           }
+        } catch (error) {
+          console.error('❌ Error parsing SSE message:', error);
         }
-      } catch (error) {
-        console.error('❌ Error parsing SSE message:', error);
-      }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('❌ SSE connection error:', error);
+        
+        // Mobile-friendly reconnection with exponential backoff
+        if (isMobile && eventSource.readyState === EventSource.CLOSED) {
+          console.log('📱 Mobile SSE connection lost, attempting reconnect...');
+          sseRetryTimeoutRef.current = setTimeout(() => {
+            if (currentProject && sseRef.current?.readyState === EventSource.CLOSED) {
+              console.log('🔄 Reconnecting SSE...');
+              setupSSE();
+            }
+          }, 5000); // 5 second retry for mobile
+        }
+      };
+
+      return eventSource;
     };
 
-    eventSource.onerror = (error) => {
-      console.error('❌ SSE connection error:', error);
-    };
+    const eventSource = setupSSE();
 
     // Cleanup on unmount
     return () => {
@@ -148,54 +175,76 @@ const sseRef = useRef(null);
         sseRef.current.close();
         console.log('🔌 SSE connection closed');
       }
+      if (sseRetryTimeoutRef.current) {
+        clearTimeout(sseRetryTimeoutRef.current);
+      }
     };
   }, [currentProject]);
 
   useEffect(() => {
     if (!currentProject) return;
   
+    const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
+    const pollInterval = isMobile ? 5000 : 3000; // 5s mobile, 3s desktop for better responsiveness
+    
     const pollForUpdates = async () => {
+      // Skip polling if page is hidden (browser optimization)
+      if (document.hidden) return;
+      
       try {
         const response = await fetch(
-          `/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`
+          `/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`,
+          { signal: AbortSignal.timeout(10000) } // 10s timeout to prevent hanging
         );
         
         if (response.ok) {
           const syncData = await response.json();
           
-          // Update processing status
+          // Update processing status immediately for better UX
           setProcessingStatus(syncData.processingStatus || []);
-          
-          // Show/hide processing notification
           setShowProcessingNotification(syncData.processingImages > 0);
           
           // If there are updates, reload the project data
           if (syncData.hasUpdates) {
             console.log('🔄 New updates detected, refreshing data...');
             
-            // Reload inventory items
-            const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
-            if (itemsResponse.ok) {
-              const items = await itemsResponse.json();
-              setInventoryItems(items);
+            // Optimistic UI update - show loading states immediately
+            if (syncData.recentItems > 0) {
+              console.log(`✅ Added ${syncData.recentItems} new items from customer uploads`);
               
-              // Reload spreadsheet data
-              const spreadsheetResponse = await fetch(`/api/projects/${currentProject._id}/spreadsheet`);
-              if (spreadsheetResponse.ok) {
-                const spreadsheetData = await spreadsheetResponse.json();
-                if (spreadsheetData.rows) {
-                  setSpreadsheetRows(spreadsheetData.rows);
+              // Show immediate feedback
+              if (typeof window !== 'undefined' && window.sonner) {
+                window.sonner.toast.success(`Added ${syncData.recentItems} new items!`);
+              }
+            }
+            
+            // Reload inventory items with error handling
+            try {
+              const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`, {
+                signal: AbortSignal.timeout(15000)
+              });
+              
+              if (itemsResponse.ok) {
+                const items = await itemsResponse.json();
+                setInventoryItems(items);
+                
+                // Reload spreadsheet data
+                const spreadsheetResponse = await fetch(`/api/projects/${currentProject._id}/spreadsheet`, {
+                  signal: AbortSignal.timeout(15000)
+                });
+                
+                if (spreadsheetResponse.ok) {
+                  const spreadsheetData = await spreadsheetResponse.json();
+                  if (spreadsheetData.rows) {
+                    setSpreadsheetRows(spreadsheetData.rows);
+                  }
                 }
+                
+                // Refresh image gallery
+                setImageGalleryKey(prev => prev + 1);
               }
-              
-              // Refresh image gallery
-              setImageGalleryKey(prev => prev + 1);
-              
-              // Show notification
-              if (syncData.recentItems > 0) {
-                // You can add a toast notification here
-                console.log(`✅ Added ${syncData.recentItems} new items from customer uploads`);
-              }
+            } catch (dataError) {
+              console.error('Error reloading project data:', dataError);
             }
             
             // Update last check time
@@ -203,12 +252,16 @@ const sseRef = useRef(null);
           }
         }
       } catch (error) {
-        console.error('Error polling for updates:', error);
+        if (error.name === 'AbortError') {
+          console.log('⏱️ Polling request timed out');
+        } else {
+          console.error('Error polling for updates:', error);
+        }
       }
     };
   
-    // Start polling every 10 seconds when the component is active
-    pollIntervalRef.current = setInterval(pollForUpdates, 10000);
+    // Start polling with mobile-optimized interval
+    pollIntervalRef.current = setInterval(pollForUpdates, pollInterval);
     
     // Poll immediately on mount
     pollForUpdates();
@@ -600,20 +653,20 @@ useEffect(() => {
       case 'saving':
         return (
           <div className="flex items-center text-blue-500">
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            <span>Saving...</span>
+            {/* <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            <span>Saving...</span> */}
           </div>
         );
       case 'saved':
         return (
           <div className="flex items-center text-green-500">
-            <span>All changes saved</span>
+            {/* <span>All changes saved</span> */}
           </div>
         );
       case 'error':
         return (
           <div className="flex items-center text-red-500">
-            <span>Error saving changes</span>
+            {/* <span>Error saving changes</span> */}
           </div>
         );
       default:

@@ -128,22 +128,36 @@ export async function POST(
       );
     }
 
-    // Validate file type (accept regular images and HEIC)
+    // Enhanced file type validation for mobile browsers
     const isRegularImage = image.type.startsWith('image/');
     const isHeic = isHeicFile(image);
+    const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(image.name);
+    const isPotentialMobileImage = (image.type === '' || image.type === 'application/octet-stream') && hasImageExtension;
     
-    if (!isRegularImage && !isHeic) {
+    console.log('📱 Customer upload file validation:', {
+      fileName: image.name,
+      mimeType: image.type || 'empty',
+      size: image.size,
+      isRegularImage,
+      isHeic,
+      hasImageExtension,
+      isPotentialMobileImage,
+      userAgent: request.headers.get('user-agent')?.substring(0, 100)
+    });
+    
+    if (!isRegularImage && !isHeic && !isPotentialMobileImage) {
       return NextResponse.json(
         { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, or HEIF).' },
         { status: 400 }
       );
     }
 
-    // Validate file size (10MB limit)
-    const maxSize = 10 * 1024 * 1024;
+    // Validate file size (50MB limit for high-quality images)
+    const maxSize = parseInt(process.env.MAX_UPLOAD_SIZE || '52428800'); // 50MB default
     if (image.size > maxSize) {
+      const maxSizeMB = Math.round(maxSize / (1024 * 1024));
       return NextResponse.json(
-        { error: 'File size too large. Please upload an image smaller than 10MB.' },
+        { error: `File size too large. Please upload an image smaller than ${maxSizeMB}MB.` },
         { status: 400 }
       );
     }

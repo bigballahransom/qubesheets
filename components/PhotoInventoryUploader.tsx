@@ -3,6 +3,7 @@
 
 import { useState, useRef } from 'react';
 import { Upload, Camera, Loader2, X, Package, Box, BoxesIcon } from 'lucide-react';
+import RealTimeUploadStatus from './RealTimeUploadStatus';
 
 export interface InventoryItem {
   name: string;
@@ -443,12 +444,23 @@ export default function PhotoInventoryUploader({
     try {
       console.log(`🚀 Starting async processing for ${selectedFiles.length} images...`);
 
-      // Process each file sequentially
+      // Mobile-optimized sequential processing
+      const isMobile = isMobileDevice();
+      if (isMobile) {
+        console.log('📱 Mobile device detected - using optimized upload strategy');
+      }
+      
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
         const fileNum = i + 1;
         
         console.log(`📸 Processing image ${fileNum}/${selectedFiles.length}: ${file.name}`);
+        
+        // Mobile: Add delay between uploads to prevent overwhelming the device
+        if (isMobile && i > 0) {
+          console.log('📱 Mobile: Adding delay between uploads...');
+          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+        }
         
         // Update processing status for this file
         setProcessingStatus(prev => ({
@@ -467,14 +479,30 @@ export default function PhotoInventoryUploader({
           }
 
           console.log(`💾 Saving image ${fileNum} to MongoDB...`);
+          console.log(`📱 Mobile upload debug - File details:`, {
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            isMobile: isMobileDevice(),
+            userAgent: navigator.userAgent.substring(0, 100)
+          });
+          
           const saveResponse = await fetch(`/api/projects/${projectId}/images`, {
             method: 'POST',
             body: formData,
+            // Add timeout for mobile networks
+            signal: AbortSignal.timeout(120000) // 2 minute timeout for mobile
           });
 
           if (!saveResponse.ok) {
             const errorText = await saveResponse.text();
             console.error(`❌ Failed to save image ${fileNum}:`, errorText);
+            console.error(`📱 Mobile upload error details:`, {
+              status: saveResponse.status,
+              statusText: saveResponse.statusText,
+              headers: Object.fromEntries(saveResponse.headers.entries()),
+              isMobile: isMobileDevice()
+            });
             setProcessingStatus(prev => ({
               ...prev,
               [file.name]: 'failed'
@@ -485,32 +513,71 @@ export default function PhotoInventoryUploader({
           const savedImage = await saveResponse.json();
           console.log(`✅ Image ${fileNum} saved to MongoDB:`, savedImage._id);
 
+          // Immediate UI feedback - trigger image gallery refresh right away
+          if (onImageSaved) {
+            console.log('🔄 Triggering immediate image gallery refresh...');
+            onImageSaved();
+          }
+
           // Step 2: Queue background analysis job
           console.log(`📋 Queueing background analysis job for image ${fileNum}...`);
-          const queueResponse = await fetch('/api/background-queue', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              type: 'image_analysis',
-              imageId: savedImage._id,
-              projectId: projectId,
-              useRailwayService: file.size > 4 * 1024 * 1024 || 
-                               file.name.toLowerCase().match(/\.(heic|heif)$/) || 
-                               file.type.includes('heic')
-            }),
+          const useRailway = file.size > 4 * 1024 * 1024 || 
+                           file.name.toLowerCase().match(/\.(heic|heif)$/) || 
+                           file.type.includes('heic');
+          
+          console.log(`🚂 Railway decision for ${file.name}:`, {
+            useRailway,
+            fileSize: file.size,
+            isLargeFile: file.size > 4 * 1024 * 1024,
+            isHEIC: file.name.toLowerCase().match(/\.(heic|heif)$/) || file.type.includes('heic'),
+            isMobile: isMobileDevice()
           });
+          
+          try {
+            const queueResponse = await fetch('/api/background-queue', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                type: 'image_analysis',
+                imageId: savedImage._id,
+                projectId: projectId,
+                useRailwayService: useRailway,
+                estimatedSize: file.size // Pass file size for smart queue prioritization
+              }),
+              // Add timeout for mobile networks
+              signal: AbortSignal.timeout(30000) // 30 second timeout for queue API
+            });
 
-          if (!queueResponse.ok) {
-            console.error(`⚠️ Failed to queue background job for image ${fileNum}, but image was saved`);
-            setProcessingStatus(prev => ({
-              ...prev,
-              [file.name]: 'completed'
-            }));
-          } else {
-            const queueResult = await queueResponse.json();
-            console.log(`✅ Background job queued for image ${fileNum}:`, queueResult.jobId);
+            if (!queueResponse.ok) {
+              const queueErrorText = await queueResponse.text();
+              console.error(`⚠️ Failed to queue background job for image ${fileNum}:`, queueErrorText);
+              console.error(`📱 Queue error details:`, {
+                status: queueResponse.status,
+                statusText: queueResponse.statusText,
+                isMobile: isMobileDevice()
+              });
+              setProcessingStatus(prev => ({
+                ...prev,
+                [file.name]: 'completed' // Image was saved successfully
+              }));
+            } else {
+              const queueResult = await queueResponse.json();
+              console.log(`✅ Background job queued for image ${fileNum}:`, queueResult.jobId);
+              setProcessingStatus(prev => ({
+                ...prev,
+                [file.name]: 'completed'
+              }));
+            }
+          } catch (queueError) {
+            console.error(`❌ Queue request failed for image ${fileNum}:`, queueError);
+            console.error(`📱 Queue network error on mobile:`, {
+              error: queueError.message,
+              isMobile: isMobileDevice(),
+              isTimeout: queueError.name === 'AbortError'
+            });
+            // Still mark as completed since image was saved
             setProcessingStatus(prev => ({
               ...prev,
               [file.name]: 'completed'
@@ -919,6 +986,24 @@ export default function PhotoInventoryUploader({
               </ul>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Real-time Upload Status */}
+      {Object.keys(processingStatus).length > 0 && (
+        <div className="mb-6">
+          <RealTimeUploadStatus 
+            uploads={Object.fromEntries(
+              Object.entries(processingStatus).map(([fileName, status]) => [
+                fileName, 
+                {
+                  fileName,
+                  status: status as 'uploading' | 'processing' | 'completed' | 'failed',
+                  startTime: new Date()
+                }
+              ])
+            )}
+          />
         </div>
       )}
 

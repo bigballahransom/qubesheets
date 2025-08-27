@@ -13,32 +13,70 @@ interface QueueItem {
     maxRetries: number;
     createdAt: Date;
     scheduledFor: Date;
+    priority: number; // Higher number = higher priority
+    estimatedSize?: number; // Estimated image size for smart queuing
   }
   
   class BackgroundQueue {
     private queue: QueueItem[] = [];
     private processing = false;
     private workers = 0;
-    private maxWorkers = 3;
+    private maxWorkers = parseInt(process.env.QUEUE_MAX_WORKERS || '25'); // 25 concurrent workers for high throughput
+    private railwayWorkers = 0;
+    private maxRailwayWorkers = parseInt(process.env.RAILWAY_MAX_CONCURRENT || '5'); // Limit Railway concurrency
+    private railwayHealthy = true;
+    private lastHealthCheck = new Date();
+    private railwayErrors = 0;
+    private maxRailwayErrors = 3; // Circuit breaker threshold
   
-    // Add item to queue
-    enqueue(type: 'image_analysis', data: any, delay = 0): string {
+    // Add item to queue with overflow management and smart priority
+    enqueue(type: 'image_analysis', data: any, delay = 0, estimatedSize?: number): string {
       const id = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const now = new Date();
       const scheduledFor = new Date(now.getTime() + delay);
+      
+      // Check for queue overflow (prevent memory issues)
+      const maxQueueSize = parseInt(process.env.MAX_QUEUE_SIZE || '1000');
+      if (this.queue.length >= maxQueueSize) {
+        console.warn(`⚠️ Queue overflow! Rejecting job: ${id} (queue size: ${this.queue.length})`);
+        throw new Error(`Queue is full (${this.queue.length} items). Please try again later.`);
+      }
+
+      // Smart priority: smaller images get higher priority for faster processing
+      let priority = 50; // Default priority
+      if (estimatedSize) {
+        if (estimatedSize < 1024 * 1024) { // < 1MB
+          priority = 80; // High priority
+        } else if (estimatedSize < 5 * 1024 * 1024) { // < 5MB
+          priority = 60; // Medium-high priority
+        } else if (estimatedSize > 20 * 1024 * 1024) { // > 20MB
+          priority = 30; // Lower priority for very large files
+        }
+      }
   
       const item: QueueItem = {
         id,
         type,
         data,
         retries: 0,
-        maxRetries: 3,
+        maxRetries: 5, // Increased retries for better reliability
         createdAt: now,
-        scheduledFor
+        scheduledFor,
+        priority,
+        estimatedSize
       };
   
       this.queue.push(item);
-      console.log(`📋 Queued ${type} job: ${id} (scheduled for: ${scheduledFor.toISOString()})`);
+      
+      // Sort queue by priority (higher priority first), then by scheduled time
+      this.queue.sort((a, b) => {
+        if (a.scheduledFor <= now && b.scheduledFor <= now) {
+          return b.priority - a.priority; // Higher priority first
+        }
+        return a.scheduledFor.getTime() - b.scheduledFor.getTime(); // Earlier scheduled first
+      });
+      
+      console.log(`📋 Queued ${type} job: ${id} (priority: ${priority}, queue: ${this.queue.length}/${maxQueueSize}, Railway: ${this.railwayWorkers}/${this.maxRailwayWorkers})`);
       
       // Start processing if not already running
       this.startProcessing();
@@ -118,9 +156,30 @@ interface QueueItem {
       }
     }
 
-    // Process with Railway service
+    // Process with Railway service - with concurrency control and health monitoring
     private async processWithRailway(data: any) {
-      console.log('🚂 Sending job to Railway background service...');
+      // Check Railway health before processing
+      if (!this.railwayHealthy) {
+        const timeSinceLastCheck = new Date().getTime() - this.lastHealthCheck.getTime();
+        if (timeSinceLastCheck < 60000) { // 1 minute circuit breaker
+          console.warn(`🚂 Railway service unhealthy, skipping (errors: ${this.railwayErrors})`);
+          throw new Error('Railway service temporarily unavailable due to repeated failures');
+        } else {
+          // Reset after 1 minute
+          console.log('🚂 Resetting Railway health check after cooldown period');
+          this.railwayHealthy = true;
+          this.railwayErrors = 0;
+        }
+      }
+      
+      // Wait for Railway worker availability
+      while (this.railwayWorkers >= this.maxRailwayWorkers) {
+        console.log(`🚂 Railway queue full (${this.railwayWorkers}/${this.maxRailwayWorkers}), waiting...`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+      }
+      
+      this.railwayWorkers++;
+      console.log(`🚂 Railway worker ${this.railwayWorkers}/${this.maxRailwayWorkers} - Processing imageId: ${data.imageId} (health: ${this.railwayHealthy ? 'good' : 'degraded'})`);
       
       try {
         // Get the image data from MongoDB
@@ -158,25 +217,81 @@ interface QueueItem {
         formData.append('twilioAuthToken', process.env.TWILIO_AUTH_TOKEN!);
         formData.append('twilioPhoneNumber', process.env.TWILIO_PHONE_NUMBER!);
 
-        // Call Railway background service
+        // Call Railway background service with mobile-optimized timeouts
         const railwayUrl = process.env.IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app';
+        
+        console.log('🚂 Calling Railway service:', {
+          url: `${railwayUrl}/api/background`,
+          imageId: data.imageId,
+          projectId: data.projectId,
+          imageSize: image?.data?.length || 'unknown'
+        });
+        
+        // Mobile-friendly timeout (5 minutes for large files)
+        const timeoutMs = image?.data?.length > 10 * 1024 * 1024 ? 300000 : 180000; // 5min for large, 3min for smaller
+        
         const response = await fetch(`${railwayUrl}/api/background`, {
           method: 'POST',
           body: formData,
+          signal: AbortSignal.timeout(timeoutMs)
         });
 
         if (!response.ok) {
+          const errorText = await response.text().catch(() => 'No error details');
+          console.error('🚂 Railway service error:', {
+            status: response.status,
+            statusText: response.statusText,
+            errorText: errorText.substring(0, 500),
+            url: railwayUrl
+          });
           throw new Error(`Railway service failed: ${response.status} ${response.statusText}`);
         }
 
         const result = await response.json();
         console.log('✅ Railway background processing initiated:', result);
         
+        // Reset error count on successful Railway request
+        if (this.railwayErrors > 0) {
+          console.log(`🚂 Railway service recovered - resetting error count from ${this.railwayErrors} to 0`);
+          this.railwayErrors = 0;
+          this.railwayHealthy = true;
+        }
+        
         return result;
         
       } catch (error) {
-        console.error('❌ Railway background processing failed:', error);
-        throw error;
+        // Track Railway service errors for health monitoring
+        this.railwayErrors++;
+        this.lastHealthCheck = new Date();
+        
+        console.error('❌ Railway background processing failed:', {
+          error: error.message,
+          isTimeout: error.name === 'AbortError',
+          isNetworkError: error.name === 'TypeError',
+          railwayUrl,
+          imageId: data.imageId,
+          totalErrors: this.railwayErrors,
+          healthStatus: this.railwayHealthy ? 'healthy' : 'unhealthy'
+        });
+        
+        // Circuit breaker: mark Railway as unhealthy if too many errors
+        if (this.railwayErrors >= this.maxRailwayErrors) {
+          console.warn(`🚨 Railway service marked as unhealthy after ${this.railwayErrors} errors - activating circuit breaker`);
+          this.railwayHealthy = false;
+        }
+        
+        // Provide more specific error messages
+        if (error.name === 'AbortError') {
+          throw new Error('Railway service timeout - the request took too long to complete');
+        } else if (error.name === 'TypeError') {
+          throw new Error('Network error connecting to Railway service - please check internet connection');
+        } else {
+          throw error;
+        }
+      } finally {
+        // Always release Railway worker slot
+        this.railwayWorkers--;
+        console.log(`🚂 Railway worker released - Active: ${this.railwayWorkers}/${this.maxRailwayWorkers}`);
       }
     }
   
@@ -187,12 +302,20 @@ interface QueueItem {
         processing: this.processing,
         workers: this.workers,
         maxWorkers: this.maxWorkers,
+        railwayWorkers: this.railwayWorkers,
+        maxRailwayWorkers: this.maxRailwayWorkers,
+        railwayCapacityAvailable: this.maxRailwayWorkers - this.railwayWorkers,
+        railwayHealthy: this.railwayHealthy,
+        railwayErrors: this.railwayErrors,
+        lastHealthCheck: this.lastHealthCheck,
         items: this.queue.map(item => ({
           id: item.id,
           type: item.type,
           retries: item.retries,
           scheduledFor: item.scheduledFor,
-          createdAt: item.createdAt
+          createdAt: item.createdAt,
+          priority: item.priority,
+          estimatedSize: item.estimatedSize
         }))
       };
     }

@@ -111,6 +111,14 @@ export default function CustomerUploadPage() {
   const handleFileUpload = async (file: File) => {
     setUploading(true);
     
+    // Immediately show optimistic UI update
+    const tempImage: UploadedImage = {
+      id: `temp-${Date.now()}`,
+      name: file.name,
+      uploadedAt: new Date().toISOString()
+    };
+    setUploadedImages(prev => [...prev, tempImage]);
+    
     try {
       const formData = new FormData();
       formData.append('image', file);
@@ -118,6 +126,8 @@ export default function CustomerUploadPage() {
       const response = await fetch(`/api/customer-upload/${token}/upload`, {
         method: 'POST',
         body: formData,
+        // Add timeout for mobile networks
+        signal: AbortSignal.timeout(120000) // 2 minute timeout
       });
 
       if (!response.ok) {
@@ -127,19 +137,48 @@ export default function CustomerUploadPage() {
 
       const result = await response.json();
       
-      // Add to uploaded images list
-      const newImage: UploadedImage = {
-        id: result.imageId,
-        name: file.name,
-        uploadedAt: new Date().toISOString()
-      };
+      // Replace temp image with real data
+      setUploadedImages(prev => prev.map(img => 
+        img.id === tempImage.id 
+          ? {
+              id: result.imageId,
+              name: file.name,
+              uploadedAt: new Date().toISOString()
+            }
+          : img
+      ));
       
-      setUploadedImages(prev => [...prev, newImage]);
-      toast.success('Photo uploaded successfully! AI analysis in progress...');
+      toast.success('Photo uploaded successfully! AI analysis in progress...', {
+        duration: 4000,
+        style: {
+          background: '#10b981',
+          color: 'white',
+        }
+      });
       
     } catch (err) {
       console.error('Upload error:', err);
-      toast.error(err instanceof Error ? err.message : 'Upload failed');
+      
+      // Remove temp image on error
+      setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
+      
+      // Enhanced error messages for mobile
+      let errorMessage = 'Upload failed';
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          errorMessage = 'Upload timed out. Please check your connection and try again.';
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      toast.error(errorMessage, {
+        duration: 6000,
+        style: {
+          background: '#ef4444',
+          color: 'white',
+        }
+      });
     } finally {
       setUploading(false);
     }

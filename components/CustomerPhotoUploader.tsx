@@ -153,6 +153,19 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
     if (!file) return;
 
     try {
+      const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
+      
+      console.log(`📱 Customer upload - Mobile detection:`, {
+        isMobile,
+        userAgent: navigator.userAgent.substring(0, 100),
+        fileDetails: {
+          name: file.name,
+          size: file.size,
+          type: file.type || 'empty',
+          lastModified: file.lastModified
+        }
+      });
+      
       // Check if file is a supported image type or HEIC
       const isRegularImage = file.type.startsWith('image/');
       const isHeic = isHeicFile(file);
@@ -162,7 +175,10 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
       
       if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
-        alert('Please select a valid image file (JPEG, PNG, GIF, HEIC, or HEIF). Note: Some iPhone photos may need to be converted to JPEG first.');
+        const errorMsg = isMobile 
+          ? 'Please select a photo from your camera roll or take a new photo.'
+          : 'Please select a valid image file (JPEG, PNG, GIF, HEIC, or HEIF). Note: Some iPhone photos may need to be converted to JPEG first.';
+        alert(errorMsg);
         return;
       }
       
@@ -198,14 +214,42 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       }
 
-      // Upload the processed file
-      await onUpload(finalFile);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      // Mobile-optimized upload with retry logic
+      let uploadSuccess = false;
+      let retryCount = 0;
+      const maxRetries = isMobile ? 3 : 1; // More retries on mobile
+      
+      while (!uploadSuccess && retryCount < maxRetries) {
+        try {
+          if (retryCount > 0) {
+            console.log(`📱 Retry attempt ${retryCount} for ${finalFile.name}`);
+            // Add exponential backoff delay for retries
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+          }
+          
+          await onUpload(finalFile);
+          uploadSuccess = true;
+          
+          if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+          }
+          
+        } catch (uploadError) {
+          console.error(`❌ Upload attempt ${retryCount + 1} failed:`, uploadError);
+          retryCount++;
+          
+          if (retryCount >= maxRetries) {
+            const errorMsg = isMobile
+              ? 'Upload failed after multiple attempts. Please check your internet connection and try again.'
+              : 'Failed to process the selected file. Please try again.';
+            alert(errorMsg);
+            setIsConverting(false);
+            throw uploadError;
+          }
+        }
       }
     } catch (error) {
       console.error('Error processing file:', error);
-      alert('Failed to process the selected file. Please try again.');
       setIsConverting(false);
     }
   };
@@ -304,7 +348,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       </div>
 
       <p className="text-xs text-gray-500 text-center">
-        Supported formats: JPG, PNG, GIF, HEIC, HEIF (max 10MB)
+        Supported formats: JPG, PNG, GIF, HEIC, HEIF (max 50MB)
       </p>
     </div>
   );

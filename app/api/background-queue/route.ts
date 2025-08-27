@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { type, imageId, projectId, useRailwayService } = body;
+    const { type, imageId, projectId, useRailwayService, estimatedSize } = body;
 
     console.log('📋 Queue job request:', {
       type,
@@ -35,14 +35,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Queue the background job
+    // Queue the background job with estimated size for smart prioritization
     const jobId = backgroundQueue.enqueue(type, {
       imageId,
       projectId,
       userId,
       organizationId,
       useRailwayService
-    });
+    }, 0, estimatedSize);
 
     console.log('✅ Background job queued:', jobId);
 
