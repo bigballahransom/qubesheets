@@ -77,22 +77,27 @@ export async function POST(
       );
     }
 
-    // Enhanced file type validation for mobile browsers
+    // Enhanced file type validation for mobile browsers - accept anything that looks like an image
     const isRegularImage = image.type.startsWith('image/');
-    const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(image.name);
-    const isPotentialMobileImage = (image.type === '' || image.type === 'application/octet-stream') && hasImageExtension;
+    const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i.test(image.name);
+    const isPotentialMobileImage = (image.type === '' || image.type === 'application/octet-stream' || image.type === 'text/plain') && hasImageExtension;
+    const isAnyImageType = isRegularImage || isPotentialMobileImage;
     
     console.log('📱 File validation debug:', {
       fileName: image.name,
       mimeType: image.type || 'empty',
       size: image.size,
+      sizeInMB: (image.size / (1024 * 1024)).toFixed(2) + 'MB',
       isRegularImage,
       hasImageExtension,
       isPotentialMobileImage,
-      userAgent: request.headers.get('user-agent')?.substring(0, 100)
+      isAnyImageType,
+      userAgent: request.headers.get('user-agent')?.substring(0, 100),
+      contentLength: request.headers.get('content-length'),
+      isIPhone: request.headers.get('user-agent')?.includes('iPhone') || false
     });
     
-    if (!isRegularImage && !isPotentialMobileImage) {
+    if (!isAnyImageType) {
       return NextResponse.json(
         { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, or HEIF).' },
         { status: 400 }
@@ -109,9 +114,20 @@ export async function POST(
       );
     }
 
-    // Convert image to buffer
-    const bytes = await image.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    // Convert image to buffer with iPhone-specific error handling
+    let buffer: Buffer;
+    try {
+      console.log(`📱 Converting image to buffer: ${image.name} (${(image.size / (1024 * 1024)).toFixed(2)}MB)`);
+      const bytes = await image.arrayBuffer();
+      buffer = Buffer.from(bytes);
+      console.log(`✅ Buffer conversion successful: ${buffer.length} bytes`);
+    } catch (bufferError) {
+      console.error('❌ Buffer conversion failed:', bufferError);
+      return NextResponse.json(
+        { error: 'Failed to process image. The file may be corrupted or too large for processing.' },
+        { status: 400 }
+      );
+    }
 
     // Generate unique name
     const timestamp = Date.now();
@@ -127,11 +143,43 @@ export async function POST(
       }
     }
 
-    // Create the image document
+    // Create the image document with normalized MIME type
+    let normalizedMimeType = image.type;
+    
+    // Fix common MIME type issues
+    if (!normalizedMimeType || normalizedMimeType === 'application/octet-stream' || normalizedMimeType === 'text/plain') {
+      // Guess MIME type from file extension
+      const ext = image.name.toLowerCase().split('.').pop();
+      switch (ext) {
+        case 'jpg':
+        case 'jpeg':
+          normalizedMimeType = 'image/jpeg';
+          break;
+        case 'png':
+          normalizedMimeType = 'image/png';
+          break;
+        case 'gif':
+          normalizedMimeType = 'image/gif';
+          break;
+        case 'webp':
+          normalizedMimeType = 'image/webp';
+          break;
+        case 'heic':
+          normalizedMimeType = 'image/heic';
+          break;
+        case 'heif':
+          normalizedMimeType = 'image/heif';
+          break;
+        default:
+          normalizedMimeType = 'image/jpeg'; // Default fallback
+      }
+      console.log(`📱 Normalized MIME type from ${image.type || 'empty'} to ${normalizedMimeType}`);
+    }
+
     const imageData: any = {
       name,
       originalName: image.name,
-      mimeType: image.type,
+      mimeType: normalizedMimeType,
       size: image.size,
       data: buffer,
       projectId,
@@ -150,7 +198,34 @@ export async function POST(
       imageData.organizationId = authContext.organizationId;
     }
     
-    const imageDoc = await Image.create(imageData);
+    let imageDoc;
+    try {
+      console.log(`💾 Saving image to MongoDB: ${name}`);
+      imageDoc = await Image.create(imageData);
+      console.log(`✅ Image saved successfully: ${imageDoc._id}`);
+    } catch (mongoError) {
+      console.error('❌ MongoDB save failed:', mongoError);
+      
+      // Check for specific MongoDB errors
+      if (mongoError instanceof Error) {
+        if (mongoError.message.includes('Document too large')) {
+          return NextResponse.json(
+            { error: 'Image file is too large to save. Please reduce the image size and try again.' },
+            { status: 413 }
+          );
+        } else if (mongoError.message.includes('timeout')) {
+          return NextResponse.json(
+            { error: 'Upload timed out. Please check your connection and try again.' },
+            { status: 408 }
+          );
+        }
+      }
+      
+      return NextResponse.json(
+        { error: 'Failed to save image. Please try again or reduce image size.' },
+        { status: 500 }
+      );
+    }
 
     // Update project's updatedAt timestamp
     await Project.findByIdAndUpdate(projectId, { 

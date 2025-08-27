@@ -41,6 +41,136 @@ function isHeicFile(file: File): boolean {
   return result;
 }
 
+// Universal image processing for mobile devices - handles ANY image type and size
+async function processImageForMobile(file: File): Promise<File> {
+  // Always process on mobile or for large files (regardless of device)
+  const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+  const isLargeFile = file.size > 3 * 1024 * 1024; // 3MB threshold
+  const isVeryLargeFile = file.size > 10 * 1024 * 1024; // 10MB threshold
+  
+  // Process if mobile OR file is large
+  if (!isMobile && !isLargeFile) {
+    return file;
+  }
+  
+  const deviceType = isMobile ? (navigator.userAgent.includes('iPhone') ? 'iPhone' : 'Mobile') : 'Desktop';
+  console.log(`📱 Customer uploader: Processing ${deviceType} image: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)}MB)`);
+  
+  try {
+    // Create a canvas to process the image
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Cannot get canvas context');
+    
+    // Create an image element with error handling
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; // Handle CORS issues
+    
+    // Use createObjectURL for better memory management
+    const imageUrl = URL.createObjectURL(file);
+    
+    return new Promise((resolve, reject) => {
+      // Set up timeout to prevent hanging
+      const timeout = setTimeout(() => {
+        URL.revokeObjectURL(imageUrl);
+        reject(new Error('Image processing timeout'));
+      }, 30000); // 30 second timeout
+      
+      img.onload = () => {
+        clearTimeout(timeout);
+        try {
+          // Calculate new dimensions based on file size and device
+          let maxDimension = 2048; // Default
+          if (isVeryLargeFile) {
+            maxDimension = 1920; // Reduce for very large files
+          } else if (isMobile) {
+            maxDimension = 1600; // Smaller for mobile to save memory
+          }
+          
+          let { width, height } = img;
+          let needsResize = width > maxDimension || height > maxDimension;
+          
+          if (needsResize) {
+            if (width > height) {
+              height = (height * maxDimension) / width;
+              width = maxDimension;
+            } else {
+              width = (width * maxDimension) / height;
+              height = maxDimension;
+            }
+          }
+          
+          // Set canvas size
+          canvas.width = width;
+          canvas.height = height;
+          
+          // Draw with anti-aliasing
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Determine quality based on original file size
+          let quality = 0.8; // Default
+          if (isVeryLargeFile) {
+            quality = 0.7; // More compression for very large files
+          } else if (file.size < 5 * 1024 * 1024) {
+            quality = 0.9; // Less compression for smaller files
+          }
+          
+          // Convert to blob with compression
+          canvas.toBlob(
+            (blob) => {
+              URL.revokeObjectURL(imageUrl);
+              
+              if (!blob) {
+                reject(new Error('Failed to process image'));
+                return;
+              }
+              
+              // Create processed file with proper naming
+              let newName = file.name;
+              if (!newName.toLowerCase().endsWith('.jpg') && !newName.toLowerCase().endsWith('.jpeg')) {
+                newName = file.name.replace(/\.[^.]*$/, '.jpg');
+              }
+              
+              const processedFile = new File(
+                [blob],
+                newName,
+                {
+                  type: 'image/jpeg',
+                  lastModified: Date.now()
+                }
+              );
+              
+              const reductionPercent = ((1 - processedFile.size / file.size) * 100).toFixed(1);
+              console.log(`✅ Customer uploader: ${deviceType} image processed: ${(processedFile.size / (1024 * 1024)).toFixed(2)}MB (${reductionPercent}% reduction)`);
+              resolve(processedFile);
+            },
+            'image/jpeg',
+            quality
+          );
+        } catch (error) {
+          clearTimeout(timeout);
+          URL.revokeObjectURL(imageUrl);
+          reject(error);
+        }
+      };
+      
+      img.onerror = (error) => {
+        clearTimeout(timeout);
+        URL.revokeObjectURL(imageUrl);
+        console.error('❌ Customer uploader: Failed to load image for processing:', error);
+        reject(new Error('Failed to load image - file may be corrupted or unsupported'));
+      };
+      
+      img.src = imageUrl;
+    });
+  } catch (error) {
+    console.warn(`⚠️ Customer uploader: ${deviceType} image processing failed, using original:`, error);
+    return file;
+  }
+}
+
 // Modern HEIC to JPEG conversion using heic-to library
 async function convertHeicToJpeg(file: File): Promise<File> {
   // Ensure we're running on client-side
@@ -212,6 +342,14 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         } finally {
           setIsConverting(false);
         }
+      }
+
+      // Process images for mobile devices to prevent upload failures
+      try {
+        finalFile = await processImageForMobile(finalFile);
+      } catch (processingError) {
+        console.warn('⚠️ Customer uploader: Image processing failed, using original file:', processingError);
+        // Continue with original file
       }
 
       // Mobile-optimized upload with retry logic

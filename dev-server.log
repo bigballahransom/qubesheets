@@ -1381,3 +1381,109 @@ TypeError: Invalid state: Controller is already closed
  PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
  PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 279ms
  PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 330ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 283ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 282ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 277ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 279ms
+🧹 Cleaned up SSE connection: 68ae55c2d848efd0657473de-1756305741789-cd06b8o1k
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 600141ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 279ms
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756306344814-qsb3411mx
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 404ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 346ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 316ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 284ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 333ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 287ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 465ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 404ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 287ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 272ms
+ ✓ Compiled in 246ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 288ms
+ ✓ Compiled in 154ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ ✓ Compiled in 157ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 277ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ ✓ Compiled in 180ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ ✓ Compiled in 189ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+ ✓ Compiled in 192ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 285ms
+ ✓ Compiled in 169ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ ✓ Compiled in 180ms (1287 modules)
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 282ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 285ms
+ ✓ Compiled in 176ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 292ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ ✓ Compiled in 178ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ ✓ Compiled in 171ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 260ms
+ ✓ Compiled in 158ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 453ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 280ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 299ms
+ ✓ Compiled in 239ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 353ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 297ms
+ ✓ Compiled in 161ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 414ms
+ ✓ Compiled in 148ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ ✓ Compiled in 163ms (1287 modules)
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 340ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 384ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 318ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 311ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 312ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 262ms
