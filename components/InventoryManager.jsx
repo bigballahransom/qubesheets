@@ -907,10 +907,10 @@ const ProcessingNotification = () => {
       
       {/* Photo Uploader Modal */}
       {isUploaderOpen && currentProject && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
-            <div className="sticky top-0 z-10 p-4 flex justify-between items-center border-b bg-white">
-              <h2 className="text-lg font-semibold text-slate-800">Add Items from Photo</h2>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex-shrink-0 p-3 sm:p-4 flex justify-between items-center border-b bg-white">
+              <h2 className="text-base sm:text-lg font-semibold text-slate-800">Add Items from Photo</h2>
               <button 
                 onClick={() => setIsUploaderOpen(false)}
                 className="p-2 rounded-full hover:bg-slate-100 transition-colors cursor-pointer focus:ring-2 focus:ring-slate-500 focus:outline-none"
@@ -918,7 +918,7 @@ const ProcessingNotification = () => {
                 <X size={20} className="text-slate-600" />
               </button>
             </div>
-            <div className="p-1 overflow-auto">
+            <div className="flex-1 overflow-y-auto scroll-smooth p-3 sm:p-6 overscroll-contain" style={{ maxHeight: 'calc(95vh - 4rem)', WebkitOverflowScrolling: 'touch' }}>
               <PhotoInventoryUploader 
                 onItemsAnalyzed={handleItemsAnalyzed}
                 onImageSaved={handleImageSaved}

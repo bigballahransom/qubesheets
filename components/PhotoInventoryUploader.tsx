@@ -834,7 +834,7 @@ export default function PhotoInventoryUploader({
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg">
+    <div className="max-w-none w-full">
       <div className="text-center mb-6">
         <p className="text-gray-600">
           Upload a photo to automatically identify and inventory items in the image
@@ -1039,47 +1039,59 @@ export default function PhotoInventoryUploader({
                 Box Requirements
               </h3>
               <div className="bg-white p-4 rounded-lg border shadow-sm">
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {analysisResult.total_boxes.small && analysisResult.total_boxes.small > 0 && (
-                    <div className="flex items-center gap-2 p-2 rounded border bg-gray-50">
-                      <Box className="h-5 w-5 text-gray-500" />
-                      <span className="font-medium">{analysisResult.total_boxes.small} Small</span>
-                      <span className="text-xs text-gray-500">(16⅜" x 12⅝" x 12⅝")</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 p-2 rounded border bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <Box className="h-5 w-5 text-gray-500" />
+                        <span className="font-medium">{analysisResult.total_boxes.small} Small</span>
+                      </div>
+                      <span className="text-xs text-gray-500 ml-7 sm:ml-0">(16⅜" x 12⅝" x 12⅝")</span>
                     </div>
                   )}
                   {analysisResult.total_boxes.medium && analysisResult.total_boxes.medium > 0 && (
-                    <div className="flex items-center gap-2 p-2 rounded border bg-gray-50">
-                      <Box className="h-5 w-5 text-gray-500" />
-                      <span className="font-medium">{analysisResult.total_boxes.medium} Medium</span>
-                      <span className="text-xs text-gray-500">(18⅛" x 18" x 16")</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 p-2 rounded border bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <Box className="h-5 w-5 text-gray-500" />
+                        <span className="font-medium">{analysisResult.total_boxes.medium} Medium</span>
+                      </div>
+                      <span className="text-xs text-gray-500 ml-7 sm:ml-0">(18⅛" x 18" x 16")</span>
                     </div>
                   )}
                   {analysisResult.total_boxes.large && analysisResult.total_boxes.large > 0 && (
-                    <div className="flex items-center gap-2 p-2 rounded border bg-gray-50">
-                      <Box className="h-5 w-5 text-gray-500" />
-                      <span className="font-medium">{analysisResult.total_boxes.large} Large</span>
-                      <span className="text-xs text-gray-500">(18" x 18" x 24")</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 p-2 rounded border bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <Box className="h-5 w-5 text-gray-500" />
+                        <span className="font-medium">{analysisResult.total_boxes.large} Large</span>
+                      </div>
+                      <span className="text-xs text-gray-500 ml-7 sm:ml-0">(18" x 18" x 24")</span>
                     </div>
                   )}
                   {analysisResult.total_boxes.extra_large && analysisResult.total_boxes.extra_large > 0 && (
-                    <div className="flex items-center gap-2 p-2 rounded border bg-gray-50">
-                      <Box className="h-5 w-5 text-gray-500" />
-                      <span className="font-medium">{analysisResult.total_boxes.extra_large} Extra-Large</span>
-                      <span className="text-xs text-gray-500">(24" x 18" x 24")</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 p-2 rounded border bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <Box className="h-5 w-5 text-gray-500" />
+                        <span className="font-medium">{analysisResult.total_boxes.extra_large} Extra-Large</span>
+                      </div>
+                      <span className="text-xs text-gray-500 ml-7 sm:ml-0">(24" x 18" x 24")</span>
                     </div>
                   )}
                   {analysisResult.total_boxes.book && analysisResult.total_boxes.book > 0 && (
-                    <div className="flex items-center gap-2 p-2 rounded border bg-gray-50">
-                      <Box className="h-5 w-5 text-gray-500" />
-                      <span className="font-medium">{analysisResult.total_boxes.book} Book</span>
-                      <span className="text-xs text-gray-500">(12" x 12" x 12")</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 p-2 rounded border bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <Box className="h-5 w-5 text-gray-500" />
+                        <span className="font-medium">{analysisResult.total_boxes.book} Book</span>
+                      </div>
+                      <span className="text-xs text-gray-500 ml-7 sm:ml-0">(12" x 12" x 12")</span>
                     </div>
                   )}
                   {analysisResult.total_boxes.specialty && analysisResult.total_boxes.specialty > 0 && (
-                    <div className="flex items-center gap-2 p-2 rounded border bg-gray-50">
-                      <Box className="h-5 w-5 text-gray-500" />
-                      <span className="font-medium">{analysisResult.total_boxes.specialty} Specialty</span>
-                      <span className="text-xs text-gray-500">(Various sizes)</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 p-2 rounded border bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <Box className="h-5 w-5 text-gray-500" />
+                        <span className="font-medium">{analysisResult.total_boxes.specialty} Specialty</span>
+                      </div>
+                      <span className="text-xs text-gray-500 ml-7 sm:ml-0">(Various sizes)</span>
                     </div>
                   )}
                 </div>
@@ -1104,7 +1116,7 @@ export default function PhotoInventoryUploader({
             <h3 className="text-lg font-semibold text-gray-900 mb-3">
               Identified Items ({analysisResult.items.length})
             </h3>
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {analysisResult.items.map((item, index) => (
                 <div
                   key={index}
