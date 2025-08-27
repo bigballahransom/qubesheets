@@ -890,6 +890,8 @@ const ProcessingNotification = () => {
     onClose={() => setIsSendLinkModalOpen(false)}
     projectId={currentProject._id}
     projectName={currentProject.name}
+    customerName={currentProject.customerName}
+    customerPhone={currentProject.phone}
   />
 )}
     </div>

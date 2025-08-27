@@ -46,9 +46,18 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    if (!data.customerName) {
+      return NextResponse.json(
+        { error: 'Customer name is required' },
+        { status: 400 }
+      );
+    }
+    
     // Create the project with appropriate context
     const projectData: any = {
       name: data.name,
+      customerName: data.customerName,
+      phone: data.phone,
       description: data.description,
       userId,
     };

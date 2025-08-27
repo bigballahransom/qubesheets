@@ -18,6 +18,7 @@ import { Sidebar } from '@/components/ui/sidebar';
 import { useAuth } from '@clerk/nextjs';
 import { useOrganizationData } from '@/components/providers/OrganizationDataProvider';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
+import SettingsSection from '@/components/SettingsSection';
 
 interface Project {
   _id: string;
@@ -165,6 +166,9 @@ export function AppSidebar() {
       {/* Footer menu */}
       <ClerkProvider>
       <div className="absolute bottom-0 left-0 right-0 border-t bg-white">
+        {/* Settings Section */}
+        <SettingsSection />
+        
         <div className="p-3">
           <SignedIn>
             <div className="flex items-center gap-2 sm:gap-3">

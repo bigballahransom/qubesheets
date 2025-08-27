@@ -1,7 +1,7 @@
 // components/SendUploadLinkModal.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Send, Phone, User, MessageSquare, Check, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -10,28 +10,81 @@ interface SendUploadLinkModalProps {
   onClose: () => void;
   projectId: string;
   projectName: string;
+  customerName?: string;
+  customerPhone?: string;
 }
 
 export default function SendUploadLinkModal({ 
   isOpen, 
   onClose, 
   projectId, 
-  projectName 
+  projectName,
+  customerName: initialCustomerName = '',
+  customerPhone: initialCustomerPhone = '' 
 }: SendUploadLinkModalProps) {
-  const [customerName, setCustomerName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerName, setCustomerName] = useState(initialCustomerName);
+  const [customerPhone, setCustomerPhone] = useState(initialCustomerPhone);
+  const [phoneError, setPhoneError] = useState('');
   const [sending, setSending] = useState(false);
   const [success, setSuccess] = useState(false);
   const [uploadUrl, setUploadUrl] = useState('');
 
+  // Update state when initial props change
+  useEffect(() => {
+    setCustomerName(initialCustomerName);
+    // Convert Twilio format to display format for prefilling
+    setCustomerPhone(formatTwilioToDisplay(initialCustomerPhone));
+  }, [initialCustomerName, initialCustomerPhone]);
+
   if (!isOpen) return null;
 
-  const formatPhoneNumber = (value: string) => {
-    const phone = value.replace(/\D/g, '');
-    if (phone.length >= 10) {
-      return `+1${phone.slice(-10)}`;
+  // Phone formatting utilities (same as CreateProjectModal)
+  const formatPhoneNumber = (value: string, previousValue: string = ''): string => {
+    // Remove all non-digits
+    const digits = value.replace(/\D/g, '');
+    
+    // If user is deleting and we have fewer digits than before, don't add formatting yet
+    const prevDigits = previousValue.replace(/\D/g, '');
+    const isDeleting = digits.length < prevDigits.length;
+    
+    // Limit to 10 digits
+    const limitedDigits = digits.slice(0, 10);
+    
+    // If empty or deleting and less than 4 digits, return just the digits
+    if (limitedDigits.length === 0) {
+      return '';
     }
-    return phone;
+    
+    if (isDeleting && limitedDigits.length <= 3) {
+      return limitedDigits;
+    }
+    
+    // Format as (xxx) xxx-xxxx
+    if (limitedDigits.length >= 7) {
+      return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
+    } else if (limitedDigits.length >= 4) {
+      return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3)}`;
+    } else if (limitedDigits.length >= 1) {
+      return isDeleting ? limitedDigits : `(${limitedDigits}`;
+    }
+    
+    return limitedDigits;
+  };
+
+  const formatPhoneForTwilio = (formattedPhone: string): string => {
+    // Extract digits only
+    const digits = formattedPhone.replace(/\D/g, '');
+    // Return in Twilio format +1xxxxxxxxxx if we have 10 digits
+    return digits.length === 10 ? `+1${digits}` : '';
+  };
+  
+  const formatTwilioToDisplay = (twilioPhone: string): string => {
+    // Convert +1xxxxxxxxxx back to (xxx) xxx-xxxx format
+    if (twilioPhone && twilioPhone.startsWith('+1') && twilioPhone.length === 12) {
+      const digits = twilioPhone.slice(2); // Remove +1
+      return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+    }
+    return twilioPhone || '';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -52,7 +105,7 @@ export default function SendUploadLinkModal({
         },
         body: JSON.stringify({
           customerName: customerName.trim(),
-          customerPhone: formatPhoneNumber(customerPhone),
+          customerPhone: formatPhoneForTwilio(customerPhone),
         }),
       });
 
@@ -74,8 +127,9 @@ export default function SendUploadLinkModal({
   };
 
   const handleClose = () => {
-    setCustomerName('');
-    setCustomerPhone('');
+    setCustomerName(initialCustomerName);
+    setCustomerPhone(formatTwilioToDisplay(initialCustomerPhone));
+    setPhoneError('');
     setSuccess(false);
     setUploadUrl('');
     onClose();
@@ -165,12 +219,28 @@ export default function SendUploadLinkModal({
                 <input
                   type="tel"
                   value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  onChange={(e) => {
+                    const formatted = formatPhoneNumber(e.target.value, customerPhone);
+                    setCustomerPhone(formatted);
+                    
+                    // Validate phone number
+                    const digits = formatted.replace(/\D/g, '');
+                    if (formatted && digits.length > 0 && digits.length !== 10) {
+                      setPhoneError('Phone number must be 10 digits');
+                    } else {
+                      setPhoneError('');
+                    }
+                  }}
                   placeholder="(555) 123-4567"
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                    phoneError ? 'border-red-500' : ''
+                  }`}
                   required
                   disabled={sending}
                 />
+                {phoneError && (
+                  <p className="text-sm text-red-500 mt-1">{phoneError}</p>
+                )}
                 <p className="text-xs text-gray-500 mt-1">
                   Include area code. We'll format it automatically.
                 </p>

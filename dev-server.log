@@ -566,3 +566,297 @@ Import trace for requested module:
  PUT /api/projects/68ae2cbed800ca27e0ac7ce4/spreadsheet 404 in 1487ms
  ✓ Compiled in 437ms (1274 modules)
  ✓ Compiled in 211ms (1274 modules)
+ ✓ Compiled /api/processing-complete in 169ms (130 modules)
+📡 New SSE connection established: 68ae2e35ee88ba7245ff7f73-1756246706884-m9tmyos06
+ ✓ Compiled /api/projects/[projectId]/spreadsheet in 28ms (262 modules)
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 283ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 223ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 223ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 226ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 218ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 218ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 226ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 217ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 213ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 236ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 223ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 228ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 218ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 230ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 228ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 220ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 217ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 228ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 213ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 217ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 220ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 217ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 220ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 217ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 222ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 226ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 223ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 215ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 220ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 225ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 218ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 214ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 216ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 220ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 217ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 213ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 230ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 229ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 218ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 221ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 218ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 217ms
+ GET /api/processing-complete?projectId=68ae2e35ee88ba7245ff7f73 200 in 519785ms
+📡 New SSE connection established: 68ae2e35ee88ba7245ff7f73-1756247229439-fxhfkurgf
+TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException: TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException:  TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ✓ Compiled /_not-found in 415ms (2012 modules)
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 556ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 19ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 25ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 26ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 27ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 28ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 26ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 32ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 28ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 22ms
+🧹 Cleaned up SSE connection: 68ae2e35ee88ba7245ff7f73-1756247229439-fxhfkurgf
+ GET /api/processing-complete?projectId=68ae2e35ee88ba7245ff7f73 200 in 1066129ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 30ms
+ GET /api/processing-complete?projectId=68ae2e35ee88ba7245ff7f73 404 in 17ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 58ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 404 in 59ms
+ ○ Compiling /api/projects/[projectId]/spreadsheet ...
+ ✓ Compiled /api/projects/[projectId]/spreadsheet in 557ms (777 modules)
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 1771ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 367ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 87104ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 374ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 305ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 250ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 257ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 323ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 258ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 253ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 272ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 259ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 254ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 255ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 257ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 282ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 257ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 256ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 255ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 257ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 311ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 258ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 258ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 255ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 255ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 252ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 259ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 256ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 277ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 328ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 258ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 268ms
+ ✓ Compiled in 257ms (1274 modules)
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 255ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 257ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 273ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 258ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 257ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 261ms
+ ✓ Compiled in 418ms (1534 modules)
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 324ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ ✓ Compiled in 252ms (1274 modules)
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ ✓ Compiled in 133ms (1274 modules)
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 259ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 285ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 259ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae2e35ee88ba7245ff7f73/spreadsheet 200 in 263ms
+ ✓ Compiled in 656ms (1274 modules)
+ ✓ Compiled in 328ms (1274 modules)
+ ✓ Compiled in 188ms (1274 modules)
+ ✓ Compiled in 184ms (1274 modules)
+ ✓ Compiled in 164ms (1274 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: ENOENT: no such file or directory, rename '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/0.pack.gz_' -> '/Users/andrewransom/Desktop/qubesheets/.next/cache/webpack/client-development/0.pack.gz'
+ ✓ Compiled in 668ms (1328 modules)
+ ✓ Compiled in 321ms (1274 modules)
+ ✓ Compiled in 409ms (1274 modules)
+ ✓ Compiled in 254ms (1274 modules)
+ ✓ Compiled in 268ms (1274 modules)
+ ✓ Compiled in 307ms (1274 modules)
+ ✓ Compiled in 297ms (1274 modules)
+ ✓ Compiled in 296ms (1274 modules)
+ ✓ Compiled in 466ms (1274 modules)
+ ✓ Compiled in 237ms (1274 modules)
+ ✓ Compiled in 288ms (1274 modules)
+ ✓ Compiled in 160ms (1274 modules)
+ ✓ Compiled in 349ms (1274 modules)
+ ✓ Compiled in 294ms (1274 modules)
+ ✓ Compiled in 185ms (1280 modules)
+ ✓ Compiled in 263ms (1280 modules)
+ ✓ Compiled in 349ms (1274 modules)
+ ✓ Compiled in 206ms (1280 modules)
+ ✓ Compiled in 778ms (1280 modules)
+ ✓ Compiled in 259ms (1280 modules)
+ ✓ Compiled in 186ms (1280 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: too many length or distance symbols
+ ✓ Compiled in 485ms (1280 modules)
+ ✓ Compiled in 193ms (1280 modules)
+ ✓ Compiled in 353ms (1544 modules)
+ ✓ Compiled in 537ms (1558 modules)
+ ✓ Compiled in 542ms (1558 modules)
+ ✓ Compiled in 523ms (1280 modules)
+ ✓ Compiled in 328ms (1280 modules)
+ ✓ Compiled /api/processing-complete in 201ms (130 modules)
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756257939928-hbwclkw4i

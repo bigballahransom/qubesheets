@@ -3,6 +3,8 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IProject extends Document {
   name: string;
+  customerName: string;
+  phone?: string;
   userId: string;
   organizationId?: string;
   description?: string;
@@ -13,6 +15,8 @@ export interface IProject extends Document {
 const ProjectSchema: Schema = new Schema(
   {
     name: { type: String, required: true },
+    customerName: { type: String, required: true },
+    phone: { type: String, required: false },
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
     description: { type: String },

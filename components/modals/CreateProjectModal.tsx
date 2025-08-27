@@ -17,6 +17,46 @@ import {
 import { Plus, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
+// Phone formatting utilities
+const formatPhoneNumber = (value: string, previousValue: string = ''): string => {
+  // Remove all non-digits
+  const digits = value.replace(/\D/g, '');
+  
+  // If user is deleting and we have fewer digits than before, don't add formatting yet
+  const prevDigits = previousValue.replace(/\D/g, '');
+  const isDeleting = digits.length < prevDigits.length;
+  
+  // Limit to 10 digits
+  const limitedDigits = digits.slice(0, 10);
+  
+  // If empty or deleting and less than 4 digits, return just the digits
+  if (limitedDigits.length === 0) {
+    return '';
+  }
+  
+  if (isDeleting && limitedDigits.length <= 3) {
+    return limitedDigits;
+  }
+  
+  // Format as (xxx) xxx-xxxx
+  if (limitedDigits.length >= 7) {
+    return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
+  } else if (limitedDigits.length >= 4) {
+    return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3)}`;
+  } else if (limitedDigits.length >= 1) {
+    return isDeleting ? limitedDigits : `(${limitedDigits}`;
+  }
+  
+  return limitedDigits;
+};
+
+const formatPhoneForTwilio = (formattedPhone: string): string => {
+  // Extract digits only
+  const digits = formattedPhone.replace(/\D/g, '');
+  // Return in Twilio format +1xxxxxxxxxx if we have 10 digits
+  return digits.length === 10 ? `+1${digits}` : '';
+};
+
 interface CreateProjectModalProps {
   children?: React.ReactNode;
   onProjectCreated?: (project: any) => void;
@@ -24,12 +64,14 @@ interface CreateProjectModalProps {
 
 export default function CreateProjectModal({ children, onProjectCreated }: CreateProjectModalProps) {
   const [open, setOpen] = useState(false);
-  const [projectName, setProjectName] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const router = useRouter();
 
   const createProject = async () => {
-    if (!projectName.trim()) return;
+    if (!customerName.trim()) return;
     
     setIsCreating(true);
     
@@ -40,7 +82,9 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: projectName.trim(),
+          name: customerName.trim(),
+          customerName: customerName.trim(),
+          phone: phone.trim() ? formatPhoneForTwilio(phone.trim()) : undefined,
         }),
       });
       
@@ -55,7 +99,9 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
       });
       
       // Clear the form
-      setProjectName('');
+      setCustomerName('');
+      setPhone('');
+      setPhoneError('');
       setOpen(false);
       
       // Call the callback if provided
@@ -78,7 +124,9 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
   const handleOpenChange = (newOpen: boolean) => {
     setOpen(newOpen);
     if (!newOpen) {
-      setProjectName('');
+      setCustomerName('');
+      setPhone('');
+      setPhoneError('');
     }
   };
 
@@ -101,22 +149,49 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
           <DialogDescription>
-            Enter a name for your new project. You can always change it later.
+            Enter customer information for your new project.
           </DialogDescription>
         </DialogHeader>
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="projectName">Project Name</Label>
+            <Label htmlFor="customerName">Customer Name</Label>
             <Input
-              id="projectName"
+              id="customerName"
               type="text"
-              placeholder="My Awesome Project"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="Customer Name"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
               disabled={isCreating}
               autoFocus
             />
+          </div>
+          
+          <div className="space-y-2">
+            <Label htmlFor="phone">Phone Number (Optional)</Label>
+            <Input
+              id="phone"
+              type="tel"
+              placeholder="(555) 123-4567"
+              value={phone}
+              onChange={(e) => {
+                const formatted = formatPhoneNumber(e.target.value, phone);
+                setPhone(formatted);
+                
+                // Validate phone number
+                const digits = formatted.replace(/\D/g, '');
+                if (formatted && digits.length > 0 && digits.length !== 10) {
+                  setPhoneError('Phone number must be 10 digits');
+                } else {
+                  setPhoneError('');
+                }
+              }}
+              disabled={isCreating}
+              className={phoneError ? 'border-red-500' : ''}
+            />
+            {phoneError && (
+              <p className="text-sm text-red-500">{phoneError}</p>
+            )}
           </div>
           
           <DialogFooter>
@@ -130,7 +205,7 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
             </Button>
             <Button 
               type="submit" 
-              disabled={!projectName.trim() || isCreating}
+              disabled={!customerName.trim() || isCreating}
             >
               {isCreating ? (
                 <>
