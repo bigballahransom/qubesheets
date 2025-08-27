@@ -78,19 +78,53 @@ export default function CustomerUploadPage() {
     });
   };
 
-  // Skip token validation completely - always allow upload
+  // Skip validation but fetch branding data for display
   useEffect(() => {
-    // Always allow upload regardless of token
-    setValidation({
-      customerName: 'Customer',
-      projectName: 'Photo Upload',
-      expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year
-      isValid: true,
-      branding: null,
-      instructions: null
-    });
-    setLoading(false);
-  }, []);
+    const fetchBrandingData = async () => {
+      try {
+        // Try to fetch branding data from validation endpoint
+        const response = await fetch(`/api/customer-upload/${token}/validate`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          // Use real data if available, otherwise fallback to defaults
+          setValidation({
+            customerName: data.customerName || 'Customer',
+            projectName: data.projectName || 'Photo Upload',
+            expiresAt: data.expiresAt || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+            isValid: true,
+            branding: data.branding,
+            instructions: data.instructions
+          });
+        } else {
+          // Fallback to defaults if validation fails
+          setValidation({
+            customerName: 'Customer',
+            projectName: 'Photo Upload',
+            expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+            isValid: true,
+            branding: null,
+            instructions: null
+          });
+        }
+      } catch (error) {
+        console.log('Could not fetch branding data, using defaults:', error);
+        // Always allow upload with defaults
+        setValidation({
+          customerName: 'Customer',
+          projectName: 'Photo Upload',
+          expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          isValid: true,
+          branding: null,
+          instructions: null
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchBrandingData();
+  }, [token]);
 
   const handleFileUpload = async (file: File) => {
     setUploading(true);
