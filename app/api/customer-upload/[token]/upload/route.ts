@@ -97,22 +97,47 @@ export async function POST(
     console.log('🔗 MongoDB connected');
     
     const { token } = await params;
-    console.log('🎫 Token received:', token);
+    console.log('🎫 Token received (optional):', token);
     
-    // Validate customer upload token
+    // Try to find customer upload for project association, but don't require it
     const customerUpload = await CustomerUpload.findOne({
       uploadToken: token,
-      isActive: true,
-      expiresAt: { $gt: new Date() }
+      isActive: true
     });
 
-    console.log('✅ Customer upload validated:', !!customerUpload);
-
-    if (!customerUpload) {
-      return NextResponse.json(
-        { error: 'Invalid or expired upload link' },
-        { status: 404 }
-      );
+    console.log('📋 Customer upload found:', !!customerUpload);
+    
+    // If no valid customer upload, we'll create a default project association
+    let projectId = null;
+    let userId = null;
+    let organizationId = null;
+    
+    if (customerUpload) {
+      projectId = customerUpload.projectId;
+      userId = customerUpload.userId;
+      organizationId = customerUpload.organizationId;
+    } else {
+      // Fallback: Create/use a default "Customer Uploads" project
+      console.log('🔄 No valid token, using fallback project creation');
+      
+      // Find or create a default project for anonymous uploads
+      let defaultProject = await Project.findOne({ 
+        name: 'Anonymous Customer Uploads',
+        isDefault: true 
+      });
+      
+      if (!defaultProject) {
+        defaultProject = await Project.create({
+          name: 'Anonymous Customer Uploads',
+          description: 'Photos uploaded without specific project tokens',
+          isDefault: true,
+          createdAt: new Date()
+        });
+        console.log('📁 Created default project for anonymous uploads:', defaultProject._id);
+      }
+      
+      projectId = defaultProject._id;
+      // Leave userId and organizationId as null for anonymous uploads
     }
 
     // Parse the form data
@@ -195,7 +220,8 @@ export async function POST(
 
     // Generate unique name
     const timestamp = Date.now();
-    const cleanCustomerName = customerUpload.customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+    const customerName = customerUpload?.customerName || 'anonymous';
+    const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const name = `customer-${cleanCustomerName}-${timestamp}-${processedImage.name}`;
 
     console.log('💾 Creating image document...');
@@ -207,10 +233,10 @@ export async function POST(
       mimeType: processedImage.type,
       size: processedImage.size,
       data: buffer,
-      projectId: customerUpload.projectId,
-      userId: customerUpload.userId,
-      organizationId: customerUpload.organizationId,
-      description: `Image uploaded by ${customerUpload.customerName}`,
+      projectId,
+      userId,
+      organizationId,
+      description: `Image uploaded by ${customerName}`,
       // Initialize with pending analysis status
       analysisResult: {
         summary: 'Analysis pending...',
@@ -222,7 +248,7 @@ export async function POST(
     console.log('✅ Image document created:', imageDoc._id);
 
     // Update project timestamp
-    await Project.findByIdAndUpdate(customerUpload.projectId, { 
+    await Project.findByIdAndUpdate(projectId, { 
       updatedAt: new Date() 
     });
 
@@ -231,9 +257,9 @@ export async function POST(
     
     const jobId = backgroundQueue.enqueue('image_analysis', {
       imageId: imageDoc._id.toString(),
-      projectId: customerUpload.projectId.toString(),
-      userId: customerUpload.userId,
-      organizationId: customerUpload.organizationId
+      projectId: projectId.toString(),
+      userId: userId,
+      organizationId: organizationId
     });
 
     console.log(`✅ Analysis job queued: ${jobId}`);
@@ -244,7 +270,7 @@ export async function POST(
       imageId: imageDoc._id.toString(),
       jobId: jobId,
       message: 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
-      customerName: customerUpload.customerName,
+      customerName,
       analysisStatus: 'queued'
     });
 

@@ -573,9 +573,9 @@ export default function PhotoInventoryUploader({
           } catch (queueError) {
             console.error(`❌ Queue request failed for image ${fileNum}:`, queueError);
             console.error(`📱 Queue network error on mobile:`, {
-              error: queueError.message,
+              error: queueError instanceof Error ? queueError.message : 'Unknown error',
               isMobile: isMobileDevice(),
-              isTimeout: queueError.name === 'AbortError'
+              isTimeout: queueError instanceof Error && queueError.name === 'AbortError'
             });
             // Still mark as completed since image was saved
             setProcessingStatus(prev => ({

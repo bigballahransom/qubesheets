@@ -181,6 +181,9 @@ interface QueueItem {
       this.railwayWorkers++;
       console.log(`🚂 Railway worker ${this.railwayWorkers}/${this.maxRailwayWorkers} - Processing imageId: ${data.imageId} (health: ${this.railwayHealthy ? 'good' : 'degraded'})`);
       
+      // Define Railway URL for error handling scope
+      const railwayUrl = process.env.IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app';
+      
       try {
         // Get the image data from MongoDB
         const { default: connectMongoDB } = await import('@/lib/mongodb');
@@ -218,7 +221,6 @@ interface QueueItem {
         formData.append('twilioPhoneNumber', process.env.TWILIO_PHONE_NUMBER!);
 
         // Call Railway background service with mobile-optimized timeouts
-        const railwayUrl = process.env.IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app';
         
         console.log('🚂 Calling Railway service:', {
           url: `${railwayUrl}/api/background`,
@@ -265,9 +267,9 @@ interface QueueItem {
         this.lastHealthCheck = new Date();
         
         console.error('❌ Railway background processing failed:', {
-          error: error.message,
-          isTimeout: error.name === 'AbortError',
-          isNetworkError: error.name === 'TypeError',
+          error: error instanceof Error ? error.message : 'Unknown error',
+          isTimeout: error instanceof Error && error.name === 'AbortError',
+          isNetworkError: error instanceof Error && error.name === 'TypeError',
           railwayUrl,
           imageId: data.imageId,
           totalErrors: this.railwayErrors,
@@ -281,9 +283,9 @@ interface QueueItem {
         }
         
         // Provide more specific error messages
-        if (error.name === 'AbortError') {
+        if (error instanceof Error && error.name === 'AbortError') {
           throw new Error('Railway service timeout - the request took too long to complete');
-        } else if (error.name === 'TypeError') {
+        } else if (error instanceof Error && error.name === 'TypeError') {
           throw new Error('Network error connecting to Railway service - please check internet connection');
         } else {
           throw error;

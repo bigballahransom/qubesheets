@@ -1108,3 +1108,201 @@ TypeError: Invalid state: Controller is already closed
 📡 New SSE connection established: 68ae55c2d848efd0657473de-1756305138682-8mys0ydxb
  GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 528ms
  PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 288ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 522ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 500ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 272ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 502ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 513ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 288ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 496ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 516ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 263ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 504ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 522ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 485ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 506ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 262ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 507ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 501ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 513ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 602ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 517ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 508ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 505ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 529ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 503ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 559ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 280ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 506ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 512ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 497ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 504ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T14%3A31%3A48.219Z 200 in 582ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 282ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 292ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 280ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 259ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 282ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 257ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 258ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 281ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 286ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 821ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 405ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 356ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 409ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 272ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 282ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 339ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 293ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 322ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 401ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 293ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ ✓ Compiled in 251ms (1287 modules)
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 295ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 281ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ ✓ Compiled in 178ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 285ms
+ ✓ Compiled in 176ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 280ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
+ ✓ Compiled in 171ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ ✓ Compiled in 160ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 281ms
+ ✓ Compiled in 157ms (1287 modules)
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 280ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 262ms
+ ✓ Compiled in 162ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 291ms
+ ✓ Compiled in 171ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 264ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 283ms
+ ✓ Compiled in 196ms (1287 modules)
+ ✓ Compiled in 150ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/app-paths-manifest.json'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/app-paths-manifest.json',
+  page: '/api/projects/68ae55c2d848efd0657473de/spreadsheet'
+}
+ ✓ Compiled /_error in 440ms (1590 modules)
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/pages/_document.js'
+}
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 500 in 506ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 288ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 254ms
+ ✓ Compiled in 161ms (1288 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json',
+  page: '/api/projects/68ae55c2d848efd0657473de/spreadsheet'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json'
+}
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 500 in 28ms
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json',
+  page: '/api/projects/68ae55c2d848efd0657473de/spreadsheet'
+}
+ ⨯ [Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json'] {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/server/next-font-manifest.json'
+}
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 500 in 24ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
+ ✓ Compiled in 149ms (1288 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 277ms
+ ✓ Compiled in 189ms (1288 modules)
+ ✓ Compiled in 173ms (1288 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 290ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
+ ⨯ Failed to generate static paths for /api/projects/[projectId]/spreadsheet:
+[Error: ENOENT: no such file or directory, open '/Users/andrewransom/Desktop/qubesheets/.next/build-manifest.json'] {
+  type: 'Error',
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/Users/andrewransom/Desktop/qubesheets/.next/build-manifest.json'
+}
+🧹 Cleaned up SSE connection: 68ae55c2d848efd0657473de-1756305138682-8mys0ydxb
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 600011ms
+ ✓ Compiled /api/processing-complete in 126ms (304 modules)
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756305741789-cd06b8o1k
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 599ms
+ ✓ Compiled in 156ms (1288 modules)
+ ✓ Compiled in 150ms (1288 modules)
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 272ms
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 157ms (1288 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 266ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
