@@ -67,7 +67,7 @@ export function SidebarTrigger() {
     >
       <Menu size={20} />
     </button>
-    <div className='fixed top-0 left-0 w-full bg-white h-16'>
+    <div className='fixed top-0 left-0 w-full bg-white h-16 z-20'>
     </div>
     <div className='fixed top-4 right-4 z-30 lg:hidden'>
     <Logo />
@@ -96,7 +96,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
     <>
       {/* Backdrop for mobile */}
       {isOpen && (
-        <div className="fixed inset-0 bg-black/20 z-30 lg:hidden" onClick={closeSidebar} />
+        <div className="fixed inset-0 bg-black/20 z-35 lg:hidden" onClick={closeSidebar} />
       )}
       
       {/* Sidebar */}

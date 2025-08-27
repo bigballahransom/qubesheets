@@ -727,7 +727,7 @@ const ProcessingNotification = () => {
         {/* Sleek top header bar */}
 
 {/* Sleek top header bar */}
-<header className="sticky top-10 z-10 bg-white border-b shadow-sm">
+<header className="sticky top-10 z-30 bg-white border-b shadow-sm">
   <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
     {/* Project Name and Save Status */}
     <div className="flex items-center">

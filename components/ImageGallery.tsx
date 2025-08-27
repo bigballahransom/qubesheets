@@ -314,7 +314,7 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
                           <MoreVertical size={16} />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="z-50">
+                      <DropdownMenuContent align="end" className="z-30">
                         <DropdownMenuItem onClick={() => setSelectedImage(image)}>
                           <Eye size={16} className="mr-2" />
                           View
