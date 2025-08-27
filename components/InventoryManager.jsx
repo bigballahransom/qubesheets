@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -31,6 +31,14 @@ import {
   MenubarSubTrigger,
   MenubarTrigger,
 } from "@/components/ui/menubar"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 // Helper function to generate a unique ID
 const generateId = () => `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
@@ -71,6 +79,7 @@ export default function InventoryManager() {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 const [videoRoomId, setVideoRoomId] = useState(null);
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
+const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
 const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
@@ -534,7 +543,7 @@ useEffect(() => {
   
   // Function to save spreadsheet data to MongoDB
   const saveSpreadsheetData = async (projId, columns, rows) => {
-    if (!projId) return;
+    if (!projId || !currentProject) return;
     
     setSavingStatus('saving');
     
@@ -594,6 +603,36 @@ useEffect(() => {
       setCurrentProject(updatedProject);
     } catch (err) {
       console.error('Error updating project name:', err);
+      // Optionally show an error notification
+    }
+  };
+
+  // Function to delete project
+  const deleteProject = async () => {
+    if (!currentProject) return;
+    
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete project');
+      }
+      
+      // Clean up state to prevent further operations
+      setCurrentProject(null);
+      setSavingStatus('idle');
+      setSpreadsheetRows([]);
+      setSpreadsheetColumns([]);
+      
+      // Redirect to projects list after successful deletion
+      router.push('/projects');
+    } catch (err) {
+      console.error('Error deleting project:', err);
       // Optionally show an error notification
     }
   };
@@ -767,6 +806,14 @@ const ProcessingNotification = () => {
             <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
               <MessageSquare size={16} className="mr-1" />
               Send Customer Upload Link
+            </MenubarItem>
+            <MenubarSeparator />
+            <MenubarItem 
+              onClick={() => setIsDeleteConfirmOpen(true)}
+              className="text-red-600 focus:text-red-600 focus:bg-red-50"
+            >
+              <Trash2 size={16} className="mr-1" />
+              Delete Project
             </MenubarItem>
           </MenubarContent>
         </MenubarMenu>
@@ -947,6 +994,36 @@ const ProcessingNotification = () => {
     customerPhone={currentProject.phone}
   />
 )}
+
+{/* Delete Confirmation Dialog */}
+<Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+  <DialogContent>
+    <DialogHeader>
+      <DialogTitle>Delete Project</DialogTitle>
+      <DialogDescription>
+        Are you sure you want to delete "{currentProject?.name}"? This action cannot be undone.
+        All project data, including inventory items and uploaded images, will be permanently deleted.
+      </DialogDescription>
+    </DialogHeader>
+    <DialogFooter>
+      <Button 
+        variant="outline" 
+        onClick={() => setIsDeleteConfirmOpen(false)}
+      >
+        Cancel
+      </Button>
+      <Button 
+        variant="destructive" 
+        onClick={() => {
+          deleteProject();
+          setIsDeleteConfirmOpen(false);
+        }}
+      >
+        Delete Project
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
     </div>
   );
 }
