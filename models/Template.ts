@@ -64,7 +64,7 @@ const TemplateSchema: Schema = new Schema(
 
 // Pre-save validation to ensure either userId OR organizationId is set, but not both
 TemplateSchema.pre('save', function(next) {
-  const template = this as ITemplate;
+  const template = this as unknown as ITemplate;
   
   // Ensure exactly one of userId or organizationId is set
   const hasUserId = !!template.userId;
