@@ -1570,3 +1570,186 @@ TypeError: Invalid state: Controller is already closed
  ✓ Compiled /api/processing-complete in 39ms (262 modules)
 📡 New SSE connection established: 68ae55c2d848efd0657473de-1756307441976-kglfozx3c
  GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 523ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 509ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 508ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 510ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 515ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 520ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 498ms
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 511ms
+TypeError: Invalid state: Controller is already closed
+    at Timeout._onTimeout (.next/server/app/api/processing-complete/route.js:5:71) {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException: TypeError: Invalid state: Controller is already closed
+    at Timeout._onTimeout (.next/server/app/api/processing-complete/route.js:5:71) {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException:  TypeError: Invalid state: Controller is already closed
+    at Timeout._onTimeout (.next/server/app/api/processing-complete/route.js:5:71) {
+  code: 'ERR_INVALID_STATE'
+}
+🧹 Cleaned up SSE connection: 68ae55c2d848efd0657473de-1756307441976-kglfozx3c
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 600065ms
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756308045580-386s4cbjs
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 419854ms
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756308468845-r2lq9fhro
+TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException: TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+ ⨯ uncaughtException:  TypeError: Invalid state: Controller is already closed
+    at Timeout.eval [as _onTimeout] (app/api/processing-complete/route.ts:90:23)
+  88 |         setTimeout(() => {
+  89 |           if (sseConnections.has(connectionId)) {
+> 90 |             controller.close();
+     |                       ^
+  91 |             sseConnections.delete(connectionId);
+  92 |             console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+  93 |           } {
+  code: 'ERR_INVALID_STATE'
+}
+🧹 Cleaned up SSE connection: 68ae55c2d848efd0657473de-1756308468845-r2lq9fhro
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 1275660ms
+ ○ Compiling /_not-found ...
+getaddrinfo ENOTFOUND fonts.googleapis.com
+
+Retrying 1/3...
+getaddrinfo ENOTFOUND fonts.googleapis.com
+
+Retrying 1/3...
+getaddrinfo ENOTFOUND fonts.googleapis.com
+
+Retrying 2/3...
+getaddrinfo ENOTFOUND fonts.googleapis.com
+
+Retrying 2/3...
+getaddrinfo ENOTFOUND fonts.googleapis.com
+
+Retrying 3/3...
+getaddrinfo ENOTFOUND fonts.googleapis.com
+
+Retrying 3/3...
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+[Error: getaddrinfo ENOTFOUND fonts.googleapis.com] {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'fonts.googleapis.com'
+}
+ ⨯ Failed to download `Geist Mono` from Google Fonts. Using fallback font instead.
+
+Failed to fetch `Geist Mono` from Google Fonts.}
+[Error: getaddrinfo ENOTFOUND fonts.googleapis.com] {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'fonts.googleapis.com'
+}
+ ⨯ Failed to download `Geist` from Google Fonts. Using fallback font instead.
+
+Failed to fetch `Geist` from Google Fonts.}
+ ✓ Compiled /_not-found in 2.7s (2025 modules)
+ ○ Compiling /projects/[projectId] ...
+ ✓ Compiled /projects/[projectId] in 1176ms (1361 modules)
+ GET /projects/68aca1d10eec32d77ca08b9a 200 in 25ms
+ ○ Compiling /customer-upload/[token] ...
+ ✓ Compiled /customer-upload/[token] in 502ms (2651 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ GET /customer-upload/7274529507b96966d9f9e91d3298cf51a4c7a752f4724cb4c6dd29a99125779b 200 in 24ms
+ ✓ Compiled in 1651ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 221ms (1294 modules)
+ ✓ Compiled in 180ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 191ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 191ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 199ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 184ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 254ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 192ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 264ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 266ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 425ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 462ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 1202ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 278ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 844ms (1348 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 434ms (1294 modules)
+ ✓ Compiled in 248ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 588ms (1294 modules)
+ ✓ Compiled in 264ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 418ms (1294 modules)
+ ✓ Compiled in 271ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 457ms (1294 modules)
+ ✓ Compiled in 200ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 568ms (1294 modules)
+ ✓ Compiled in 269ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ⨯ ./components/ImageGallery.tsx
+Error:   [31mx[0m Unexpected token `div`. Expected jsx identifier
+     ,-[[36;1;4m/Users/andrewransom/Desktop/qubesheets/components/ImageGallery.tsx[0m:207:1]
+ [2m204[0m |   }
+ [2m205[0m | 
+ [2m206[0m |   return (
+ [2m207[0m |     <div className="space-y-6">
+     : [35;1m     ^^^[0m
+ [2m208[0m |       {/* Header */}
+ [2m209[0m |       <div className="flex items-center justify-between">
+ [2m210[0m |         <div>
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./components/ImageGallery.tsx
+./components/InventoryManager.jsx
+./app/projects/[projectId]/page.jsx
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 233ms (1294 modules)
+ ✓ Compiled in 208ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled in 784ms (1294 modules)
+ ✓ Compiled in 158ms (1294 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ ✓ Compiled /api/projects/[projectId]/sync-status in 416ms (260 modules)
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T18%3A09%3A50.986Z 200 in 1333ms
+ ✓ Compiled /api/processing-complete in 43ms (262 modules)
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756318268817-bj3d89qlm
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T18%3A09%3A50.986Z 200 in 440ms

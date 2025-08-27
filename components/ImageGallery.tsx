@@ -238,9 +238,8 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
         /* Image Grid */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {images.map((image) => (
-            <Card key={image._id} className="group hover:shadow-lg transition-shadow">
-              <CardHeader className="p-0">
-                <div className="relative aspect-video bg-gray-100 rounded-t-lg overflow-hidden">
+            <Card key={image._id} className="group hover:shadow-lg transition-shadow overflow-hidden p-0">
+              <div className="relative aspect-video bg-gray-100 overflow-hidden rounded-t-lg">
                   {/* Loading spinner */}
                   <div className="loading-spinner absolute inset-0 flex items-center justify-center bg-gray-100">
                     <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
@@ -261,13 +260,13 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
                         url: `/api/projects/${projectId}/images/${image._id}`
                       });
                       
-                      // Replace with error placeholder
+                      // Replace with error placeholder that's still clickable
                       const target = e.currentTarget as HTMLImageElement;
                       target.style.display = 'none';
                       const parent = target.parentElement;
                       if (parent && !parent.querySelector('.error-placeholder')) {
                         const errorDiv = document.createElement('div');
-                        errorDiv.className = 'error-placeholder absolute inset-0 flex flex-col items-center justify-center bg-gray-200 text-gray-500';
+                        errorDiv.className = 'error-placeholder absolute inset-0 flex flex-col items-center justify-center bg-gray-200 text-gray-500 pointer-events-none z-10';
                         errorDiv.innerHTML = `
                           <svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 18.5c-.77.833.192 2.5 1.732 2.5z"></path>
@@ -294,25 +293,28 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
                       }
                     }}
                   />
-                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center">
+                  {/* Click overlay for entire image */}
+                  <div 
+                    className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-10 transition-all duration-200 cursor-pointer flex items-center justify-center"
+                    onClick={() => setSelectedImage(image)}
+                  >
                     <Button
                       size="sm"
                       variant="secondary"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => setSelectedImage(image)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
                     >
                       <Eye size={16} className="mr-2" />
-                      View
+                      View Details
                     </Button>
                   </div>
-                  <div className="absolute top-2 right-2">
-                    <DropdownMenu>
+                  <div className="absolute top-2 right-2 z-20">
+                    <DropdownMenu key={`dropdown-${image._id}-${selectedImage ? 'modal-open' : 'modal-closed'}`}>
                       <DropdownMenuTrigger asChild>
-                        <Button size="sm" variant="secondary" className="h-8 w-8 p-0">
+                        <Button size="sm" variant="secondary" className="h-8 w-8 p-0 relative z-20">
                           <MoreVertical size={16} />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuContent align="end" className="z-50">
                         <DropdownMenuItem onClick={() => setSelectedImage(image)}>
                           <Eye size={16} className="mr-2" />
                           View
@@ -339,7 +341,6 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
                     </DropdownMenu>
                   </div>
                 </div>
-              </CardHeader>
               <CardContent className="p-4">
                 <div className="space-y-3">
                   <div>
@@ -440,7 +441,12 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
       )}
 
       {/* Image Detail Dialog */}
-      <Dialog open={!!selectedImage} onOpenChange={() => setSelectedImage(null)}>
+      <Dialog open={!!selectedImage} onOpenChange={(open) => {
+        if (!open) {
+          // Small delay to ensure modal state is fully reset
+          setTimeout(() => setSelectedImage(null), 10);
+        }
+      }}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>{selectedImage?.originalName}</DialogTitle>
