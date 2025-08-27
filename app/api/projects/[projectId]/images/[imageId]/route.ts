@@ -11,8 +11,11 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string; imageId: string }> }
 ) {
   try {
+    console.log('🖼️ Image request received for thumbnail display');
+    
     const authContext = await getAuthContext();
     if (authContext instanceof NextResponse) {
+      console.log('❌ Auth failed for image request');
       return authContext;
     }
     const { userId } = authContext;
@@ -20,28 +23,69 @@ export async function GET(
     await connectMongoDB();
     
     const { projectId, imageId } = await params;
+    console.log(`🔍 Looking for image: ${imageId} in project: ${projectId}`);
     
-    const image = await Image.findOne(
-      getProjectFilter(authContext, projectId, { _id: imageId })
-    );
+    // Build query filter
+    const filter = getProjectFilter(authContext, projectId, { _id: imageId });
+    console.log('📋 Query filter:', JSON.stringify(filter));
+    
+    const image = await Image.findOne(filter);
     
     if (!image) {
+      console.log('❌ Image not found with filter:', filter);
+      
+      // Try to find image without project filter for debugging
+      const imageExists = await Image.findById(imageId);
+      if (imageExists) {
+        console.log('🔍 Image exists but doesn\'t match filter:', {
+          imageId: imageExists._id,
+          imageProjectId: imageExists.projectId,
+          expectedProjectId: projectId,
+          imageUserId: imageExists.userId,
+          currentUserId: userId,
+          imageOrgId: imageExists.organizationId,
+          currentOrgId: authContext.organizationId
+        });
+      } else {
+        console.log('🚫 Image does not exist in database');
+      }
+      
       return NextResponse.json({ error: 'Image not found' }, { status: 404 });
     }
+    
+    console.log('✅ Image found:', {
+      id: image._id,
+      name: image.originalName,
+      size: image.size,
+      mimeType: image.mimeType,
+      hasData: !!image.data,
+      dataLength: image.data?.length
+    });
+    
+    // Validate image data
+    if (!image.data || image.data.length === 0) {
+      console.log('❌ Image has no data');
+      return NextResponse.json({ error: 'Image data missing' }, { status: 404 });
+    }
+    
+    // Validate MIME type
+    const mimeType = image.mimeType || 'image/jpeg';
+    console.log(`📄 Serving image with MIME type: ${mimeType}`);
     
     // Return the image as a blob response with proper headers
     return new NextResponse(image.data, {
       headers: {
-        'Content-Type': image.mimeType,
+        'Content-Type': mimeType,
         'Content-Length': image.size.toString(),
-        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour (reduced from 1 year for development)
+        'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET',
         'Access-Control-Allow-Headers': 'Content-Type',
       },
     });
   } catch (error) {
-    console.error('Error fetching image:', error);
+    console.error('❌ Error fetching image:', error);
+    console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack');
     return NextResponse.json(
       { error: 'Failed to fetch image' },
       { status: 500 }

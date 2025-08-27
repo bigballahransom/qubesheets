@@ -241,10 +241,58 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
             <Card key={image._id} className="group hover:shadow-lg transition-shadow">
               <CardHeader className="p-0">
                 <div className="relative aspect-video bg-gray-100 rounded-t-lg overflow-hidden">
+                  {/* Loading spinner */}
+                  <div className="loading-spinner absolute inset-0 flex items-center justify-center bg-gray-100">
+                    <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                  </div>
+                  
                   <img
                     src={`/api/projects/${projectId}/images/${image._id}`}
                     alt={image.originalName}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200 relative z-10"
+                    onError={(e) => {
+                      console.error('❌ Failed to load image thumbnail:', {
+                        imageId: image._id,
+                        imageName: image.originalName,
+                        projectId,
+                        imageSize: image.size,
+                        mimeType: image.mimeType,
+                        createdAt: image.createdAt,
+                        url: `/api/projects/${projectId}/images/${image._id}`
+                      });
+                      
+                      // Replace with error placeholder
+                      const target = e.currentTarget as HTMLImageElement;
+                      target.style.display = 'none';
+                      const parent = target.parentElement;
+                      if (parent && !parent.querySelector('.error-placeholder')) {
+                        const errorDiv = document.createElement('div');
+                        errorDiv.className = 'error-placeholder absolute inset-0 flex flex-col items-center justify-center bg-gray-200 text-gray-500';
+                        errorDiv.innerHTML = `
+                          <svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 18.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                          </svg>
+                          <span class="text-xs text-center">Failed to load<br/>thumbnail</span>
+                        `;
+                        parent.appendChild(errorDiv);
+                      }
+                    }}
+                    onLoad={(e) => {
+                      console.log('✅ Successfully loaded image thumbnail:', {
+                        imageId: image._id,
+                        imageName: image.originalName
+                      });
+                      
+                      // Hide loading spinner
+                      const target = e.currentTarget as HTMLImageElement;
+                      const parent = target.parentElement;
+                      if (parent) {
+                        const loader = parent.querySelector('.loading-spinner');
+                        if (loader) {
+                          (loader as HTMLElement).style.display = 'none';
+                        }
+                      }
+                    }}
                   />
                   <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center">
                     <Button

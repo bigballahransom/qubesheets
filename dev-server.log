@@ -1487,3 +1487,86 @@ TypeError: Invalid state: Controller is already closed
  PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
  PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
  PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 261ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 262ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 268ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 260ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 282ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 284ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 299ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 292ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 296ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+🧹 Cleaned up SSE connection: 68ae55c2d848efd0657473de-1756306344814-qsb3411mx
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 600010ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756306947846-vy67t3yx0
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 282ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 284ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 279ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 277ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 288ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 263ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 287ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 272ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 270ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 278ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 269ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 276ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 286ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 265ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 267ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 274ms
+ ✓ Compiled in 302ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 271ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 266ms
+ ✓ Compiled in 165ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 275ms
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 275ms
+ ✓ Compiled in 170ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 273ms
+ ✓ Compiled in 169ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 272ms
+ ✓ Compiled in 179ms (1287 modules)
+<w> [webpack.cache.PackFileCacheStrategy] Caching failed for pack: Error: invalid code lengths set
+ PUT /api/projects/68ae55c2d848efd0657473de/spreadsheet 200 in 268ms
+ GET /api/processing-complete?projectId=68ae55c2d848efd0657473de 200 in 359910ms
+ ✓ Compiled /api/projects/[projectId]/sync-status in 67ms (260 modules)
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 640ms
+ ✓ Compiled /api/processing-complete in 39ms (262 modules)
+📡 New SSE connection established: 68ae55c2d848efd0657473de-1756307441976-kglfozx3c
+ GET /api/projects/68ae55c2d848efd0657473de/sync-status?lastUpdate=2025-08-27T15%3A08%3A29.564Z 200 in 523ms
