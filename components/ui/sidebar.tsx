@@ -117,7 +117,7 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
           </button>
         </div>
         
-        <div className="overflow-y-auto h-[calc(100vh-64px)]">
+        <div className="h-[calc(100vh-64px)]">
           {children}
         </div>
       </aside>

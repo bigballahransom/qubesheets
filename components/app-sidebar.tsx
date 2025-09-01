@@ -113,59 +113,61 @@ export function AppSidebar() {
   
   return (
     <Sidebar>
-
-      {/* Add new project button */}
-      <div className="p-4 border-b">
-        <CreateProjectModal onProjectCreated={handleProjectCreated}>
-          <button className="flex items-center gap-2 w-full p-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors cursor-pointer">
-            <Plus size={16} />
-            <span>New Project</span>
-          </button>
-        </CreateProjectModal>
-      </div>
-      
-      {/* Project list */}
-      <div className="p-2">
-        {loading ? (
-          <div className="flex justify-center p-4">
-            <Loader2 size={24} className="animate-spin text-gray-400" />
+      <div className="flex flex-col h-full">
+        {/* Add new project button */}
+        <div className="p-4 border-b flex-shrink-0">
+          <CreateProjectModal onProjectCreated={handleProjectCreated}>
+            <button className="flex items-center gap-2 w-full p-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors cursor-pointer">
+              <Plus size={16} />
+              <span>New Project</span>
+            </button>
+          </CreateProjectModal>
+        </div>
+        
+        {/* Project list - scrollable area */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="p-2">
+            {loading ? (
+              <div className="flex justify-center p-4">
+                <Loader2 size={24} className="animate-spin text-gray-400" />
+              </div>
+            ) : error ? (
+              <div className="text-red-500 p-4 text-center text-sm">
+                {error}
+              </div>
+            ) : projects.length === 0 ? (
+              <div className="text-gray-500 p-4 text-center text-sm">
+                No projects found. Create your first project!
+              </div>
+            ) : (
+              <ul className="space-y-1">
+                {projects.map((project) => (
+                  <li key={project._id}>
+                    <button
+                      onClick={() => handleProjectClick(project._id)}
+                      className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
+                        activeProjectId === project._id ? 'bg-gray-100' : ''
+                      }`}
+                    >
+                      <Folder size={16} className="mr-2 flex-shrink-0 text-blue-500" />
+                      <div className="flex-1 overflow-hidden">
+                        <p className="truncate font-medium">{project.name}</p>
+                        <p className="text-xs text-gray-500">
+                          Updated {formatDate(project.updatedAt)}
+                        </p>
+                      </div>
+                      <ArrowRight size={14} className="text-gray-400" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        ) : error ? (
-          <div className="text-red-500 p-4 text-center text-sm">
-            {error}
-          </div>
-        ) : projects.length === 0 ? (
-          <div className="text-gray-500 p-4 text-center text-sm">
-            No projects found. Create your first project!
-          </div>
-        ) : (
-          <ul className="space-y-1">
-            {projects.map((project) => (
-              <li key={project._id}>
-                <button
-                  onClick={() => handleProjectClick(project._id)}
-                  className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
-                    activeProjectId === project._id ? 'bg-gray-100' : ''
-                  }`}
-                >
-                  <Folder size={16} className="mr-2 flex-shrink-0 text-blue-500" />
-                  <div className="flex-1 overflow-hidden">
-                    <p className="truncate font-medium">{project.name}</p>
-                    <p className="text-xs text-gray-500">
-                      Updated {formatDate(project.updatedAt)}
-                    </p>
-                  </div>
-                  <ArrowRight size={14} className="text-gray-400" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      
-      {/* Footer menu */}
-      <ClerkProvider>
-      <div className="absolute bottom-0 left-0 right-0 border-t bg-white">
+        </div>
+        
+        {/* Footer menu */}
+        <ClerkProvider>
+        <div className="border-t bg-white flex-shrink-0">
         {/* Settings Section */}
         <SettingsSection />
         
@@ -207,8 +209,9 @@ export function AppSidebar() {
             </div>
           </SignedIn>
         </div>
+        </div>
+        </ClerkProvider>
       </div>
-      </ClerkProvider>
     </Sidebar>
   );
 }
