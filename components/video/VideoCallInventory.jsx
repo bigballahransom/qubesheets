@@ -590,20 +590,6 @@ const AgentView = React.memo(({
     { onlySubscribed: false }
   );
   
-  // Debug video tracks
-  useEffect(() => {
-    console.log('Video tracks updated:', {
-      totalTracks: tracks.length,
-      trackTypes: tracks.map(t => ({ 
-        source: t.publication?.source, 
-        kind: t.publication?.kind,
-        participantIdentity: t.participant.identity,
-        isLocal: t.participant.isLocal
-      })),
-      remoteParticipants: remoteParticipants.length,
-      hasCustomer
-    });
-  }, [tracks, remoteParticipants, hasCustomer]);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -1394,59 +1380,27 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
                   />
                   {/* Status Overlay */}
                   <div className="absolute top-2 right-2">
-                    {(() => {
-                      // Debug log the actual status
-                      console.log(`Image ${image._id} status:`, image.analysisResult);
-                      
-                      // Check if image was captured more than 3 minutes ago and still processing
-                      const capturedTime = new Date(image.createdAt);
-                      const now = new Date();
-                      const timeDiff = (now - capturedTime) / 1000 / 60; // minutes
-                      
-                      if (image.analysisResult?.status === 'processing') {
-                        return (
-                          <div className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <Loader2 size={12} className="animate-spin" />
-                            Processing
-                          </div>
-                        );
-                      } else if (image.analysisResult?.status === 'completed') {
-                        return (
-                          <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <CheckCircle size={12} />
-                            Analyzed
-                          </div>
-                        );
-                      } else if (image.analysisResult?.status === 'failed') {
-                        return (
-                          <div className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <AlertCircle size={12} />
-                            Failed
-                          </div>
-                        );
-                      } else if (timeDiff > 3) {
-                        // If more than 3 minutes old and no clear status, assume completed
-                        return (
-                          <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <CheckCircle size={12} />
-                            Ready
-                          </div>
-                        );
-                      } else if (!image.analysisResult) {
-                        return (
-                          <div className="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg">
-                            Pending
-                          </div>
-                        );
-                      } else {
-                        return (
-                          <div className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <Loader2 size={12} className="animate-spin" />
-                            Analyzing
-                          </div>
-                        );
-                      }
-                    })()}
+                    {image.analysisResult?.status === 'processing' ? (
+                      <div className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                        <Loader2 size={12} className="animate-spin" />
+                        Processing
+                      </div>
+                    ) : image.analysisResult?.status === 'completed' ? (
+                      <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                        <CheckCircle size={12} />
+                        Analyzed
+                      </div>
+                    ) : image.analysisResult?.status === 'failed' ? (
+                      <div className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                        <AlertCircle size={12} />
+                        Failed
+                      </div>
+                    ) : (
+                      <div className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                        <Loader2 size={12} className="animate-spin" />
+                        Analyzing
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1663,24 +1617,12 @@ export default function VideoCallInventory({
         className="h-full"
         options={roomOptions}
         onError={(error) => {
-          console.error('🚨 LiveKit room error:', error);
-          toast.error('Video call connection failed');
+          console.error('LiveKit room error:', error);
+          toast.error('🚨 Video call error occurred');
         }}
         onConnected={() => {
-          console.log('✅ Connected to LiveKit room successfully');
-          console.log('Room details:', { serverUrl, participantName });
-          toast.success('Connected to video call!');
-        }}
-        onParticipantConnected={(participant) => {
-          console.log('🎯 Participant connected:', participant.identity);
-          toast.info(`${participant.identity} joined the call`);
-        }}
-        onTrackPublished={(track, participant) => {
-          console.log('📹 Track published:', { 
-            trackKind: track.kind,
-            trackSource: track.source,
-            participant: participant.identity
-          });
+          console.log('✅ Connected to LiveKit room');
+          toast.success('🎉 Connected to AI video call!');
         }}
       >
         {/* Render different views based on participant type */}
