@@ -238,12 +238,15 @@ async function extractFrameFromRemoteTrack(track) {
     videoElement.playsInline = true;
     
     await new Promise((resolve, reject) => {
-      videoElement.onloadedmetadata = resolve;
+      videoElement.onloadedmetadata = () => {
+        // Wait for at least one frame to be available
+        videoElement.requestVideoFrameCallback ? 
+          videoElement.requestVideoFrameCallback(resolve) : 
+          setTimeout(resolve, 100); // Much shorter fallback delay
+      };
       videoElement.onerror = reject;
       videoElement.play().catch(reject);
     });
-
-    await new Promise(resolve => setTimeout(resolve, 500));
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -555,11 +558,8 @@ const CustomerView = React.memo(({ onCallEnd }) => {
 
 const AgentView = React.memo(({ 
   projectId, 
-  detectedItems, 
-  setDetectedItems, 
   currentRoom,
-  setCurrentRoom,
-  handleSaveItems
+  setCurrentRoom
 }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -568,6 +568,16 @@ const AgentView = React.memo(({
   const [isInventoryActive, setIsInventoryActive] = useState(false);
   const [captureMode, setCaptureMode] = useState('paused');
   const [captureCount, setCaptureCount] = useState(0);
+  
+  // SSE for real-time inventory updates
+  const sseRef = useRef(null);
+  const sseRetryTimeoutRef = useRef(null);
+  
+  // Real inventory data (replaces detectedItems)
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [capturedImages, setCapturedImages] = useState([]);
+  const [imagesLoading, setImagesLoading] = useState(false);
   
   const remoteParticipants = useRemoteParticipants();
   const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useAdvancedCameraSwitching();
@@ -618,29 +628,7 @@ const AgentView = React.memo(({
     };
   }, [isMobile]);
 
-  const handleItemsDetected = useCallback((items) => {
-    const newItems = items.map(item => ({
-      ...item,
-      id: `${Date.now()}-${Math.random()}`,
-      location: currentRoom,
-      detectedAt: new Date().toISOString(),
-      frameId: `frame-${Date.now()}`,
-    }));
-
-    setDetectedItems(prev => {
-      const filtered = newItems.filter(newItem =>
-        !prev.some(existing =>
-          existing.name.toLowerCase() === newItem.name.toLowerCase() &&
-          existing.location === newItem.location
-        )
-      );
-      return [...prev, ...filtered];
-    });
-
-    if (newItems.length > 0) {
-      toast.success(`✨ Discovered ${newItems.length} new items!`);
-    }
-  }, [currentRoom, setDetectedItems]);
+  // handleItemsDetected removed - items now saved directly to database via Railway
 
   const startInventory = () => {
     setIsInventoryActive(true);
@@ -666,7 +654,104 @@ const AgentView = React.memo(({
 
   const toggleSidebar = () => {
     setShowInventory(!showInventory);
+    
+    // Load inventory when sidebar opens
+    if (!showInventory && inventoryItems.length === 0) {
+      fetchInventoryItems();
+      fetchCapturedImages();
+    }
   };
+  
+  // Fetch real inventory items from database
+  const fetchInventoryItems = async () => {
+    setInventoryLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/inventory`);
+      if (response.ok) {
+        const items = await response.json();
+        setInventoryItems(items);
+        console.log(`📦 Loaded ${items.length} inventory items for video call`);
+      } else {
+        console.error('Failed to fetch inventory items');
+      }
+    } catch (error) {
+      console.error('Error fetching inventory items:', error);
+    } finally {
+      setInventoryLoading(false);
+    }
+  };
+
+  // Fetch all project images from database
+  const fetchCapturedImages = async (force = false) => {
+    if (!force) setImagesLoading(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/images`);
+      if (response.ok) {
+        const images = await response.json();
+        // Show all project images, sorted by most recent
+        const allImages = images.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        
+        // Only update state if data actually changed (prevent unnecessary re-renders)
+        setCapturedImages(prevImages => {
+          const hasChanged = JSON.stringify(prevImages) !== JSON.stringify(allImages);
+          if (hasChanged) {
+            console.log(`📸 Updated ${allImages.length} project images for video call`);
+            return allImages;
+          }
+          console.log('📸 No changes in images, skipping update');
+          return prevImages;
+        });
+      } else {
+        console.error('Failed to fetch project images');
+      }
+    } catch (error) {
+      console.error('Error fetching project images:', error);
+    } finally {
+      if (!force) setImagesLoading(false);
+    }
+  };
+  
+  // Load images and inventory on mount
+  useEffect(() => {
+    if (projectId) {
+      fetchInventoryItems();
+      fetchCapturedImages();
+    }
+  }, [projectId]);
+
+  // Refresh images when SSE updates occur (not on timer to avoid glitching)
+  // Removed periodic refresh to prevent UI glitching
+
+  // SSE for inventory updates only (not images - handled by sidebar)
+  useEffect(() => {
+    if (!isInventoryActive || !projectId) return;
+
+    console.log('🔌 Setting up Video Call SSE for inventory updates:', projectId);
+    
+    const eventSource = new EventSource(`/api/processing-complete?projectId=${projectId}`);
+    sseRef.current = eventSource;
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.success && data.itemsProcessed > 0) {
+          // Only refresh inventory items, not images
+          toast.success(`🎯 AI Analysis Complete! Found ${data.itemsProcessed} items${data.totalBoxes > 0 ? ` (${data.totalBoxes} boxes recommended)` : ''}`);
+          fetchInventoryItems();
+        }
+      } catch (error) {
+        console.error('❌ Error parsing inventory SSE message:', error);
+      }
+    };
+
+    return () => {
+      if (sseRef.current) {
+        sseRef.current.close();
+        console.log('🔌 Inventory SSE connection closed');
+      }
+    };
+  }, [isInventoryActive, projectId]);
 
   const takeScreenshot = async () => {
     if (isProcessing) {
@@ -692,56 +777,60 @@ const AgentView = React.memo(({
         throw new Error('Failed to capture video frame');
       }
 
+      // STEP 1: Save the captured frame as an Image record first (Railway system)
       const formData = new FormData();
-      formData.append('image', frameBlob, `ai-capture-${Date.now()}.jpg`);
+      formData.append('image', frameBlob, `video-capture-${currentRoom}-${Date.now()}.jpg`);
       formData.append('projectId', projectId);
-      formData.append('roomLabel', currentRoom);
-      formData.append('existingItems', JSON.stringify(
-        detectedItems.map(item => ({ name: item.name, location: item.location }))
-      ));
+      formData.append('source', 'video_call');
+      formData.append('location', currentRoom);
 
-      const response = await fetch('/api/analyze-video-frame', {
+      const response = await fetch('/api/projects/' + projectId + '/images', {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        throw new Error('Failed to analyze capture');
+        throw new Error('Failed to save captured frame');
       }
 
-      const result = await response.json();
+      const savedImage = await response.json();
       
-      if (result.items && result.items.length > 0) {
-        const newItems = result.items.map((item) => ({
-          ...item,
-          id: `${Date.now()}-${Math.random()}`,
-          location: currentRoom,
-          detectedAt: new Date().toISOString(),
-          frameId: `ai-capture-${Date.now()}`,
-        }));
+      // STEP 2: Queue for background analysis via Railway system
+      const queueResponse = await fetch('/api/background-queue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'image_analysis',
+          imageId: savedImage._id,
+          projectId: projectId,
+          useRailwayService: true,
+          priority: 'high', // Video captures get high priority
+          source: 'video_call',
+          metadata: {
+            room: currentRoom,
+            capturedAt: new Date().toISOString(),
+            participantCount: remoteParticipants.length + 1
+          }
+        }),
+      });
 
-        setDetectedItems(prev => {
-          const filtered = newItems.filter(newItem =>
-            !prev.some(existing =>
-              existing.name.toLowerCase() === newItem.name.toLowerCase() &&
-              existing.location === newItem.location
-            )
-          );
-          return [...prev, ...filtered];
-        });
-
-        if (newItems.length > 0) {
-          toast.success(`🎯 AI found ${newItems.length} new items!`);
-        } else {
-          toast.info('📸 Capture analyzed - no new items detected');
-        }
-      } else {
-        toast.info('📸 Frame captured and analyzed');
+      if (!queueResponse.ok) {
+        throw new Error('Failed to queue image for analysis');
       }
+
+      setCaptureCount(prev => prev + 1);
+      toast.success(`📸 Frame captured from ${currentRoom}! Processing with AI...`);
+      
+      // Refresh captured images list immediately
+      fetchCapturedImages();
+      
+      // STEP 3: The SSE connection (if active) will handle real-time updates when analysis completes
 
     } catch (error) {
-      console.error('Error taking screenshot:', error);
-      toast.error('❌ Failed to analyze frame');
+      console.error('Screenshot error:', error);
+      toast.error('❌ Failed to capture frame: ' + error.message);
     } finally {
       setIsProcessing(false);
     }
@@ -776,10 +865,10 @@ const AgentView = React.memo(({
               </div>
               
               {isInventoryActive && (
-                <div className={`px-4 py-2 rounded-2xl ${glassStyle} flex items-center gap-2 ${captureMode === 'auto' ? 'bg-green-500/20 border-green-400/50' : 'bg-gray-500/20 border-gray-400/50'}`}>
+                <div className={`px-4 py-2 rounded-2xl ${glassStyle} flex items-center gap-2 bg-blue-500/20 border-blue-400/50`}>
                   <Activity className="w-4 h-4 text-white" />
                   <span className="text-white text-sm font-bold">
-                    {captureMode === 'auto' ? 'SCANNING' : 'PAUSED'}
+                    MANUAL MODE
                   </span>
                 </div>
               )}
@@ -795,11 +884,11 @@ const AgentView = React.memo(({
             </div>
 
             {/* Stats Row - Simplified */}
-            {isInventoryActive && detectedItems.length > 0 && (
+            {isInventoryActive && inventoryItems.length > 0 && (
               <div className="grid grid-cols-2 gap-2">
                 <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
                   <p className="text-white/70 text-xs">Items</p>
-                  <p className="text-white font-bold">{detectedItems.length}</p>
+                  <p className="text-white font-bold">{inventoryItems.length}</p>
                 </div>
                 <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
                   <p className="text-white/70 text-xs">Captures</p>
@@ -835,9 +924,9 @@ const AgentView = React.memo(({
               className={`relative p-4 rounded-2xl ${glassStyle} bg-indigo-600/30 border-indigo-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95`}
             >
               {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
-              {!showInventory && detectedItems.length > 0 && (
+              {!showInventory && inventoryItems.length > 0 && (
                 <span className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
-                  {detectedItems.length}
+                  {inventoryItems.length}
                 </span>
               )}
             </button>
@@ -891,7 +980,8 @@ const AgentView = React.memo(({
           </div>
         )}
 
-        {/* Frame Processor */}
+        {/* Frame Processor - COMMENTED OUT FOR RAILWAY INTEGRATION */}
+        {/* 
         {isInventoryActive && captureMode === 'auto' && (
           <FrameProcessor
             projectId={projectId}
@@ -903,6 +993,7 @@ const AgentView = React.memo(({
             onCaptureCountChange={setCaptureCount}
           />
         )}
+        */}
 
         {/* Inventory Sidebar */}
         {showInventory && (
@@ -914,9 +1005,30 @@ const AgentView = React.memo(({
             
             <div className="absolute right-0 top-0 bottom-0 w-80 bg-white/95 backdrop-blur-xl z-50 transform transition-transform duration-300 ease-in-out shadow-2xl">
               <InventorySidebar
-                items={detectedItems}
-                onRemoveItem={(id) => setDetectedItems(prev => prev.filter(item => item.id !== id))}
-                onSaveItems={() => handleSaveItems(detectedItems)}
+                items={inventoryItems}
+                loading={inventoryLoading}
+                capturedImages={capturedImages}
+                imagesLoading={imagesLoading}
+                projectId={projectId}
+                fetchCapturedImages={fetchCapturedImages}
+                onRemoveItem={async (id) => {
+                  // Remove from database via API
+                  try {
+                    const response = await fetch(`/api/projects/${projectId}/inventory/${id}`, {
+                      method: 'DELETE'
+                    });
+                    if (response.ok) {
+                      setInventoryItems(prev => prev.filter(item => item._id !== id));
+                      toast.success('Item removed');
+                    }
+                  } catch (error) {
+                    toast.error('Failed to remove item');
+                  }
+                }}
+                onSaveItems={() => {
+                  // Items are automatically saved via Railway system
+                  toast.info('Items saved automatically');
+                }}
                 onClose={() => setShowInventory(false)}
               />
             </div>
@@ -928,284 +1040,147 @@ const AgentView = React.memo(({
     );
   }
 
-  // Desktop view remains unchanged
+  // Desktop view - Compact layout with controls
   return (
-    <div className="h-full flex flex-col bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
-      {/* Ultra Modern Header */}
-      <div className="bg-white/80 backdrop-blur-xl shadow-xl border-b border-white/20">
-        <div className="px-6 py-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-4">
-              {/* Main title with gradient */}
-              <div className="flex items-center gap-3">
-                <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl shadow-lg">
-                  <Sparkles className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                    AI Inventory Assistant
-                  </h2>
-                  <p className="text-sm text-gray-500 font-medium">Powered by Computer Vision</p>
-                </div>
-              </div>
-              
-              {/* Status badges */}
-              <div className="flex gap-3">
-                {isInventoryActive && (
-                  <div className="px-4 py-2 bg-gradient-to-r from-green-400 to-emerald-500 text-white text-sm font-bold rounded-2xl shadow-lg flex items-center gap-2">
-                    <Activity className="w-4 h-4" />
-                    <span>ACTIVE</span>
-                  </div>
-                )}
-              </div>
+    <div className="h-screen max-h-screen flex flex-col bg-gray-50 overflow-hidden">
+      {/* Compact Header */}
+      <div className="bg-white border-b border-gray-200 px-4 py-2 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg">
+              <Sparkles className="w-5 h-5 text-white" />
             </div>
-            
-            {/* Desktop controls */}
-            <div className="flex items-center gap-3">
-              {/* Camera switch */}
-              {/* {canSwitchCamera && (
-                <button
-                  onClick={switchCamera}
-                  disabled={isSwitching}
-                  className="px-4 py-3 bg-gradient-to-r from-gray-100 to-gray-200 hover:from-gray-200 hover:to-gray-300 text-gray-700 rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 shadow-lg"
-                >
-                  {isSwitching ? (
-                    <Loader2 size={20} className="animate-spin" />
-                  ) : (
-                    <SwitchCamera size={20} />
-                  )}
-                  <span className="hidden sm:inline">
-                    {currentFacingMode === 'user' ? 'Switch to Back' : 'Switch to Front'}
-                  </span>
-                </button>
-              )} */}
-
-              {/* Main action buttons */}
-              {!isInventoryActive ? (
-                <button
-                  onClick={startInventory}
-                  className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                >
-                  <Zap size={20} />
-                  Start AI Scanning
-                </button>
-              ) : (
-                <div className="flex gap-2">
-                  {captureMode === 'paused' ? (
-                    <button
-                      onClick={resumeInventory}
-                      className="px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                    >
-                      <Play size={18} />
-                      Resume
-                    </button>
-                  ) : (
-                    <button
-                      onClick={pauseInventory}
-                      className="px-4 py-3 bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                    >
-                      <Pause size={18} />
-                      Pause
-                    </button>
-                  )}
-                  <button
-                    onClick={stopInventory}
-                    className="px-4 py-3 bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white rounded-2xl font-bold flex items-center gap-2 transition-all duration-300 transform hover:scale-105 shadow-lg"
-                  >
-                    <X size={18} />
-                    Stop
-                  </button>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">AI Inventory Assistant</h2>
+              {isInventoryActive && (
+                <div className="flex items-center gap-2 text-sm text-green-600">
+                  <Activity className="w-3 h-3" />
+                  <span>Active - {captureCount} captures, {inventoryItems.length} items</span>
                 </div>
               )}
-              
-              {/* AI Capture button */}
-              <button
-                onClick={takeScreenshot}
-                disabled={isProcessing || !hasCustomer}
-                className="px-6 py-3 bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 disabled:from-gray-300 disabled:to-gray-400 text-white rounded-2xl font-bold flex items-center gap-3 transition-all duration-300 transform hover:scale-105 disabled:scale-100 shadow-lg"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 size={20} className="animate-spin" />
-                    AI Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Target size={20} />
-                    AI Capture
-                  </>
-                )}
-              </button>
-              
-              {/* Inventory toggle */}
-              <button
-                onClick={toggleSidebar}
-                className="relative p-3 hover:bg-gray-100 rounded-2xl transition-all duration-200"
-                title={showInventory ? 'Hide inventory' : 'Show inventory'}
-              >
-                {showInventory ? <EyeOff size={24} /> : <Layers size={24} />}
-                {!showInventory && detectedItems.length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
-                    {detectedItems.length}
-                  </span>
-                )}
-              </button>
             </div>
           </div>
-
-          {/* Enhanced Room selector and stats */}
-          {isInventoryActive && (
-            <div className="mt-4 space-y-4">
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-                  <Scan className="w-4 h-4" />
-                  Current Room
-                </label>
-                <RoomSelector 
-                  currentRoom={currentRoom} 
-                  onChange={setCurrentRoom}
-                  isMobile={isMobile}
-                />
-              </div>
-              
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-gradient-to-r from-blue-100 to-indigo-100 p-4 rounded-2xl border border-blue-200/50">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-500 rounded-xl">
-                      <Camera className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Captures</p>
-                      <p className="text-xl font-bold text-blue-600">{captureCount}</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-gradient-to-r from-green-100 to-emerald-100 p-4 rounded-2xl border border-green-200/50">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-500 rounded-xl">
-                      <Package className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Items</p>
-                      <p className="text-xl font-bold text-green-600">{detectedItems.length}</p>
-                    </div>
-                  </div>
-                </div>
-                {/* <div className="bg-gradient-to-r from-purple-100 to-violet-100 p-4 rounded-2xl border border-purple-200/50">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-500 rounded-xl">
-                      <SwitchCamera className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Camera</p>
-                      <p className="text-lg font-bold text-purple-600">
-                        {currentFacingMode === 'user' ? 'Front' : 'Back'}
-                      </p>
-                    </div>
-                  </div>
-                </div> */}
-              </div>
-            </div>
-          )}
+          
+          <div className="flex items-center gap-3">
+            {/* AI Capture button */}
+            <button
+              onClick={takeScreenshot}
+              disabled={isProcessing || !hasCustomer}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+            >
+              {isProcessing ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Target size={16} />
+                  AI Capture
+                </>
+              )}
+            </button>
+            
+            {/* Room selector */}
+            {isInventoryActive && (
+              <RoomSelector 
+                currentRoom={currentRoom} 
+                onChange={setCurrentRoom}
+                isMobile={false}
+              />
+            )}
+            
+            {/* Inventory toggle */}
+            <button
+              onClick={toggleSidebar}
+              className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              title={showInventory ? 'Hide inventory' : 'Show inventory'}
+            >
+              {showInventory ? <EyeOff size={20} /> : <Layers size={20} />}
+              {!showInventory && inventoryItems.length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                  {inventoryItems.length}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Enhanced Video Grid */}
-      <div className="flex-1 flex flex-col md:flex-row min-h-0">
-        <div className="flex-1 flex flex-col">
-          <div className="flex-1 relative bg-gradient-to-br from-gray-900 via-slate-800 to-gray-900 rounded-3xl m-4 overflow-hidden shadow-2xl border border-gray-700/50">
-            <div className="w-full h-full">
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-row min-h-0 overflow-hidden">
+        {/* Video Area with integrated controls */}
+        <div className="flex-1 flex flex-col bg-gray-900">
+          {/* Video Grid */}
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+            <div className="w-full h-full flex items-center justify-center">
               <GridLayout 
                 tracks={tracks}
                 style={{ 
                   height: '100%', 
                   width: '100%',
-                  backgroundColor: 'transparent'
+                  backgroundColor: 'transparent',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
                 }}
               >
                 <ParticipantTile 
                   style={{ 
-                    borderRadius: '24px',
+                    borderRadius: '16px',
                     overflow: 'hidden',
-                    backgroundColor: '#1e293b',
+                    backgroundColor: '#374151',
                     border: '1px solid rgba(255,255,255,0.1)'
                   }}
                 />
               </GridLayout>
             </div>
-            
-            {/* Enhanced Status Indicators */}
-            {isInventoryActive && (
-              <div className="absolute top-6 left-6 right-6 flex flex-wrap gap-3 z-10">
-                {isProcessing && (
-                  <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-yellow-400/30">
-                    <Loader2 size={16} className="animate-spin" />
-                    AI Analyzing Frame...
-                  </div>
-                )}
-
-                {captureMode === 'auto' && !isProcessing && (
-                  <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-green-400/30">
-                    <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
-                    AI Scanning Active
-                  </div>
-                )}
-
-                {captureMode === 'paused' && (
-                  <div className="bg-gradient-to-r from-gray-600 to-slate-600 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-gray-500/30">
-                    <Pause size={16} />
-                    Scanning Paused
-                  </div>
-                )}
-
-                <div className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl text-sm font-bold border border-blue-400/30">
-                  <Camera size={16} />
-                  {currentFacingMode === 'user' ? 'Front Camera' : 'Back Camera'}
-                </div>
-              </div>
-            )}
-
-            {/* Enhanced Customer Connection Status */}
-            {!hasCustomer && (
-              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center">
-                <div className="bg-white/95 backdrop-blur-xl p-8 rounded-3xl text-center max-w-md shadow-2xl border border-white/20">
-                  <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                    <Users size={40} className="text-blue-500" />
-                  </div>
-                  <h3 className="text-2xl font-bold text-gray-900 mb-3 bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                    Waiting for Customer
-                  </h3>
-                  <p className="text-gray-600 leading-relaxed">
-                    Share the video call link with your customer to begin the AI-powered inventory session.
-                  </p>
-                  <div className="mt-6 flex items-center justify-center gap-2">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
-
-          {/* Enhanced Control Bar */}
-          <div className="p-4">
-            <div className="bg-white/80 backdrop-blur-xl rounded-3xl p-4 shadow-2xl border border-white/20">
-              <ControlBar 
-                variation={isMobile ? "minimal" : "verbose"}
-                controls={{
-                  microphone: true,
-                  camera: true,
-                  chat: false,
-                  screenShare: !isMobile,
-                  leave: true,
-                }}
-              />
+          
+          {/* Video Controls Bar - Right under video frames */}
+          <div className="bg-gray-800 p-2 border-t border-gray-700 flex-shrink-0">
+            <div className="flex justify-center">
+              <ControlBar />
             </div>
           </div>
         </div>
+        
+        {/* Desktop Sidebar - Always visible */}
+        {showInventory && (
+          <div className="w-96 h-full flex-shrink-0 border-l border-gray-200 bg-white">
+            <InventorySidebar
+              items={inventoryItems}
+              loading={inventoryLoading}
+              capturedImages={capturedImages}
+              imagesLoading={imagesLoading}
+              projectId={projectId}
+              fetchCapturedImages={fetchCapturedImages}
+              onRemoveItem={async (id) => {
+                // Remove from database via API
+                try {
+                  const response = await fetch(`/api/projects/${projectId}/inventory/${id}`, {
+                    method: 'DELETE'
+                  });
+                  if (response.ok) {
+                    setInventoryItems(prev => prev.filter(item => item._id !== id));
+                    toast.success('Item removed');
+                  }
+                } catch (error) {
+                  toast.error('Failed to remove item');
+                }
+              }}
+              onSaveItems={() => {
+                // Items are automatically saved via Railway system
+                toast.info('Items saved automatically');
+              }}
+              onClose={() => {}} // No close on desktop - always visible
+            />
+          </div>
+        )}
+      </div>
 
-        {/* Enhanced Frame Processor - only when active */}
+        {/* Enhanced Frame Processor - COMMENTED OUT FOR RAILWAY INTEGRATION */}
+        {/* 
         {isInventoryActive && captureMode === 'auto' && (
           <FrameProcessor
             projectId={projectId}
@@ -1217,47 +1192,90 @@ const AgentView = React.memo(({
             onCaptureCountChange={setCaptureCount}
           />
         )}
+        */}
 
         {/* Enhanced Inventory Sidebar */}
-        {showInventory && (
-          <div className={`${
-            isMobile 
-              ? 'fixed inset-0 z-50' 
-              : 'w-96 flex-shrink-0'
-          }`}>
-            {isMobile && (
-              <div 
-                className="absolute inset-0 bg-black/50 backdrop-blur-sm z-40"
-                onClick={() => setShowInventory(false)}
-              />
-            )}
-            
-            <div className={`${
-              isMobile 
-                ? 'absolute right-0 top-0 bottom-0 w-80 bg-white/95 backdrop-blur-xl z-50 transform transition-transform duration-300 ease-in-out shadow-2xl' 
-                : 'w-full h-full bg-white/80 backdrop-blur-xl border-l border-white/20'
-            }`}>
-              <InventorySidebar
-                items={detectedItems}
-                onRemoveItem={(id) => setDetectedItems(prev => prev.filter(item => item.id !== id))}
-                onSaveItems={() => handleSaveItems(detectedItems)}
-                onClose={() => setShowInventory(false)}
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
       <RoomAudioRenderer />
     </div>
   );
 });
 
-// Enhanced InventorySidebar component (unchanged)
-const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
+// Enhanced InventorySidebar component - Updated for real database items
+const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isMobile, setIsMobile] = useState(false);
+  
+  // Isolated image state that doesn't affect parent component
+  const [localCapturedImages, setLocalCapturedImages] = useState(capturedImages);
+  const [localImagesLoading, setLocalImagesLoading] = useState(imagesLoading);
+  
+  // Update local state when props change initially
+  useEffect(() => {
+    setLocalCapturedImages(capturedImages);
+  }, [capturedImages.length]); // Only update when count changes
+  
+  useEffect(() => {
+    setLocalImagesLoading(imagesLoading);
+  }, [imagesLoading]);
+  
+  // Local image refresh function that doesn't trigger parent re-renders
+  const refreshLocalImages = async () => {
+    try {
+      const response = await fetch(`/api/projects/${projectId}/images`);
+      if (response.ok) {
+        const images = await response.json();
+        const allImages = images.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        
+        // Only update if data actually changed
+        setLocalCapturedImages(prevImages => {
+          const hasChanged = JSON.stringify(prevImages.map(img => ({ 
+            _id: img._id, 
+            analysisResult: img.analysisResult 
+          }))) !== JSON.stringify(allImages.map(img => ({ 
+            _id: img._id, 
+            analysisResult: img.analysisResult 
+          })));
+          
+          if (hasChanged) {
+            console.log('🖼️ Sidebar: Status updated locally');
+            return allImages;
+          }
+          return prevImages;
+        });
+      }
+    } catch (error) {
+      console.error('Error refreshing sidebar images:', error);
+    }
+  };
+  
+  // Isolated SSE connection for sidebar-only updates
+  useEffect(() => {
+    if (!projectId) return;
+    
+    const eventSource = new EventSource(`/api/processing-complete?projectId=${projectId}`);
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('🖼️ Sidebar: SSE update received, refreshing images...');
+        refreshLocalImages(); // Only affects sidebar
+      } catch (error) {
+        console.error('Sidebar SSE error:', error);
+      }
+    };
+    
+    // Polling for sidebar only (very infrequent)
+    const pollInterval = setInterval(() => {
+      refreshLocalImages();
+    }, 30000); // Every 30 seconds
+    
+    return () => {
+      eventSource.close();
+      clearInterval(pollInterval);
+      console.log('🖼️ Sidebar: Isolated connections closed');
+    };
+  }, [projectId]);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -1304,7 +1322,7 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
   };
 
   return (
-    <div className="h-full flex flex-col bg-gradient-to-br from-white via-blue-50 to-indigo-100">
+    <div className="h-screen max-h-screen flex flex-col bg-gradient-to-br from-white via-blue-50 to-indigo-100">
       {/* Enhanced Header */}
       <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white">
         <div className="p-4 md:p-6 border-b border-blue-500/30">
@@ -1320,15 +1338,15 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
               )}
               <div className="flex items-center gap-3">
                 <div className="p-2 md:p-3 bg-white/20 rounded-xl md:rounded-2xl backdrop-blur-sm">
-                  <Package className="text-white w-5 h-5 md:w-6 md:h-6" />
+                  <Camera className="text-white w-5 h-5 md:w-6 md:h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-lg md:text-xl">AI Detected Items</h3>
-                  <p className="text-blue-100 text-xs md:text-sm">Automatically cataloged</p>
+                  <h3 className="font-bold text-lg md:text-xl">Photos Captured</h3>
+                  <p className="text-blue-100 text-xs md:text-sm">Video call captures</p>
                 </div>
               </div>
               <div className="px-3 md:px-4 py-1 md:py-2 bg-white/20 text-white rounded-xl md:rounded-2xl backdrop-blur-sm font-bold">
-                {items.length}
+                {localCapturedImages.length}
               </div>
             </div>
             {!isMobile && (
@@ -1343,49 +1361,52 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
         </div>
       </div>
 
-      {/* Enhanced Totals */}
+      {/* Photo Stats */}
       <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-4 md:p-6 border-b border-blue-200/50">
         <div className="grid grid-cols-3 gap-3 md:gap-4">
           <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-blue-100">
             <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
-              <Package className="w-5 h-5 md:w-6 md:h-6 text-white" />
+              <Camera className="w-5 h-5 md:w-6 md:h-6 text-white" />
             </div>
-            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Total Items</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-900">{totals.items}</p>
+            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Total Photos</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-900">{localCapturedImages.length}</p>
           </div>
           <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-green-100">
             <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
-              <svg className="w-5 h-5 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-              </svg>
+              <CheckCircle className="w-5 h-5 md:w-6 md:h-6 text-white" />
             </div>
-            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Volume</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-900">{totals.cuft.toFixed(1)}</p>
-            <p className="text-xs text-gray-500">cu ft</p>
+            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Analyzed</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-900">
+              {localCapturedImages.filter(img => img.analysisResult?.status === 'completed').length}
+            </p>
           </div>
           <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-purple-100">
             <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-purple-500 to-violet-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
-              <svg className="w-5 h-5 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16l3-3m-3 3l-3-3" />
-              </svg>
+              <Loader2 className="w-5 h-5 md:w-6 md:h-6 text-white" />
             </div>
-            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Weight</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-900">{totals.weight.toFixed(0)}</p>
-            <p className="text-xs text-gray-500">lbs</p>
+            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Processing</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-900">
+              {localCapturedImages.filter(img => img.analysisResult?.status === 'processing' || !img.analysisResult?.status).length}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Enhanced Items List */}
-      <div className="flex-1 overflow-y-auto bg-gray-50">
-        {items.length === 0 ? (
+      {/* Photos Gallery - Scrollable */}
+      <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50">
+        {localImagesLoading ? (
+          <div className="flex flex-col items-center justify-center h-full p-8">
+            <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+            <p className="text-gray-600">Loading captured photos...</p>
+          </div>
+        ) : localCapturedImages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-8">
             <div className="w-20 md:w-24 h-20 md:h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-2xl md:rounded-3xl flex items-center justify-center mb-4 md:mb-6">
-              <Package size={40} className="text-blue-400 md:w-12 md:h-12" />
+              <Camera size={40} className="text-blue-400 md:w-12 md:h-12" />
             </div>
-            <h4 className="text-lg md:text-xl font-bold text-gray-900 mb-2 md:mb-3">No Items Detected Yet</h4>
+            <h4 className="text-lg md:text-xl font-bold text-gray-900 mb-2 md:mb-3">No Photos Captured Yet</h4>
             <p className="text-sm md:text-base text-gray-600 text-center leading-relaxed max-w-sm">
-              Start the AI inventory scan to automatically detect and catalog items in each room
+              Use the 'AI Capture' button to take photos during the video call
             </p>
             <div className="mt-4 md:mt-6 flex items-center gap-2">
               <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
@@ -1394,170 +1415,127 @@ const InventorySidebar = ({ items, onRemoveItem, onSaveItems, onClose }) => {
             </div>
           </div>
         ) : (
-          <div className="p-3 md:p-4 space-y-3 md:space-y-4">
-            {Object.entries(groupedItems).map(([location, locationItems]) => (
-              <div key={location} className="bg-white rounded-2xl md:rounded-3xl shadow-lg overflow-hidden border border-gray-100">
-                <div className="bg-gradient-to-r from-gray-50 to-blue-50 px-4 md:px-6 py-3 md:py-4 border-b border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 md:gap-3">
-                      <span className="text-xl md:text-2xl">{getRoomIcon(location)}</span>
-                      <div>
-                        <h4 className="font-bold text-gray-900 text-base md:text-lg">{location}</h4>
-                        <p className="text-xs md:text-sm text-gray-600">{locationItems.length} items detected</p>
-                      </div>
-                    </div>
-                    <div className="px-2 md:px-3 py-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-xl md:rounded-2xl text-xs md:text-sm font-bold">
-                      {locationItems.length}
-                    </div>
+          <div className="p-3 md:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+            {localCapturedImages.map((image) => (
+              <div key={image._id} className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100">
+                {/* Image Preview */}
+                <div className="relative aspect-video bg-gray-100">
+                  <img
+                    src={`/api/projects/${projectId}/images/${image._id}`}
+                    alt={image.originalName}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      // If image fails to load, show a placeholder
+                      e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiB2aWV3Qm94PSIwIDAgMjQgMjQiPjxwYXRoIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiBkPSJtOSAxMiAyIDIgNC00bTYgMkE1IDUgMCAxIDEgOS43IDJhNS4xIDUuMSAwIDAgMSAyIDEwWiIvPjwvc3ZnPg==';
+                      e.target.className = 'w-full h-full object-contain p-8 opacity-50';
+                    }}
+                  />
+                  {/* Status Overlay */}
+                  <div className="absolute top-2 right-2">
+                    {(() => {
+                      // Debug log the actual status
+                      console.log(`Image ${image._id} status:`, image.analysisResult);
+                      
+                      // Check if image was captured more than 3 minutes ago and still processing
+                      const capturedTime = new Date(image.createdAt);
+                      const now = new Date();
+                      const timeDiff = (now - capturedTime) / 1000 / 60; // minutes
+                      
+                      if (image.analysisResult?.status === 'processing') {
+                        return (
+                          <div className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <Loader2 size={12} className="animate-spin" />
+                            Processing
+                          </div>
+                        );
+                      } else if (image.analysisResult?.status === 'completed') {
+                        return (
+                          <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <CheckCircle size={12} />
+                            Analyzed
+                          </div>
+                        );
+                      } else if (image.analysisResult?.status === 'failed') {
+                        return (
+                          <div className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <AlertCircle size={12} />
+                            Failed
+                          </div>
+                        );
+                      } else if (timeDiff > 3) {
+                        // If more than 3 minutes old and no clear status, assume completed
+                        return (
+                          <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <CheckCircle size={12} />
+                            Ready
+                          </div>
+                        );
+                      } else if (!image.analysisResult) {
+                        return (
+                          <div className="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg">
+                            Pending
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <Loader2 size={12} className="animate-spin" />
+                            Analyzing
+                          </div>
+                        );
+                      }
+                    })()}
                   </div>
                 </div>
-                <div className="divide-y divide-gray-100">
-                  {locationItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-3 md:p-4 hover:bg-gray-50 transition-colors duration-200"
-                    >
-                      {editingId === item.id ? (
-                        // Enhanced Edit Mode
-                        <div className="space-y-3 md:space-y-4">
-                          <input
-                            type="text"
-                            value={editForm.name || ''}
-                            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                            className="w-full text-black px-3 md:px-4 py-2 md:py-3 border border-gray-300 rounded-xl md:rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium text-sm md:text-base"
-                            placeholder="Item name"
-                          />
-                          <div className="grid grid-cols-3 gap-2 md:gap-3">
-                            <div>
-                              <label className="text-xs font-medium text-gray-600 mb-1 block">Quantity</label>
-                              <input
-                                type="number"
-                                value={editForm.quantity || ''}
-                                onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 1 })}
-                                className="w-full text-black px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs font-medium text-gray-600 mb-1 block">Cu ft</label>
-                              <input
-                                type="number"
-                                value={editForm.cuft || ''}
-                                onChange={(e) => setEditForm({ ...editForm, cuft: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-black px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs font-medium text-gray-600 mb-1 block">Weight</label>
-                              <input
-                                type="number"
-                                value={editForm.weight || ''}
-                                onChange={(e) => setEditForm({ ...editForm, weight: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-black px-2 md:px-3 py-1 md:py-2 border border-gray-300 rounded-lg md:rounded-xl text-xs md:text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                              />
-                            </div>
-                          </div>
-                          <div className="flex justify-end gap-2 md:gap-3">
-                            <button
-                              onClick={() => setEditingId(null)}
-                              className="px-3 md:px-4 py-1.5 md:py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg md:rounded-xl transition-all duration-200"
-                            >
-                              <X size={16} className="md:w-5 md:h-5" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                // Save logic would go here
-                                setEditingId(null);
-                              }}
-                              className="px-3 md:px-4 py-1.5 md:py-2 bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700 rounded-lg md:rounded-xl transition-all duration-200"
-                            >
-                              <CheckCircle size={16} className="md:w-5 md:h-5" />
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        // Enhanced View Mode
-                        <div>
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <h5 className="font-bold text-gray-900 text-base md:text-lg mb-1 md:mb-2">{item.name}</h5>
-                              <div className="flex flex-wrap gap-1.5 md:gap-2">
-                                <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700">
-                                  {item.quantity || 1}x
-                                </span>
-                                {item.category && (
-                                  <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-medium bg-gradient-to-r from-gray-100 to-slate-100 text-gray-700">
-                                    {item.category}
-                                  </span>
-                                )}
-                                {item.cuft && (
-                                  <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-medium bg-gradient-to-r from-green-100 to-emerald-100 text-green-700">
-                                    {item.cuft} cu ft
-                                  </span>
-                                )}
-                                {item.weight && (
-                                  <span className="inline-flex items-center px-2 md:px-3 py-0.5 md:py-1 rounded-xl md:rounded-2xl text-xs md:text-sm font-medium bg-gradient-to-r from-yellow-100 to-orange-100 text-orange-700">
-                                    {item.weight} lbs
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex gap-1 md:gap-2 ml-2 md:ml-3">
-                              <button
-                                onClick={() => {
-                                  setEditingId(item.id);
-                                  setEditForm({
-                                    name: item.name,
-                                    quantity: item.quantity,
-                                    cuft: item.cuft,
-                                    weight: item.weight,
-                                  });
-                                }}
-                                className="p-1.5 md:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg md:rounded-xl transition-all duration-200"
-                              >
-                                <Edit2 size={14} className="md:w-4 md:h-4" />
-                              </button>
-                              <button
-                                onClick={() => onRemoveItem(item.id)}
-                                className="p-1.5 md:p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg md:rounded-xl transition-all duration-200"
-                              >
-                                <Trash2 size={14} className="md:w-4 md:h-4" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
+
+                {/* Image Details */}
+                <div className="p-3 md:p-4">
+                  <div className="flex items-start justify-between mb-2">
+                    <h5 className="font-medium text-gray-900 text-sm md:text-base truncate">
+                      {image.originalName || image.name}
+                    </h5>
+                    <span className="text-xs text-gray-500 ml-2">
+                      {new Date(image.createdAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+
+                  {/* Analysis Results */}
+                  {image.analysisResult?.status === 'completed' && (
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {image.analysisResult.itemsCount > 0 && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-blue-100 text-blue-800">
+                          <Package size={10} className="mr-1" />
+                          {image.analysisResult.itemsCount} items
+                        </span>
+                      )}
+                      {image.analysisResult.totalBoxes > 0 && (
+                        <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-green-100 text-green-800">
+                          📦 {image.analysisResult.totalBoxes} boxes
+                        </span>
                       )}
                     </div>
-                  ))}
+                  )}
+
+                  {/* Summary */}
+                  {image.analysisResult?.summary && (
+                    <p className="text-xs text-gray-600 line-clamp-2">
+                      {image.analysisResult.summary}
+                    </p>
+                  )}
+                  
+                  {/* File Size */}
+                  <div className="mt-2 text-xs text-gray-500">
+                    {(image.size / (1024 * 1024)).toFixed(1)}MB
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
-
-      {/* Enhanced Save Button */}
-      {items.length > 0 && (
-        <div className="bg-white border-t border-gray-200 p-4 md:p-6">
-          <button
-            onClick={() => onSaveItems(items)}
-            className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white py-3 md:py-4 rounded-2xl md:rounded-3xl font-bold flex items-center justify-center gap-2 md:gap-3 transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-2xl text-base md:text-lg"
-          >
-            <Save className="w-5 h-5 md:w-6 md:h-6" />
-            Save {items.length} Items to Inventory
-          </button>
-          {isMobile && (
-            <button
-              onClick={onClose}
-              className="w-full mt-3 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-2xl font-medium transition-colors duration-200"
-            >
-              Continue Scanning
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
-};
+});
 
 // Main VideoCallInventory component
 export default function VideoCallInventory({
@@ -1569,7 +1547,7 @@ export default function VideoCallInventory({
   const [token, setToken] = useState('');
   const [serverUrl, setServerUrl] = useState('');
   const [isConnecting, setIsConnecting] = useState(true);
-  const [detectedItems, setDetectedItems] = useState([]);
+  // Removed detectedItems - now using real inventory data via Railway system
   const [currentRoom, setCurrentRoom] = useState('Living Room');
 
   // Fetch LiveKit token on mount
@@ -1604,44 +1582,7 @@ export default function VideoCallInventory({
   }, [roomId, participantName]);
 
   // Save items to inventory
-  const handleSaveItems = async (items) => {
-    if (!items || items.length === 0) {
-      toast.error('No items to save');
-      return;
-    }
-
-    try {
-      const inventoryItems = items.map(item => ({
-        name: item.name,
-        description: `AI detected via video inventory in ${item.location}`,
-        category: item.category,
-        quantity: item.quantity || 1,
-        location: item.location,
-        cuft: item.cuft || 3,
-        weight: item.weight || 21,
-        fragile: false,
-        special_handling: "",
-      }));
-
-      const response = await fetch(`/api/projects/${projectId}/inventory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(inventoryItems),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to save items to inventory');
-      }
-
-      toast.success(`🎉 Successfully saved ${items.length} items to inventory!`);
-      setDetectedItems([]);
-
-    } catch (error) {
-      console.error('Error saving video inventory items:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to save items to inventory');
-    }
-  };
+  // Items are now saved automatically via Railway system - no manual save needed
 
   const handleDisconnect = useCallback(() => {
     if (onCallEnd) {
@@ -1731,6 +1672,25 @@ export default function VideoCallInventory({
 
   return (
     <div className="h-screen">
+      {/* Custom CSS for better desktop video layout */}
+      <style jsx>{`
+        @media (min-width: 768px) {
+          :global(.lk-grid-layout > div) {
+            min-height: 300px !important;
+            height: 50vh !important;
+            max-width: 500px !important;
+            border-radius: 16px !important;
+            overflow: hidden !important;
+            margin: 1rem !important;
+          }
+          :global(.lk-grid-layout video) {
+            object-fit: cover !important;
+            width: 100% !important;
+            height: 100% !important;
+          }
+        }
+      `}</style>
+      
       <LiveKitRoom
         video={true}
         audio={true}
@@ -1753,11 +1713,8 @@ export default function VideoCallInventory({
         {isAgent(participantName) ? (
           <AgentView
             projectId={projectId}
-            detectedItems={detectedItems}
-            setDetectedItems={setDetectedItems}
             currentRoom={currentRoom}
             setCurrentRoom={setCurrentRoom}
-            handleSaveItems={handleSaveItems}
           />
         ) : (
           <CustomerView onCallEnd={onCallEnd} />
