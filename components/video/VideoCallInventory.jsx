@@ -589,6 +589,21 @@ const AgentView = React.memo(({
     ],
     { onlySubscribed: false }
   );
+  
+  // Debug video tracks
+  useEffect(() => {
+    console.log('Video tracks updated:', {
+      totalTracks: tracks.length,
+      trackTypes: tracks.map(t => ({ 
+        source: t.publication?.source, 
+        kind: t.publication?.kind,
+        participantIdentity: t.participant.identity,
+        isLocal: t.participant.isLocal
+      })),
+      remoteParticipants: remoteParticipants.length,
+      hasCustomer
+    });
+  }, [tracks, remoteParticipants, hasCustomer]);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -722,36 +737,53 @@ const AgentView = React.memo(({
   // Refresh images when SSE updates occur (not on timer to avoid glitching)
   // Removed periodic refresh to prevent UI glitching
 
-  // SSE for inventory updates only (not images - handled by sidebar)
+  // SSE setup for real-time updates
   useEffect(() => {
-    if (!isInventoryActive || !projectId) return;
+    if (!projectId) return;
 
-    console.log('🔌 Setting up Video Call SSE for inventory updates:', projectId);
+    console.log('🔌 Setting up Video Call SSE connection for project:', projectId);
     
-    const eventSource = new EventSource(`/api/processing-complete?projectId=${projectId}`);
-    sseRef.current = eventSource;
+    const setupSSE = () => {
+      const eventSource = new EventSource(`/api/processing-complete?projectId=${projectId}`);
+      sseRef.current = eventSource;
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        
-        if (data.success && data.itemsProcessed > 0) {
-          // Only refresh inventory items, not images
-          toast.success(`🎯 AI Analysis Complete! Found ${data.itemsProcessed} items${data.totalBoxes > 0 ? ` (${data.totalBoxes} boxes recommended)` : ''}`);
-          fetchInventoryItems();
+      eventSource.onopen = () => {
+        console.log('📡 Video Call SSE connection established');
+      };
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('📨 Video Call SSE message received:', data);
+          
+          // Refresh both images and inventory on updates
+          fetchCapturedImages();
+          
+          if (data.success && data.itemsProcessed > 0) {
+            toast.success(`🎯 AI Analysis Complete! Found ${data.itemsProcessed} items${data.totalBoxes > 0 ? ` (${data.totalBoxes} boxes recommended)` : ''}`);
+            fetchInventoryItems();
+          }
+        } catch (error) {
+          console.error('❌ Error parsing Video Call SSE message:', error);
         }
-      } catch (error) {
-        console.error('❌ Error parsing inventory SSE message:', error);
-      }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('❌ Video Call SSE connection error:', error);
+      };
+
+      return eventSource;
     };
+
+    const eventSource = setupSSE();
 
     return () => {
       if (sseRef.current) {
         sseRef.current.close();
-        console.log('🔌 Inventory SSE connection closed');
+        console.log('🔌 Video Call SSE connection closed');
       }
     };
-  }, [isInventoryActive, projectId]);
+  }, [projectId]);
 
   const takeScreenshot = async () => {
     if (isProcessing) {
@@ -1201,81 +1233,11 @@ const AgentView = React.memo(({
 });
 
 // Enhanced InventorySidebar component - Updated for real database items
-const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId }) => {
+const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isMobile, setIsMobile] = useState(false);
   
-  // Isolated image state that doesn't affect parent component
-  const [localCapturedImages, setLocalCapturedImages] = useState(capturedImages);
-  const [localImagesLoading, setLocalImagesLoading] = useState(imagesLoading);
-  
-  // Update local state when props change initially
-  useEffect(() => {
-    setLocalCapturedImages(capturedImages);
-  }, [capturedImages.length]); // Only update when count changes
-  
-  useEffect(() => {
-    setLocalImagesLoading(imagesLoading);
-  }, [imagesLoading]);
-  
-  // Local image refresh function that doesn't trigger parent re-renders
-  const refreshLocalImages = async () => {
-    try {
-      const response = await fetch(`/api/projects/${projectId}/images`);
-      if (response.ok) {
-        const images = await response.json();
-        const allImages = images.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        
-        // Only update if data actually changed
-        setLocalCapturedImages(prevImages => {
-          const hasChanged = JSON.stringify(prevImages.map(img => ({ 
-            _id: img._id, 
-            analysisResult: img.analysisResult 
-          }))) !== JSON.stringify(allImages.map(img => ({ 
-            _id: img._id, 
-            analysisResult: img.analysisResult 
-          })));
-          
-          if (hasChanged) {
-            console.log('🖼️ Sidebar: Status updated locally');
-            return allImages;
-          }
-          return prevImages;
-        });
-      }
-    } catch (error) {
-      console.error('Error refreshing sidebar images:', error);
-    }
-  };
-  
-  // Isolated SSE connection for sidebar-only updates
-  useEffect(() => {
-    if (!projectId) return;
-    
-    const eventSource = new EventSource(`/api/processing-complete?projectId=${projectId}`);
-    
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log('🖼️ Sidebar: SSE update received, refreshing images...');
-        refreshLocalImages(); // Only affects sidebar
-      } catch (error) {
-        console.error('Sidebar SSE error:', error);
-      }
-    };
-    
-    // Polling for sidebar only (very infrequent)
-    const pollInterval = setInterval(() => {
-      refreshLocalImages();
-    }, 30000); // Every 30 seconds
-    
-    return () => {
-      eventSource.close();
-      clearInterval(pollInterval);
-      console.log('🖼️ Sidebar: Isolated connections closed');
-    };
-  }, [projectId]);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -1346,7 +1308,7 @@ const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems
                 </div>
               </div>
               <div className="px-3 md:px-4 py-1 md:py-2 bg-white/20 text-white rounded-xl md:rounded-2xl backdrop-blur-sm font-bold">
-                {localCapturedImages.length}
+                {capturedImages.length}
               </div>
             </div>
             {!isMobile && (
@@ -1369,7 +1331,7 @@ const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems
               <Camera className="w-5 h-5 md:w-6 md:h-6 text-white" />
             </div>
             <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Total Photos</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-900">{localCapturedImages.length}</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-900">{capturedImages.length}</p>
           </div>
           <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-green-100">
             <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
@@ -1377,7 +1339,7 @@ const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems
             </div>
             <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Analyzed</p>
             <p className="text-xl md:text-2xl font-bold text-gray-900">
-              {localCapturedImages.filter(img => img.analysisResult?.status === 'completed').length}
+              {capturedImages.filter(img => img.analysisResult?.status === 'completed').length}
             </p>
           </div>
           <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-purple-100">
@@ -1386,7 +1348,7 @@ const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems
             </div>
             <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Processing</p>
             <p className="text-xl md:text-2xl font-bold text-gray-900">
-              {localCapturedImages.filter(img => img.analysisResult?.status === 'processing' || !img.analysisResult?.status).length}
+              {capturedImages.filter(img => img.analysisResult?.status === 'processing' || !img.analysisResult?.status).length}
             </p>
           </div>
         </div>
@@ -1394,12 +1356,12 @@ const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems
 
       {/* Photos Gallery - Scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50">
-        {localImagesLoading ? (
+        {imagesLoading ? (
           <div className="flex flex-col items-center justify-center h-full p-8">
             <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
             <p className="text-gray-600">Loading captured photos...</p>
           </div>
-        ) : localCapturedImages.length === 0 ? (
+        ) : capturedImages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-8">
             <div className="w-20 md:w-24 h-20 md:h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-2xl md:rounded-3xl flex items-center justify-center mb-4 md:mb-6">
               <Camera size={40} className="text-blue-400 md:w-12 md:h-12" />
@@ -1416,7 +1378,7 @@ const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems
           </div>
         ) : (
           <div className="p-3 md:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-            {localCapturedImages.map((image) => (
+            {capturedImages.map((image) => (
               <div key={image._id} className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100">
                 {/* Image Preview */}
                 <div className="relative aspect-video bg-gray-100">
@@ -1535,7 +1497,7 @@ const InventorySidebar = React.memo(({ items, loading, onRemoveItem, onSaveItems
       </div>
     </div>
   );
-});
+};
 
 // Main VideoCallInventory component
 export default function VideoCallInventory({
@@ -1701,12 +1663,24 @@ export default function VideoCallInventory({
         className="h-full"
         options={roomOptions}
         onError={(error) => {
-          console.error('LiveKit room error:', error);
-          toast.error('🚨 Video call error occurred');
+          console.error('🚨 LiveKit room error:', error);
+          toast.error('Video call connection failed');
         }}
         onConnected={() => {
-          console.log('✅ Connected to LiveKit room');
-          toast.success('🎉 Connected to AI video call!');
+          console.log('✅ Connected to LiveKit room successfully');
+          console.log('Room details:', { serverUrl, participantName });
+          toast.success('Connected to video call!');
+        }}
+        onParticipantConnected={(participant) => {
+          console.log('🎯 Participant connected:', participant.identity);
+          toast.info(`${participant.identity} joined the call`);
+        }}
+        onTrackPublished={(track, participant) => {
+          console.log('📹 Track published:', { 
+            trackKind: track.kind,
+            trackSource: track.source,
+            participant: participant.identity
+          });
         }}
       >
         {/* Render different views based on participant type */}
