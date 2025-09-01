@@ -52,6 +52,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
+import Logo from '../../public/logo';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
@@ -1065,18 +1066,13 @@ const AgentView = React.memo(({
       <div className="bg-white border-b border-gray-200 px-4 py-2 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">AI Inventory Assistant</h2>
-              {isInventoryActive && (
-                <div className="flex items-center gap-2 text-sm text-green-600">
-                  <Activity className="w-3 h-3" />
-                  <span>Active - {captureCount} captures, {inventoryItems.length} items</span>
-                </div>
-              )}
-            </div>
+            <Logo />
+            {isInventoryActive && (
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <Activity className="w-3 h-3" />
+                <span>Active - {captureCount} captures, {inventoryItems.length} items</span>
+              </div>
+            )}
           </div>
           
           <div className="flex items-center gap-3">
@@ -1270,37 +1266,31 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
   };
 
   return (
-    <div className="h-screen max-h-screen flex flex-col bg-gradient-to-br from-white via-blue-50 to-indigo-100">
+    <div className="h-screen max-h-screen flex flex-col bg-white">
       {/* Enhanced Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white">
+      <div className="bg-white border-b border-gray-200">
         <div className="p-4 md:p-6 border-b border-blue-500/30">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 md:gap-4">
               {isMobile && (
                 <button
                   onClick={onClose}
-                  className="p-2 hover:bg-white/20 rounded-xl transition-all duration-200"
+                  className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 text-gray-700"
                 >
                   <ChevronLeft size={24} />
                 </button>
               )}
               <div className="flex items-center gap-3">
-                <div className="p-2 md:p-3 bg-white/20 rounded-xl md:rounded-2xl backdrop-blur-sm">
-                  <Camera className="text-white w-5 h-5 md:w-6 md:h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg md:text-xl">Photos Captured</h3>
-                  <p className="text-blue-100 text-xs md:text-sm">Video call captures</p>
-                </div>
+                <Logo />
               </div>
-              <div className="px-3 md:px-4 py-1 md:py-2 bg-white/20 text-white rounded-xl md:rounded-2xl backdrop-blur-sm font-bold">
+              <div className="px-3 md:px-4 py-1 md:py-2 bg-blue-500 text-white rounded-xl md:rounded-2xl font-bold">
                 {capturedImages.length}
               </div>
             </div>
             {!isMobile && (
               <button
                 onClick={onClose}
-                className="p-2 hover:bg-white/20 rounded-xl transition-all duration-200"
+                className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 text-gray-700"
               >
                 <X size={24} />
               </button>
@@ -1310,7 +1300,7 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
       </div>
 
       {/* Photo Stats */}
-      <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-4 md:p-6 border-b border-blue-200/50">
+      <div className="bg-gray-50 p-4 md:p-6 border-b border-gray-200">
         <div className="grid grid-cols-3 gap-3 md:gap-4">
           <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-blue-100">
             <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
