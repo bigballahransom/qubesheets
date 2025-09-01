@@ -1506,7 +1506,7 @@ export default function VideoCallInventory({
     }
   }, [onCallEnd]);
 
-  // Enhanced LiveKit room options with mobile camera optimization
+  // Enhanced LiveKit room options with mobile camera optimization and better permissions
   const roomOptions = {
     publishDefaults: {
       videoCodec: 'h264',
@@ -1515,10 +1515,10 @@ export default function VideoCallInventory({
         height: 720
       },
       videoSimulcast: false,
-      frameRate: 30, // Add explicit frame rate for better mobile performance
+      frameRate: 30,
     },
-    adaptiveStream: true, // Enable adaptive streaming for mobile
-    dynacast: true, // Enable dynamic casting for better bandwidth management
+    adaptiveStream: true,
+    dynacast: true,
     autoSubscribe: true,
     disconnectOnPageLeave: true,
     reconnectPolicy: {
@@ -1534,9 +1534,41 @@ export default function VideoCallInventory({
         width: 1280,
         height: 720
       },
-      frameRate: 30, // Add frame rate constraint
-    }
+      frameRate: 30,
+    },
+    // Improve mobile permissions handling
+    e2eeOptions: undefined, // Disable E2EE for better mobile compatibility
+    expWebAudioMix: false, // Disable experimental features that might cause issues
   };
+  
+  // Pre-request camera permissions before LiveKit connection
+  useEffect(() => {
+    const requestPermissions = async () => {
+      try {
+        console.log('🎥 Requesting camera and microphone permissions...');
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: {
+            facingMode: roomOptions.videoCaptureDefaults.facingMode,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+          }, 
+          audio: true 
+        });
+        console.log('✅ Camera and microphone permissions granted');
+        // Stop the test stream immediately
+        stream.getTracks().forEach(track => track.stop());
+      } catch (error) {
+        console.error('❌ Failed to get media permissions:', error);
+        toast.error('Camera/microphone access required for video calls');
+      }
+    };
+    
+    // Only request permissions once when component mounts
+    if (token && serverUrl) {
+      requestPermissions();
+    }
+  }, [token, serverUrl]);
 
   if (isConnecting) {
     return (
@@ -1616,13 +1648,24 @@ export default function VideoCallInventory({
         data-lk-theme="default"
         className="h-full"
         options={roomOptions}
+        connect={true}
         onError={(error) => {
-          console.error('LiveKit room error:', error);
-          toast.error('🚨 Video call error occurred');
+          console.error('LiveKit room error:', error.message || error);
+          if (error.message && error.message.includes('camera')) {
+            toast.error('Camera access denied. Please enable camera permissions.');
+          } else if (error.message && error.message.includes('microphone')) {
+            toast.error('Microphone access denied. Please enable microphone permissions.');
+          } else {
+            toast.error('Connection failed. Please check your internet connection.');
+          }
         }}
         onConnected={() => {
-          console.log('✅ Connected to LiveKit room');
-          toast.success('🎉 Connected to AI video call!');
+          console.log('✅ Successfully connected to LiveKit room');
+          toast.success('Connected to video call!');
+        }}
+        onMediaDeviceFailure={(failure) => {
+          console.error('Media device failure:', failure);
+          toast.error(`${failure.kind} device failed. Please check your permissions.`);
         }}
       >
         {/* Render different views based on participant type */}
