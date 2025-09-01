@@ -982,6 +982,8 @@ const ProcessingNotification = () => {
     roomId={videoRoomId}
     projectId={currentProject._id}
     projectName={currentProject.name}
+    customerName={currentProject.customerName}
+    customerPhone={currentProject.phone}
   />
 )}
 {isSendLinkModalOpen && currentProject && (
