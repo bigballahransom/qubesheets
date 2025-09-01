@@ -8,6 +8,18 @@ import Project from '@/models/Project';
 import { backgroundQueue } from '@/lib/backgroundQueue';
 import sharp from 'sharp';
 
+// Helper function to detect video files server-side
+function isVideoFile(file: File): boolean {
+  const fileName = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+  
+  const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+  const hasVideoExtension = videoExtensions.some(ext => fileName.endsWith(ext));
+  const hasVideoMimeType = mimeType.startsWith('video/');
+  
+  return hasVideoExtension || hasVideoMimeType;
+}
+
 // Helper function to detect HEIC files server-side
 function isHeicFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
@@ -90,6 +102,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
+  console.log('🔍 Customer upload API called');
   try {
     console.log('📤 Customer upload initiated');
     
@@ -153,8 +166,9 @@ export async function POST(
       );
     }
 
-    // Enhanced file type validation for mobile browsers
+    // Enhanced file type validation for mobile browsers - including video files
     const isRegularImage = image.type.startsWith('image/');
+    const isVideo = isVideoFile(image);
     const isHeic = isHeicFile(image);
     const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(image.name);
     const isPotentialMobileImage = (image.type === '' || image.type === 'application/octet-stream') && hasImageExtension;
@@ -164,33 +178,84 @@ export async function POST(
       mimeType: image.type || 'empty',
       size: image.size,
       isRegularImage,
+      isVideo,
       isHeic,
       hasImageExtension,
       isPotentialMobileImage,
       userAgent: request.headers.get('user-agent')?.substring(0, 100)
     });
     
-    if (!isRegularImage && !isHeic && !isPotentialMobileImage) {
+    if (!isRegularImage && !isVideo && !isHeic && !isPotentialMobileImage) {
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, or HEIF).' },
+        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM).' },
         { status: 400 }
       );
     }
 
-    // Validate file size (50MB limit for high-quality images)
-    const maxSize = parseInt(process.env.MAX_UPLOAD_SIZE || '52428800'); // 50MB default
+    // MongoDB document size limit is 16MB, so we need stricter limits
+    const mongoDBLimit = 16 * 1024 * 1024; // 16MB MongoDB limit
+    const imageMaxSize = 15 * 1024 * 1024; // 15MB for images (leaving buffer for metadata)
+    const videoMaxSize = parseInt(process.env.MAX_VIDEO_UPLOAD_SIZE || '104857600'); // 100MB for videos (stored separately)
+    const maxSize = isVideo ? videoMaxSize : imageMaxSize;
+    
+    console.log('📄 File size validation:', {
+      fileName: image.name,
+      fileSize: image.size,
+      fileSizeMB: (image.size / (1024 * 1024)).toFixed(2) + 'MB',
+      isVideo,
+      maxSize,
+      maxSizeMB: (maxSize / (1024 * 1024)).toFixed(2) + 'MB',
+      mongoDBLimit: (mongoDBLimit / (1024 * 1024)).toFixed(2) + 'MB'
+    });
+    
     if (image.size > maxSize) {
       const maxSizeMB = Math.round(maxSize / (1024 * 1024));
+      const fileType = isVideo ? 'video' : 'image';
       return NextResponse.json(
-        { error: `File size too large. Please upload an image smaller than ${maxSizeMB}MB.` },
+        { error: `File size too large. Please upload a ${fileType} smaller than ${maxSizeMB}MB. Your file is ${(image.size / (1024 * 1024)).toFixed(2)}MB.` },
         { status: 400 }
       );
+    }
+
+    // Handle video files differently from images - don't save to MongoDB due to size limits
+    if (isVideo) {
+      console.log('🎬 Processing video file for customer upload:', image.name);
+      
+      // For customer uploads, we can't store large video files in MongoDB
+      // Instead, return instructions for the client to process the video
+      const timestamp = Date.now();
+      const customerName = customerUpload?.customerName || 'anonymous';
+      const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      
+      console.log('🎬 Video file too large for direct MongoDB storage, returning processing instructions');
+      
+      return NextResponse.json({
+        success: true,
+        requiresClientProcessing: true,
+        videoInfo: {
+          fileName: image.name,
+          size: image.size,
+          type: image.type,
+          customerName,
+          projectId: projectId?.toString(),
+          uploadToken: token
+        },
+        message: 'Video received - please process frames on client side',
+        instructions: 'extract_frames_and_upload'
+      });
     }
 
     // Process image (handle HEIC if needed)
     const bytes = await image.arrayBuffer();
     let buffer = Buffer.from(bytes);
     let mimeType = image.type;
+    
+    console.log('🖼️ Original image details:', {
+      fileName: image.name,
+      originalSize: buffer.length,
+      originalSizeMB: (buffer.length / (1024 * 1024)).toFixed(2) + 'MB',
+      mimeType
+    });
 
     // For HEIC files, attempt server-side handling as fallback
     if (isHeic) {
@@ -211,12 +276,64 @@ export async function POST(
         );
       }
     }
+    
+    // Compress image if it's too large for MongoDB
+    const mongoDBSafeSize = 14 * 1024 * 1024; // 14MB to be safe
+    if (buffer.length > mongoDBSafeSize) {
+      console.log('📋 Image too large, compressing...', {
+        originalSize: buffer.length,
+        originalSizeMB: (buffer.length / (1024 * 1024)).toFixed(2) + 'MB',
+        target: 'Under ' + (mongoDBSafeSize / (1024 * 1024)).toFixed(2) + 'MB'
+      });
+      
+      try {
+        // Use Sharp to compress the image
+        let quality = 80;
+        let compressed = await sharp(buffer)
+          .jpeg({ quality, mozjpeg: true })
+          .toBuffer();
+        
+        // If still too large, reduce quality further
+        while (compressed.length > mongoDBSafeSize && quality > 30) {
+          quality -= 10;
+          compressed = await sharp(buffer)
+            .jpeg({ quality, mozjpeg: true })
+            .toBuffer();
+          console.log(`📋 Trying quality ${quality}, size: ${(compressed.length / (1024 * 1024)).toFixed(2)}MB`);
+        }
+        
+        if (compressed.length <= mongoDBSafeSize) {
+          buffer = compressed;
+          mimeType = 'image/jpeg';
+          const reductionPercent = ((1 - compressed.length / buffer.length) * 100).toFixed(1);
+          console.log(`✅ Image compressed successfully: ${(compressed.length / (1024 * 1024)).toFixed(2)}MB (${reductionPercent}% reduction)`);
+        } else {
+          return NextResponse.json(
+            { error: `Image file is too large to process. Even after compression, the file exceeds our 14MB limit. Please resize the image and try again.` },
+            { status: 400 }
+          );
+        }
+      } catch (compressionError) {
+        console.error('❌ Image compression failed:', compressionError);
+        return NextResponse.json(
+          { error: `Image file is too large (${(buffer.length / (1024 * 1024)).toFixed(2)}MB) and compression failed. Please resize the image to under 14MB and try again.` },
+          { status: 400 }
+        );
+      }
+    }
 
     const processedImage = {
       name: image.name,
       type: mimeType,
       size: buffer.length
     };
+    
+    console.log('🖼️ Final processed image:', {
+      fileName: processedImage.name,
+      finalSize: processedImage.size,
+      finalSizeMB: (processedImage.size / (1024 * 1024)).toFixed(2) + 'MB',
+      finalMimeType: processedImage.type
+    });
 
     // Generate unique name
     const timestamp = Date.now();
@@ -255,14 +372,20 @@ export async function POST(
     // Queue background analysis (truly asynchronous)
     console.log('🚀 Queueing background analysis...');
     
-    const jobId = backgroundQueue.enqueue('image_analysis', {
-      imageId: imageDoc._id.toString(),
-      projectId: projectId.toString(),
-      userId: userId,
-      organizationId: organizationId
-    });
-
-    console.log(`✅ Analysis job queued: ${jobId}`);
+    let jobId = 'manual-fallback';
+    try {
+      jobId = backgroundQueue.enqueue('image_analysis', {
+        imageId: imageDoc._id.toString(),
+        projectId: projectId.toString(),
+        userId: userId,
+        organizationId: organizationId
+      });
+      console.log(`✅ Analysis job queued: ${jobId}`);
+    } catch (queueError) {
+      console.warn('⚠️ Background queue failed, but image was saved:', queueError);
+      console.warn('Image will need to be analyzed manually via admin interface');
+      jobId = 'queue-failed-manual-required';
+    }
 
     // Return immediately - don't wait for analysis
     return NextResponse.json({
@@ -276,11 +399,19 @@ export async function POST(
 
   } catch (error) {
     console.error('❌ Error uploading customer image:', error);
+    console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error('❌ Error type:', typeof error);
+    console.error('❌ Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : String(error),
+      cause: error instanceof Error ? error.cause : undefined
+    });
     
     return NextResponse.json(
       { 
         error: 'Failed to upload image',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
+        errorType: error instanceof Error ? error.name : typeof error
       },
       { status: 500 }
     );

@@ -2,12 +2,14 @@
 
 interface QueueItem {
     id: string;
-    type: 'image_analysis';
+    type: 'image_analysis' | 'video_frame_analysis';
     data: {
       imageId: string;
       projectId: string;
       userId: string;
       organizationId?: string | null;
+      frameTimestamp?: number;
+      source?: string;
     };
     retries: number;
     maxRetries: number;
@@ -30,7 +32,7 @@ interface QueueItem {
     private maxRailwayErrors = 3; // Circuit breaker threshold
   
     // Add item to queue with overflow management and smart priority
-    enqueue(type: 'image_analysis', data: any, delay = 0, estimatedSize?: number): string {
+    enqueue(type: 'image_analysis' | 'video_frame_analysis', data: any, delay = 0, estimatedSize?: number): string {
       const id = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const now = new Date();
       const scheduledFor = new Date(now.getTime() + delay);
@@ -43,14 +45,15 @@ interface QueueItem {
       }
 
       // Smart priority: smaller images get higher priority for faster processing
-      let priority = 50; // Default priority
+      // Video frames get slightly lower priority than regular photos
+      let priority = type === 'video_frame_analysis' ? 45 : 50; // Video frames slightly lower priority
       if (estimatedSize) {
         if (estimatedSize < 1024 * 1024) { // < 1MB
-          priority = 80; // High priority
+          priority = type === 'video_frame_analysis' ? 75 : 80; // High priority
         } else if (estimatedSize < 5 * 1024 * 1024) { // < 5MB
-          priority = 60; // Medium-high priority
+          priority = type === 'video_frame_analysis' ? 55 : 60; // Medium-high priority
         } else if (estimatedSize > 20 * 1024 * 1024) { // > 20MB
-          priority = 30; // Lower priority for very large files
+          priority = type === 'video_frame_analysis' ? 25 : 30; // Lower priority for very large files
         }
       }
   
@@ -133,9 +136,9 @@ interface QueueItem {
       console.log(`⚡ Processing job: ${item.id} (attempt ${item.retries + 1})`);
       
       try {
-        if (item.type === 'image_analysis') {
+        if (item.type === 'image_analysis' || item.type === 'video_frame_analysis') {
           // Always use Railway for background processing
-          const result = await this.processWithRailway(item.data);
+          const result = await this.processWithRailway(item.data, item.type);
           console.log(`✅ Job completed: ${item.id}`, result);
         }
       } catch (error) {
@@ -157,7 +160,7 @@ interface QueueItem {
     }
 
     // Process with Railway service - with concurrency control and health monitoring
-    private async processWithRailway(data: any) {
+    private async processWithRailway(data: any, jobType: 'image_analysis' | 'video_frame_analysis' = 'image_analysis') {
       // Check Railway health before processing
       if (!this.railwayHealthy) {
         const timeSinceLastCheck = new Date().getTime() - this.lastHealthCheck.getTime();
@@ -207,9 +210,20 @@ interface QueueItem {
         formData.append('imageId', data.imageId);
         formData.append('projectId', data.projectId);
         formData.append('userId', data.userId);
+        formData.append('jobType', jobType); // Distinguish video frames from regular images
         
         if (data.organizationId) {
           formData.append('organizationId', data.organizationId);
+        }
+        
+        // Video frame specific metadata
+        if (jobType === 'video_frame_analysis') {
+          if (data.frameTimestamp !== undefined) {
+            formData.append('frameTimestamp', data.frameTimestamp.toString());
+          }
+          if (data.source) {
+            formData.append('source', data.source);
+          }
         }
         
         // Add MongoDB connection string

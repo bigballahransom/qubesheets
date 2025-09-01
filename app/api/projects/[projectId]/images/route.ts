@@ -28,9 +28,20 @@ export async function GET(
     }
     
     // Get all images for the project (exclude binary data for list view)
-    const images = await Image.find(
-      getProjectFilter(authContext, projectId)
-    ).select('name originalName mimeType size description analysisResult createdAt updatedAt').sort({ createdAt: -1 });
+    const filter = getProjectFilter(authContext, projectId);
+    console.log('🖼️ Image gallery filter:', filter);
+    
+    const images = await Image.find(filter)
+      .select('name originalName mimeType size description analysisResult source metadata createdAt updatedAt')
+      .sort({ createdAt: -1 });
+    
+    console.log(`🖼️ Found ${images.length} images for project ${projectId}`);
+    console.log('🖼️ Images:', images.map(img => ({
+      name: img.name,
+      source: img.source,
+      hasVideoMetadata: !!img.metadata?.videoSource,
+      createdAt: img.createdAt
+    })));
     
     return NextResponse.json(images);
   } catch (error) {

@@ -2,11 +2,29 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Camera, Upload, Loader2 } from 'lucide-react';
+import { Camera, Upload, Loader2, Video } from 'lucide-react';
 
 interface CustomerPhotoUploaderProps {
   onUpload: (file: File) => Promise<void>;
   uploading: boolean;
+}
+
+// Video file detection
+function isVideoFile(file: File): boolean {
+  const fileName = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+  
+  console.log('🎬 Customer video file detection:', {
+    name: file.name,
+    type: file.type,
+    size: file.size
+  });
+  
+  const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+  const hasVideoExtension = videoExtensions.some(ext => fileName.endsWith(ext));
+  const hasVideoMimeType = mimeType.startsWith('video/');
+  
+  return hasVideoExtension || hasVideoMimeType;
 }
 
 // Enhanced HEIC file detection for iPhone compatibility
@@ -296,19 +314,41 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       });
       
-      // Check if file is a supported image type or HEIC
+      // Check if file is a supported image, video type, or HEIC
       const isRegularImage = file.type.startsWith('image/');
+      const isVideo = isVideoFile(file);
       const isHeic = isHeicFile(file);
       
       // Special handling for iPhone photos that may have empty MIME types
       const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
       const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
       
-      if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
+      if (!isRegularImage && !isVideo && !isHeic && !(isPotentialImage && hasImageExtension)) {
         const errorMsg = isMobile 
-          ? 'Please select a photo from your camera roll or take a new photo.'
-          : 'Please select a valid image file (JPEG, PNG, GIF, HEIC, or HEIF). Note: Some iPhone photos may need to be converted to JPEG first.';
+          ? 'Please select a photo or video from your device.'
+          : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF) or video file (MP4, MOV, AVI, WebM). Note: Some iPhone photos may need to be converted to JPEG first.';
         alert(errorMsg);
+        return;
+      }
+      
+      // Client-side file size validation
+      const imageMaxSize = 15 * 1024 * 1024; // 15MB for images
+      const videoMaxSize = 100 * 1024 * 1024; // 100MB for videos
+      const maxSize = isVideo ? videoMaxSize : imageMaxSize;
+      
+      if (file.size > maxSize) {
+        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
+        const fileType = isVideo ? 'video' : 'image';
+        
+        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
+        alert(errorMsg);
+        return;
+      }
+      
+      // For video files, skip image processing and conversion
+      if (isVideo) {
+        await onUpload(file);
         return;
       }
       
@@ -445,7 +485,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif"
+          accept="image/*,.heic,.heif,video/*"
           onChange={handleFileSelect}
           className="hidden"
           disabled={uploading || isConverting}
@@ -455,7 +495,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         {uploading ? (
           <div className="space-y-4">
             <Loader2 className="w-12 h-12 animate-spin mx-auto text-blue-500" />
-            <p className="text-gray-600">Uploading photo...</p>
+            <p className="text-gray-600">Uploading file...</p>
           </div>
         ) : isConverting ? (
           <div className="space-y-4">
@@ -465,20 +505,23 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
           </div>
         ) : (
           <div className="space-y-4">
-            <Camera className="w-12 h-12 mx-auto text-gray-400" />
+            <div className="flex justify-center items-center gap-4 mb-4">
+              <Camera className="w-12 h-12 text-gray-400" />
+              <Video className="w-12 h-12 text-gray-400" />
+            </div>
             <div>
               <p className="text-lg font-medium text-gray-700 mb-2">
-                Upload a photo of your items
+                Upload photos or videos of your items
               </p>
               <p className="text-sm text-gray-500 mb-4">
-                Drag and drop an image here, or click to select
+                Drag and drop files here, or click to select
               </p>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="inline-flex items-center gap-2 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
               >
                 <Upload className="w-5 h-5" />
-                Select Photo
+                Select Files
               </button>
             </div>
           </div>
@@ -486,7 +529,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       </div>
 
       <p className="text-xs text-gray-500 text-center">
-        Supported formats: JPG, PNG, GIF, HEIC, HEIF (max 50MB)
+        Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 100MB)
       </p>
     </div>
   );

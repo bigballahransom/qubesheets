@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { CheckCircle, AlertCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight } from 'lucide-react';
 import CustomerPhotoUploader from '@/components/CustomerPhotoUploader';
+import VideoUpload from '@/components/video/VideoUpload';
 import { toast } from 'sonner';
 import Logo from '../../../public/logo';
 
@@ -37,6 +38,7 @@ export default function CustomerUploadPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [processingVideo, setProcessingVideo] = useState(false);
 
   // Parse instructions for display (simple markdown-like parsing)
   const parseInstructionsForDisplay = (text: string, companyName: string) => {
@@ -126,6 +128,125 @@ export default function CustomerUploadPage() {
     fetchBrandingData();
   }, [token]);
 
+  // Process video client-side (extract frames and upload)
+  const processVideoClientSide = async (videoFile: File, videoInfo: any) => {
+    setProcessingVideo(true);
+    
+    try {
+      console.log('🎬 Starting client-side video processing:', videoFile.name);
+      
+      toast.info('Processing video frames...', {
+        description: 'Extracting and analyzing frames from your video.',
+        duration: 3000,
+      });
+      
+      // Create video element for frame extraction
+      const video = document.createElement('video');
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        throw new Error('Could not create canvas context');
+      }
+      
+      // Load video
+      const videoUrl = URL.createObjectURL(videoFile);
+      video.src = videoUrl;
+      
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = () => resolve(void 0);
+        video.onerror = () => reject(new Error('Failed to load video'));
+      });
+      
+      const duration = video.duration;
+      const frameRate = 1; // 1 frame per second
+      const frames: any[] = [];
+      
+      // Extract frames
+      for (let time = 0; time < duration; time += 1 / frameRate) {
+        video.currentTime = time;
+        await new Promise(resolve => {
+          video.onseeked = resolve;
+        });
+        
+        // Set canvas size to match video
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // Draw frame to canvas
+        ctx.drawImage(video, 0, 0);
+        
+        // Convert to base64
+        const frameData = canvas.toDataURL('image/jpeg', 0.8);
+        frames.push({
+          timestamp: time,
+          base64: frameData.split(',')[1]
+        });
+      }
+      
+      // Clean up
+      URL.revokeObjectURL(videoUrl);
+      
+      console.log(`🎬 Extracted ${frames.length} frames from video`);
+      
+      // Process frames using the video processing API
+      const processResponse = await fetch('/api/video/process-frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          frames: frames.map(f => ({
+            timestamp: f.timestamp,
+            base64: f.base64,
+            relevanceScore: 1 // All frames considered relevant for customer uploads
+          })),
+          projectId: videoInfo.projectId,
+          uploadLinkId: videoInfo.uploadToken,
+          source: 'customer_video_upload'
+        })
+      });
+      
+      if (!processResponse.ok) {
+        const errorText = await processResponse.text();
+        throw new Error(`Frame processing failed: ${errorText}`);
+      }
+      
+      const processResult = await processResponse.json();
+      
+      if (processResult.success) {
+        // Add processed frames to uploaded images list
+        const frameImages = processResult.processedFrameDetails?.map((frame: any, index: number) => ({
+          id: frame.imageId || `frame-${index}`,
+          name: `${videoFile.name} - Frame ${index + 1}`,
+          uploadedAt: new Date().toISOString()
+        })) || [];
+        
+        setUploadedImages(prev => [...prev, ...frameImages]);
+        
+        toast.success(`Video processed successfully! Extracted ${frames.length} frames for analysis.`, {
+          duration: 5000,
+          style: {
+            background: '#10b981',
+            color: 'white',
+          }
+        });
+      } else {
+        throw new Error(processResult.error || 'Frame processing failed');
+      }
+      
+    } catch (error) {
+      console.error('Video processing error:', error);
+      toast.error(`Video processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`, {
+        duration: 6000,
+        style: {
+          background: '#ef4444',
+          color: 'white',
+        }
+      });
+    } finally {
+      setProcessingVideo(false);
+    }
+  };
+
   const handleFileUpload = async (file: File) => {
     setUploading(true);
     
@@ -138,6 +259,14 @@ export default function CustomerUploadPage() {
     setUploadedImages(prev => [...prev, tempImage]);
     
     try {
+      console.log('🚀 Starting file upload:', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        token: token,
+        uploadUrl: `/api/customer-upload/${token}/upload`
+      });
+      
       const formData = new FormData();
       formData.append('image', file);
 
@@ -147,26 +276,76 @@ export default function CustomerUploadPage() {
         // Add timeout for mobile networks
         signal: AbortSignal.timeout(120000) // 2 minute timeout
       });
+      
+      console.log('📡 Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        headers: Object.fromEntries(response.headers.entries())
+      });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to upload image');
+        const errorText = await response.text();
+        console.error('Upload API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText,
+          headers: Object.fromEntries(response.headers.entries())
+        });
+        
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText || `HTTP ${response.status}: ${response.statusText}` };
+        }
+        
+        const errorMessage = errorData.error || `Upload failed: ${response.status} ${response.statusText}`;
+        const details = errorData.details ? ` (${errorData.details})` : '';
+        const errorType = errorData.errorType ? ` [${errorData.errorType}]` : '';
+        
+        throw new Error(`${errorMessage}${details}${errorType}`);
       }
 
       const result = await response.json();
+      
+      // Handle client-side video processing requirement
+      if (result.requiresClientProcessing) {
+        console.log('🎬 Video requires client-side processing:', result.videoInfo);
+        
+        // Remove temp image since we'll handle video processing differently
+        setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
+        
+        // Store video info for processing
+        const videoInfo = result.videoInfo;
+        
+        // Process video using our VideoUpload component logic
+        await processVideoClientSide(file, videoInfo);
+        
+        return;
+      }
+      
+      // Handle regular images and processed videos
+      const uploadId = result.imageId || result.videoId;
+      const isVideo = result.requiresFrameExtraction || false;
       
       // Replace temp image with real data
       setUploadedImages(prev => prev.map(img => 
         img.id === tempImage.id 
           ? {
-              id: result.imageId,
+              id: uploadId,
               name: file.name,
               uploadedAt: new Date().toISOString()
             }
           : img
       ));
       
-      toast.success('Photo uploaded successfully! AI analysis in progress...', {
+      const fileType = isVideo ? 'Video' : 'Photo';
+      const message = isVideo 
+        ? 'Video uploaded successfully! Frame extraction and AI analysis in progress...'
+        : 'Photo uploaded successfully! AI analysis in progress...';
+      
+      toast.success(message, {
         duration: 4000,
         style: {
           background: '#10b981',
@@ -233,7 +412,7 @@ export default function CustomerUploadPage() {
               <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
             </div>
             <h2 className="text-xl font-semibold text-slate-800 mb-2">Loading Upload Page</h2>
-            <p className="text-slate-600 mb-4">Setting up your photo upload...</p>
+            <p className="text-slate-600 mb-4">Setting up your media upload...</p>
           </div>
         </div>
       </div>
@@ -284,10 +463,10 @@ export default function CustomerUploadPage() {
             Welcome, {validation.customerName}
           </div>
           <h1 className="text-3xl md:text-4xl font-bold text-slate-800 leading-tight">
-            Upload Your Moving Photos
+            Upload Your Moving Photos or Videos
           </h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto leading-relaxed">
-            Help us ensure a wonderful moving experience by uploading photos of the belongings moving with you.
+            Help us ensure a wonderful moving experience by uploading photos or videos of the belongings moving with you.
             {/* <span className="font-semibold text-blue-600 ml-1">{validation.projectName}</span> */}
           </p>
         </div>
@@ -299,13 +478,25 @@ export default function CustomerUploadPage() {
               <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
                 <UploadIcon className="w-4 h-4 text-blue-600" />
               </div>
-              <h2 className="text-xl font-semibold text-slate-800">Upload Photos</h2>
+              <h2 className="text-xl font-semibold text-slate-800">Upload Photos or Videos</h2>
             </div>
             
             <CustomerPhotoUploader
               onUpload={handleFileUpload}
-              uploading={uploading}
+              uploading={uploading || processingVideo}
             />
+            
+            {processingVideo && (
+              <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                  <div>
+                    <p className="text-blue-700 font-medium">Processing Video</p>
+                    <p className="text-blue-600 text-sm">Extracting frames and analyzing content...</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -2,8 +2,9 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Upload, Camera, Loader2, X, Package, Box, BoxesIcon } from 'lucide-react';
+import { Upload, Camera, Loader2, X, Package, Box, BoxesIcon, Video, Play, Clock } from 'lucide-react';
 import RealTimeUploadStatus from './RealTimeUploadStatus';
+import VideoUpload from './video/VideoUpload';
 
 export interface InventoryItem {
   name: string;
@@ -40,6 +41,7 @@ export interface AnalysisResult {
 interface PhotoInventoryUploaderProps {
   onItemsAnalyzed?: (result: AnalysisResult) => void;
   onImageSaved?: () => void; // New callback for when image is saved
+  onClose?: () => void; // New callback to close the modal
   projectId?: string;
 }
 
@@ -61,6 +63,24 @@ function isMobileDevice(): boolean {
   });
   
   return isMobile;
+}
+
+// Video file detection
+function isVideoFile(file: File): boolean {
+  const fileName = file.name.toLowerCase();
+  const mimeType = file.type.toLowerCase();
+  
+  console.log('🎬 Video file detection:', {
+    name: file.name,
+    type: file.type,
+    size: file.size
+  });
+  
+  const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+  const hasVideoExtension = videoExtensions.some(ext => fileName.endsWith(ext));
+  const hasVideoMimeType = mimeType.startsWith('video/');
+  
+  return hasVideoExtension || hasVideoMimeType;
 }
 
 // Enhanced HEIC file detection for iPhone compatibility
@@ -426,6 +446,7 @@ function generateBoxRecommendation(
 export default function PhotoInventoryUploader({ 
   onItemsAnalyzed, 
   onImageSaved,
+  onClose,
   projectId 
 }: PhotoInventoryUploaderProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -436,17 +457,35 @@ export default function PhotoInventoryUploader({
   const [error, setError] = useState<string | null>(null);
   const [imageDescription, setImageDescription] = useState('');
   const [processingStatus, setProcessingStatus] = useState<{[key: string]: 'processing' | 'completed' | 'failed'}>({});
+  const [uploadMode, setUploadMode] = useState<'image' | 'video'>('image');
+  const [hasVideoFiles, setHasVideoFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
 
+    // Check if any files are videos
+    const videoFiles = files.filter(isVideoFile);
+    const imageFiles = files.filter(file => !isVideoFile(file));
+    
+    if (videoFiles.length > 0 && imageFiles.length > 0) {
+      setError('Please upload either images or videos, not both at the same time.');
+      return;
+    }
+    
+    if (videoFiles.length > 1) {
+      setError('Please upload one video at a time for optimal processing.');
+      return;
+    }
+
     // Reset states
     setError(null);
     setAnalysisResult(null);
     setImageDescription('');
     setPreviewUrl(null);
+    setHasVideoFiles(videoFiles.length > 0);
+    setUploadMode(videoFiles.length > 0 ? 'video' : 'image');
     setSelectedFiles([]);
     setProcessingStatus({});
 
@@ -460,20 +499,27 @@ export default function PhotoInventoryUploader({
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         
-        // Check if file is a supported image type or HEIC
+        // Check if file is a supported image, video type, or HEIC
         const isRegularImage = file.type.startsWith('image/');
+        const isVideo = isVideoFile(file);
         const isHeic = isHeicFile(file);
         
         // Special handling for iPhone photos that may have empty MIME types
         const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
         const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
         
-        if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
+        if (!isRegularImage && !isVideo && !isHeic && !(isPotentialImage && hasImageExtension)) {
           invalidFiles.push(file.name);
           continue;
         }
         
         let finalFile = file;
+
+        // Skip processing for video files - they'll be handled by VideoUpload component
+        if (isVideo) {
+          validFiles.push(finalFile);
+          continue;
+        }
 
         // Smart HEIC conversion: Mobile-first strategy
         if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
@@ -573,6 +619,8 @@ export default function PhotoInventoryUploader({
 
     try {
       console.log(`🚀 Starting async processing for ${selectedFiles.length} images...`);
+      
+      let modalClosed = false;
 
       // Mobile-optimized sequential processing
       const isMobile = isMobileDevice();
@@ -713,6 +761,22 @@ export default function PhotoInventoryUploader({
                 ...prev,
                 [file.name]: 'completed'
               }));
+              
+              // Close modal and show toast after first successful save AND queue
+              if (!modalClosed) {
+                // Import toast and show notification
+                const { toast } = await import('sonner');
+                toast.success(`Processing ${selectedFiles.length} image${selectedFiles.length > 1 ? 's' : ''}...`, {
+                  description: 'Your images are being saved and analyzed in the background.',
+                  duration: 4000,
+                });
+                
+                // Close the modal after first successful save and queue
+                if (onClose) {
+                  onClose();
+                }
+                modalClosed = true;
+              }
             }
           } catch (queueError) {
             console.error(`❌ Queue request failed for image ${fileNum}:`, queueError);
@@ -741,9 +805,9 @@ export default function PhotoInventoryUploader({
       setIsAnalyzing(false);
       setError(null);
 
-      // Import toast dynamically
-      const { toast } = await import('sonner');
-      toast.success(`Processing ${selectedFiles.length} images completed!`, {
+      // Import toast dynamically for completion notification
+      const { toast: completionToast } = await import('sonner');
+      completionToast.success(`Processing ${selectedFiles.length} images completed!`, {
         description: 'Your images have been saved and analysis is running in the background.',
         duration: 5000,
       });
@@ -958,6 +1022,8 @@ export default function PhotoInventoryUploader({
     setImageDescription('');
     setProcessingStatus({});
     setIsConverting(false);
+    setUploadMode('image');
+    setHasVideoFiles(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -981,7 +1047,7 @@ export default function PhotoInventoryUploader({
     <div className="max-w-none w-full">
       <div className="text-center mb-6">
         <p className="text-gray-600">
-          Upload a photo to automatically identify and inventory items in the image
+          Upload photos or videos to automatically extract frames and identify inventory items
         </p>
       </div>
 
@@ -990,7 +1056,7 @@ export default function PhotoInventoryUploader({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif"
+          accept="image/*,.heic,.heif,video/*"
           onChange={handleFileSelect}
           className="hidden"
           multiple
@@ -1001,12 +1067,16 @@ export default function PhotoInventoryUploader({
             onClick={handleUploadClick}
             className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors focus:ring-2 focus:ring-blue-500 focus:outline-none"
           >
-            <Camera className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+            <div className="flex justify-center items-center gap-4 mb-4">
+              <Camera className="h-12 w-12 text-gray-400" />
+              <Video className="h-12 w-12 text-gray-400" />
+            </div>
             <p className="text-lg font-medium text-gray-700 mb-2">
-              Click to upload photos
+              Click to upload photos or videos
             </p>
             <p className="text-sm text-gray-500">
-              Select single or multiple images (JPG, PNG, GIF, HEIC, HEIF up to 10MB each)
+              Images: JPG, PNG, GIF, HEIC, HEIF (up to 10MB each)<br/>
+              Videos: MP4, MOV, AVI, WebM (up to 100MB each)
             </p>
           </div>
         ) : isConverting ? (
@@ -1021,60 +1091,102 @@ export default function PhotoInventoryUploader({
           </div>
         ) : selectedFiles.length > 0 ? (
           <div className="space-y-4">
-            <div className="relative">
-              {selectedFiles.length === 1 && previewUrl ? (
-                <img
-                  src={previewUrl}
-                  alt="Preview"
-                  className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
+            {hasVideoFiles ? (
+              // Video upload mode - automatically process the selected video
+              <div>
+                <VideoUpload 
+                  projectId={projectId}
+                  initialVideoFile={selectedFiles[0]} // Pass the video file directly
+                  autoStart={true} // Automatically start processing
+                  onFramesExtracted={async () => {
+                    console.log('Video frames extracted, triggering gallery refresh');
+                    // Show toast and close modal when video processing starts
+                    const { toast: videoToast } = await import('sonner');
+                    videoToast.success('Processing video frames...', {
+                      description: 'Extracting and analyzing frames from your video.',
+                      duration: 4000,
+                    });
+                    
+                    // Close the modal
+                    if (onClose) {
+                      onClose();
+                    }
+                    
+                    // Trigger gallery refresh when frames are extracted
+                    if (onImageSaved) onImageSaved();
+                  }}
+                  onAnalysisComplete={(results) => {
+                    console.log('Video analysis complete:', results);
+                    // Trigger another gallery refresh when analysis completes
+                    if (onImageSaved) onImageSaved();
+                    // Auto-reset after completion to allow new uploads
+                    setTimeout(() => handleReset(), 2000);
+                  }}
+                  onReset={() => {
+                    // Reset the parent component when video upload resets
+                    handleReset();
+                  }}
                 />
-              ) : selectedFiles.length === 1 ? (
-                <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-gray-100 border-2 border-dashed border-gray-300 flex flex-col items-center justify-center p-8">
-                  <Camera className="h-12 w-12 text-gray-400 mb-2" />
-                  <p className="text-sm font-medium text-gray-600">HEIC Image Selected</p>
-                  <p className="text-xs text-gray-500 text-center mt-1">
-                    {selectedFiles[0].name}
-                    <br />
-                    Preview will be available after analysis
-                  </p>
-                </div>
-              ) : (
-                <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-blue-100 border-2 border-dashed border-blue-300 flex flex-col items-center justify-center p-8">
-                  <Package className="h-12 w-12 text-blue-500 mb-2" />
-                  <p className="text-lg font-medium text-blue-700">{selectedFiles.length} Images Selected</p>
-                  <p className="text-sm text-blue-600 text-center mt-1">
-                    Ready to analyze multiple images
-                  </p>
-                </div>
-              )}
-              <button
-                onClick={handleReset}
-                className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors cursor-pointer focus:ring-2 focus:ring-red-500 focus:outline-none"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+              </div>
+            ) : (
+              // Image upload mode - show existing image preview
+              <div className="relative">
+                {selectedFiles.length === 1 && previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Preview"
+                    className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
+                  />
+                ) : selectedFiles.length === 1 ? (
+                  <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-gray-100 border-2 border-dashed border-gray-300 flex flex-col items-center justify-center p-8">
+                    <Camera className="h-12 w-12 text-gray-400 mb-2" />
+                    <p className="text-sm font-medium text-gray-600">HEIC Image Selected</p>
+                    <p className="text-xs text-gray-500 text-center mt-1">
+                      {selectedFiles[0].name}
+                      <br />
+                      Preview will be available after analysis
+                    </p>
+                  </div>
+                ) : (
+                  <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-blue-100 border-2 border-dashed border-blue-300 flex flex-col items-center justify-center p-8">
+                    <Package className="h-12 w-12 text-blue-500 mb-2" />
+                    <p className="text-lg font-medium text-blue-700">{selectedFiles.length} Images Selected</p>
+                    <p className="text-sm text-blue-600 text-center mt-1">
+                      Ready to analyze multiple images
+                    </p>
+                  </div>
+                )}
+                <button
+                  onClick={handleReset}
+                  className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors cursor-pointer focus:ring-2 focus:ring-red-500 focus:outline-none"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
             
-            {/* Image Description Input */}
-            <div className="max-w-md mx-auto">
-              <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
-                Add a description (optional)
-              </label>
-              <input
-                id="description"
-                type="text"
-                value={imageDescription}
-                onChange={(e) => setImageDescription(e.target.value)}
-                placeholder="e.g., Living room items, Kitchen inventory..."
-                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+            {/* Image Description Input - Only show for images, not videos */}
+            {!hasVideoFiles && (
+              <div className="max-w-md mx-auto">
+                <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                  Add a description (optional)
+                </label>
+                <input
+                  id="description"
+                  type="text"
+                  value={imageDescription}
+                  onChange={(e) => setImageDescription(e.target.value)}
+                  placeholder="e.g., Living room items, Kitchen inventory..."
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            )}
           </div>
         ) : null}
       </div>
 
-      {/* Action Buttons */}
-      {selectedFiles.length > 0 && !analysisResult && (
+      {/* Action Buttons - Only show for image uploads */}
+      {selectedFiles.length > 0 && !analysisResult && !hasVideoFiles && (
         <div className="text-center mb-6">
           <button
             onClick={handleAnalyze}

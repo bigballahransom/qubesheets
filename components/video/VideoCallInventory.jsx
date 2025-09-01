@@ -48,7 +48,7 @@ import {
   Home,
   Edit2,
   Trash2,
-  Save
+  Save,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
@@ -1095,6 +1095,7 @@ const AgentView = React.memo(({
               )}
             </button>
             
+            
             {/* Room selector */}
             {isInventoryActive && (
               <RoomSelector 
@@ -1207,6 +1208,7 @@ const AgentView = React.memo(({
           />
         )}
         */}
+
 
         {/* Enhanced Inventory Sidebar */}
       <RoomAudioRenderer />
