@@ -13,9 +13,9 @@ export default function VideoCallPage() {
   const searchParams = useSearchParams();
   const { isLoaded, userId } = useAuth();
   
-  const roomId = params.roomId as string;
-  const projectId = searchParams.get('projectId');
-  const participantName = searchParams.get('name') || 'Participant';
+  const roomId = params?.roomId as string;
+  const projectId = searchParams?.get('projectId');
+  const participantName = searchParams?.get('name') || 'Participant';
   
   const [isValidating, setIsValidating] = useState(true);
   const [validationError, setValidationError] = useState<string | null>(null);

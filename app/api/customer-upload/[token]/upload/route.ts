@@ -303,7 +303,7 @@ export async function POST(
         }
         
         if (compressed.length <= mongoDBSafeSize) {
-          buffer = compressed;
+          buffer = Buffer.from(compressed);
           mimeType = 'image/jpeg';
           const reductionPercent = ((1 - compressed.length / buffer.length) * 100).toFixed(1);
           console.log(`✅ Image compressed successfully: ${(compressed.length / (1024 * 1024)).toFixed(2)}MB (${reductionPercent}% reduction)`);

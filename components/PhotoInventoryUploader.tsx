@@ -1096,7 +1096,8 @@ export default function PhotoInventoryUploader({
               <div>
                 <VideoUpload 
                   projectId={projectId}
-                  initialVideoFile={selectedFiles[0]} // Pass the video file directly
+                  uploadLinkId={null}
+                  initialVideoFile={selectedFiles.length > 0 ? selectedFiles[0] : null as any} // Pass the video file directly
                   autoStart={true} // Automatically start processing
                   onFramesExtracted={async () => {
                     console.log('Video frames extracted, triggering gallery refresh');
@@ -1115,7 +1116,7 @@ export default function PhotoInventoryUploader({
                     // Trigger gallery refresh when frames are extracted
                     if (onImageSaved) onImageSaved();
                   }}
-                  onAnalysisComplete={(results) => {
+                  onAnalysisComplete={(results: any) => {
                     console.log('Video analysis complete:', results);
                     // Trigger another gallery refresh when analysis completes
                     if (onImageSaved) onImageSaved();

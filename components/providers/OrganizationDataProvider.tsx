@@ -46,7 +46,7 @@ export function OrganizationDataProvider({ children }: { children: React.ReactNo
         refreshData();
         
         // Handle page redirects if user doesn't have access to current page
-        const isOnProjectPage = pathname.startsWith('/projects/') && pathname !== '/projects';
+        const isOnProjectPage = pathname?.startsWith('/projects/') && pathname !== '/projects';
         if (isOnProjectPage) {
           console.log('On project page during org switch, will check access');
           // Redirect to main projects page - individual project access will be checked there

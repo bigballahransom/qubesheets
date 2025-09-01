@@ -10,7 +10,7 @@ function OrganizationSelectionContent() {
   const { organization } = useOrganization();
   const { isLoaded, isSignedIn } = useUser();
 
-  const redirectUrl = searchParams.get('redirectUrl') || '/projects';
+  const redirectUrl = searchParams?.get('redirectUrl') || '/projects';
 
   useEffect(() => {
     // If user has an active organization, redirect them

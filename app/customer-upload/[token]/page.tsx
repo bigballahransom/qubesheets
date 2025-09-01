@@ -31,7 +31,7 @@ interface UploadedImage {
 
 export default function CustomerUploadPage() {
   const params = useParams();
-  const token = params.token as string;
+  const token = params?.token as string;
   
   const [validation, setValidation] = useState<UploadValidation | null>(null);
   const [loading, setLoading] = useState(true);
