@@ -10,9 +10,16 @@ export default async function handler(req, res) {
     message: 'Video frame extraction is now handled client-side. Railway still processes individual image frames.',
     details: 'This endpoint was disabled when video storage moved from MongoDB Buffer to Cloudinary URLs.'
   });
+}
 
-  // COMMENTED OUT - Original Railway video processing code
-  /*
+/*
+// COMMENTED OUT - Original Railway video processing code
+import connectMongoDB from '../../../lib/mongodb';
+import Video from '../../../models/Video';
+
+const RAILWAY_VIDEO_PROCESSOR_URL = process.env.RAILWAY_VIDEO_PROCESSOR_URL || 'https://your-video-processor.railway.app';
+
+async function originalHandler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -142,7 +149,7 @@ export default async function handler(req, res) {
       details: error.message
     });
   }
-  */
+}
 
 export const config = {
   api: {
@@ -151,4 +158,5 @@ export const config = {
     },
     responseLimit: false,
   },
-}
+};
+*/
