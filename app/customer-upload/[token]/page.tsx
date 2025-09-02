@@ -201,7 +201,8 @@ export default function CustomerUploadPage() {
           })),
           projectId: videoInfo.projectId,
           uploadLinkId: videoInfo.uploadToken,
-          source: 'customer_video_upload'
+          source: 'customer_video_upload',
+          videoId: videoInfo.videoId // Link frames to the original video
         })
       });
       

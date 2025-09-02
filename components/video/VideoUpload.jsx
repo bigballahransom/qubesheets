@@ -255,8 +255,8 @@ export default function VideoUpload({
     }
   }, [projectId, onAnalysisComplete, uploadLinkId]);
 
-  // Handle file selection
-  const handleFileSelect = useCallback((event) => {
+  // Handle file selection and upload to server with Railway processing
+  const handleFileSelect = useCallback(async (event) => {
     const file = event.target.files[0];
     console.log('🎬 File selected:', file?.name, file?.type, file?.size);
     
@@ -278,23 +278,111 @@ export default function VideoUpload({
       return;
     }
     
-    console.log('🎬 Setting video file and starting upload');
+    console.log('🎬 Starting video upload to server for Railway processing');
     setVideoFile(file);
     setVideoUrl(URL.createObjectURL(file));
     setUploadState('uploading');
+    setCurrentStage('Uploading video to server...');
     
-    // Simulate upload progress
-    let progress = 0;
-    const progressInterval = setInterval(() => {
-      progress += 10;
-      setUploadProgress(progress);
-      if (progress >= 100) {
-        clearInterval(progressInterval);
-        console.log('🎬 Upload simulation complete, setting to processing');
-        setUploadState('processing');
+    try {
+      // Upload video to server
+      const formData = new FormData();
+      formData.append('video', file);
+      formData.append('projectId', projectId);
+      
+      if (uploadLinkId) {
+        formData.append('uploadLinkId', uploadLinkId);
       }
-    }, 100);
-  }, []);
+      
+      console.log('🎬 Uploading video to server...');
+      setUploadProgress(20);
+      
+      const uploadUrl = uploadLinkId 
+        ? `/api/customer-upload/${uploadLinkId}/upload`
+        : `/api/projects/${projectId}/videos`;
+      
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      setUploadProgress(60);
+      
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        throw new Error(`Upload failed: ${errorText}`);
+      }
+      
+      const uploadResult = await uploadResponse.json();
+      console.log('🎬 Video uploaded successfully:', uploadResult.videoId);
+      
+      // Set video URL from Cloudinary instead of local file
+      if (uploadResult.cloudinarySecureUrl) {
+        setVideoUrl(uploadResult.cloudinarySecureUrl);
+        console.log('🎬 Using Cloudinary URL for video preview:', uploadResult.cloudinarySecureUrl);
+      }
+      
+      setUploadProgress(100);
+      setCurrentStage('Video uploaded successfully!');
+      
+      // DISABLED: Railway video processing (now handled client-side)
+      // Videos are now stored in Cloudinary, so Railway video-to-frames extraction is disabled
+      // Frame extraction will be handled client-side when user clicks "Start Analysis"
+      
+      console.log('🎬 Video upload completed - skipping Railway processing (now client-side)');
+      
+      setUploadState('ready'); // Set to ready so user can start client-side analysis
+      
+      // Show success message
+      toast.success('Video uploaded successfully!', {
+        description: 'Click "Start AI Analysis" below to extract and analyze frames from your video.',
+        duration: 6000,
+      });
+      
+    } catch (error) {
+      console.error('🎬 Video upload/processing error:', error);
+      
+      let errorMessage = error.message || 'Unknown error occurred';
+      
+      // Provide more user-friendly error messages
+      if (errorMessage.includes('404')) {
+        errorMessage = 'Video upload endpoint not found. Please check the project configuration.';
+      } else if (errorMessage.includes('413') || errorMessage.includes('too large')) {
+        errorMessage = 'Video file is too large. Please compress the video or use a smaller file (max 100MB).';
+      } else if (errorMessage.includes('timeout')) {
+        errorMessage = 'Upload timed out. Please check your internet connection and try again.';
+      } else if (errorMessage.includes('network') || errorMessage.includes('fetch')) {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else if (errorMessage.includes('server') || errorMessage.includes('500')) {
+        errorMessage = 'Server error. Please try again later or contact support.';
+      }
+      
+      toast.error(`Video upload failed: ${errorMessage}`, {
+        description: 'Please try again with a smaller video file or check your connection.',
+        duration: 8000,
+      });
+      
+      setUploadState('idle');
+      setUploadProgress(0);
+      setCurrentStage('');
+    }
+  }, [projectId, uploadLinkId, onFramesExtracted]);
+
+  // Handle auto-start with initial video file
+  useEffect(() => {
+    if (initialVideoFile && autoStart && uploadState === 'idle') {
+      console.log('🎬 Auto-starting video upload with initial file:', initialVideoFile.name);
+      
+      // Create a synthetic event to trigger the upload
+      const syntheticEvent = {
+        target: {
+          files: [initialVideoFile]
+        }
+      };
+      
+      handleFileSelect(syntheticEvent);
+    }
+  }, [initialVideoFile, autoStart, uploadState, handleFileSelect]);
 
   // Handle video metadata loaded
   const handleVideoLoaded = useCallback(() => {
@@ -488,7 +576,25 @@ export default function VideoUpload({
             </div>
           )}
 
-          {/* Analysis Status */}
+          {/* Railway Processing Status */}
+          {uploadState === 'processing' && (
+            <div className="mb-4">
+              <div className="flex items-center gap-3 mb-2">
+                <Zap className="w-5 h-5 text-purple-500" />
+                <span className="text-gray-700">{currentStage || 'Processing video on Railway...'}</span>
+              </div>
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                <p className="text-purple-800 text-sm mb-2">
+                  🚂 Your video is being processed on Railway's high-performance infrastructure.
+                </p>
+                <p className="text-purple-600 text-xs">
+                  Real-time updates will appear on the main project page. You can close this dialog safely.
+                </p>
+              </div>
+            </div>
+          )}
+          
+          {/* Analysis Status (legacy - kept for backward compatibility) */}
           {uploadState === 'extracting' && (
             <div className="mb-4">
               <div className="flex items-center gap-3 mb-2">

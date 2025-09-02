@@ -167,11 +167,11 @@ export function AppSidebar() {
         
         {/* Footer menu */}
         <ClerkProvider>
-        <div className="border-t bg-white flex-shrink-0">
+        <div className="border-t bg-white flex-shrink-0 mobile-safe-bottom">
         {/* Settings Section */}
         <SettingsSection />
         
-        <div className="p-3">
+        <div className="p-3 pb-2 lg:pb-3">
           <SignedIn>
             <div className="flex items-center gap-2 sm:gap-3">
               {/* User Button - Left */}

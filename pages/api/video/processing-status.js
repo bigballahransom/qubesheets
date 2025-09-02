@@ -1,0 +1,163 @@
+// pages/api/video/processing-status.js - Server-Sent Events for real-time video processing updates
+import connectMongoDB from '../../../lib/mongodb';
+import Video from '../../../models/Video';
+
+export default async function handler(req, res) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const { projectId } = req.query;
+  
+  if (!projectId) {
+    return res.status(400).json({ error: 'Project ID required' });
+  }
+
+  console.log('📡 SSE connection established for project:', projectId);
+
+  // Set up Server-Sent Events
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Cache-Control'
+  });
+
+  // Send initial connection confirmation
+  res.write(`data: ${JSON.stringify({
+    type: 'connected',
+    projectId,
+    timestamp: new Date().toISOString()
+  })}\n\n`);
+
+  let intervalId;
+  let isConnected = true;
+
+  // Function to check and send video processing updates
+  const checkVideoUpdates = async () => {
+    try {
+      if (!isConnected) return;
+
+      await connectMongoDB();
+
+      // Get all videos for the project that are currently processing
+      const processingVideos = await Video.find({
+        projectId: projectId,
+        'metadata.processingStatus': { 
+          $in: [
+            'queued_for_railway', 
+            'processing_on_railway', 
+            'extracting_frames',
+            'processing',
+            'completed'
+          ] 
+        }
+      }).select('name originalName metadata extractedFrames createdAt').sort({ createdAt: -1 });
+
+      if (processingVideos.length > 0) {
+        const updates = processingVideos.map(video => ({
+          videoId: video._id,
+          name: video.originalName,
+          status: video.metadata?.processingStatus || 'unknown',
+          progress: calculateProgress(video.metadata),
+          framesExtracted: video.extractedFrames?.length || 0,
+          estimatedCompletion: video.metadata?.estimatedCompletion,
+          error: video.metadata?.processingError,
+          lastUpdate: video.metadata?.lastUpdate || video.updatedAt
+        }));
+
+        res.write(`data: ${JSON.stringify({
+          type: 'video_updates',
+          projectId,
+          videos: updates,
+          timestamp: new Date().toISOString()
+        })}\n\n`);
+      }
+
+      // Also check for newly completed videos that might need UI refresh
+      const recentlyCompleted = await Video.find({
+        projectId: projectId,
+        'metadata.processingStatus': 'completed',
+        'metadata.processingFinished': { 
+          $gte: new Date(Date.now() - 30000) // Last 30 seconds
+        }
+      }).select('name originalName extractedFrames');
+
+      if (recentlyCompleted.length > 0) {
+        res.write(`data: ${JSON.stringify({
+          type: 'processing_completed',
+          projectId,
+          completedVideos: recentlyCompleted.map(v => ({
+            videoId: v._id,
+            name: v.originalName,
+            framesExtracted: v.extractedFrames?.length || 0
+          })),
+          timestamp: new Date().toISOString()
+        })}\n\n`);
+      }
+
+    } catch (error) {
+      console.error('📡 SSE update error:', error);
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        message: 'Failed to fetch video updates',
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+    }
+  };
+
+  // Check for updates every 2 seconds
+  intervalId = setInterval(checkVideoUpdates, 2000);
+
+  // Send initial check
+  checkVideoUpdates();
+
+  // Handle client disconnect
+  req.on('close', () => {
+    console.log('📡 SSE connection closed for project:', projectId);
+    isConnected = false;
+    if (intervalId) {
+      clearInterval(intervalId);
+    }
+  });
+
+  req.on('end', () => {
+    console.log('📡 SSE connection ended for project:', projectId);
+    isConnected = false;
+    if (intervalId) {
+      clearInterval(intervalId);
+    }
+  });
+}
+
+// Calculate processing progress based on status
+function calculateProgress(metadata) {
+  if (!metadata) return 0;
+  
+  const status = metadata.processingStatus;
+  
+  switch (status) {
+    case 'queued_for_railway':
+      return 10;
+    case 'processing_on_railway':
+    case 'extracting_frames':
+      return 50;
+    case 'processing':
+      return 80;
+    case 'completed':
+      return 100;
+    case 'failed':
+    case 'railway_failed':
+      return -1; // Indicate error
+    default:
+      return 0;
+  }
+}
+
+export const config = {
+  api: {
+    bodyParser: false, // Disable body parsing for SSE
+    externalResolver: true, // Let Next.js know this is a long-running connection
+  },
+}

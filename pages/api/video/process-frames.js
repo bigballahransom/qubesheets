@@ -2,6 +2,7 @@
 import connectMongoDB from '../../../lib/mongodb';
 import { backgroundQueue } from '../../../lib/backgroundQueue';
 import Image from '../../../models/Image';
+import Video from '../../../models/Video';
 import Project from '../../../models/Project';
 
 export default async function handler(req, res) {
@@ -13,13 +14,14 @@ export default async function handler(req, res) {
     console.log('🎬 Video process-frames API called');
     console.log('🎬 Request body keys:', Object.keys(req.body));
     
-    const { frames, projectId, uploadLinkId, source = 'video_upload' } = req.body;
+    const { frames, projectId, uploadLinkId, source = 'video_upload', videoId } = req.body;
     
     console.log('🎬 Extracted params:', {
       framesCount: frames?.length,
       projectId,
       uploadLinkId,
-      source
+      source,
+      videoId
     });
 
     if (!frames || !Array.isArray(frames) || frames.length === 0) {
@@ -76,7 +78,8 @@ export default async function handler(req, res) {
             frameTimestamp: frame.timestamp,
             videoSource: true,
             relevanceScore: frame.relevanceScore || 0,
-            extractionSource: 'admin_video_upload'
+            extractionSource: source,
+            parentVideoId: videoId || null
           },
           analysisResult: {
             status: 'pending',
@@ -135,6 +138,30 @@ export default async function handler(req, res) {
       }
     }
 
+    // Update the original video document with extracted frame references
+    if (videoId && processedFrames.length > 0) {
+      try {
+        const frameReferences = processedFrames.map(frame => ({
+          frameId: frame.imageId,
+          timestamp: frame.frameTimestamp,
+          relevanceScore: frame.relevanceScore || 1
+        }));
+        
+        await Video.findByIdAndUpdate(videoId, {
+          $set: {
+            extractedFrames: frameReferences,
+            'metadata.processingComplete': true,
+            'metadata.framesExtracted': processedFrames.length
+          }
+        });
+        
+        console.log(`🎬 Updated video ${videoId} with ${processedFrames.length} frame references`);
+      } catch (videoUpdateError) {
+        console.error('🎬 Failed to update video document:', videoUpdateError);
+        // Don't fail the entire request if video update fails
+      }
+    }
+    
     // Update project with video processing metadata using Mongoose
     await Project.findByIdAndUpdate(projectId, {
       $set: {

@@ -213,10 +213,10 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
             {images.length} {images.length === 1 ? 'image' : 'images'} uploaded
           </p>
         </div>
-        <Button onClick={onUploadClick} className="flex items-center gap-2">
+        {/* <Button onClick={onUploadClick} className="flex items-center gap-2">
           <Camera size={16} />
           Upload Photo
-        </Button>
+        </Button> */}
       </div>
 
       {/* Empty state */}
@@ -549,6 +549,7 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
           )}
         </DialogContent>
       </Dialog>
+      
     </div>
   );
 }

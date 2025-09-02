@@ -47,6 +47,15 @@
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
+  
+  /* Safe area insets for mobile devices */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+  
+  /* Mobile sidebar height - will be set dynamically */
+  --mobile-sidebar-height: calc(100vh - 64px);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
@@ -222,4 +231,29 @@
 .h-screen {
   height: 100vh;
   height: -webkit-fill-available;
+}
+
+/* Mobile-specific utilities for sidebar accessibility */
+@media (max-width: 1023px) {
+  .mobile-safe-bottom {
+    padding-bottom: calc(var(--safe-area-inset-bottom) + 1rem);
+  }
+  
+  .mobile-viewport-height {
+    height: var(--mobile-sidebar-height);
+  }
+  
+  /* Ensure scrollable content doesn't get cut off */
+  .mobile-scrollable {
+    max-height: var(--mobile-sidebar-height);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* iOS Safari viewport fix */
+@supports (-webkit-touch-callout: none) {
+  .ios-viewport-fix {
+    height: -webkit-fill-available;
+  }
 }

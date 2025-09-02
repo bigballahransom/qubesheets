@@ -4,9 +4,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Image from '@/models/Image';
+import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { backgroundQueue } from '@/lib/backgroundQueue';
 import sharp from 'sharp';
+import { uploadVideo, uploadImage as uploadImageToCloudinary } from '@/lib/cloudinary';
 
 // Helper function to detect video files server-side
 function isVideoFile(file: File): boolean {
@@ -217,20 +219,96 @@ export async function POST(
       );
     }
 
-    // Handle video files differently from images - don't save to MongoDB due to size limits
+    // Handle video files - upload to Cloudinary and save metadata
     if (isVideo) {
       console.log('🎬 Processing video file for customer upload:', image.name);
       
-      // For customer uploads, we can't store large video files in MongoDB
-      // Instead, return instructions for the client to process the video
+      const videoBuffer = Buffer.from(await image.arrayBuffer());
       const timestamp = Date.now();
       const customerName = customerUpload?.customerName || 'anonymous';
       const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+      const name = `customer-video-${cleanCustomerName}-${timestamp}-${image.name}`;
       
-      console.log('🎬 Video file too large for direct MongoDB storage, returning processing instructions');
+      // Upload to Cloudinary
+      let cloudinaryResult: {
+        success: boolean;
+        publicId: string;
+        url: string;
+        secureUrl: string;
+        duration?: number;
+        format?: string;
+        bytes?: number;
+        width?: number;
+        height?: number;
+        createdAt?: string;
+      };
       
+      try {
+        console.log('📤 Uploading customer video to Cloudinary...');
+        
+        const nameWithoutExt = image.name.replace(/\.[^/.]+$/, ''); // Remove file extension  
+        const sanitizedName = nameWithoutExt.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const publicId = `customer_${cleanCustomerName}_${timestamp}_${sanitizedName}`;
+        
+        cloudinaryResult = await uploadVideo(videoBuffer, {
+          public_id: publicId,
+          folder: `qubesheets/customer-uploads/${projectId || 'anonymous'}/videos`,
+          transformation: [
+            { quality: 'auto:good' },
+            { fetch_format: 'auto' }
+          ]
+        }) as typeof cloudinaryResult;
+        
+        console.log('✅ Customer video uploaded to Cloudinary:', cloudinaryResult.publicId);
+        
+      } catch (cloudinaryError) {
+        console.error('❌ Customer video Cloudinary upload failed:', cloudinaryError);
+        const errorMessage = cloudinaryError instanceof Error ? cloudinaryError.message : 'Unknown error';
+        return NextResponse.json(
+          { error: `Failed to upload video: ${errorMessage}` },
+          { status: 500 }
+        );
+      }
+      
+      // Save video metadata with Cloudinary URLs
+      const videoDoc = await Video.create({
+        name,
+        originalName: image.name,
+        mimeType: image.type,
+        size: image.size,
+        duration: cloudinaryResult.duration || 0,
+        cloudinaryPublicId: cloudinaryResult.publicId,
+        cloudinaryUrl: cloudinaryResult.url,
+        cloudinarySecureUrl: cloudinaryResult.secureUrl,
+        projectId,
+        userId,
+        organizationId,
+        description: `Video uploaded by ${customerName}`,
+        source: 'customer_upload',
+        metadata: {
+          uploadToken: token,
+          processingPending: true,
+          cloudinaryInfo: {
+            format: cloudinaryResult.format || 'unknown',
+            bytes: cloudinaryResult.bytes || 0,
+            width: cloudinaryResult.width || 0,
+            height: cloudinaryResult.height || 0,
+            createdAt: cloudinaryResult.createdAt || new Date().toISOString()
+          }
+        }
+      });
+      
+      console.log('✅ Customer video metadata saved:', videoDoc._id);
+      
+      // Update project timestamp
+      await Project.findByIdAndUpdate(projectId, { 
+        updatedAt: new Date() 
+      });
+      
+      // Return processing instructions for client-side frame extraction
       return NextResponse.json({
         success: true,
+        videoId: videoDoc._id.toString(),
         requiresClientProcessing: true,
         videoInfo: {
           fileName: image.name,
@@ -238,9 +316,11 @@ export async function POST(
           type: image.type,
           customerName,
           projectId: projectId?.toString(),
-          uploadToken: token
+          uploadToken: token,
+          videoId: videoDoc._id.toString(),
+          cloudinaryUrl: cloudinaryResult.secureUrl
         },
-        message: 'Video received - please process frames on client side',
+        message: 'Video uploaded successfully to cloud storage - ready for processing',
         instructions: 'extract_frames_and_upload'
       });
     }

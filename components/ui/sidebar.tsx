@@ -79,6 +79,39 @@ export function SidebarTrigger() {
 export function Sidebar({ children }: { children: React.ReactNode }) {
   const { isOpen, closeSidebar } = useSidebar();
   
+  // Set CSS custom properties for mobile viewport handling
+  useEffect(() => {
+    const setViewportHeight = () => {
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+      
+      // For mobile browsers, calculate available height excluding browser UI
+      const isMobile = window.innerWidth < 1024;
+      if (isMobile) {
+        const availableHeight = window.innerHeight;
+        const headerHeight = 64; // 64px header
+        const safeAreaBottom = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--safe-area-inset-bottom') || '0');
+        const mobileContentHeight = availableHeight - headerHeight - safeAreaBottom - 16; // 16px bottom padding
+        document.documentElement.style.setProperty('--mobile-sidebar-height', `${mobileContentHeight}px`);
+      }
+    };
+
+    // Set initial values
+    setViewportHeight();
+    
+    // Update on resize and orientation change
+    window.addEventListener('resize', setViewportHeight);
+    window.addEventListener('orientationchange', () => {
+      // Small delay to account for mobile browser UI adjustment
+      setTimeout(setViewportHeight, 100);
+    });
+    
+    return () => {
+      window.removeEventListener('resize', setViewportHeight);
+      window.removeEventListener('orientationchange', setViewportHeight);
+    };
+  }, []);
+  
   // Handle clicks outside on mobile
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -117,7 +150,12 @@ export function Sidebar({ children }: { children: React.ReactNode }) {
           </button>
         </div>
         
-        <div className="h-[calc(100vh-64px)]">
+        <div 
+          className="lg:h-[calc(100vh-64px)] overflow-hidden"
+          style={{
+            height: 'var(--mobile-sidebar-height, calc(100vh - 64px))'
+          }}
+        >
           {children}
         </div>
       </aside>

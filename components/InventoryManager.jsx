@@ -12,9 +12,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import EditableProjectName from './EditableProjectName';
 import PhotoInventoryUploader from './PhotoInventoryUploader';
 import ImageGallery from './ImageGallery';
+import VideoGallery from './VideoGallery';
 import Spreadsheet from './sheets/Spreadsheet';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import SendUploadLinkModal from './SendUploadLinkModal';
+import VideoProcessingStatus from './VideoProcessingStatus';
 
 import {
   Menubar,
@@ -886,6 +888,24 @@ const ProcessingNotification = () => {
             </div>
           </div>
           
+          {/* Video Processing Status */}
+          {currentProject && (
+            <VideoProcessingStatus 
+              projectId={currentProject._id}
+              onProcessingComplete={(completedVideos) => {
+                // Refresh the images gallery when video processing completes
+                setImageGalleryKey(prev => prev + 1);
+                
+                // Show notification about completed videos
+                if (typeof window !== 'undefined' && window.sonner && completedVideos.length > 0) {
+                  window.sonner.toast.success(
+                    `Video processing complete! ${completedVideos.length} video${completedVideos.length > 1 ? 's' : ''} processed with ${completedVideos.reduce((total, v) => total + v.framesExtracted, 0)} total frames.`
+                  );
+                }
+              }}
+            />
+          )}
+          
           {/* Tabs for Inventory and Images */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="mb-4">
@@ -896,6 +916,10 @@ const ProcessingNotification = () => {
               <TabsTrigger value="images" className="flex items-center gap-2">
                 <Images size={16} />
                 Images
+              </TabsTrigger>
+              <TabsTrigger value="videos" className="flex items-center gap-2">
+                <Video size={16} />
+                Videos
               </TabsTrigger>
             </TabsList>
             
@@ -943,6 +967,22 @@ const ProcessingNotification = () => {
                       key={imageGalleryKey}
                       projectId={currentProject._id}
                       onUploadClick={() => setIsUploaderOpen(true)}
+                    />
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="videos">
+              {/* Video Gallery Container */}
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="p-6">
+                  {currentProject && (
+                    <VideoGallery 
+                      projectId={currentProject._id}
+                      onVideoSelect={(video) => {
+                        console.log('Video selected:', video);
+                      }}
                     />
                   )}
                 </div>
