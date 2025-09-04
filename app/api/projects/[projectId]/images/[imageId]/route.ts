@@ -99,8 +99,11 @@ export async function DELETE(
   { params }: { params: Promise<{ projectId: string; imageId: string }> }
 ) {
   try {
+    console.log('🗑️ Delete image request received');
+    
     const authContext = await getAuthContext();
     if (authContext instanceof NextResponse) {
+      console.log('❌ Auth failed for delete request');
       return authContext;
     }
     const { userId } = authContext;
@@ -108,26 +111,68 @@ export async function DELETE(
     await connectMongoDB();
     
     const { projectId, imageId } = await params;
+    console.log(`🗑️ Deleting image: ${imageId} from project: ${projectId}`);
     
-    // Delete the image
-    const image = await Image.findOneAndDelete(
-      getProjectFilter(authContext, projectId, { _id: imageId })
-    );
+    // Build query filter and log it
+    const filter = getProjectFilter(authContext, projectId, { _id: imageId });
+    console.log('🔍 Delete filter:', JSON.stringify(filter));
     
-    if (!image) {
+    // First check if image exists before deleting
+    const existingImage = await Image.findOne(filter);
+    if (!existingImage) {
+      console.log('❌ Image not found with filter:', filter);
+      
+      // Try to find image without project filter for debugging
+      const imageExists = await Image.findById(imageId);
+      if (imageExists) {
+        console.log('🔍 Image exists but doesn\'t match filter:', {
+          imageId: imageExists._id,
+          imageProjectId: imageExists.projectId,
+          expectedProjectId: projectId,
+          imageUserId: imageExists.userId,
+          currentUserId: userId,
+          imageOrgId: imageExists.organizationId,
+          currentOrgId: authContext.organizationId
+        });
+      } else {
+        console.log('🚫 Image does not exist in database');
+      }
+      
       return NextResponse.json({ error: 'Image not found' }, { status: 404 });
     }
+    
+    console.log('✅ Image found, proceeding to delete:', {
+      id: existingImage._id,
+      name: existingImage.originalName,
+      projectId: existingImage.projectId
+    });
+    
+    // Delete the image
+    const deletedImage = await Image.findOneAndDelete(filter);
+    
+    if (!deletedImage) {
+      console.log('❌ Failed to delete image with filter');
+      return NextResponse.json({ error: 'Failed to delete image' }, { status: 500 });
+    }
+    
+    console.log('✅ Image deleted successfully:', deletedImage._id);
     
     // Update project's updatedAt timestamp
     await Project.findByIdAndUpdate(projectId, { 
       updatedAt: new Date() 
     });
     
+    console.log('✅ Project timestamp updated');
+    
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error deleting image:', error);
+    console.error('❌ Error deleting image:', error);
+    console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack');
     return NextResponse.json(
-      { error: 'Failed to delete image' },
+      { 
+        error: 'Failed to delete image',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }
