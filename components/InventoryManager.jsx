@@ -12,11 +12,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import EditableProjectName from './EditableProjectName';
 import PhotoInventoryUploader from './PhotoInventoryUploader';
 import ImageGallery from './ImageGallery';
-import VideoGallery from './VideoGallery';
-import Spreadsheet from './sheets/Spreadsheet';
+/* Video gallery tab is disabled, but video room modal is still needed */
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
+import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
-import VideoProcessingStatus from './VideoProcessingStatus';
 
 import {
   Menubar,
@@ -79,7 +78,7 @@ export default function InventoryManager() {
   const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
   const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of gallery
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
-const [videoRoomId, setVideoRoomId] = useState(null);
+  const [videoRoomId, setVideoRoomId] = useState(null);
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
 const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
@@ -917,10 +916,12 @@ const ProcessingNotification = () => {
                 <Images size={16} />
                 Images
               </TabsTrigger>
+{/* COMMENTED OUT - Videos tab (videos disabled)
               <TabsTrigger value="videos" className="flex items-center gap-2">
                 <Video size={16} />
                 Videos
               </TabsTrigger>
+              */}
             </TabsList>
             
             <TabsContent value="inventory">
@@ -973,8 +974,8 @@ const ProcessingNotification = () => {
               </div>
             </TabsContent>
             
+{/* COMMENTED OUT - Videos tab content (videos disabled)
             <TabsContent value="videos">
-              {/* Video Gallery Container */}
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6">
                   {currentProject && (
@@ -988,6 +989,7 @@ const ProcessingNotification = () => {
                 </div>
               </div>
             </TabsContent>
+            */}
           </Tabs>
         </div>
       </div>
@@ -997,7 +999,7 @@ const ProcessingNotification = () => {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
           <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex-shrink-0 p-3 sm:p-4 flex justify-between items-center border-b bg-white">
-              <h2 className="text-base sm:text-lg font-semibold text-slate-800">Add Items from Photo or Video</h2>
+              <h2 className="text-base sm:text-lg font-semibold text-slate-800">Add Items from Photos</h2>
               <button 
                 onClick={() => setIsUploaderOpen(false)}
                 className="p-2 rounded-full hover:bg-slate-100 transition-colors cursor-pointer focus:ring-2 focus:ring-slate-500 focus:outline-none"

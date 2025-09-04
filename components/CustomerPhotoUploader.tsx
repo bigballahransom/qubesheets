@@ -9,7 +9,8 @@ interface CustomerPhotoUploaderProps {
   uploading: boolean;
 }
 
-// Video file detection
+// COMMENTED OUT - Video file detection (videos disabled)
+/*
 function isVideoFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
   const mimeType = file.type.toLowerCase();
@@ -26,6 +27,7 @@ function isVideoFile(file: File): boolean {
   
   return hasVideoExtension || hasVideoMimeType;
 }
+*/
 
 // Enhanced HEIC file detection for iPhone compatibility
 function isHeicFile(file: File): boolean {
@@ -314,41 +316,37 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       });
       
-      // Check if file is a supported image, video type, or HEIC
+      // Check if file is a supported image type or HEIC (videos disabled)
       const isRegularImage = file.type.startsWith('image/');
-      const isVideo = isVideoFile(file);
       const isHeic = isHeicFile(file);
       
       // Special handling for iPhone photos that may have empty MIME types
       const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
       const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
       
-      if (!isRegularImage && !isVideo && !isHeic && !(isPotentialImage && hasImageExtension)) {
+      // Block videos explicitly
+      if (file.type.startsWith('video/') || /\.(mp4|mov|avi|webm|mkv)$/i.test(file.name)) {
+        alert('Video uploads are temporarily disabled. Please upload images only.');
+        return;
+      }
+      
+      if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
         const errorMsg = isMobile 
-          ? 'Please select a photo or video from your device.'
-          : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF) or video file (MP4, MOV, AVI, WebM). Note: Some iPhone photos may need to be converted to JPEG first.';
+          ? 'Please select a photo from your device.'
+          : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF). Note: Some iPhone photos may need to be converted to JPEG first.';
         alert(errorMsg);
         return;
       }
       
-      // Client-side file size validation
-      const imageMaxSize = 15 * 1024 * 1024; // 15MB for images
-      const videoMaxSize = 100 * 1024 * 1024; // 100MB for videos
-      const maxSize = isVideo ? videoMaxSize : imageMaxSize;
+      // Client-side file size validation (images only)
+      const maxSize = 15 * 1024 * 1024; // 15MB for images
       
       if (file.size > maxSize) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
-        const fileType = isVideo ? 'video' : 'image';
         
-        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
+        const errorMsg = `File too large: ${fileSizeMB}MB. Please select an image smaller than ${maxSizeMB}MB.`;
         alert(errorMsg);
-        return;
-      }
-      
-      // For video files, skip image processing and conversion
-      if (isVideo) {
-        await onUpload(file);
         return;
       }
       
@@ -485,7 +483,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif,video/*"
+          accept="image/*,.heic,.heif"
           onChange={handleFileSelect}
           className="hidden"
           disabled={uploading || isConverting}

@@ -675,52 +675,46 @@ export default function PhotoInventoryUploader({
     }
   };
 
-  // Handle direct Cloudinary upload for large files
+  // Handle direct Cloudinary upload for large files (images only)
   const handleDirectUpload = async (file: File, fileNum: number) => {
     try {
       console.log('📤 Starting direct Cloudinary upload for admin');
       
+      // Only allow images
+      if (file.type.startsWith('video/')) {
+        throw new Error('Video uploads are not supported at this time.');
+      }
+      
       // Upload directly to Cloudinary
-      const isVideo = file.type.startsWith('video/');
       const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
       
-      let cloudinaryResult;
-      if (isVideo) {
-        cloudinaryResult = await uploadVideoDirectly(file, uploadPreset, {
-          folder: `qubesheets/admin-uploads/${projectId}`,
-          context: 'admin_upload=true'
-        });
-      } else {
-        cloudinaryResult = await uploadImageDirectly(file, uploadPreset, {
-          folder: `qubesheets/admin-uploads/${projectId}`,
-          context: 'admin_upload=true'
-        });
-      }
+      const cloudinaryResult = await uploadImageDirectly(file, uploadPreset, {
+        folder: `qubesheets/admin-uploads/${projectId}`,
+        context: 'admin_upload=true'
+      });
       
       console.log('✅ Direct Cloudinary upload successful:', cloudinaryResult);
       
-      // For images, get base64 for analysis
+      // Get base64 for analysis (images only)
       let imageBuffer = null;
-      if (!isVideo) {
-        try {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const img = new Image();
-          
-          await new Promise((resolve, reject) => {
-            img.onload = () => {
-              canvas.width = img.width;
-              canvas.height = img.height;
-              ctx?.drawImage(img, 0, 0);
-              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-              resolve(null);
-            };
-            img.onerror = reject;
-            img.src = URL.createObjectURL(file);
-          });
-        } catch (error) {
-          console.warn('Could not generate base64:', error);
-        }
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        
+        await new Promise((resolve, reject) => {
+          img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx?.drawImage(img, 0, 0);
+            imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+            resolve(null);
+          };
+          img.onerror = reject;
+          img.src = URL.createObjectURL(file);
+        });
+      } catch (error) {
+        console.warn('Could not generate base64:', error);
       }
       
       // Save metadata to database
@@ -805,12 +799,31 @@ export default function PhotoInventoryUploader({
             processedFile = file;
           }
 
+          // VIDEOS TEMPORARILY DISABLED - only allow images
+          if (processedFile.type.startsWith('video/')) {
+            console.error(`❌ Video upload rejected for file ${fileNum}: ${processedFile.name}`);
+            setProcessingStatus(prev => ({
+              ...prev,
+              [file.name]: 'failed'
+            }));
+            continue; // Skip video files
+          }
+          
           // Step 1: Check if file is too large for regular upload
-          const PAYLOAD_LIMIT = 4 * 1024 * 1024; // 4MB
+          const PAYLOAD_LIMIT = 2 * 1024 * 1024; // 2MB
+          const shouldUseDirectUpload = processedFile.size > PAYLOAD_LIMIT;
           let savedImage;
           
-          if (processedFile.size > PAYLOAD_LIMIT) {
-            console.log(`📤 File ${fileNum} too large for API route, using direct Cloudinary upload`);
+          console.log(`📊 Upload decision for file ${fileNum}:`, {
+            fileName: processedFile.name,
+            fileSize: processedFile.size,
+            fileSizeMB: (processedFile.size / (1024 * 1024)).toFixed(2),
+            payloadLimit: PAYLOAD_LIMIT,
+            shouldUseDirectUpload
+          });
+          
+          if (shouldUseDirectUpload) {
+            console.log(`📤 File ${fileNum} using direct Cloudinary upload (size > 2MB)`);
             savedImage = await handleDirectUpload(processedFile, fileNum);
           } else {
             // Regular upload for smaller files
@@ -852,14 +865,31 @@ export default function PhotoInventoryUploader({
                 headers: Object.fromEntries(saveResponse.headers.entries()),
                 isMobile: isMobileDevice()
               });
-              setProcessingStatus(prev => ({
-                ...prev,
-                [file.name]: 'failed'
-              }));
-              continue; // Skip to next file
+              
+              // If it's a payload too large error, try direct upload as fallback
+              if (saveResponse.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE') || errorText.includes('Request Entity Too Large')) {
+                console.log(`🔄 File ${fileNum} payload too large, falling back to direct upload`);
+                try {
+                  savedImage = await handleDirectUpload(processedFile, fileNum);
+                  console.log(`✅ Fallback direct upload successful for file ${fileNum}`);
+                } catch (directError) {
+                  console.error(`❌ Direct upload fallback also failed for file ${fileNum}:`, directError);
+                  setProcessingStatus(prev => ({
+                    ...prev,
+                    [file.name]: 'failed'
+                  }));
+                  continue; // Skip to next file
+                }
+              } else {
+                setProcessingStatus(prev => ({
+                  ...prev,
+                  [file.name]: 'failed'
+                }));
+                continue; // Skip to next file
+              }
+            } else {
+              savedImage = await saveResponse.json();
             }
-
-            savedImage = await saveResponse.json();
           }
           console.log(`✅ Image ${fileNum} saved to MongoDB:`, savedImage._id);
 
@@ -1230,7 +1260,7 @@ export default function PhotoInventoryUploader({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif,video/*"
+          accept="image/*,.heic,.heif"
           onChange={handleFileSelect}
           className="hidden"
           multiple

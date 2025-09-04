@@ -133,7 +133,8 @@ export default function CustomerUploadPage() {
     fetchBrandingData();
   }, [token]);
 
-  // Process video client-side (extract frames and upload)
+  /*
+  // COMMENTED OUT - Process video client-side (extract frames and upload)
   const processVideoClientSide = async (videoFile: File, videoInfo: any) => {
     setProcessingVideo(true);
     
@@ -283,20 +284,36 @@ export default function CustomerUploadPage() {
       setProcessingVideo(false);
     }
   };
+  */
 
   // Handle direct Cloudinary upload for large files
   const handleDirectUpload = async (file: File, tempImage: UploadedImage) => {
     try {
       console.log('📤 Starting direct Cloudinary upload');
       
-      // Upload directly to Cloudinary
+      // Check environment variables
+      const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+      const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+      
+      if (!uploadPreset || !cloudName) {
+        console.error('❌ Missing Cloudinary environment variables:', {
+          hasUploadPreset: !!uploadPreset,
+          hasCloudName: !!cloudName
+        });
+        throw new Error('Cloudinary configuration missing. Please check environment variables.');
+      }
+      
+      // Upload directly to Cloudinary (images only)
+      if (file.type.startsWith('video/')) {
+        throw new Error('Video uploads are not supported at this time.');
+      }
+      
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('upload_preset', process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
+      formData.append('upload_preset', uploadPreset);
       formData.append('folder', `qubesheets/customer-uploads/${token}`);
       
-      const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-      const resourceType = file.type.startsWith('video/') ? 'video' : 'image';
+      const resourceType = 'image';
       const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
       
       console.log('📤 Uploading to:', uploadUrl);
@@ -314,35 +331,30 @@ export default function CustomerUploadPage() {
       const cloudinaryResult = await cloudinaryResponse.json();
       console.log('✅ Cloudinary upload successful:', cloudinaryResult);
       
-      // For images, get base64 for analysis
+      // Get base64 for analysis (images only)
       let imageBuffer = null;
-      if (file.type.startsWith('image/')) {
-        try {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const img = new Image();
-          
-          await new Promise((resolve, reject) => {
-            img.onload = () => {
-              canvas.width = img.width;
-              canvas.height = img.height;
-              ctx?.drawImage(img, 0, 0);
-              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-              resolve(null);
-            };
-            img.onerror = reject;
-            img.src = URL.createObjectURL(file);
-          });
-        } catch (error) {
-          console.warn('Could not generate base64:', error);
-        }
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        
+        await new Promise((resolve, reject) => {
+          img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx?.drawImage(img, 0, 0);
+            imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+            resolve(null);
+          };
+          img.onerror = reject;
+          img.src = URL.createObjectURL(file);
+        });
+      } catch (error) {
+        console.warn('Could not generate base64:', error);
       }
       
-      // Save metadata to database
-      const isVideo = file.type.startsWith('video/');
-      const metadataUrl = isVideo 
-        ? `/api/customer-upload/${token}/save-video-metadata`
-        : `/api/customer-upload/${token}/save-image-metadata`;
+      // Save metadata to database (images only)
+      const metadataUrl = `/api/customer-upload/${token}/save-image-metadata`;
         
       const metadataPayload = {
         fileName: file.name,
@@ -394,15 +406,10 @@ export default function CustomerUploadPage() {
           : img
       ));
       
-      const fileType = isVideo ? 'Video' : 'Photo';
-      const message = isVideo 
-        ? 'Video uploaded successfully! Frame extraction and AI analysis in progress...'
-        : 'Photo uploaded successfully! AI analysis in progress...';
+      const message = 'Photo uploaded successfully! AI analysis in progress...';
       
       toast.success(message, {
-        description: isVideo 
-          ? 'The video will be processed and inventory items will appear shortly.'
-          : 'AI is analyzing your photo to identify inventory items.',
+        description: 'AI is analyzing your photo to identify inventory items.',
         duration: 5000,
       });
       
@@ -449,10 +456,24 @@ export default function CustomerUploadPage() {
         sizeMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
       });
       
-      // For files larger than 4MB, use direct Cloudinary upload to avoid payload limits
-      const PAYLOAD_LIMIT = 4 * 1024 * 1024; // 4MB
-      if (file.size > PAYLOAD_LIMIT) {
-        console.log('📤 File too large for API route, using direct Cloudinary upload');
+      // VIDEOS TEMPORARILY DISABLED - only allow images
+      if (file.type.startsWith('video/')) {
+        throw new Error('Video uploads are temporarily disabled. Please upload images only.');
+      }
+      
+      // For files larger than 2MB, use direct Cloudinary upload to avoid payload limits
+      const PAYLOAD_LIMIT = 2 * 1024 * 1024; // 2MB
+      const shouldUseDirectUpload = file.size > PAYLOAD_LIMIT;
+      
+      console.log('📊 Upload decision:', {
+        fileSize: file.size,
+        fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
+        payloadLimit: PAYLOAD_LIMIT,
+        shouldUseDirectUpload
+      });
+      
+      if (shouldUseDirectUpload) {
+        console.log('📤 Using direct Cloudinary upload (file size > 2MB)');
         return await handleDirectUpload(file, tempImage);
       }
       
@@ -482,6 +503,12 @@ export default function CustomerUploadPage() {
           headers: Object.fromEntries(response.headers.entries())
         });
         
+        // If it's a payload too large error, try direct upload as fallback
+        if (response.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE') || errorText.includes('Request Entity Too Large')) {
+          console.log('🔄 Payload too large error detected, falling back to direct upload');
+          return await handleDirectUpload(file, tempImage);
+        }
+        
         let errorData;
         try {
           errorData = JSON.parse(errorText);
@@ -498,7 +525,8 @@ export default function CustomerUploadPage() {
 
       const result = await response.json();
       
-      // Handle client-side video processing requirement
+      /*
+      // COMMENTED OUT - Handle client-side video processing requirement
       if (result.requiresClientProcessing) {
         console.log('🎬 Video requires client-side processing:', result.videoInfo);
         
@@ -513,6 +541,7 @@ export default function CustomerUploadPage() {
         
         return;
       }
+      */
       
       // Handle regular images and processed videos
       const uploadId = result.imageId || result.videoId;
