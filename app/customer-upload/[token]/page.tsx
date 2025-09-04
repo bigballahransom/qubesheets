@@ -284,6 +284,146 @@ export default function CustomerUploadPage() {
     }
   };
 
+  // Handle direct Cloudinary upload for large files
+  const handleDirectUpload = async (file: File, tempImage: UploadedImage) => {
+    try {
+      console.log('📤 Starting direct Cloudinary upload');
+      
+      // Upload directly to Cloudinary
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!);
+      formData.append('folder', `qubesheets/customer-uploads/${token}`);
+      
+      const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+      const resourceType = file.type.startsWith('video/') ? 'video' : 'image';
+      const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
+      
+      console.log('📤 Uploading to:', uploadUrl);
+      
+      const cloudinaryResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!cloudinaryResponse.ok) {
+        const error = await cloudinaryResponse.text();
+        throw new Error(`Cloudinary upload failed: ${cloudinaryResponse.status} - ${error}`);
+      }
+      
+      const cloudinaryResult = await cloudinaryResponse.json();
+      console.log('✅ Cloudinary upload successful:', cloudinaryResult);
+      
+      // For images, get base64 for analysis
+      let imageBuffer = null;
+      if (file.type.startsWith('image/')) {
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          
+          await new Promise((resolve, reject) => {
+            img.onload = () => {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              ctx?.drawImage(img, 0, 0);
+              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+              resolve(null);
+            };
+            img.onerror = reject;
+            img.src = URL.createObjectURL(file);
+          });
+        } catch (error) {
+          console.warn('Could not generate base64:', error);
+        }
+      }
+      
+      // Save metadata to database
+      const isVideo = file.type.startsWith('video/');
+      const metadataUrl = isVideo 
+        ? `/api/customer-upload/${token}/save-video-metadata`
+        : `/api/customer-upload/${token}/save-image-metadata`;
+        
+      const metadataPayload = {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        cloudinaryResult,
+        customerName: validation?.customerName || 'Customer',
+        imageBuffer // Only for images
+      };
+      
+      console.log('💾 Saving metadata to:', metadataUrl);
+      
+      const metadataResponse = await fetch(metadataUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(metadataPayload)
+      });
+      
+      if (!metadataResponse.ok) {
+        const errorData = await metadataResponse.text();
+        throw new Error(`Metadata save failed: ${metadataResponse.status} - ${errorData}`);
+      }
+      
+      const result = await metadataResponse.json();
+      console.log('✅ Metadata saved successfully:', result);
+      
+      // Handle the result same as regular upload
+      const uploadId = result.imageId || result.videoId;
+      
+      // Track job ID for Railway transfer monitoring
+      if (result.jobId) {
+        console.log('📋 Tracking job ID for transfer monitoring:', result.jobId);
+        setPendingJobIds(prev => [...prev, result.jobId]);
+      }
+      
+      // Mark this file as processed
+      setProcessedFiles(1);
+      
+      // Replace temp image with real data
+      setUploadedImages(prev => prev.map(img => 
+        img.id === tempImage.id 
+          ? {
+              id: uploadId,
+              name: file.name,
+              uploadedAt: new Date().toISOString()
+            }
+          : img
+      ));
+      
+      const fileType = isVideo ? 'Video' : 'Photo';
+      const message = isVideo 
+        ? 'Video uploaded successfully! Frame extraction and AI analysis in progress...'
+        : 'Photo uploaded successfully! AI analysis in progress...';
+      
+      toast.success(message, {
+        description: isVideo 
+          ? 'The video will be processed and inventory items will appear shortly.'
+          : 'AI is analyzing your photo to identify inventory items.',
+        duration: 5000,
+      });
+      
+    } catch (error) {
+      console.error('❌ Direct upload failed:', error);
+      
+      // Remove temp image on error
+      setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
+      
+      // Show user-friendly error message
+      const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+      
+      toast.error(`Upload failed: ${errorMessage}`, {
+        description: 'Please try again with a smaller file or check your connection.',
+        duration: 8000,
+      });
+      
+      throw error;
+    }
+  };
+
   const handleFileUpload = async (file: File) => {
     setUploading(true);
     
@@ -306,8 +446,15 @@ export default function CustomerUploadPage() {
         fileSize: file.size,
         fileType: file.type,
         token: token,
-        uploadUrl: `/api/customer-upload/${token}/upload`
+        sizeMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
       });
+      
+      // For files larger than 4MB, use direct Cloudinary upload to avoid payload limits
+      const PAYLOAD_LIMIT = 4 * 1024 * 1024; // 4MB
+      if (file.size > PAYLOAD_LIMIT) {
+        console.log('📤 File too large for API route, using direct Cloudinary upload');
+        return await handleDirectUpload(file, tempImage);
+      }
       
       const formData = new FormData();
       formData.append('image', file);

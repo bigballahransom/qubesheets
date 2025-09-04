@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Upload, Camera, Loader2, X, Package, Box, BoxesIcon, Video, Play, Clock } from 'lucide-react';
 import RealTimeUploadStatus from './RealTimeUploadStatus';
 import VideoUpload from './video/VideoUpload';
+import { uploadImageDirectly, uploadVideoDirectly } from '@/lib/directCloudinaryUpload';
 
 export interface InventoryItem {
   name: string;
@@ -674,6 +675,91 @@ export default function PhotoInventoryUploader({
     }
   };
 
+  // Handle direct Cloudinary upload for large files
+  const handleDirectUpload = async (file: File, fileNum: number) => {
+    try {
+      console.log('📤 Starting direct Cloudinary upload for admin');
+      
+      // Upload directly to Cloudinary
+      const isVideo = file.type.startsWith('video/');
+      const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
+      
+      let cloudinaryResult;
+      if (isVideo) {
+        cloudinaryResult = await uploadVideoDirectly(file, uploadPreset, {
+          folder: `qubesheets/admin-uploads/${projectId}`,
+          context: 'admin_upload=true'
+        });
+      } else {
+        cloudinaryResult = await uploadImageDirectly(file, uploadPreset, {
+          folder: `qubesheets/admin-uploads/${projectId}`,
+          context: 'admin_upload=true'
+        });
+      }
+      
+      console.log('✅ Direct Cloudinary upload successful:', cloudinaryResult);
+      
+      // For images, get base64 for analysis
+      let imageBuffer = null;
+      if (!isVideo) {
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          
+          await new Promise((resolve, reject) => {
+            img.onload = () => {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              ctx?.drawImage(img, 0, 0);
+              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+              resolve(null);
+            };
+            img.onerror = reject;
+            img.src = URL.createObjectURL(file);
+          });
+        } catch (error) {
+          console.warn('Could not generate base64:', error);
+        }
+      }
+      
+      // Save metadata to database
+      const metadataUrl = `/api/projects/${projectId}/save-image-metadata`;
+      const metadataPayload = {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        cloudinaryResult,
+        imageBuffer,
+        description: imageDescription
+      };
+      
+      console.log('💾 Saving admin metadata to:', metadataUrl);
+      
+      const metadataResponse = await fetch(metadataUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(metadataPayload)
+      });
+      
+      if (!metadataResponse.ok) {
+        const errorData = await metadataResponse.text();
+        throw new Error(`Metadata save failed: ${metadataResponse.status} - ${errorData}`);
+      }
+      
+      const result = await metadataResponse.json();
+      console.log('✅ Admin metadata saved successfully:', result);
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Direct admin upload failed:', error);
+      throw error;
+    }
+  };
+
   const handleAnalyze = async () => {
     if (selectedFiles.length === 0) return;
 
@@ -719,53 +805,62 @@ export default function PhotoInventoryUploader({
             processedFile = file;
           }
 
-          // Step 1: Save image to MongoDB first
-          const formData = new FormData();
-          formData.append('image', processedFile);
-          formData.append('description', imageDescription);
+          // Step 1: Check if file is too large for regular upload
+          const PAYLOAD_LIMIT = 4 * 1024 * 1024; // 4MB
+          let savedImage;
           
-          if (projectId) {
-            formData.append('projectId', projectId);
-          }
+          if (processedFile.size > PAYLOAD_LIMIT) {
+            console.log(`📤 File ${fileNum} too large for API route, using direct Cloudinary upload`);
+            savedImage = await handleDirectUpload(processedFile, fileNum);
+          } else {
+            // Regular upload for smaller files
+            const formData = new FormData();
+            formData.append('image', processedFile);
+            formData.append('description', imageDescription);
+            
+            if (projectId) {
+              formData.append('projectId', projectId);
+            }
 
-          console.log(`💾 Saving image ${fileNum} to MongoDB...`);
-          console.log(`📱 Mobile upload debug - File details:`, {
-            originalName: file.name,
-            originalSize: file.size,
-            originalType: file.type,
-            processedName: processedFile.name,
-            processedSize: processedFile.size,
-            processedType: processedFile.type,
-            compressionRatio: processedFile.size !== file.size ? `${((1 - processedFile.size / file.size) * 100).toFixed(1)}% reduced` : 'no compression',
-            isMobile: isMobileDevice(),
-            isIPhone: /iPhone/i.test(navigator.userAgent),
-            userAgent: navigator.userAgent.substring(0, 100)
-          });
-          
-          const saveResponse = await fetch(`/api/projects/${projectId}/images`, {
-            method: 'POST',
-            body: formData,
-            // Add timeout for mobile networks
-            signal: AbortSignal.timeout(120000) // 2 minute timeout for mobile
-          });
-
-          if (!saveResponse.ok) {
-            const errorText = await saveResponse.text();
-            console.error(`❌ Failed to save image ${fileNum}:`, errorText);
-            console.error(`📱 Mobile upload error details:`, {
-              status: saveResponse.status,
-              statusText: saveResponse.statusText,
-              headers: Object.fromEntries(saveResponse.headers.entries()),
-              isMobile: isMobileDevice()
+            console.log(`💾 Saving image ${fileNum} to MongoDB...`);
+            console.log(`📱 Mobile upload debug - File details:`, {
+              originalName: file.name,
+              originalSize: file.size,
+              originalType: file.type,
+              processedName: processedFile.name,
+              processedSize: processedFile.size,
+              processedType: processedFile.type,
+              compressionRatio: processedFile.size !== file.size ? `${((1 - processedFile.size / file.size) * 100).toFixed(1)}% reduced` : 'no compression',
+              isMobile: isMobileDevice(),
+              isIPhone: /iPhone/i.test(navigator.userAgent),
+              userAgent: navigator.userAgent.substring(0, 100)
             });
-            setProcessingStatus(prev => ({
-              ...prev,
-              [file.name]: 'failed'
-            }));
-            continue; // Skip to next file
-          }
+            
+            const saveResponse = await fetch(`/api/projects/${projectId}/images`, {
+              method: 'POST',
+              body: formData,
+              // Add timeout for mobile networks
+              signal: AbortSignal.timeout(120000) // 2 minute timeout for mobile
+            });
 
-          const savedImage = await saveResponse.json();
+            if (!saveResponse.ok) {
+              const errorText = await saveResponse.text();
+              console.error(`❌ Failed to save image ${fileNum}:`, errorText);
+              console.error(`📱 Mobile upload error details:`, {
+                status: saveResponse.status,
+                statusText: saveResponse.statusText,
+                headers: Object.fromEntries(saveResponse.headers.entries()),
+                isMobile: isMobileDevice()
+              });
+              setProcessingStatus(prev => ({
+                ...prev,
+                [file.name]: 'failed'
+              }));
+              continue; // Skip to next file
+            }
+
+            savedImage = await saveResponse.json();
+          }
           console.log(`✅ Image ${fileNum} saved to MongoDB:`, savedImage._id);
 
           // Immediate UI feedback - trigger image gallery refresh right away
