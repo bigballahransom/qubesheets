@@ -390,12 +390,16 @@ export default function CustomerUploadPage() {
       if (result.jobId) {
         console.log('📋 Tracking job ID for transfer monitoring:', result.jobId);
         setPendingJobIds(prev => [...prev, result.jobId]);
+        
+        // Don't mark as processed yet - wait for Railway transfer
+        console.log('⏳ Direct upload: Waiting for Railway transfer to complete...');
+      } else {
+        // If no jobId, mark as processed immediately (fallback)
+        console.log('⚠️ Direct upload: No jobId returned, marking as processed immediately');
+        setProcessedFiles(1);
       }
       
-      // Mark this file as processed
-      setProcessedFiles(1);
-      
-      // Replace temp image with real data
+      // Replace temp image with real data (but keep overlay until Railway transfer)
       setUploadedImages(prev => prev.map(img => 
         img.id === tempImage.id 
           ? {
@@ -406,12 +410,8 @@ export default function CustomerUploadPage() {
           : img
       ));
       
-      const message = 'Photo uploaded successfully! AI analysis in progress...';
-      
-      toast.success(message, {
-        description: 'AI is analyzing your photo to identify inventory items.',
-        duration: 5000,
-      });
+      // Don't show success toast yet - let Railway transfer overlay handle it
+      console.log('📄 Direct upload: Photo uploaded to database, waiting for Railway transfer...');
       
     } catch (error) {
       console.error('❌ Direct upload failed:', error);
@@ -551,12 +551,16 @@ export default function CustomerUploadPage() {
       if (result.jobId) {
         console.log('📋 Tracking job ID for transfer monitoring:', result.jobId);
         setPendingJobIds(prev => [...prev, result.jobId]);
+        
+        // Don't mark as processed yet - wait for Railway transfer
+        console.log('⏳ Waiting for Railway transfer to complete before showing success...');
+      } else {
+        // If no jobId, mark as processed immediately (fallback)
+        console.log('⚠️ No jobId returned, marking as processed immediately');
+        setProcessedFiles(1);
       }
       
-      // Mark this file as processed
-      setProcessedFiles(1);
-      
-      // Replace temp image with real data
+      // Replace temp image with real data (but keep overlay until Railway transfer)
       setUploadedImages(prev => prev.map(img => 
         img.id === tempImage.id 
           ? {
@@ -567,18 +571,8 @@ export default function CustomerUploadPage() {
           : img
       ));
       
-      const fileType = isVideo ? 'Video' : 'Photo';
-      const message = isVideo 
-        ? 'Video uploaded successfully! Frame extraction and AI analysis in progress...'
-        : 'Photo uploaded successfully! AI analysis in progress...';
-      
-      toast.success(message, {
-        duration: 4000,
-        style: {
-          background: '#10b981',
-          color: 'white',
-        }
-      });
+      // Don't show success toast yet - let Railway transfer overlay handle it
+      console.log('📄 Photo uploaded to database, waiting for Railway transfer...');
       
     } catch (err) {
       console.error('Upload error:', err);
@@ -695,10 +689,10 @@ export default function CustomerUploadPage() {
             Welcome, {validation.customerName}
           </div>
           <h1 className="text-3xl md:text-4xl font-bold text-slate-800 leading-tight">
-            Upload Your Moving Photos or Videos
+            Upload Your Moving Photos
           </h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto leading-relaxed">
-            Help us ensure a wonderful moving experience by uploading photos or videos of the belongings moving with you.
+            Help us ensure a wonderful moving experience by uploading photos of the belongings moving with you.
             {/* <span className="font-semibold text-blue-600 ml-1">{validation.projectName}</span> */}
           </p>
         </div>
@@ -710,7 +704,7 @@ export default function CustomerUploadPage() {
               <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
                 <UploadIcon className="w-4 h-4 text-blue-600" />
               </div>
-              <h2 className="text-xl font-semibold text-slate-800">Upload Photos or Videos</h2>
+              <h2 className="text-xl font-semibold text-slate-800">Upload Photos</h2>
             </div>
             
             <CustomerPhotoUploader
@@ -869,11 +863,28 @@ export default function CustomerUploadPage() {
           totalFiles={totalFilesToProcess}
           processedFiles={processedFiles}
           onComplete={() => {
-            console.log('🎉 Transfer overlay completed');
-            setShowTransferOverlay(false);
-            setPendingJobIds([]);
-            setTotalFilesToProcess(0);
-            setProcessedFiles(0);
+            console.log('🎉 Railway transfer completed - now showing success message');
+            
+            // Mark file as processed (this triggers the progress to show complete)
+            setProcessedFiles(totalFilesToProcess);
+            
+            // Show success message now that Railway has the images
+            toast.success('Photo uploaded successfully! AI analysis in progress...', {
+              description: 'AI is analyzing your photo to identify inventory items.',
+              duration: 5000,
+              style: {
+                background: '#10b981',
+                color: 'white',
+              }
+            });
+            
+            // Wait a moment to show success, then hide overlay
+            setTimeout(() => {
+              setShowTransferOverlay(false);
+              setPendingJobIds([]);
+              setTotalFilesToProcess(0);
+              setProcessedFiles(0);
+            }, 2000);
           }}
         />
       )}
