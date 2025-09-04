@@ -887,7 +887,7 @@ const ProcessingNotification = () => {
             </div>
           </div>
           
-          {/* Video Processing Status */}
+{/* COMMENTED OUT - Video Processing Status (videos disabled)
           {currentProject && (
             <VideoProcessingStatus 
               projectId={currentProject._id}
@@ -904,6 +904,7 @@ const ProcessingNotification = () => {
               }}
             />
           )}
+          */}
           
           {/* Tabs for Inventory and Images */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
