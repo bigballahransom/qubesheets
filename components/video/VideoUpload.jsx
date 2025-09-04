@@ -326,28 +326,34 @@ export default function VideoUpload({
       const uploadResult = await uploadResponse.json();
       console.log('🎬 Video uploaded successfully:', uploadResult.videoId);
       
-      // Set video URL from Cloudinary instead of local file
-      if (uploadResult.cloudinarySecureUrl) {
-        setVideoUrl(uploadResult.cloudinarySecureUrl);
-        console.log('🎬 Using Cloudinary URL for video preview:', uploadResult.cloudinarySecureUrl);
+      // Set video URL for preview (no CORS needed since no client-side extraction)
+      if (uploadResult.videoInfo?.cloudinaryUrl) {
+        setVideoUrl(uploadResult.videoInfo.cloudinaryUrl);
+        console.log('🎬 Using Cloudinary URL for video preview:', uploadResult.videoInfo.cloudinaryUrl);
       }
       
       setUploadProgress(100);
       setCurrentStage('Video uploaded successfully!');
       
-      // DISABLED: Railway video processing (now handled client-side)
-      // Videos are now stored in Cloudinary, so Railway video-to-frames extraction is disabled
-      // Frame extraction will be handled client-side when user clicks "Start Analysis"
-      
-      console.log('🎬 Video upload completed - skipping Railway processing (now client-side)');
-      
-      setUploadState('ready'); // Set to ready so user can start client-side analysis
-      
-      // Show success message
-      toast.success('Video uploaded successfully!', {
-        description: 'Click "Start AI Analysis" below to extract and analyze frames from your video.',
-        duration: 6000,
-      });
+      // Check processing type
+      if (uploadResult.requiresClientProcessing) {
+        console.log('🎬 Client-side processing required');
+        setUploadState('ready');
+        
+        toast.success('Video uploaded successfully!', {
+          description: 'Click "Start AI Analysis" below to extract and analyze frames from your video.',
+          duration: 6000,
+        });
+      } else {
+        // Fallback to ready state
+        console.log('🎬 Video upload completed - no processing initiated');
+        setUploadState('ready');
+        
+        toast.success('Video uploaded successfully!', {
+          description: 'Processing will begin shortly.',
+          duration: 4000,
+        });
+      }
       
     } catch (error) {
       console.error('🎬 Video upload/processing error:', error);
@@ -566,7 +572,6 @@ export default function VideoUpload({
               ref={videoRef}
               src={videoUrl}
               controls
-              crossOrigin="anonymous"
               onLoadedMetadata={handleVideoLoaded}
               className="w-full max-h-96 rounded-lg"
             />
@@ -587,19 +592,19 @@ export default function VideoUpload({
             </div>
           )}
 
-          {/* Railway Processing Status */}
+          {/* Server Processing Status */}
           {uploadState === 'processing' && (
             <div className="mb-4">
               <div className="flex items-center gap-3 mb-2">
-                <Zap className="w-5 h-5 text-purple-500" />
-                <span className="text-gray-700">{currentStage || 'Processing video on Railway...'}</span>
+                <Loader2 className="w-5 h-5 text-purple-500 animate-spin" />
+                <span className="text-gray-700">{currentStage || 'Server is extracting frames from video...'}</span>
               </div>
               <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
                 <p className="text-purple-800 text-sm mb-2">
-                  🚂 Your video is being processed on Railway's high-performance infrastructure.
+                  🚂 Server is extracting 1 frame per second and queuing them for AI analysis.
                 </p>
                 <p className="text-purple-600 text-xs">
-                  Real-time updates will appear on the main project page. You can close this dialog safely.
+                  Frame analysis results will appear on the main project page. You can close this dialog safely.
                 </p>
               </div>
             </div>
@@ -654,7 +659,7 @@ export default function VideoUpload({
           {uploadState === 'complete' && (
             <div className="flex items-center gap-3 mb-4">
               <CheckCircle className="w-5 h-5 text-green-500" />
-              <span className="text-gray-700">Analysis complete! Found {analysisResults.length} frames with inventory items.</span>
+              <span className="text-gray-700">Server processing complete! Video frames have been extracted and queued for AI analysis.</span>
             </div>
           )}
 

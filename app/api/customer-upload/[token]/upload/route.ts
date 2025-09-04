@@ -305,7 +305,7 @@ export async function POST(
         updatedAt: new Date() 
       });
       
-      // Return processing instructions for client-side frame extraction
+      // Return instructions for client-side frame extraction
       return NextResponse.json({
         success: true,
         videoId: videoDoc._id.toString(),

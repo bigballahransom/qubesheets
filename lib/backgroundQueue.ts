@@ -2,14 +2,17 @@
 
 interface QueueItem {
     id: string;
-    type: 'image_analysis' | 'video_frame_analysis';
+    type: 'image_analysis' | 'video_frame_analysis' | 'video_processing';
     data: {
-      imageId: string;
+      imageId?: string;
+      videoId?: string;
+      videoUrl?: string;
       projectId: string;
       userId: string;
       organizationId?: string | null;
       frameTimestamp?: number;
       source?: string;
+      uploadToken?: string;
     };
     retries: number;
     maxRetries: number;
@@ -42,7 +45,7 @@ interface QueueItem {
     private transferStatus = new Map<string, TransferInfo>(); // Track transfer status for each job
   
     // Add item to queue with overflow management and smart priority
-    enqueue(type: 'image_analysis' | 'video_frame_analysis', data: any, delay = 0, estimatedSize?: number): string {
+    enqueue(type: 'image_analysis' | 'video_frame_analysis' | 'video_processing', data: any, delay = 0, estimatedSize?: number): string {
       const id = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const now = new Date();
       const scheduledFor = new Date(now.getTime() + delay);
@@ -54,10 +57,16 @@ interface QueueItem {
         throw new Error(`Queue is full (${this.queue.length} items). Please try again later.`);
       }
 
-      // Smart priority: smaller images get higher priority for faster processing
-      // Video frames get slightly lower priority than regular photos
-      let priority = type === 'video_frame_analysis' ? 45 : 50; // Video frames slightly lower priority
-      if (estimatedSize) {
+      // Smart priority: video processing gets highest priority, then smaller images
+      let priority = 50; // Default priority
+      
+      if (type === 'video_processing') {
+        priority = 90; // Video processing gets highest priority
+      } else if (type === 'video_frame_analysis') {
+        priority = 45; // Video frames slightly lower than regular images
+      }
+      
+      if (estimatedSize && type !== 'video_processing') {
         if (estimatedSize < 1024 * 1024) { // < 1MB
           priority = type === 'video_frame_analysis' ? 75 : 80; // High priority
         } else if (estimatedSize < 5 * 1024 * 1024) { // < 5MB
@@ -156,6 +165,19 @@ interface QueueItem {
           // Always use Railway for background processing
           const result = await this.processWithRailway(item.data, item.type, item.id);
           console.log(`✅ Job completed: ${item.id}`, result);
+        } else if (item.type === 'video_processing') {
+          // Handle video processing with Railway video processor
+          const { processVideoOnRailway } = await import('@/services/railwayVideoProcessor');
+          const result = await processVideoOnRailway(item.data);
+          console.log(`✅ Video processing completed: ${item.id}`, result);
+          
+          // Update status to sent on successful completion
+          if (item.id) {
+            this.transferStatus.set(item.id, {
+              status: 'sent',
+              timestamp: new Date()
+            });
+          }
         }
       } catch (error) {
         console.error(`❌ Job failed: ${item.id}`, error);
@@ -171,6 +193,13 @@ interface QueueItem {
           this.queue.push(item);
         } else {
           console.error(`💀 Job permanently failed: ${item.id} after ${item.maxRetries} attempts`);
+          
+          // Update transfer status to failed for permanently failed jobs
+          this.transferStatus.set(item.id, {
+            status: 'failed',
+            timestamp: new Date(),
+            error: error instanceof Error ? error.message : 'Unknown error after max retries'
+          });
         }
       }
     }
