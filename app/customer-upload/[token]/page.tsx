@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import { CheckCircle, AlertCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight } from 'lucide-react';
 import CustomerPhotoUploader from '@/components/CustomerPhotoUploader';
 import VideoUpload from '@/components/video/VideoUpload';
+import RailwayTransferOverlay from '@/components/RailwayTransferOverlay';
 import { toast } from 'sonner';
 import Logo from '../../../public/logo';
 
@@ -39,6 +40,10 @@ export default function CustomerUploadPage() {
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [uploading, setUploading] = useState(false);
   const [processingVideo, setProcessingVideo] = useState(false);
+  const [pendingJobIds, setPendingJobIds] = useState<string[]>([]);
+  const [showTransferOverlay, setShowTransferOverlay] = useState(false);
+  const [totalFilesToProcess, setTotalFilesToProcess] = useState(0);
+  const [processedFiles, setProcessedFiles] = useState(0);
 
   // Parse instructions for display (simple markdown-like parsing)
   const parseInstructionsForDisplay = (text: string, companyName: string) => {
@@ -132,6 +137,11 @@ export default function CustomerUploadPage() {
   const processVideoClientSide = async (videoFile: File, videoInfo: any) => {
     setProcessingVideo(true);
     
+    // Show transfer overlay immediately for video processing
+    setTotalFilesToProcess(1);
+    setProcessedFiles(0);
+    setShowTransferOverlay(true);
+    
     try {
       console.log('🎬 Starting client-side video processing:', videoFile.name);
       
@@ -142,6 +152,7 @@ export default function CustomerUploadPage() {
       
       // Create video element for frame extraction
       const video = document.createElement('video');
+      video.crossOrigin = 'anonymous'; // Allow cross-origin video processing
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       
@@ -173,15 +184,25 @@ export default function CustomerUploadPage() {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         
-        // Draw frame to canvas
-        ctx.drawImage(video, 0, 0);
-        
-        // Convert to base64
-        const frameData = canvas.toDataURL('image/jpeg', 0.8);
-        frames.push({
-          timestamp: time,
-          base64: frameData.split(',')[1]
-        });
+        try {
+          // Draw frame to canvas
+          ctx.drawImage(video, 0, 0);
+          
+          // Convert to base64
+          const frameData = canvas.toDataURL('image/jpeg', 0.8);
+          frames.push({
+            timestamp: time,
+            base64: frameData.split(',')[1]
+          });
+        } catch (error) {
+          console.error('Failed to extract frame at', time, 's:', error);
+          if (error instanceof Error && error.name === 'SecurityError') {
+            toast.error('Cannot extract frames from this video. Please try uploading a different video file.');
+            // Clean up and abort
+            URL.revokeObjectURL(videoUrl);
+            throw new Error('Cross-origin video cannot be processed');
+          }
+        }
       }
       
       // Clean up
@@ -223,6 +244,15 @@ export default function CustomerUploadPage() {
         
         setUploadedImages(prev => [...prev, ...frameImages]);
         
+        // Track job IDs for Railway transfer monitoring
+        if (processResult.queuedJobs && processResult.queuedJobs.length > 0) {
+          console.log('📋 Tracking video frame job IDs for transfer monitoring:', processResult.queuedJobs);
+          setPendingJobIds(prev => [...prev, ...processResult.queuedJobs]);
+        }
+        
+        // Mark video as processed
+        setProcessedFiles(1);
+        
         toast.success(`Video processed successfully! Extracted ${frames.length} frames for analysis.`, {
           duration: 5000,
           style: {
@@ -236,6 +266,12 @@ export default function CustomerUploadPage() {
       
     } catch (error) {
       console.error('Video processing error:', error);
+      
+      // Hide overlay on error
+      setShowTransferOverlay(false);
+      setTotalFilesToProcess(0);
+      setProcessedFiles(0);
+      
       toast.error(`Video processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`, {
         duration: 6000,
         style: {
@@ -250,6 +286,11 @@ export default function CustomerUploadPage() {
 
   const handleFileUpload = async (file: File) => {
     setUploading(true);
+    
+    // Show transfer overlay immediately when file is selected
+    setTotalFilesToProcess(1);
+    setProcessedFiles(0);
+    setShowTransferOverlay(true);
     
     // Immediately show optimistic UI update
     const tempImage: UploadedImage = {
@@ -330,6 +371,15 @@ export default function CustomerUploadPage() {
       const uploadId = result.imageId || result.videoId;
       const isVideo = result.requiresFrameExtraction || false;
       
+      // Track job ID for Railway transfer monitoring
+      if (result.jobId) {
+        console.log('📋 Tracking job ID for transfer monitoring:', result.jobId);
+        setPendingJobIds(prev => [...prev, result.jobId]);
+      }
+      
+      // Mark this file as processed
+      setProcessedFiles(1);
+      
       // Replace temp image with real data
       setUploadedImages(prev => prev.map(img => 
         img.id === tempImage.id 
@@ -359,6 +409,11 @@ export default function CustomerUploadPage() {
       
       // Remove temp image on error
       setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
+      
+      // Hide overlay on error
+      setShowTransferOverlay(false);
+      setTotalFilesToProcess(0);
+      setProcessedFiles(0);
       
       // Enhanced error messages for mobile
       let errorMessage = 'Upload failed';
@@ -629,6 +684,23 @@ export default function CustomerUploadPage() {
           </div>
         </div>
       </div>
+      
+      {/* Railway Transfer Overlay */}
+      {showTransferOverlay && (
+        <RailwayTransferOverlay
+          jobIds={pendingJobIds}
+          itemType="images"
+          totalFiles={totalFilesToProcess}
+          processedFiles={processedFiles}
+          onComplete={() => {
+            console.log('🎉 Transfer overlay completed');
+            setShowTransferOverlay(false);
+            setPendingJobIds([]);
+            setTotalFilesToProcess(0);
+            setProcessedFiles(0);
+          }}
+        />
+      )}
     </div>
   );
 }

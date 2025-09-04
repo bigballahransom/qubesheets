@@ -19,6 +19,15 @@ interface QueueItem {
     estimatedSize?: number; // Estimated image size for smart queuing
   }
   
+  // Transfer status tracking for UI visibility
+  export type TransferStatus = 'queued' | 'sending' | 'sent' | 'failed';
+  
+  interface TransferInfo {
+    status: TransferStatus;
+    timestamp: Date;
+    error?: string;
+  }
+  
   class BackgroundQueue {
     private queue: QueueItem[] = [];
     private processing = false;
@@ -30,6 +39,7 @@ interface QueueItem {
     private lastHealthCheck = new Date();
     private railwayErrors = 0;
     private maxRailwayErrors = 3; // Circuit breaker threshold
+    private transferStatus = new Map<string, TransferInfo>(); // Track transfer status for each job
   
     // Add item to queue with overflow management and smart priority
     enqueue(type: 'image_analysis' | 'video_frame_analysis', data: any, delay = 0, estimatedSize?: number): string {
@@ -77,6 +87,12 @@ interface QueueItem {
           return b.priority - a.priority; // Higher priority first
         }
         return a.scheduledFor.getTime() - b.scheduledFor.getTime(); // Earlier scheduled first
+      });
+      
+      // Track initial status
+      this.transferStatus.set(id, {
+        status: 'queued',
+        timestamp: new Date()
       });
       
       console.log(`📋 Queued ${type} job: ${id} (priority: ${priority}, queue: ${this.queue.length}/${maxQueueSize}, Railway: ${this.railwayWorkers}/${this.maxRailwayWorkers})`);
@@ -138,7 +154,7 @@ interface QueueItem {
       try {
         if (item.type === 'image_analysis' || item.type === 'video_frame_analysis') {
           // Always use Railway for background processing
-          const result = await this.processWithRailway(item.data, item.type);
+          const result = await this.processWithRailway(item.data, item.type, item.id);
           console.log(`✅ Job completed: ${item.id}`, result);
         }
       } catch (error) {
@@ -160,7 +176,7 @@ interface QueueItem {
     }
 
     // Process with Railway service - with concurrency control and health monitoring
-    private async processWithRailway(data: any, jobType: 'image_analysis' | 'video_frame_analysis' = 'image_analysis') {
+    private async processWithRailway(data: any, jobType: 'image_analysis' | 'video_frame_analysis' = 'image_analysis', jobId?: string) {
       // Check Railway health before processing
       if (!this.railwayHealthy) {
         const timeSinceLastCheck = new Date().getTime() - this.lastHealthCheck.getTime();
@@ -183,6 +199,14 @@ interface QueueItem {
       
       this.railwayWorkers++;
       console.log(`🚂 Railway worker ${this.railwayWorkers}/${this.maxRailwayWorkers} - Processing imageId: ${data.imageId} (health: ${this.railwayHealthy ? 'good' : 'degraded'})`);
+      
+      // Update status to sending
+      if (jobId) {
+        this.transferStatus.set(jobId, {
+          status: 'sending',
+          timestamp: new Date()
+        });
+      }
       
       // Define Railway URL for error handling scope
       const railwayUrl = process.env.IMAGE_SERVICE_URL || 'https://qubesheets-image-service-production.up.railway.app';
@@ -266,6 +290,15 @@ interface QueueItem {
         const result = await response.json();
         console.log('✅ Railway background processing initiated:', result);
         
+        // Update status to sent on successful Railway transfer
+        if (jobId) {
+          this.transferStatus.set(jobId, {
+            status: 'sent',
+            timestamp: new Date()
+          });
+          console.log(`✅ Job ${jobId} successfully sent to Railway`);
+        }
+        
         // Reset error count on successful Railway request
         if (this.railwayErrors > 0) {
           console.log(`🚂 Railway service recovered - resetting error count from ${this.railwayErrors} to 0`);
@@ -279,6 +312,15 @@ interface QueueItem {
         // Track Railway service errors for health monitoring
         this.railwayErrors++;
         this.lastHealthCheck = new Date();
+        
+        // Update status to failed
+        if (jobId) {
+          this.transferStatus.set(jobId, {
+            status: 'failed',
+            timestamp: new Date(),
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
         
         console.error('❌ Railway background processing failed:', {
           error: error instanceof Error ? error.message : 'Unknown error',
@@ -309,6 +351,67 @@ interface QueueItem {
         this.railwayWorkers--;
         console.log(`🚂 Railway worker released - Active: ${this.railwayWorkers}/${this.maxRailwayWorkers}`);
       }
+    }
+  
+    // Get transfer status for specific job IDs
+    getTransferStatus(jobIds: string[]): {
+      total: number;
+      queued: number;
+      sending: number;
+      sent: number;
+      failed: number;
+      details: Record<string, TransferInfo>;
+    } {
+      const result = {
+        total: jobIds.length,
+        queued: 0,
+        sending: 0,
+        sent: 0,
+        failed: 0,
+        details: {} as Record<string, TransferInfo>
+      };
+      
+      for (const jobId of jobIds) {
+        const info = this.transferStatus.get(jobId);
+        if (info) {
+          result.details[jobId] = info;
+          switch (info.status) {
+            case 'queued':
+              result.queued++;
+              break;
+            case 'sending':
+              result.sending++;
+              break;
+            case 'sent':
+              result.sent++;
+              break;
+            case 'failed':
+              result.failed++;
+              break;
+          }
+        } else {
+          // If not in transfer status, it might still be in queue
+          const inQueue = this.queue.some(item => item.id === jobId);
+          if (inQueue) {
+            result.queued++;
+            result.details[jobId] = {
+              status: 'queued',
+              timestamp: new Date()
+            };
+          } else {
+            // Job not found anywhere - this might indicate the job was already processed
+            // or there's a mismatch in job IDs. For user experience, assume it's complete.
+            console.warn(`⚠️ Job ID ${jobId} not found in queue or transfer status - assuming completed`);
+            result.sent++;
+            result.details[jobId] = {
+              status: 'sent',
+              timestamp: new Date()
+            };
+          }
+        }
+      }
+      
+      return result;
     }
   
     // Get queue status

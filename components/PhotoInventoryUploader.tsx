@@ -1,7 +1,7 @@
 // components/PhotoInventoryUploader.tsx
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Upload, Camera, Loader2, X, Package, Box, BoxesIcon, Video, Play, Clock } from 'lucide-react';
 import RealTimeUploadStatus from './RealTimeUploadStatus';
 import VideoUpload from './video/VideoUpload';
@@ -459,6 +459,14 @@ export default function PhotoInventoryUploader({
   const [processingStatus, setProcessingStatus] = useState<{[key: string]: 'processing' | 'completed' | 'failed'}>({});
   const [uploadMode, setUploadMode] = useState<'image' | 'video'>('image');
   const [hasVideoFiles, setHasVideoFiles] = useState(false);
+  const [pendingJobIds, setPendingJobIds] = useState<string[]>([]);
+  const [transferStatus, setTransferStatus] = useState<{
+    total: number;
+    sent: number;
+    pending: number;
+    failed: number;
+  } | null>(null);
+  const [checkingTransferStatus, setCheckingTransferStatus] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -582,6 +590,61 @@ export default function PhotoInventoryUploader({
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
+
+  // Poll transfer status
+  const checkTransferStatus = async () => {
+    if (pendingJobIds.length === 0) return;
+    
+    try {
+      const response = await fetch('/api/background-queue/transfer-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobIds: pendingJobIds })
+      });
+
+      if (response.ok) {
+        const status = await response.json();
+        setTransferStatus({
+          total: status.total,
+          sent: status.sent,
+          pending: status.pending,
+          failed: status.failed
+        });
+
+        // If all transferred, we can allow closing
+        if (status.allTransferred) {
+          setCheckingTransferStatus(false);
+          
+          // Show success message and close after delay
+          const { toast } = await import('sonner');
+          toast.success('All images sent to processing server!', {
+            description: 'You can now safely close this window.',
+            duration: 3000,
+          });
+          
+          // Reset and close after showing success
+          setTimeout(() => {
+            handleReset();
+            if (onClose) {
+              onClose();
+            }
+          }, 2000);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to check transfer status:', error);
+    }
+  };
+
+  // Start polling when we have pending jobs
+  useEffect(() => {
+    if (pendingJobIds.length === 0 || !checkingTransferStatus) return;
+
+    const interval = setInterval(checkTransferStatus, 2000);
+    checkTransferStatus(); // Initial check
+
+    return () => clearInterval(interval);
+  }, [pendingJobIds, checkingTransferStatus]);
 
   const saveImageToDatabase = async (file: File, analysisResult: AnalysisResult) => {
     if (!projectId) return;
@@ -757,24 +820,26 @@ export default function PhotoInventoryUploader({
             } else {
               const queueResult = await queueResponse.json();
               console.log(`✅ Background job queued for image ${fileNum}:`, queueResult.jobId);
+              
+              // Track job ID for transfer monitoring
+              if (queueResult.jobId) {
+                console.log('📋 [PhotoUploader] Tracking job ID:', queueResult.jobId);
+                setPendingJobIds(prev => [...prev, queueResult.jobId]);
+              }
+              
               setProcessingStatus(prev => ({
                 ...prev,
                 [file.name]: 'completed'
               }));
               
-              // Close modal and show toast after first successful save AND queue
+              // After first successful save AND queue, show notification but DON'T close modal
               if (!modalClosed) {
                 // Import toast and show notification
                 const { toast } = await import('sonner');
-                toast.success(`Processing ${selectedFiles.length} image${selectedFiles.length > 1 ? 's' : ''}...`, {
-                  description: 'Your images are being saved and analyzed in the background.',
+                toast.success(`Saving ${selectedFiles.length} image${selectedFiles.length > 1 ? 's' : ''}...`, {
+                  description: 'Sending images to processing server...',
                   duration: 4000,
                 });
-                
-                // Close the modal after first successful save and queue
-                if (onClose) {
-                  onClose();
-                }
                 modalClosed = true;
               }
             }
@@ -805,20 +870,31 @@ export default function PhotoInventoryUploader({
       setIsAnalyzing(false);
       setError(null);
 
-      // Import toast dynamically for completion notification
-      const { toast: completionToast } = await import('sonner');
-      completionToast.success(`Processing ${selectedFiles.length} images completed!`, {
-        description: 'Your images have been saved and analysis is running in the background.',
-        duration: 5000,
-      });
+      // Start monitoring transfer status if we have job IDs
+      console.log('📋 [PhotoUploader] Checking pending job IDs:', pendingJobIds);
+      if (pendingJobIds.length > 0) {
+        console.log('📋 [PhotoUploader] Starting transfer monitoring for', pendingJobIds.length, 'jobs');
+        setCheckingTransferStatus(true);
+        
+        // Import toast dynamically for completion notification
+        const { toast: completionToast } = await import('sonner');
+        completionToast.info(`Sending ${pendingJobIds.length} images to processing server...`, {
+          description: 'Please wait while we transfer your images.',
+          duration: 5000,
+        });
+      } else {
+        console.log('📋 [PhotoUploader] No pending job IDs - closing immediately');
+        // No jobs queued, just close
+        handleReset();
+        if (onClose) {
+          onClose();
+        }
+      }
 
       // Call success callback to refresh gallery
       if (onImageSaved) {
         onImageSaved();
       }
-
-      // Reset form and close
-      handleReset();
 
       return; // Exit here - no blocking analysis
 
@@ -1024,6 +1100,9 @@ export default function PhotoInventoryUploader({
     setIsConverting(false);
     setUploadMode('image');
     setHasVideoFiles(false);
+    setPendingJobIds([]);
+    setTransferStatus(null);
+    setCheckingTransferStatus(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -1101,27 +1180,41 @@ export default function PhotoInventoryUploader({
                   autoStart={true} // Automatically start processing
                   onFramesExtracted={async () => {
                     console.log('Video frames extracted, triggering gallery refresh');
-                    // Show toast and close modal when video processing starts
+                    // Show toast but DON'T close modal yet
                     const { toast: videoToast } = await import('sonner');
                     videoToast.success('Processing video frames...', {
                       description: 'Extracting and analyzing frames from your video.',
                       duration: 4000,
                     });
                     
-                    // Close the modal
-                    if (onClose) {
-                      onClose();
-                    }
-                    
                     // Trigger gallery refresh when frames are extracted
                     if (onImageSaved) onImageSaved();
                   }}
-                  onAnalysisComplete={(results: any) => {
+                  onAnalysisComplete={async (results: any) => {
                     console.log('Video analysis complete:', results);
-                    // Trigger another gallery refresh when analysis completes
+                    
+                    // If we have queued jobs, start monitoring transfer status
+                    if (results?.queuedJobs && results.queuedJobs.length > 0) {
+                      setPendingJobIds(results.queuedJobs);
+                      setCheckingTransferStatus(true);
+                      
+                      const { toast: videoTransferToast } = await import('sonner');
+                      videoTransferToast.info(`Sending ${results.queuedJobs.length} video frames to processing server...`, {
+                        description: 'Please wait while we transfer your video frames.',
+                        duration: 5000,
+                      });
+                    } else {
+                      // No jobs queued, just close after delay
+                      setTimeout(() => {
+                        handleReset();
+                        if (onClose) {
+                          onClose();
+                        }
+                      }, 2000);
+                    }
+                    
+                    // Trigger gallery refresh when analysis completes
                     if (onImageSaved) onImageSaved();
-                    // Auto-reset after completion to allow new uploads
-                    setTimeout(() => handleReset(), 2000);
                   }}
                   onReset={() => {
                     // Reset the parent component when video upload resets
@@ -1246,8 +1339,45 @@ export default function PhotoInventoryUploader({
         </div>
       )}
 
+      {/* Transfer Status */}
+      {checkingTransferStatus && transferStatus && (
+        <div className="mb-6">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+              <div>
+                <h3 className="font-medium text-blue-900">Sending to Processing Server</h3>
+                <p className="text-sm text-blue-700">Please don't close this window</p>
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-blue-700">Progress:</span>
+                <span className="font-medium text-blue-900">
+                  {transferStatus.sent} of {transferStatus.total} sent
+                </span>
+              </div>
+              
+              <div className="w-full bg-blue-200 rounded-full h-2">
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${(transferStatus.sent / transferStatus.total) * 100}%` }}
+                />
+              </div>
+              
+              {transferStatus.failed > 0 && (
+                <p className="text-sm text-red-600">
+                  {transferStatus.failed} images failed to transfer
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Real-time Upload Status */}
-      {Object.keys(processingStatus).length > 0 && (
+      {Object.keys(processingStatus).length > 0 && !checkingTransferStatus && (
         <div className="mb-6">
           <RealTimeUploadStatus 
             uploads={Object.fromEntries(

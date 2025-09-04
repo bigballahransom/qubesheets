@@ -70,18 +70,28 @@ export default function VideoUpload({
           canvas.width = videoElement.videoWidth;
           canvas.height = videoElement.videoHeight;
           
-          // Draw current frame to canvas
-          ctx.drawImage(videoElement, 0, 0);
-          
-          // Convert to base64
-          const frameData = canvas.toDataURL('image/jpeg', 0.8);
-          
-          frames.push({
-            timestamp: currentTime,
-            dataUrl: frameData,
-            base64: frameData.split(',')[1],
-            selected: false
-          });
+          try {
+            // Draw current frame to canvas
+            ctx.drawImage(videoElement, 0, 0);
+            
+            // Convert to base64
+            const frameData = canvas.toDataURL('image/jpeg', 0.8);
+            
+            frames.push({
+              timestamp: currentTime,
+              dataUrl: frameData,
+              base64: frameData.split(',')[1],
+              selected: false
+            });
+          } catch (error) {
+            console.error('Failed to extract frame at', currentTime, 's:', error);
+            // Skip this frame if it fails (likely due to CORS)
+            if (error.name === 'SecurityError') {
+              toast.error('Cannot extract frames from this video due to security restrictions. Please upload the video file directly.');
+              resolve(frames); // Return what we have so far
+              return;
+            }
+          }
           
           frameCount++;
           const progress = Math.round((frameCount / totalFrames) * 100);
@@ -556,6 +566,7 @@ export default function VideoUpload({
               ref={videoRef}
               src={videoUrl}
               controls
+              crossOrigin="anonymous"
               onLoadedMetadata={handleVideoLoaded}
               className="w-full max-h-96 rounded-lg"
             />
