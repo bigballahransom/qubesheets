@@ -273,7 +273,7 @@ export default function IntegrationsPage() {
                           {testResults.error ? (
                             <p className="text-sm text-red-600">Error: {testResults.error}</p>
                           ) : (
-                            <div className="space-y-2">
+                            <div className="space-y-4">
                               <p className="text-sm text-green-600">✓ Successfully connected to SmartMoving API</p>
                               {testResults.customerCount !== undefined && (
                                 <div className="text-sm text-gray-600 space-y-1">
@@ -281,8 +281,21 @@ export default function IntegrationsPage() {
                                   <p>Found {testResults.leadsCount} leads</p>
                                   <p>Found {testResults.opportunitiesCount} opportunities</p>
                                   <p>Found {testResults.jobsCount} jobs</p>
+                                  <p>Found {testResults.unifiedRecordsCount} unified records</p>
                                 </div>
                               )}
+                              
+                              {/* Full API Response Data */}
+                              <details className="mt-4">
+                                <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900">
+                                  View Full API Response Data
+                                </summary>
+                                <div className="mt-2 p-3 bg-gray-100 rounded-md overflow-auto max-h-96">
+                                  <pre className="text-xs text-gray-800 whitespace-pre-wrap">
+                                    {JSON.stringify(testResults, null, 2)}
+                                  </pre>
+                                </div>
+                              </details>
                             </div>
                           )}
                         </div>
