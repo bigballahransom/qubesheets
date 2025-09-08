@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, Settings, Bell, FileText, Palette } from 'lucide-react';
+import { ChevronDown, Settings, Bell, FileText, Palette, Plug } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SettingsItem {
@@ -26,6 +26,11 @@ const settingsItems: SettingsItem[] = [
     title: 'Branding',
     icon: Palette,
     href: '/settings/branding',
+  },
+  {
+    title: 'Integrations',
+    icon: Plug,
+    href: '/settings/integrations',
   },
 ];
 
