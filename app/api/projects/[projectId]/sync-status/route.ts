@@ -46,18 +46,12 @@ export async function GET(
       'analysisResult.itemsCount': { $gt: 0 }
     }).select('_id name analysisResult updatedAt').sort({ updatedAt: -1 });
 
-    // Check for images currently being processed
+    // Check for images currently being processed using new processingStatus field
     const processingImages = await Image.find({
       projectId,
       userId,
-      $or: [
-        { 'analysisResult.status': 'processing' },
-        { 'analysisResult.status': 'pending' },
-        { 'analysisResult.summary': 'Analysis pending...' },
-        { 'analysisResult.summary': /processing|analyzing/i },
-        { 'analysisResult.summary': 'AI analysis in progress...' }
-      ]
-    }).select('_id name analysisResult').sort({ createdAt: -1 });
+      processingStatus: { $in: ['queued', 'processing'] }
+    }).select('_id name processingStatus processingError analysisResult').sort({ createdAt: -1 });
 
     // Calculate totals
     const totalItems = await InventoryItem.countDocuments({ projectId, userId });
@@ -76,7 +70,9 @@ export async function GET(
       processingStatus: processingImages.map(img => ({
         id: img._id,
         name: img.name,
-        status: img.analysisResult?.summary || 'Processing...'
+        status: img.processingStatus === 'processing' ? 'Processing...' : 
+                img.processingStatus === 'queued' ? 'Queued...' : 
+                img.processingError || 'Processing...'
       }))
     });
 

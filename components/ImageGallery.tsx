@@ -400,28 +400,43 @@ export default function ImageGallery({ projectId, onUploadClick }: ImageGalleryP
 
                   {/* Analysis Status */}
                   <div className="flex flex-wrap gap-1">
-                    {image.analysisResult?.status === 'processing' ? (
+                    {image.processingStatus === 'processing' ? (
                       <Badge variant="secondary" className="text-xs animate-pulse">
                         <Loader2 size={10} className="mr-1 animate-spin" />
                         Processing...
                       </Badge>
-                    ) : image.analysisResult?.status === 'failed' ? (
+                    ) : image.processingStatus === 'failed' ? (
                       <Badge variant="destructive" className="text-xs">
                         <X size={10} className="mr-1" />
                         Analysis failed
                       </Badge>
-                    ) : image.analysisResult?.status === 'completed' ? (
+                    ) : image.processingStatus === 'timeout' ? (
+                      <Badge variant="destructive" className="text-xs">
+                        <X size={10} className="mr-1" />
+                        Analysis timed out
+                      </Badge>
+                    ) : image.processingStatus === 'completed' ? (
                       <>
                         <Badge variant="secondary" className="text-xs">
                           <Package size={10} className="mr-1" />
-                          {image.analysisResult.itemsCount} items
+                          {image.analysisResult?.itemsCount || 0} items
                         </Badge>
-                        {image.analysisResult.totalBoxes && image.analysisResult.totalBoxes > 0 && (
+                        {image.analysisResult?.totalBoxes && image.analysisResult.totalBoxes > 0 && (
                           <Badge variant="outline" className="text-xs">
                             {image.analysisResult.totalBoxes} boxes
                           </Badge>
                         )}
                       </>
+                    ) : image.processingStatus === 'queued' ? (
+                      <Badge variant="outline" className="text-xs animate-pulse">
+                        <Loader2 size={10} className="mr-1 animate-spin" />
+                        Queued...
+                      </Badge>
+                    ) : image.processingStatus === 'uploaded' ? (
+                      <Badge variant="outline" className="text-xs">
+                        <Loader2 size={10} className="mr-1 animate-spin" />
+                        Queued...
+                      </Badge>
                     ) : (
                       <Badge variant="outline" className="text-xs">
                         <Loader2 size={10} className="mr-1 animate-spin" />

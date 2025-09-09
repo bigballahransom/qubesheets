@@ -441,28 +441,97 @@ export async function POST(request: Request) {
       );
     }
 
-    console.log('Testing SmartMoving API using new getAllCustomerRecords structure:', {
+    console.log('Testing SmartMoving API with separate method results:', {
       clientId,
       hasApiKey: !!apiKey,
       fromMoveDate: fromServiceDate,
     });
 
-    // Use the new getAllCustomerRecords function
-    const allRecords = await getAllCustomerRecords(apiKey, clientId, fromServiceDate);
+    // Fetch each method separately for individual results
+    const [customersRaw, leadsRaw, opportunitiesRaw, jobsRaw] = await Promise.all([
+      getAllCustomers(apiKey, clientId, fromServiceDate),
+      getAllLeads(apiKey, clientId, fromServiceDate),
+      getAllOpportunities(apiKey, clientId, fromServiceDate),
+      getAllJobs(apiKey, clientId, fromServiceDate)
+    ]);
+
+    // Also get unified records for backwards compatibility
+    const unifiedRecords = combineRecords(customersRaw, leadsRaw, opportunitiesRaw, jobsRaw);
     
     return NextResponse.json({
       success: true,
-      // Raw data counts
-      customerCount: allRecords.customers.length,
-      leadsCount: allRecords.leads.length,
-      opportunitiesCount: allRecords.opportunities.length,
-      jobsCount: allRecords.jobs.length,
       
-      // Unified records count
-      unifiedRecordsCount: allRecords.unifiedRecords.length,
+      // Individual method results
+      customerResults: {
+        count: customersRaw.length,
+        data: customersRaw.map((customer: any) => ({
+          id: customer.id,
+          name: customer.name,
+          email: customer.emailAddress,
+          phone: customer.phoneNumber,
+          address: customer.address,
+          opportunities: customer.opportunities?.map((opp: any) => ({
+            id: opp.id,
+            quoteNumber: opp.quoteNumber,
+            status: opp.status,
+            statusText: getStatusText(opp.status),
+            jobs: opp.jobs?.map((job: any) => ({
+              id: job.id,
+              jobNumber: job.jobNumber,
+              serviceDate: job.serviceDate,
+              type: job.type
+            }))
+          }))
+        }))
+      },
+      
+      leadsResults: {
+        count: leadsRaw.length,
+        data: leadsRaw.map((lead: any) => ({
+          id: lead.id,
+          name: lead.name || `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
+          email: lead.emailAddress || lead.email,
+          phone: lead.phoneNumber || lead.phone,
+          address: lead.address,
+          createdDate: lead.createdDate,
+          moveDate: lead.moveDate || lead.serviceDates?.[0] || lead.requestedMoveDate
+        }))
+      },
+      
+      opportunitiesResults: {
+        count: opportunitiesRaw.length,
+        data: opportunitiesRaw.map((opp: any) => ({
+          id: opp.id,
+          customerId: opp.customerId,
+          quoteNumber: opp.quoteNumber,
+          status: opp.status,
+          statusText: getStatusText(opp.status),
+          moveDate: opp.moveDate,
+          serviceDate: opp.serviceDate
+        }))
+      },
+      
+      jobsResults: {
+        count: jobsRaw.length,
+        data: jobsRaw.map((job: any) => ({
+          id: job.id,
+          customerId: job.customerId,
+          opportunityId: job.opportunityId,
+          jobNumber: job.jobNumber,
+          serviceDate: job.serviceDate || job.moveDate,
+          type: job.type
+        }))
+      },
+      
+      // Legacy fields for backwards compatibility
+      customerCount: customersRaw.length,
+      leadsCount: leadsRaw.length,
+      opportunitiesCount: opportunitiesRaw.length,
+      jobsCount: jobsRaw.length,
+      unifiedRecordsCount: unifiedRecords.length,
       
       // Formatted data for backwards compatibility
-      customers: allRecords.customers.map((customer: any) => ({
+      customers: customersRaw.map((customer: any) => ({
         id: customer.id,
         name: customer.name,
         email: customer.emailAddress,
@@ -482,7 +551,7 @@ export async function POST(request: Request) {
         }))
       })),
       
-      leads: allRecords.leads.map((lead: any) => ({
+      leads: leadsRaw.map((lead: any) => ({
         id: lead.id,
         name: lead.name || `${lead.firstName || ''} ${lead.lastName || ''}`.trim(),
         email: lead.emailAddress || lead.email,
@@ -492,8 +561,7 @@ export async function POST(request: Request) {
         _raw: lead
       })),
       
-      // New structured data
-      opportunities: allRecords.opportunities.map((opp: any) => ({
+      opportunities: opportunitiesRaw.map((opp: any) => ({
         id: opp.id,
         customerId: opp.customerId,
         quoteNumber: opp.quoteNumber,
@@ -501,7 +569,7 @@ export async function POST(request: Request) {
         statusText: getStatusText(opp.status)
       })),
       
-      jobs: allRecords.jobs.map((job: any) => ({
+      jobs: jobsRaw.map((job: any) => ({
         id: job.id,
         customerId: job.customerId,
         opportunityId: job.opportunityId,
@@ -511,7 +579,7 @@ export async function POST(request: Request) {
       })),
       
       // Unified records with combined data
-      unifiedRecords: allRecords.unifiedRecords.map((record: any) => ({
+      unifiedRecords: unifiedRecords.map((record: any) => ({
         id: record.id,
         name: record.name,
         email: record.emailAddress || record.email,
@@ -539,7 +607,7 @@ export async function POST(request: Request) {
       })),
       
       // Analysis of opportunity statuses (backwards compatibility)
-      statusAnalysis: analyzeOpportunityStatuses(allRecords.customers)
+      statusAnalysis: analyzeOpportunityStatuses(customersRaw)
     });
   } catch (error) {
     console.error('Error testing SmartMoving connection:', error);

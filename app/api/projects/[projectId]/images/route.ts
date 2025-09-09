@@ -4,6 +4,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
+import { processImage, validateImageFile, validateFileSize } from '@/lib/imageProcessor';
 
 // GET /api/projects/:projectId/images - Get all images for a project
 export async function GET(
@@ -32,7 +33,7 @@ export async function GET(
     console.log('🖼️ Image gallery filter:', filter);
     
     const images = await Image.find(filter)
-      .select('name originalName mimeType size description analysisResult source metadata createdAt updatedAt')
+      .select('name originalName mimeType size description analysisResult processingStatus source metadata createdAt updatedAt')
       .sort({ createdAt: -1 });
     
     console.log(`🖼️ Found ${images.length} images for project ${projectId}`);
@@ -88,61 +89,78 @@ export async function POST(
       );
     }
 
-    // Enhanced file type validation for mobile browsers - accept anything that looks like an image
-    const isRegularImage = image.type.startsWith('image/');
-    const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?)$/i.test(image.name);
-    const isPotentialMobileImage = (image.type === '' || image.type === 'application/octet-stream' || image.type === 'text/plain') && hasImageExtension;
-    const isAnyImageType = isRegularImage || isPotentialMobileImage;
+    // Validate file type using centralized validator
+    const validation = validateImageFile(image);
+    if (!validation.isValid) {
+      return NextResponse.json(
+        { error: validation.error! },
+        { status: 400 }
+      );
+    }
+    
+    if (validation.isVideo) {
+      return NextResponse.json(
+        { error: 'Video files are not supported in project uploads. Please use image files only.' },
+        { status: 400 }
+      );
+    }
+
+    // Validate file size using centralized validator
+    const maxSize = parseInt(process.env.MAX_UPLOAD_SIZE || '52428800'); // 50MB default
+    const sizeValidation = validateFileSize(image, maxSize);
+    
+    if (!sizeValidation.isValid) {
+      return NextResponse.json(
+        { error: sizeValidation.error! },
+        { status: 400 }
+      );
+    }
     
     console.log('📱 File validation debug:', {
       fileName: image.name,
       mimeType: image.type || 'empty',
       size: image.size,
       sizeInMB: (image.size / (1024 * 1024)).toFixed(2) + 'MB',
-      isRegularImage,
-      hasImageExtension,
-      isPotentialMobileImage,
-      isAnyImageType,
+      isHeic: validation.isHeic,
       userAgent: request.headers.get('user-agent')?.substring(0, 100),
       contentLength: request.headers.get('content-length'),
       isIPhone: request.headers.get('user-agent')?.includes('iPhone') || false
     });
-    
-    if (!isAnyImageType) {
-      return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, or HEIF).' },
-        { status: 400 }
-      );
-    }
 
-    // Validate file size (50MB limit for high-quality images)
-    const maxSize = parseInt(process.env.MAX_UPLOAD_SIZE || '52428800'); // 50MB default
-    if (image.size > maxSize) {
-      const maxSizeMB = Math.round(maxSize / (1024 * 1024));
-      return NextResponse.json(
-        { error: `File size too large. Please upload an image smaller than ${maxSizeMB}MB.` },
-        { status: 400 }
-      );
-    }
-
-    // Convert image to buffer with iPhone-specific error handling
-    let buffer: Buffer;
+    // Process image using centralized processor
+    let processedImage;
     try {
-      console.log(`📱 Converting image to buffer: ${image.name} (${(image.size / (1024 * 1024)).toFixed(2)}MB)`);
-      const bytes = await image.arrayBuffer();
-      buffer = Buffer.from(bytes);
-      console.log(`✅ Buffer conversion successful: ${buffer.length} bytes`);
-    } catch (bufferError) {
-      console.error('❌ Buffer conversion failed:', bufferError);
+      processedImage = await processImage(image, {
+        maxSizeBytes: 14 * 1024 * 1024, // 14MB for MongoDB safety
+        targetQuality: 85, // Higher quality for project uploads
+        minQuality: 40,
+        allowHeicConversion: true
+      });
+      
+      console.log('✅ Image processing completed:', {
+        originalName: processedImage.originalName,
+        processedName: processedImage.processedName,
+        finalSize: processedImage.size,
+        finalSizeMB: (processedImage.size / (1024 * 1024)).toFixed(2) + 'MB',
+        mimeType: processedImage.mimeType,
+        heicConverted: processedImage.heicConverted,
+        compressionApplied: processedImage.compressionApplied,
+        qualityReduction: processedImage.qualityReduction
+      });
+      
+    } catch (processingError) {
+      console.error('❌ Image processing failed:', processingError);
+      const errorMsg = processingError instanceof Error ? processingError.message : 'Unknown processing error';
+      
       return NextResponse.json(
-        { error: 'Failed to process image. The file may be corrupted or too large for processing.' },
+        { error: `Image processing failed: ${errorMsg}` },
         { status: 400 }
       );
     }
 
     // Generate unique name
     const timestamp = Date.now();
-    const name = `${timestamp}-${image.name}`;
+    const name = `${timestamp}-${processedImage.processedName}`;
 
     // Parse analysis result if provided
     let parsedAnalysisResult;
@@ -154,54 +172,29 @@ export async function POST(
       }
     }
 
-    // Create the image document with normalized MIME type
-    let normalizedMimeType = image.type;
-    
-    // Fix common MIME type issues
-    if (!normalizedMimeType || normalizedMimeType === 'application/octet-stream' || normalizedMimeType === 'text/plain') {
-      // Guess MIME type from file extension
-      const ext = image.name.toLowerCase().split('.').pop();
-      switch (ext) {
-        case 'jpg':
-        case 'jpeg':
-          normalizedMimeType = 'image/jpeg';
-          break;
-        case 'png':
-          normalizedMimeType = 'image/png';
-          break;
-        case 'gif':
-          normalizedMimeType = 'image/gif';
-          break;
-        case 'webp':
-          normalizedMimeType = 'image/webp';
-          break;
-        case 'heic':
-          normalizedMimeType = 'image/heic';
-          break;
-        case 'heif':
-          normalizedMimeType = 'image/heif';
-          break;
-        default:
-          normalizedMimeType = 'image/jpeg'; // Default fallback
-      }
-      console.log(`📱 Normalized MIME type from ${image.type || 'empty'} to ${normalizedMimeType}`);
-    }
-
     const imageData: any = {
       name,
-      originalName: image.name,
-      mimeType: normalizedMimeType,
-      size: image.size,
-      data: buffer,
+      originalName: processedImage.originalName,
+      mimeType: processedImage.mimeType,
+      size: processedImage.size,
+      data: processedImage.buffer,
       projectId,
       userId,
       description: description || '',
+      processingStatus: parsedAnalysisResult ? 'completed' : 'uploaded', // If already analyzed, mark complete
+      source: 'direct_upload',
       analysisResult: parsedAnalysisResult ? {
         summary: parsedAnalysisResult.summary,
         itemsCount: parsedAnalysisResult.items?.length || 0,
         totalBoxes: parsedAnalysisResult.total_boxes ? 
-          Object.values(parsedAnalysisResult.total_boxes).reduce((a: number, b: unknown) => a + (typeof b === 'number' ? b : 0), 0) : 0
-      } : undefined
+          Object.values(parsedAnalysisResult.total_boxes).reduce((a: number, b: unknown) => a + (typeof b === 'number' ? b : 0), 0) : 0,
+        status: 'completed'
+      } : {
+        summary: 'Analysis pending...',
+        itemsCount: 0,
+        totalBoxes: 0,
+        status: 'pending'
+      }
     };
     
     // Only add organizationId if user is in an organization
@@ -253,7 +246,10 @@ export async function POST(
       description: imageDoc.description,
       analysisResult: imageDoc.analysisResult,
       createdAt: imageDoc.createdAt,
-      updatedAt: imageDoc.updatedAt
+      updatedAt: imageDoc.updatedAt,
+      message: "Photo uploaded successfully! We'll analyze it and update your inventory automatically. This typically takes 2-3 minutes.",
+      userMessage: "You can safely close this page - processing will continue in the background.",
+      estimatedProcessingTime: "2-3 minutes"
     };
 
     return NextResponse.json(responseData, { status: 201 });

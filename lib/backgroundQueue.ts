@@ -242,14 +242,26 @@ interface QueueItem {
         const imageBlob = new Blob([image.data], { type: image.mimeType });
         formData.append('image', imageBlob, image.originalName);
         
-        // Add metadata
-        formData.append('imageId', data.imageId);
-        formData.append('projectId', data.projectId);
-        formData.append('userId', data.userId);
+        // Add metadata - ensure IDs are strings, not objects
+        const imageIdString = typeof data.imageId === 'string' ? data.imageId : data.imageId.toString();
+        const projectIdString = typeof data.projectId === 'string' ? data.projectId : data.projectId.toString();
+        const userIdString = typeof data.userId === 'string' ? data.userId : data.userId.toString();
+        
+        console.log('🔍 Debug imageId type and value:', {
+          originalImageId: data.imageId,
+          imageIdType: typeof data.imageId,
+          imageIdString,
+          isObjectId: data.imageId?._id ? 'YES - FOUND THE BUG!' : 'No'
+        });
+        
+        formData.append('imageId', imageIdString);
+        formData.append('projectId', projectIdString);
+        formData.append('userId', userIdString);
         formData.append('jobType', jobType); // Distinguish video frames from regular images
         
         if (data.organizationId) {
-          formData.append('organizationId', data.organizationId);
+          const organizationIdString = typeof data.organizationId === 'string' ? data.organizationId : data.organizationId.toString();
+          formData.append('organizationId', organizationIdString);
         }
         
         // Video frame specific metadata

@@ -6,99 +6,11 @@ import CustomerUpload from '@/models/CustomerUpload';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
-import { backgroundQueue } from '@/lib/backgroundQueue';
-import sharp from 'sharp';
+import { persistentQueue } from '@/lib/persistentQueue';
 import { uploadVideo, uploadImage as uploadImageToCloudinary } from '@/lib/cloudinary';
+import { processImage, validateImageFile, validateFileSize, isVideoFile } from '@/lib/imageProcessor';
 
-// Helper function to detect video files server-side
-function isVideoFile(file: File): boolean {
-  const fileName = file.name.toLowerCase();
-  const mimeType = file.type.toLowerCase();
-  
-  const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
-  const hasVideoExtension = videoExtensions.some(ext => fileName.endsWith(ext));
-  const hasVideoMimeType = mimeType.startsWith('video/');
-  
-  return hasVideoExtension || hasVideoMimeType;
-}
-
-// Helper function to detect HEIC files server-side
-function isHeicFile(file: File): boolean {
-  const fileName = file.name.toLowerCase();
-  const mimeType = file.type.toLowerCase();
-  
-  return (
-    fileName.endsWith('.heic') || 
-    fileName.endsWith('.heif') ||
-    mimeType === 'image/heic' ||
-    mimeType === 'image/heif'
-  );
-}
-
-// Production-safe server-side HEIC handling
-async function convertHeicToJpeg(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string; originalName: string; convertedName: string }> {
-  console.log('🔧 Attempting server-side HEIC conversion...');
-  
-  // In production (Vercel), prioritize stability over server-side conversion
-  const isProduction = process.env.NODE_ENV === 'production';
-  
-  if (isProduction) {
-    console.log('🏭 Vercel production environment detected - skipping complex HEIC conversion');
-    throw new Error('HEIC files require client-side conversion in production. Please ensure your browser converted this file before upload, or try converting to JPEG using your device\'s photo app.');
-  }
-  
-  // Development environment - try full conversion
-  try {
-    console.log('📦 Attempting conversion with heic-convert...');
-    const convert = require('heic-convert');
-    
-    const convertedBuffer = await convert({
-      buffer: buffer,
-      format: 'JPEG',
-      quality: 0.8
-    });
-    
-    console.log('✅ Server-side heic-convert conversion successful');
-    return {
-      buffer: Buffer.from(convertedBuffer),
-      mimeType: 'image/jpeg',
-      originalName: 'original.heic',
-      convertedName: 'converted.jpg'
-    };
-    
-  } catch (heicConvertError) {
-    console.log('⚠️ heic-convert failed, trying Sharp...', heicConvertError);
-    
-    // Fallback to Sharp (may work if libheif is compiled)
-    try {
-      const convertedBuffer = await sharp(buffer)
-        .jpeg({ quality: 80 })
-        .toBuffer();
-      
-      console.log('✅ Server-side Sharp HEIC conversion successful');
-      return {
-        buffer: convertedBuffer,
-        mimeType: 'image/jpeg',
-        originalName: 'original.heic',
-        convertedName: 'converted.jpg'
-      };
-      
-    } catch (sharpError) {
-      console.log('❌ Both heic-convert and Sharp failed:', { heicConvertError, sharpError });
-      
-      // If both fail, provide comprehensive guidance
-      const errorDetails: string[] = [];
-      if (heicConvertError && typeof heicConvertError === 'object' && 'message' in heicConvertError && heicConvertError.message) {
-        errorDetails.push(`heic-convert: ${heicConvertError.message}`);
-      }
-      if (sharpError && typeof sharpError === 'object' && 'message' in sharpError && sharpError.message) {
-        errorDetails.push(`sharp: ${sharpError.message}`);
-      }
-      
-      throw new Error(`Server-side HEIC conversion failed. ${errorDetails.join('; ')}. Client-side conversion should handle this automatically.`);
-    }
-  }
-}
+// Helper functions are now imported from imageProcessor
 
 export async function POST(
   request: NextRequest,
@@ -168,59 +80,38 @@ export async function POST(
       );
     }
 
-    // Enhanced file type validation for mobile browsers - including video files
-    const isRegularImage = image.type.startsWith('image/');
-    const isVideo = isVideoFile(image);
-    const isHeic = isHeicFile(image);
-    const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(image.name);
-    const isPotentialMobileImage = (image.type === '' || image.type === 'application/octet-stream') && hasImageExtension;
+    // Validate file type using centralized validator
+    const validation = validateImageFile(image);
+    if (!validation.isValid) {
+      return NextResponse.json(
+        { error: validation.error! },
+        { status: 400 }
+      );
+    }
+
+    // Validate file size using centralized validator
+    const imageMaxSize = 15 * 1024 * 1024; // 15MB for images
+    const videoMaxSize = parseInt(process.env.MAX_VIDEO_UPLOAD_SIZE || '104857600'); // 100MB for videos
+    const sizeValidation = validateFileSize(image, imageMaxSize, videoMaxSize);
+    
+    if (!sizeValidation.isValid) {
+      return NextResponse.json(
+        { error: sizeValidation.error! },
+        { status: 400 }
+      );
+    }
     
     console.log('📱 Customer upload file validation:', {
       fileName: image.name,
       mimeType: image.type || 'empty',
       size: image.size,
-      isRegularImage,
-      isVideo,
-      isHeic,
-      hasImageExtension,
-      isPotentialMobileImage,
+      isVideo: validation.isVideo,
+      isHeic: validation.isHeic,
       userAgent: request.headers.get('user-agent')?.substring(0, 100)
     });
-    
-    if (!isRegularImage && !isVideo && !isHeic && !isPotentialMobileImage) {
-      return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM).' },
-        { status: 400 }
-      );
-    }
-
-    // MongoDB document size limit is 16MB, so we need stricter limits
-    const mongoDBLimit = 16 * 1024 * 1024; // 16MB MongoDB limit
-    const imageMaxSize = 15 * 1024 * 1024; // 15MB for images (leaving buffer for metadata)
-    const videoMaxSize = parseInt(process.env.MAX_VIDEO_UPLOAD_SIZE || '104857600'); // 100MB for videos (stored separately)
-    const maxSize = isVideo ? videoMaxSize : imageMaxSize;
-    
-    console.log('📄 File size validation:', {
-      fileName: image.name,
-      fileSize: image.size,
-      fileSizeMB: (image.size / (1024 * 1024)).toFixed(2) + 'MB',
-      isVideo,
-      maxSize,
-      maxSizeMB: (maxSize / (1024 * 1024)).toFixed(2) + 'MB',
-      mongoDBLimit: (mongoDBLimit / (1024 * 1024)).toFixed(2) + 'MB'
-    });
-    
-    if (image.size > maxSize) {
-      const maxSizeMB = Math.round(maxSize / (1024 * 1024));
-      const fileType = isVideo ? 'video' : 'image';
-      return NextResponse.json(
-        { error: `File size too large. Please upload a ${fileType} smaller than ${maxSizeMB}MB. Your file is ${(image.size / (1024 * 1024)).toFixed(2)}MB.` },
-        { status: 400 }
-      );
-    }
 
     // Handle video files - upload to Cloudinary and save metadata
-    if (isVideo) {
+    if (validation.isVideo) {
       console.log('🎬 Processing video file for customer upload:', image.name);
       
       const videoBuffer = Buffer.from(await image.arrayBuffer());
@@ -325,95 +216,36 @@ export async function POST(
       });
     }
 
-    // Process image (handle HEIC if needed)
-    const bytes = await image.arrayBuffer();
-    let buffer = Buffer.from(bytes);
-    let mimeType = image.type;
-    
-    console.log('🖼️ Original image details:', {
-      fileName: image.name,
-      originalSize: buffer.length,
-      originalSizeMB: (buffer.length / (1024 * 1024)).toFixed(2) + 'MB',
-      mimeType
-    });
-
-    // For HEIC files, attempt server-side handling as fallback
-    if (isHeic) {
-      try {
-        const converted = await convertHeicToJpeg(buffer);
-        buffer = Buffer.from(converted.buffer);
-        mimeType = converted.mimeType;
-        console.log('✅ Server-side HEIC conversion successful');
-      } catch (conversionError) {
-        console.error('❌ Server HEIC conversion failed:', conversionError);
-        
-        // Extract meaningful error message
-        const errorMsg = conversionError instanceof Error ? conversionError.message : 'Unknown conversion error';
-        
-        return NextResponse.json(
-          { error: `HEIC processing failed: ${errorMsg}` },
-          { status: 400 }
-        );
-      }
-    }
-    
-    // Compress image if it's too large for MongoDB
-    const mongoDBSafeSize = 14 * 1024 * 1024; // 14MB to be safe
-    if (buffer.length > mongoDBSafeSize) {
-      console.log('📋 Image too large, compressing...', {
-        originalSize: buffer.length,
-        originalSizeMB: (buffer.length / (1024 * 1024)).toFixed(2) + 'MB',
-        target: 'Under ' + (mongoDBSafeSize / (1024 * 1024)).toFixed(2) + 'MB'
+    // Process image using centralized processor
+    let processedImage;
+    try {
+      processedImage = await processImage(image, {
+        maxSizeBytes: 14 * 1024 * 1024, // 14MB for MongoDB safety
+        targetQuality: 80,
+        minQuality: 30,
+        allowHeicConversion: true
       });
       
-      try {
-        // Use Sharp to compress the image
-        let quality = 80;
-        let compressed = await sharp(buffer)
-          .jpeg({ quality, mozjpeg: true })
-          .toBuffer();
-        
-        // If still too large, reduce quality further
-        while (compressed.length > mongoDBSafeSize && quality > 30) {
-          quality -= 10;
-          compressed = await sharp(buffer)
-            .jpeg({ quality, mozjpeg: true })
-            .toBuffer();
-          console.log(`📋 Trying quality ${quality}, size: ${(compressed.length / (1024 * 1024)).toFixed(2)}MB`);
-        }
-        
-        if (compressed.length <= mongoDBSafeSize) {
-          buffer = Buffer.from(compressed);
-          mimeType = 'image/jpeg';
-          const reductionPercent = ((1 - compressed.length / buffer.length) * 100).toFixed(1);
-          console.log(`✅ Image compressed successfully: ${(compressed.length / (1024 * 1024)).toFixed(2)}MB (${reductionPercent}% reduction)`);
-        } else {
-          return NextResponse.json(
-            { error: `Image file is too large to process. Even after compression, the file exceeds our 14MB limit. Please resize the image and try again.` },
-            { status: 400 }
-          );
-        }
-      } catch (compressionError) {
-        console.error('❌ Image compression failed:', compressionError);
-        return NextResponse.json(
-          { error: `Image file is too large (${(buffer.length / (1024 * 1024)).toFixed(2)}MB) and compression failed. Please resize the image to under 14MB and try again.` },
-          { status: 400 }
-        );
-      }
+      console.log('✅ Image processing completed:', {
+        originalName: processedImage.originalName,
+        processedName: processedImage.processedName,
+        finalSize: processedImage.size,
+        finalSizeMB: (processedImage.size / (1024 * 1024)).toFixed(2) + 'MB',
+        mimeType: processedImage.mimeType,
+        heicConverted: processedImage.heicConverted,
+        compressionApplied: processedImage.compressionApplied,
+        qualityReduction: processedImage.qualityReduction
+      });
+      
+    } catch (processingError) {
+      console.error('❌ Image processing failed:', processingError);
+      const errorMsg = processingError instanceof Error ? processingError.message : 'Unknown processing error';
+      
+      return NextResponse.json(
+        { error: `Image processing failed: ${errorMsg}` },
+        { status: 400 }
+      );
     }
-
-    const processedImage = {
-      name: image.name,
-      type: mimeType,
-      size: buffer.length
-    };
-    
-    console.log('🖼️ Final processed image:', {
-      fileName: processedImage.name,
-      finalSize: processedImage.size,
-      finalSizeMB: (processedImage.size / (1024 * 1024)).toFixed(2) + 'MB',
-      finalMimeType: processedImage.type
-    });
 
     // Generate unique name
     const timestamp = Date.now();
@@ -423,22 +255,26 @@ export async function POST(
 
     console.log('💾 Creating image document...');
 
-    // Create the image document
+    // Create the image document with proper status tracking
     const imageDoc = await Image.create({
       name,
-      originalName: image.name, // Keep original name for reference
-      mimeType: processedImage.type,
+      originalName: processedImage.originalName,
+      mimeType: processedImage.mimeType,
       size: processedImage.size,
-      data: buffer,
+      data: processedImage.buffer,
       projectId,
       userId,
       organizationId,
       description: `Image uploaded by ${customerName}`,
-      // Initialize with pending analysis status
+      processingStatus: 'uploaded', // Set initial status
+      source: 'customer_upload',
+      uploadToken: token,
+      // Initialize with pending analysis status (for backward compatibility)
       analysisResult: {
         summary: 'Analysis pending...',
         itemsCount: 0,
-        totalBoxes: 0
+        totalBoxes: 0,
+        status: 'pending'
       }
     });
 
@@ -449,16 +285,18 @@ export async function POST(
       updatedAt: new Date() 
     });
 
-    // Queue background analysis (truly asynchronous)
+    // Queue background analysis using persistent queue
     console.log('🚀 Queueing background analysis...');
     
     let jobId = 'manual-fallback';
     try {
-      jobId = backgroundQueue.enqueue('image_analysis', {
+      jobId = await persistentQueue.enqueue('image_analysis', {
         imageId: imageDoc._id.toString(),
         projectId: projectId.toString(),
         userId: userId,
-        organizationId: organizationId
+        organizationId: organizationId,
+        estimatedSize: buffer.length,
+        source: 'customer_upload'
       });
       console.log(`✅ Analysis job queued: ${jobId}`);
     } catch (queueError) {

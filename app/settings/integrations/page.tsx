@@ -273,15 +273,105 @@ export default function IntegrationsPage() {
                           {testResults.error ? (
                             <p className="text-sm text-red-600">Error: {testResults.error}</p>
                           ) : (
-                            <div className="space-y-4">
+                            <div className="space-y-6">
                               <p className="text-sm text-green-600">✓ Successfully connected to SmartMoving API</p>
+                              
+                              {/* Individual API Method Results */}
+                              <div className="space-y-4">
+                                {/* getAllCustomers Results */}
+                                {testResults.customerResults && (
+                                  <div className="border border-blue-200 rounded-lg p-4 bg-blue-50">
+                                    <h4 className="font-medium text-blue-900 mb-2">getAllCustomers()</h4>
+                                    <p className="text-sm text-blue-700 mb-2">Found {testResults.customerResults.count} customers</p>
+                                    {testResults.customerResults.count > 0 && (
+                                      <details>
+                                        <summary className="cursor-pointer text-sm font-medium text-blue-800 hover:text-blue-900">
+                                          View All Customer Records & Raw JSON ({testResults.customerResults.count} records)
+                                        </summary>
+                                        <div className="mt-2 p-3 bg-white rounded-md overflow-auto max-h-96 border">
+                                          <pre className="text-xs text-gray-800 whitespace-pre-wrap">
+                                            {JSON.stringify(testResults.customerResults, null, 2)}
+                                          </pre>
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* getAllLeads Results */}
+                                {testResults.leadsResults && (
+                                  <div className="border border-purple-200 rounded-lg p-4 bg-purple-50">
+                                    <h4 className="font-medium text-purple-900 mb-2">getAllLeads()</h4>
+                                    <p className="text-sm text-purple-700 mb-2">Found {testResults.leadsResults.count} leads</p>
+                                    {testResults.leadsResults.count > 0 && (
+                                      <details>
+                                        <summary className="cursor-pointer text-sm font-medium text-purple-800 hover:text-purple-900">
+                                          View All Lead Records & Raw JSON ({testResults.leadsResults.count} records)
+                                        </summary>
+                                        <div className="mt-2 p-3 bg-white rounded-md overflow-auto max-h-96 border">
+                                          <pre className="text-xs text-gray-800 whitespace-pre-wrap">
+                                            {JSON.stringify(testResults.leadsResults, null, 2)}
+                                          </pre>
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* getAllOpportunities Results */}
+                                {testResults.opportunitiesResults && (
+                                  <div className="border border-orange-200 rounded-lg p-4 bg-orange-50">
+                                    <h4 className="font-medium text-orange-900 mb-2">getAllOpportunities()</h4>
+                                    <p className="text-sm text-orange-700 mb-2">Found {testResults.opportunitiesResults.count} opportunities</p>
+                                    {testResults.opportunitiesResults.count > 0 && (
+                                      <details>
+                                        <summary className="cursor-pointer text-sm font-medium text-orange-800 hover:text-orange-900">
+                                          View All Opportunity Records & Raw JSON ({testResults.opportunitiesResults.count} records)
+                                        </summary>
+                                        <div className="mt-2 p-3 bg-white rounded-md overflow-auto max-h-96 border">
+                                          <pre className="text-xs text-gray-800 whitespace-pre-wrap">
+                                            {JSON.stringify(testResults.opportunitiesResults, null, 2)}
+                                          </pre>
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* getAllJobs Results */}
+                                {testResults.jobsResults && (
+                                  <div className="border border-green-200 rounded-lg p-4 bg-green-50">
+                                    <h4 className="font-medium text-green-900 mb-2">getAllJobs()</h4>
+                                    <p className="text-sm text-green-700 mb-2">Found {testResults.jobsResults.count} jobs</p>
+                                    {testResults.jobsResults.count > 0 && (
+                                      <details>
+                                        <summary className="cursor-pointer text-sm font-medium text-green-800 hover:text-green-900">
+                                          View All Job Records & Raw JSON ({testResults.jobsResults.count} records)
+                                        </summary>
+                                        <div className="mt-2 p-3 bg-white rounded-md overflow-auto max-h-96 border">
+                                          <pre className="text-xs text-gray-800 whitespace-pre-wrap">
+                                            {JSON.stringify(testResults.jobsResults, null, 2)}
+                                          </pre>
+                                        </div>
+                                      </details>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Summary */}
                               {testResults.customerCount !== undefined && (
-                                <div className="text-sm text-gray-600 space-y-1">
-                                  <p>Found {testResults.customerCount} customers with future dates</p>
-                                  <p>Found {testResults.leadsCount} leads</p>
-                                  <p>Found {testResults.opportunitiesCount} opportunities</p>
-                                  <p>Found {testResults.jobsCount} jobs</p>
-                                  <p>Found {testResults.unifiedRecordsCount} unified records</p>
+                                <div className="bg-gray-100 rounded-lg p-4">
+                                  <h4 className="font-medium text-gray-900 mb-2">Summary</h4>
+                                  <div className="text-sm text-gray-700 grid grid-cols-2 gap-2">
+                                    <div>Total Customers: {testResults.customerCount}</div>
+                                    <div>Total Leads: {testResults.leadsCount}</div>
+                                    <div>Total Opportunities: {testResults.opportunitiesCount}</div>
+                                    <div>Total Jobs: {testResults.jobsCount}</div>
+                                  </div>
+                                  <div className="text-sm text-gray-700 mt-2">
+                                    <div>Unified Records: {testResults.unifiedRecordsCount}</div>
+                                  </div>
                                 </div>
                               )}
                               

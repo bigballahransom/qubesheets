@@ -9,7 +9,12 @@ export async function POST(request: NextRequest) {
   try {
     // Verify webhook source
     const webhookSource = request.headers.get('x-webhook-source');
-    if (webhookSource !== 'railway-image-service') {
+    const validSources = ['railway-image-service', 'persistent-queue'];
+    
+    console.log(`🔔 Processing webhook from source: ${webhookSource}`);
+    
+    if (!webhookSource || !validSources.includes(webhookSource)) {
+      console.warn(`⚠️ Invalid webhook source: ${webhookSource}. Valid sources: ${validSources.join(', ')}`);
       return NextResponse.json({ error: 'Invalid webhook source' }, { status: 401 });
     }
 

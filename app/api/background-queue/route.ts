@@ -1,7 +1,7 @@
 // app/api/background-queue/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/auth-helpers';
-import { backgroundQueue } from '@/lib/backgroundQueue';
+import { persistentQueue } from '@/lib/persistentQueue';
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,13 +18,15 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json();
-    const { type, imageId, projectId, useRailwayService, estimatedSize } = body;
+    const { type, imageId, projectId, useRailwayService, estimatedSize, source } = body;
 
     console.log('📋 Queue job request:', {
       type,
       imageId,
       projectId,
       useRailwayService,
+      estimatedSize,
+      source,
       userId
     });
 
@@ -35,21 +37,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Queue the background job with estimated size for smart prioritization
-    const jobId = backgroundQueue.enqueue(type, {
+    // Queue the job in persistent database-backed queue
+    const jobId = await persistentQueue.enqueue(type, {
       imageId,
       projectId,
       userId,
       organizationId,
+      estimatedSize,
+      source,
       useRailwayService
-    }, 0, estimatedSize);
+    });
 
     console.log('✅ Background job queued:', jobId);
 
     return NextResponse.json({
       success: true,
       jobId,
-      message: 'Background job queued successfully'
+      message: 'Analysis started successfully! Your inventory will be updated automatically.',
+      userMessage: 'Processing typically takes 2-3 minutes. You can leave this page - we\'ll save the results to your project.',
+      estimatedTime: '2-3 minutes',
+      status: 'queued'
     });
 
   } catch (error) {
@@ -75,8 +82,8 @@ export async function GET(request: NextRequest) {
       return authContext;
     }
 
-    // Get queue status
-    const status = backgroundQueue.getStatus();
+    // Get queue status from persistent queue
+    const status = await persistentQueue.getStatus();
     
     console.log('📊 Queue status:', status);
 
