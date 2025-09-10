@@ -231,6 +231,15 @@ function useAdvancedCameraSwitching() {
 }
 
 // Helper functions
+async function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function extractFrameFromRemoteTrack(track) {
   try {
     const videoElement = document.createElement('video');
@@ -814,28 +823,40 @@ const AgentView = React.memo(({
 
       const savedImage = await response.json();
       
-      // STEP 2: Queue for background analysis via Railway system
-      const queueResponse = await fetch('/api/background-queue', {
+      // STEP 2: Upload raw file to S3 and queue for SQS analysis
+      const s3FormData = new FormData();
+      s3FormData.append('file', frameBlob, `video-capture-${currentRoom}-${Date.now()}.jpg`);
+      s3FormData.append('projectId', projectId);
+      s3FormData.append('fileIndex', '0');
+
+      const s3Response = await fetch('/api/upload-to-s3', {
+        method: 'POST',
+        body: s3FormData,
+      });
+
+      if (!s3Response.ok) {
+        console.warn('S3 upload failed, but continuing with analysis');
+        // Continue even if S3 fails - we have the image in MongoDB
+      }
+
+      // STEP 3: Queue image for analysis using SQS directly
+      const sqsResponse = await fetch('/api/projects/' + projectId + '/save-image-metadata', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          type: 'image_analysis',
-          imageId: savedImage._id,
-          projectId: projectId,
-          useRailwayService: true,
-          priority: 'high', // Video captures get high priority
-          source: 'video_call',
-          metadata: {
-            room: currentRoom,
-            capturedAt: new Date().toISOString(),
-            participantCount: remoteParticipants.length + 1
-          }
+          fileName: `video-capture-${currentRoom}-${Date.now()}.jpg`,
+          fileSize: frameBlob.size,
+          fileType: 'image/jpeg',
+          cloudinaryResult: null,
+          userName: 'Video Call Agent',
+          imageBuffer: await blobToBase64(frameBlob),
+          s3RawFile: s3Response.ok ? (await s3Response.json()).s3Result : null
         }),
       });
 
-      if (!queueResponse.ok) {
+      if (!sqsResponse.ok) {
         throw new Error('Failed to queue image for analysis');
       }
 
