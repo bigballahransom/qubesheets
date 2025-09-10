@@ -53,6 +53,7 @@ import {
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
 import Logo from '../../public/logo';
+import { Button } from '../ui/button';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
@@ -987,6 +988,13 @@ const AgentView = React.memo(({
               <p className="text-white/80 leading-relaxed">
                 Share the video call link with your customer to begin the AI-powered inventory session.
               </p>
+              <Button 
+                onClick={() => window.location.href = `/projects/${projectId}`}
+                className="mt-6 px-6 py-3 bg-white/20 hover:bg-white/30 text-white border border-white/30 rounded-2xl font-medium transition-all duration-300 flex items-center gap-2 mx-auto"
+              >
+                <Home size={18} />
+                Return to Project
+              </Button>
               <div className="mt-6 flex items-center justify-center gap-2">
                 <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
                 <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>

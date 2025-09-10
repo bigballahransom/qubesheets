@@ -431,22 +431,6 @@ useEffect(() => {
     // This will trigger the useEffect to call onColumnsChange
   }, [columns]);
   
-  // Handle row selection
-  const handleRowSelect = useCallback((rowId, event) => {
-    if (event.shiftKey) {
-      // Add to selection
-      setSelectedRows(prev => {
-        if (prev.includes(rowId)) {
-          return prev.filter(id => id !== rowId);
-        } else {
-          return [...prev, rowId];
-        }
-      });
-    } else {
-      // Set as only selection
-      setSelectedRows([rowId]);
-    }
-  }, []);
   
   // Handle column drag
   const handleColumnDragStart = useCallback((columnId) => {
@@ -717,10 +701,10 @@ useEffect(() => {
             <input 
               type="checkbox" 
               className="w-4 h-4"
-              checked={selectedRows.length > 0 && selectedRows.length === rows.length}
+              checked={selectedRows.length > 0 && selectedRows.length === filteredRows.length}
               onChange={(e) => {
                 if (e.target.checked) {
-                  setSelectedRows(rows.map(row => row.id));
+                  setSelectedRows(filteredRows.map(row => row.id));
                 } else {
                   setSelectedRows([]);
                 }
@@ -810,7 +794,6 @@ useEffect(() => {
               {/* Row number */}
               <div 
                 className="w-8 min-w-[32px] border-r border-b flex items-center justify-center cursor-pointer"
-                onClick={(e) => !row.isAnalyzing && handleRowSelect(row.id, e)}
               >
                 {row.isAnalyzing ? (
                   <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
@@ -820,12 +803,57 @@ useEffect(() => {
                     className="w-4 h-4"
                     checked={selectedRows.includes(row.id)}
                     onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedRows(prev => [...prev, row.id]);
+                      e.stopPropagation(); // Prevent event bubbling
+                      
+                      console.log(`📋 Row selection changed for row ${row.id}:`, {
+                        checked: e.target.checked,
+                        shiftKey: e.shiftKey,
+                        currentSelectedRows: selectedRows,
+                        rowData: { 
+                          id: row.id, 
+                          inventoryItemId: row.inventoryItemId,
+                          item: row.cells?.col2 
+                        }
+                      });
+                      
+                      if (e.shiftKey && selectedRows.length > 0) {
+                        // Range selection with Shift key (only within filtered rows)
+                        const filteredRowIds = filteredRows.map(r => r.id);
+                        const currentIndex = filteredRowIds.indexOf(row.id);
+                        const lastSelectedId = selectedRows[selectedRows.length - 1];
+                        const lastSelectedIndex = filteredRowIds.indexOf(lastSelectedId);
+                        
+                        // Only proceed if the last selected row is visible in filtered results
+                        if (lastSelectedIndex !== -1) {
+                          const startIndex = Math.min(currentIndex, lastSelectedIndex);
+                          const endIndex = Math.max(currentIndex, lastSelectedIndex);
+                          const rangeIds = filteredRowIds.slice(startIndex, endIndex + 1);
+                          
+                          setSelectedRows(prev => {
+                            const newSelection = [...new Set([...prev, ...rangeIds])];
+                            console.log(`📋 Range selection result:`, newSelection);
+                            return newSelection;
+                          });
+                        } else {
+                          // If last selected row is not visible, just select this row
+                          setSelectedRows([row.id]);
+                          console.log(`📋 Last selected row not visible in filter, selecting only current row:`, [row.id]);
+                        }
+                      } else if (e.target.checked) {
+                        setSelectedRows(prev => {
+                          const newSelection = [...prev, row.id];
+                          console.log(`📋 Added row to selection:`, newSelection);
+                          return newSelection;
+                        });
                       } else {
-                        setSelectedRows(prev => prev.filter(id => id !== row.id));
+                        setSelectedRows(prev => {
+                          const newSelection = prev.filter(id => id !== row.id);
+                          console.log(`📋 Removed row from selection:`, newSelection);
+                          return newSelection;
+                        });
                       }
                     }}
+                    onClick={(e) => e.stopPropagation()} // Prevent container click
                   />
                 )}
               </div>
@@ -912,25 +940,64 @@ useEffect(() => {
       {selectedRows.length > 0 && (
         <div className="fixed bottom-4 left-4 bg-white rounded-md shadow-md p-2 z-20">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{selectedRows.length} row{selectedRows.length > 1 ? 's' : ''} selected</span>
+            <span className="text-sm font-medium">
+              {selectedRows.length} row{selectedRows.length > 1 ? 's' : ''} selected
+              {/* Debug info */}
+              <span className="text-xs text-gray-500 ml-1">
+                (IDs: {selectedRows.slice(0, 3).join(', ')}{selectedRows.length > 3 ? '...' : ''})
+              </span>
+            </span>
             <button 
               className="p-1 px-2 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-sm cursor-pointer transition-colors"
-              onClick={() => {
-                // Find all rows being deleted
-                const rowsToDelete = rows.filter(row => selectedRows.includes(row.id));
-                
-                // Call onDeleteInventoryItem for each row that has an inventoryItemId
-                rowsToDelete.forEach(row => {
-                  if (row.inventoryItemId) {
-                    onDeleteInventoryItem(row.inventoryItemId);
+              onClick={async () => {
+                try {
+                  // Find all rows being deleted
+                  const rowsToDelete = rows.filter(row => selectedRows.includes(row.id));
+                  
+                  console.log(`🗑️ Bulk deleting ${rowsToDelete.length} rows:`, rowsToDelete.map(r => ({ 
+                    id: r.id, 
+                    inventoryItemId: r.inventoryItemId,
+                    item: r.cells?.col2 
+                  })));
+                  
+                  // Call onDeleteInventoryItem for each row that has an inventoryItemId
+                  const inventoryDeletions = rowsToDelete
+                    .filter(row => row.inventoryItemId)
+                    .map(row => row.inventoryItemId);
+                  
+                  console.log(`📝 ${inventoryDeletions.length} rows have inventory items to delete`);
+                  console.log(`📝 ${rowsToDelete.length - inventoryDeletions.length} rows are manual entries (no inventory items)`);
+                  
+                  // Delete inventory items asynchronously
+                  if (inventoryDeletions.length > 0) {
+                    inventoryDeletions.forEach(inventoryItemId => {
+                      onDeleteInventoryItem(inventoryItemId);
+                    });
                   }
-                });
-                
-                // Remove the rows from the UI
-                setRows(prev => prev.filter(row => !selectedRows.includes(row.id)));
-                setSelectedRows([]);
-                setRowCount(`${rows.length - selectedRows.length}/${rows.length - selectedRows.length} rows`);
-                setSaveStatus('saving');
+                  
+                  // Remove the rows from the UI immediately for better UX
+                  const newRows = rows.filter(row => !selectedRows.includes(row.id));
+                  setRows(newRows);
+                  setSelectedRows([]);
+                  setRowCount(`${newRows.length}/${newRows.length} rows`);
+                  setSaveStatus('saving');
+                  
+                  // Call onRowsChange to save the updated data
+                  onRowsChange(newRows);
+                  
+                  console.log(`✅ Successfully removed ${rowsToDelete.length} rows from spreadsheet`);
+                } catch (error) {
+                  console.error('❌ Error during bulk deletion:', error);
+                  // Even if there's an error with inventory deletion, we should still remove from UI
+                  const newRows = rows.filter(row => !selectedRows.includes(row.id));
+                  setRows(newRows);
+                  setSelectedRows([]);
+                  setRowCount(`${newRows.length}/${newRows.length} rows`);
+                  setSaveStatus('error');
+                  
+                  // Call onRowsChange to save the updated data even if inventory deletion failed
+                  onRowsChange(newRows);
+                }
               }}
             >
               Delete

@@ -704,11 +704,14 @@ useEffect(() => {
       
       console.log('✅ Inventory item deleted successfully');
       
-      // Refresh inventory items to update the UI
+      // Refresh inventory items to update the UI and stats
       const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
       if (itemsResponse.ok) {
         const updatedItems = await itemsResponse.json();
-        setItems(updatedItems);
+        console.log(`📊 Refreshing inventory stats: ${inventoryItems.length} -> ${updatedItems.length} items`);
+        setInventoryItems(updatedItems);
+      } else {
+        console.error('❌ Failed to refresh inventory items after deletion');
       }
       
     } catch (error) {

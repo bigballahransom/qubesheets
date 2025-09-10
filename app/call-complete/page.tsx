@@ -30,13 +30,13 @@ export default function CallCompletePage() {
             </p>
           </div>
           
-          <button
+          {/* <button
             onClick={() => window.close()}
             className="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 px-6 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
           >
             <Home size={18} />
             Close Window
-          </button>
+          </button> */}
         </div>
       </div>
     </div>
