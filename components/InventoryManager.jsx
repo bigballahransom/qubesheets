@@ -540,10 +540,12 @@ useEffect(() => {
         name: item.name,
         quantity: item.quantity,
         cuft: item.cuft,
-        weight: item.weight
+        weight: item.weight,
+        inventoryItemId: item._id
       });
       return {
         id: generateId(),
+        inventoryItemId: item._id, // Preserve inventory item ID for deletion
         cells: {
           col1: item.location || '',
           col2: item.name || '',
@@ -684,6 +686,36 @@ useEffect(() => {
     setSavingStatus('saving');
     debouncedSave(currentProject._id, newColumns, spreadsheetRows);
   }, [currentProject, spreadsheetRows, debouncedSave]);
+
+  // Handle deleting inventory items when spreadsheet rows are deleted
+  const handleDeleteInventoryItem = useCallback(async (inventoryItemId) => {
+    if (!inventoryItemId || !currentProject) return;
+    
+    try {
+      console.log('🗑️ Deleting inventory item:', inventoryItemId);
+      
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'DELETE'
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete inventory item');
+      }
+      
+      console.log('✅ Inventory item deleted successfully');
+      
+      // Refresh inventory items to update the UI
+      const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
+      if (itemsResponse.ok) {
+        const updatedItems = await itemsResponse.json();
+        setItems(updatedItems);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error deleting inventory item:', error);
+      // Don't show error to user, just log it - the row will still be removed from spreadsheet
+    }
+  }, [currentProject]);
   
   // Calculate stats
   const totalItems = inventoryItems.length;
@@ -989,6 +1021,7 @@ const ProcessingNotification = () => {
                       initialColumns={spreadsheetColumns}
                       onRowsChange={handleSpreadsheetRowsChange}
                       onColumnsChange={handleSpreadsheetColumnsChange}
+                      onDeleteInventoryItem={handleDeleteInventoryItem}
                     />
                   )}
                 </div>

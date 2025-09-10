@@ -809,8 +809,8 @@ export default function CustomerUploadPage() {
             </div>
             
             <div className="p-6">
-              <div className="grid gap-3 mb-6">
-                {uploadedImages.map((image) => (
+              {/* <div className="grid gap-3 mb-6"> */}
+                {/* {uploadedImages.map((image) => (
                   <div key={image.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
                     <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
                       <ImageIcon className="w-6 h-6 text-green-600" />
@@ -824,7 +824,7 @@ export default function CustomerUploadPage() {
                     <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
                   </div>
                 ))}
-              </div>
+              </div> */}
               
               {/* What's Next Section */}
               <div className="bg-blue-50 rounded-xl p-6 border border-blue-200">

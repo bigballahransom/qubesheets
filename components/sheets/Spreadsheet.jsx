@@ -18,7 +18,8 @@ export default function Spreadsheet({
   initialRows = [], 
   initialColumns = [],
   onRowsChange = () => {},
-  onColumnsChange = () => {} 
+  onColumnsChange = () => {},
+  onDeleteInventoryItem = () => {}
 }) {
   // State for spreadsheet data
   const [columns, setColumns] = useState(
@@ -395,6 +396,14 @@ useEffect(() => {
   const handleRemoveRow = useCallback((rowId) => {
     if (rows.length <= 1) return; // Keep at least one row
     
+    // Find the row being deleted
+    const rowToDelete = rows.find(row => row.id === rowId);
+    
+    // If the row has an inventoryItemId, call the delete callback
+    if (rowToDelete && rowToDelete.inventoryItemId) {
+      onDeleteInventoryItem(rowToDelete.inventoryItemId);
+    }
+    
     const updatedRows = rows.filter(row => row.id !== rowId);
     setRows(updatedRows);
     
@@ -408,7 +417,7 @@ useEffect(() => {
     
     setSaveStatus('saving');
     // This will trigger the useEffect to call onRowsChange
-  }, [rows, selectedRows]);
+  }, [rows, selectedRows, onDeleteInventoryItem]);
   
   // Handle column renaming
   const handleRenameColumn = useCallback((columnId, newName) => {
@@ -907,6 +916,17 @@ useEffect(() => {
             <button 
               className="p-1 px-2 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-sm cursor-pointer transition-colors"
               onClick={() => {
+                // Find all rows being deleted
+                const rowsToDelete = rows.filter(row => selectedRows.includes(row.id));
+                
+                // Call onDeleteInventoryItem for each row that has an inventoryItemId
+                rowsToDelete.forEach(row => {
+                  if (row.inventoryItemId) {
+                    onDeleteInventoryItem(row.inventoryItemId);
+                  }
+                });
+                
+                // Remove the rows from the UI
                 setRows(prev => prev.filter(row => !selectedRows.includes(row.id)));
                 setSelectedRows([]);
                 setRowCount(`${rows.length - selectedRows.length}/${rows.length - selectedRows.length} rows`);
