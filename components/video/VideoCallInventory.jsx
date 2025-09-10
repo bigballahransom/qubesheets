@@ -805,25 +805,7 @@ const AgentView = React.memo(({
         throw new Error('Failed to capture video frame');
       }
 
-      // STEP 1: Save the captured frame as an Image record first (Railway system)
-      const formData = new FormData();
-      formData.append('image', frameBlob, `video-capture-${currentRoom}-${Date.now()}.jpg`);
-      formData.append('projectId', projectId);
-      formData.append('source', 'video_call');
-      formData.append('location', currentRoom);
-
-      const response = await fetch('/api/projects/' + projectId + '/images', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save captured frame');
-      }
-
-      const savedImage = await response.json();
-      
-      // STEP 2: Upload raw file to S3 and queue for SQS analysis
+      // STEP 1: Upload raw file to S3 for backup
       const s3FormData = new FormData();
       s3FormData.append('file', frameBlob, `video-capture-${currentRoom}-${Date.now()}.jpg`);
       s3FormData.append('projectId', projectId);
@@ -839,7 +821,7 @@ const AgentView = React.memo(({
         // Continue even if S3 fails - we have the image in MongoDB
       }
 
-      // STEP 3: Queue image for analysis using SQS directly
+      // STEP 2: Save image and queue for analysis using SQS
       const sqsResponse = await fetch('/api/projects/' + projectId + '/save-image-metadata', {
         method: 'POST',
         headers: {
@@ -857,8 +839,11 @@ const AgentView = React.memo(({
       });
 
       if (!sqsResponse.ok) {
-        throw new Error('Failed to queue image for analysis');
+        throw new Error('Failed to save and queue image for analysis');
       }
+
+      const savedImageResult = await sqsResponse.json();
+      console.log(`✅ Video capture saved and queued: ${savedImageResult.imageId}`);
 
       setCaptureCount(prev => prev + 1);
       toast.success(`📸 Frame captured from ${currentRoom}! Processing with AI...`);
@@ -866,7 +851,7 @@ const AgentView = React.memo(({
       // Refresh captured images list immediately
       fetchCapturedImages();
       
-      // STEP 3: The SSE connection (if active) will handle real-time updates when analysis completes
+      // The SSE connection will handle real-time updates when analysis completes
 
     } catch (error) {
       console.error('Screenshot error:', error);
