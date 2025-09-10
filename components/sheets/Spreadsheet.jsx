@@ -970,9 +970,13 @@ useEffect(() => {
                   
                   // Delete inventory items asynchronously
                   if (inventoryDeletions.length > 0) {
-                    inventoryDeletions.forEach(inventoryItemId => {
+                    console.log('🔥 About to call onDeleteInventoryItem for:', inventoryDeletions);
+                    inventoryDeletions.forEach((inventoryItemId, index) => {
+                      console.log(`🗑️ Calling onDeleteInventoryItem for item ${index + 1}/${inventoryDeletions.length}:`, inventoryItemId);
                       onDeleteInventoryItem(inventoryItemId);
                     });
+                  } else {
+                    console.log('⚠️ No inventory items to delete - all rows are manual entries');
                   }
                   
                   // Remove the rows from the UI immediately for better UX

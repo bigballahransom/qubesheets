@@ -452,6 +452,16 @@ useEffect(() => {
         
         if (spreadsheetData.rows && spreadsheetData.rows.length > 0 && !rowsAlreadyMigrated) {
           // Only set rows if we didn't already migrate them above
+          console.log('📊 Loading existing spreadsheet rows:', spreadsheetData.rows.map(r => ({ 
+            id: r.id, 
+            inventoryItemId: r.inventoryItemId, 
+            hasInventoryId: !!r.inventoryItemId,
+            item: r.cells?.col2 
+          })));
+          
+          const rowsWithInventoryIds = spreadsheetData.rows.filter(r => !!r.inventoryItemId);
+          const manualRows = spreadsheetData.rows.filter(r => !r.inventoryItemId);
+          console.log(`📊 Breakdown: ${rowsWithInventoryIds.length} rows with inventory IDs, ${manualRows.length} manual rows`);
           setSpreadsheetRows(spreadsheetData.rows);
           dataLoadedRef.current = true;
         } else if (items.length > 0) {
@@ -462,6 +472,21 @@ useEffect(() => {
           
           // Save these rows to the database
           await saveSpreadsheetData(id, spreadsheetColumns, newRows);
+        }
+        
+        // IMPORTANT: If we have inventory items but spreadsheet rows don't have inventory IDs,
+        // offer to sync them (this handles the case where manual entries exist but aren't linked to inventory)
+        if (spreadsheetData.rows && spreadsheetData.rows.length > 0 && items.length > 0) {
+          const rowsWithInventoryIds = spreadsheetData.rows.filter(r => !!r.inventoryItemId);
+          if (rowsWithInventoryIds.length === 0) {
+            console.log('🔄 Found manual spreadsheet entries but no inventory links. Auto-syncing with inventory items...');
+            const newRows = convertItemsToRows(items);
+            setSpreadsheetRows(newRows);
+            
+            // Save the inventory-linked rows to replace manual entries
+            await saveSpreadsheetData(id, spreadsheetColumns, newRows);
+            console.log('✅ Spreadsheet synced with inventory items. Rows now have inventory IDs for proper deletion.');
+          }
         } else {
           // Start with empty spreadsheet (just ensure we have a blank row for user to edit)
           setSpreadsheetRows([]);
@@ -689,10 +714,14 @@ useEffect(() => {
 
   // Handle deleting inventory items when spreadsheet rows are deleted
   const handleDeleteInventoryItem = useCallback(async (inventoryItemId) => {
-    if (!inventoryItemId || !currentProject) return;
+    if (!inventoryItemId || !currentProject) {
+      console.log('❌ Cannot delete inventory item - missing data:', { inventoryItemId, currentProject: !!currentProject });
+      return;
+    }
     
     try {
-      console.log('🗑️ Deleting inventory item:', inventoryItemId);
+      console.log('🗑️ [InventoryManager] Received delete request for inventory item:', inventoryItemId);
+      console.log('🗑️ [InventoryManager] Current project ID:', currentProject._id);
       
       const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
         method: 'DELETE'
@@ -709,6 +738,7 @@ useEffect(() => {
       if (itemsResponse.ok) {
         const updatedItems = await itemsResponse.json();
         console.log(`📊 Refreshing inventory stats: ${inventoryItems.length} -> ${updatedItems.length} items`);
+        console.log('📊 Updated inventory items:', updatedItems.map(item => ({ id: item._id, name: item.name, location: item.location })));
         setInventoryItems(updatedItems);
       } else {
         console.error('❌ Failed to refresh inventory items after deletion');
@@ -719,6 +749,22 @@ useEffect(() => {
       // Don't show error to user, just log it - the row will still be removed from spreadsheet
     }
   }, [currentProject]);
+
+  // Function to manually sync spreadsheet with inventory items
+  const handleSyncSpreadsheet = useCallback(async () => {
+    if (!currentProject || !inventoryItems.length) {
+      console.log('❌ Cannot sync - no project or inventory items');
+      return;
+    }
+
+    console.log('🔄 Manually syncing spreadsheet with inventory items...');
+    const newRows = convertItemsToRows(inventoryItems);
+    setSpreadsheetRows(newRows);
+    
+    // Save the synced rows to the database
+    await saveSpreadsheetData(currentProject._id, spreadsheetColumns, newRows);
+    console.log('✅ Manual sync complete. Spreadsheet rows now have inventory IDs for proper deletion.');
+  }, [currentProject, inventoryItems, convertItemsToRows, spreadsheetColumns]);
   
   // Calculate stats
   const totalItems = inventoryItems.length;
