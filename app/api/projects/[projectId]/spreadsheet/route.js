@@ -30,10 +30,10 @@ export async function GET(
     }
     
     // Get spreadsheet data for the project
-    const spreadsheetData = await SpreadsheetData.findOne(getProjectFilter(
-      authContext,
-      projectId
-    ));
+    const projectFilter = getProjectFilter(authContext, projectId);
+    console.log('Debug - Frontend spreadsheet query filter:', JSON.stringify(projectFilter, null, 2));
+    const spreadsheetData = await SpreadsheetData.findOne(projectFilter);
+    console.log('Debug - Frontend found spreadsheet data:', !!spreadsheetData);
     
     if (!spreadsheetData) {
       return NextResponse.json({ 

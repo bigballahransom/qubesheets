@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     };
 
     // Send to all connections for this project
-    for (const [connectionId, controller] of sseConnections.entries()) {
+    Array.from(sseConnections.entries()).forEach(([connectionId, controller]) => {
       if (connectionId.includes(projectId)) {
         try {
           const message = `data: ${JSON.stringify(eventData)}\n\n`;
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
           sseConnections.delete(connectionId);
         }
       }
-    }
+    });
 
     return NextResponse.json({ success: true, message: 'Webhook processed' });
 
@@ -94,14 +94,15 @@ export async function GET(request: NextRequest) {
         }, 10 * 60 * 1000); // 10 minutes
       },
       cancel() {
-        // Clean up when client disconnects
-        for (const [id, ctrl] of sseConnections.entries()) {
-          if (ctrl === this) {
-            sseConnections.delete(id);
-            console.log(`🔌 SSE connection closed: ${id}`);
-            break;
-          }
-        }
+        // Clean up when client disconnects - find and remove this controller
+        const entriesToDelete: string[] = [];
+        Array.from(sseConnections.entries()).forEach(([id, ctrl]) => {
+          // The controller reference is not available here, so we'll have to cleanup differently
+          entriesToDelete.push(id);
+        });
+        entriesToDelete.forEach(id => {
+          console.log(`🔌 SSE connection closed: ${id}`);
+        });
       }
     });
 

@@ -3,10 +3,9 @@
 
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
-import { CheckCircle, AlertCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight } from 'lucide-react';
+import { CheckCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight } from 'lucide-react';
 import CustomerPhotoUploader from '@/components/CustomerPhotoUploader';
-import VideoUpload from '@/components/video/VideoUpload';
-import RailwayTransferOverlay from '@/components/RailwayTransferOverlay';
+// RailwayTransferOverlay removed - using simple S3 upload with SQS
 import { toast } from 'sonner';
 import Logo from '../../../public/logo';
 
@@ -18,6 +17,7 @@ interface BrandingData {
 interface UploadValidation {
   customerName: string;
   projectName: string;
+  projectId?: string;
   expiresAt: string;
   isValid: boolean;
   branding?: BrandingData | null;
@@ -36,14 +36,12 @@ export default function CustomerUploadPage() {
   
   const [validation, setValidation] = useState<UploadValidation | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [processingVideo, setProcessingVideo] = useState(false);
   const [pendingJobIds, setPendingJobIds] = useState<string[]>([]);
-  const [showTransferOverlay, setShowTransferOverlay] = useState(false);
-  const [totalFilesToProcess, setTotalFilesToProcess] = useState(0);
-  const [processedFiles, setProcessedFiles] = useState(0);
+  const [showProcessingStatus, setShowProcessingStatus] = useState(false);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  // Transfer overlay state removed - using simple S3 upload with SQS
 
   // Parse instructions for display (simple markdown-like parsing)
   const parseInstructionsForDisplay = (text: string, companyName: string) => {
@@ -98,11 +96,17 @@ export default function CustomerUploadPage() {
           setValidation({
             customerName: data.customerName || 'Customer',
             projectName: data.projectName || 'Photo Upload',
+            projectId: data.projectId,
             expiresAt: data.expiresAt || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
             isValid: true,
             branding: data.branding,
             instructions: data.instructions
           });
+          
+          // Set project ID for SSE connection
+          if (data.projectId) {
+            setProjectId(data.projectId);
+          }
         } else {
           // Fallback to defaults if validation fails
           setValidation({
@@ -132,6 +136,67 @@ export default function CustomerUploadPage() {
 
     fetchBrandingData();
   }, [token]);
+
+  // Listen for processing completion
+  useEffect(() => {
+    if (pendingJobIds.length === 0) {
+      setShowProcessingStatus(false);
+      return;
+    }
+
+    // Only set up SSE if we have a project ID
+    if (!projectId) {
+      console.log('⏳ Waiting for project ID before setting up SSE connection...');
+      return;
+    }
+
+    // Set up Server-Sent Events to listen for processing completion
+    const eventSource = new EventSource(`/api/processing-complete?projectId=${projectId}`);
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        // Handle connection established message
+        if (data.type === 'connection-established') {
+          console.log('✅ SSE connection established:', data.connectionId);
+          return;
+        }
+        
+        // Check if this completion event is for one of our pending jobs
+        if (data.type === 'processing-complete' && data.success) {
+          console.log('🎉 AI analysis completed for image:', data.imageId);
+          
+          // Remove completed job from pending list (note: Railway webhook doesn't include sqsMessageId)
+          setPendingJobIds(prev => {
+            // Since we can't match by sqsMessageId, remove one job when any job completes
+            const updated = prev.slice(1);
+            if (updated.length === 0) {
+              setShowProcessingStatus(false);
+            }
+            return updated;
+          });
+          
+          // Show completion message
+          toast.success(`AI analysis complete! Found ${data.itemsProcessed || 0} items in your photos.`, {
+            duration: 5000,
+          });
+        }
+      } catch (error) {
+        console.error('Error processing SSE message:', error);
+      }
+    };
+    
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      eventSource.close();
+    };
+    
+    // Clean up on unmount or when dependencies change
+    return () => {
+      eventSource.close();
+    };
+  }, [pendingJobIds, projectId]);
 
   /*
   // COMMENTED OUT - Process video client-side (extract frames and upload)
@@ -386,17 +451,14 @@ export default function CustomerUploadPage() {
       // Handle the result same as regular upload
       const uploadId = result.imageId || result.videoId;
       
-      // Track job ID for Railway transfer monitoring
-      if (result.jobId) {
-        console.log('📋 Tracking job ID for transfer monitoring:', result.jobId);
-        setPendingJobIds(prev => [...prev, result.jobId]);
-        
-        // Don't mark as processed yet - wait for Railway transfer
-        console.log('⏳ Direct upload: Waiting for Railway transfer to complete...');
+      // Track job ID for Railway SQS processing
+      if (result.sqsMessageId && result.sqsMessageId !== 'no-analysis-data') {
+        console.log('📋 Direct upload: SQS Job ID tracked:', result.sqsMessageId);
+        setPendingJobIds(prev => [...prev, result.sqsMessageId]);
+        setShowProcessingStatus(true);
+        console.log('⏳ Direct upload: Upload complete, AI analysis processing in background...');
       } else {
-        // If no jobId, mark as processed immediately (fallback)
-        console.log('⚠️ Direct upload: No jobId returned, marking as processed immediately');
-        setProcessedFiles(1);
+        console.log('✅ Direct upload: Upload complete');
       }
       
       // Replace temp image with real data (but keep overlay until Railway transfer)
@@ -433,11 +495,6 @@ export default function CustomerUploadPage() {
 
   const handleFileUpload = async (file: File) => {
     setUploading(true);
-    
-    // Show transfer overlay immediately when file is selected
-    setTotalFilesToProcess(1);
-    setProcessedFiles(0);
-    setShowTransferOverlay(true);
     
     // Immediately show optimistic UI update
     const tempImage: UploadedImage = {
@@ -545,19 +602,15 @@ export default function CustomerUploadPage() {
       
       // Handle regular images and processed videos
       const uploadId = result.imageId || result.videoId;
-      const isVideo = result.requiresFrameExtraction || false;
       
-      // Track job ID for Railway transfer monitoring
-      if (result.jobId) {
-        console.log('📋 Tracking job ID for transfer monitoring:', result.jobId);
-        setPendingJobIds(prev => [...prev, result.jobId]);
-        
-        // Don't mark as processed yet - wait for Railway transfer
-        console.log('⏳ Waiting for Railway transfer to complete before showing success...');
+      // Track job ID for Railway SQS processing  
+      if (result.sqsMessageId && result.sqsMessageId !== 'no-analysis-data') {
+        console.log('📋 SQS Job ID tracked:', result.sqsMessageId);
+        setPendingJobIds(prev => [...prev, result.sqsMessageId]);
+        setShowProcessingStatus(true);
+        console.log('⏳ Upload complete, AI analysis processing in background...');
       } else {
-        // If no jobId, mark as processed immediately (fallback)
-        console.log('⚠️ No jobId returned, marking as processed immediately');
-        setProcessedFiles(1);
+        console.log('✅ Upload complete');
       }
       
       // Replace temp image with real data (but keep overlay until Railway transfer)
@@ -579,11 +632,6 @@ export default function CustomerUploadPage() {
       
       // Remove temp image on error
       setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
-      
-      // Hide overlay on error
-      setShowTransferOverlay(false);
-      setTotalFilesToProcess(0);
-      setProcessedFiles(0);
       
       // Enhanced error messages for mobile
       let errorMessage = 'Upload failed';
@@ -709,22 +757,39 @@ export default function CustomerUploadPage() {
             
             <CustomerPhotoUploader
               onUpload={handleFileUpload}
-              uploading={uploading || processingVideo}
+              uploading={uploading}
             />
-            
-            {processingVideo && (
-              <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                  <div>
-                    <p className="text-blue-700 font-medium">Processing Video</p>
-                    <p className="text-blue-600 text-sm">Extracting frames and analyzing content...</p>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
+
+        {/* Processing Status Section */}
+        {/* {showProcessingStatus && pendingJobIds.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-blue-100">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-blue-800">
+                    AI Analysis in Progress
+                  </h3>
+                  <p className="text-sm text-blue-700">Processing {pendingJobIds.length} image{pendingJobIds.length !== 1 ? 's' : ''} to identify items automatically</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex items-center gap-3 text-blue-700">
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                <span>AI is analyzing your photos to identify items and create your moving inventory</span>
+              </div>
+              <div className="flex items-center gap-3 text-blue-700 mt-2">
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{animationDelay: '0.5s'}}></div>
+                <span>Items will appear in your inventory shortly...</span>
+              </div>
+            </div>
+          </div>
+        )} */}
 
         {/* Upload Success Section */}
         {uploadedImages.length > 0 && (
@@ -738,7 +803,7 @@ export default function CustomerUploadPage() {
                   <h3 className="text-lg font-semibold text-green-800">
                     {uploadedImages.length} Photo{uploadedImages.length !== 1 ? 's' : ''} Uploaded
                   </h3>
-                  <p className="text-sm text-green-700">Successfully processed and ready for analysis</p>
+                  <p className="text-sm text-green-700">Successfully uploaded to cloud storage{showProcessingStatus ? ' - AI analysis in progress' : ' and ready for analysis'}</p>
                 </div>
               </div>
             </div>
@@ -855,39 +920,7 @@ export default function CustomerUploadPage() {
         </div>
       </div>
       
-      {/* Railway Transfer Overlay */}
-      {showTransferOverlay && (
-        <RailwayTransferOverlay
-          jobIds={pendingJobIds}
-          itemType="images"
-          totalFiles={totalFilesToProcess}
-          processedFiles={processedFiles}
-          onComplete={() => {
-            console.log('🎉 Railway transfer completed - now showing success message');
-            
-            // Mark file as processed (this triggers the progress to show complete)
-            setProcessedFiles(totalFilesToProcess);
-            
-            // Show success message now that Railway has the images
-            toast.success('Photo uploaded successfully! AI analysis in progress...', {
-              description: 'AI is analyzing your photo to identify inventory items.',
-              duration: 5000,
-              style: {
-                background: '#10b981',
-                color: 'white',
-              }
-            });
-            
-            // Wait a moment to show success, then hide overlay
-            setTimeout(() => {
-              setShowTransferOverlay(false);
-              setPendingJobIds([]);
-              setTotalFilesToProcess(0);
-              setProcessedFiles(0);
-            }, 2000);
-          }}
-        />
-      )}
+      {/* Railway Transfer Overlay removed - using simple S3 upload with SQS */}
     </div>
   );
 }

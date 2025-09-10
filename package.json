@@ -7,7 +7,9 @@
     "dev:external": "next dev -H 0.0.0.0",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "worker:sqs": "node workers/sqs-image-processor.js",
+    "test:sqs": "node test-sqs-integration.js"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.18.0",
@@ -23,9 +25,11 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tabs": "^1.1.12",
     "@radix-ui/react-tooltip": "^1.2.6",
+    "aws-sdk": "^2.1692.0",
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.7.0",
     "clsx": "^2.1.1",
+    "dotenv": "^17.2.2",
     "formidable": "^3.5.4",
     "framer-motion": "^12.9.2",
     "heic-convert": "^2.1.0",

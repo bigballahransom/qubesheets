@@ -4,7 +4,8 @@ import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
-import { backgroundQueue } from '@/lib/backgroundQueue';
+import { uploadFileToS3 } from '@/lib/s3Upload';
+import { sendImageProcessingMessage } from '@/lib/sqsUtils';
 
 export async function POST(
   request: NextRequest,
@@ -130,27 +131,74 @@ export async function POST(
       updatedAt: new Date() 
     });
     
-    // Queue image for analysis if we have image data
-    let jobId = 'no-analysis-data';
+    // Upload to S3 and queue for SQS processing if we have image data
+    let s3Result = null;
+    let sqsMessageId = 'no-analysis-data';
+    
     if (buffer) {
       try {
-        jobId = backgroundQueue.enqueue('image_analysis', {
-          imageId: imageDoc._id.toString(),
-          projectId: projectId.toString(),
-          userId,
-          organizationId
+        // Upload to S3
+        const s3File = new File([buffer], fileName, { type: fileType });
+        s3Result = await uploadFileToS3(s3File, {
+          folder: 'Media/Images',
+          metadata: {
+            projectId: projectId?.toString() || 'unknown',
+            uploadSource: 'customer-upload-metadata',
+            customerToken: token,
+            customerName: customerName || 'anonymous',
+            originalMimeType: fileType,
+            uploadedAt: new Date().toISOString()
+          },
+          contentType: fileType
         });
-        console.log(`✅ Analysis job queued: ${jobId}`);
-      } catch (queueError) {
-        console.warn('⚠️ Background queue failed, but image was saved:', queueError);
-        jobId = 'queue-failed-manual-required';
+        
+        console.log(`✅ S3 upload successful: ${s3Result.key}`);
+        
+        // Update image document with S3 raw file info
+        await Image.findByIdAndUpdate(imageDoc._id, {
+          s3RawFile: {
+            key: s3Result.key,
+            bucket: s3Result.bucket,
+            url: s3Result.url,
+            etag: s3Result.etag,
+            uploadedAt: new Date(),
+            contentType: s3Result.contentType
+          }
+        });
+        
+        // Send to SQS for Railway processing
+        sqsMessageId = await sendImageProcessingMessage({
+          imageId: imageDoc._id.toString(),
+          projectId: projectId?.toString() || 'unknown',
+          userId: userId || 'anonymous',
+          organizationId: organizationId,
+          s3ObjectKey: s3Result.key,
+          s3Bucket: s3Result.bucket,
+          s3Url: s3Result.url,
+          originalFileName: fileName,
+          mimeType: fileType,
+          fileSize: buffer.length,
+          uploadedAt: new Date().toISOString(),
+          source: 'api-upload'
+        });
+        
+        console.log(`✅ SQS message sent: ${sqsMessageId}`);
+        
+      } catch (s3Error) {
+        console.error('⚠️ S3/SQS upload failed, image still saved to MongoDB:', s3Error);
+        sqsMessageId = 'fallback-local-processing';
       }
     }
     
     return NextResponse.json({
       success: true,
       imageId: imageDoc._id.toString(),
-      jobId: jobId,
+      sqsMessageId: sqsMessageId,
+      s3Info: s3Result ? {
+        key: s3Result.key,
+        bucket: s3Result.bucket,
+        url: s3Result.url
+      } : null,
       message: buffer 
         ? 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.'
         : 'Image uploaded successfully! Analysis requires image data.',

@@ -6,7 +6,8 @@ import CustomerUpload from '@/models/CustomerUpload';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
-import { backgroundQueue } from '@/lib/backgroundQueue';
+import { uploadFileToS3 } from '@/lib/s3Upload';
+import { sendImageProcessingMessage } from '@/lib/sqsUtils';
 import sharp from 'sharp';
 import { uploadVideo, uploadImage as uploadImageToCloudinary } from '@/lib/cloudinary';
 
@@ -421,61 +422,118 @@ export async function POST(
     const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const name = `customer-${cleanCustomerName}-${timestamp}-${processedImage.name}`;
 
-    console.log('💾 Creating image document...');
+    console.log('📤 Uploading image to S3...');
 
-    // Create the image document
-    const imageDoc = await Image.create({
-      name,
-      originalName: image.name, // Keep original name for reference
-      mimeType: processedImage.type,
-      size: processedImage.size,
-      data: buffer,
-      projectId,
-      userId,
-      organizationId,
-      description: `Image uploaded by ${customerName}`,
-      // Initialize with pending analysis status
-      analysisResult: {
-        summary: 'Analysis pending...',
-        itemsCount: 0,
-        totalBoxes: 0
-      }
+    // Upload to S3 first - creating File object from buffer
+    const processedFile = new File([buffer], processedImage.name, { 
+      type: processedImage.type 
     });
 
-    console.log('✅ Image document created:', imageDoc._id);
-
-    // Update project timestamp
-    await Project.findByIdAndUpdate(projectId, { 
-      updatedAt: new Date() 
-    });
-
-    // Queue background analysis (truly asynchronous)
-    console.log('🚀 Queueing background analysis...');
-    
-    let jobId = 'manual-fallback';
     try {
-      jobId = backgroundQueue.enqueue('image_analysis', {
-        imageId: imageDoc._id.toString(),
-        projectId: projectId.toString(),
-        userId: userId,
-        organizationId: organizationId
+      // Upload to S3
+      const s3Result = await uploadFileToS3(processedFile, {
+        folder: `Media/Images`,
+        metadata: {
+          projectId: projectId?.toString() || 'unknown',
+          uploadSource: 'customer-upload',
+          originalMimeType: processedImage.type,
+          uploadedBy: userId || 'anonymous',
+          uploadedAt: new Date().toISOString(),
+          customerName: customerName,
+          uploadToken: token || 'no-token'
+        },
+        contentType: processedImage.type
       });
-      console.log(`✅ Analysis job queued: ${jobId}`);
-    } catch (queueError) {
-      console.warn('⚠️ Background queue failed, but image was saved:', queueError);
-      console.warn('Image will need to be analyzed manually via admin interface');
-      jobId = 'queue-failed-manual-required';
-    }
 
-    // Return immediately - don't wait for analysis
-    return NextResponse.json({
-      success: true,
-      imageId: imageDoc._id.toString(),
-      jobId: jobId,
-      message: 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
-      customerName,
-      analysisStatus: 'queued'
-    });
+      console.log(`✅ S3 Upload successful: ${s3Result.key}`);
+
+      // Save image to MongoDB with binary data (like project uploads)
+      const imageDoc = await Image.create({
+        name,
+        originalName: image.name,
+        mimeType: processedImage.type,
+        size: processedImage.size,
+        data: buffer, // Binary data for thumbnails
+        projectId,
+        userId,
+        organizationId,
+        description: `Image uploaded by ${customerName}`,
+        source: 'customer_upload',
+        s3RawFile: {
+          key: s3Result.key,
+          bucket: s3Result.bucket,
+          url: s3Result.url,
+          etag: s3Result.etag,
+          uploadedAt: new Date(),
+          contentType: s3Result.contentType
+        },
+        // Initialize with pending analysis status
+        analysisResult: {
+          summary: 'Analysis pending...',
+          itemsCount: 0,
+          totalBoxes: 0
+        },
+        metadata: {
+          uploadToken: token || 'no-token',
+          customerName: customerName
+        }
+      });
+
+      console.log(`✅ Image saved to MongoDB: ${imageDoc._id}`);
+
+      // Update project timestamp
+      await Project.findByIdAndUpdate(projectId, { 
+        updatedAt: new Date() 
+      });
+
+      // Send SQS message for processing (now with the actual imageId)
+      console.log('🚀 Sending SQS message for processing...');
+      
+      let sqsMessageId = null;
+      try {
+        sqsMessageId = await sendImageProcessingMessage({
+          imageId: imageDoc._id.toString(), // Now we have the actual image ID
+          projectId: projectId?.toString() || 'unknown',
+          userId: userId || 'anonymous',
+          organizationId: organizationId || undefined,
+          s3ObjectKey: s3Result.key,
+          s3Bucket: s3Result.bucket,
+          s3Url: s3Result.url,
+          originalFileName: image.name,
+          mimeType: processedImage.type,
+          fileSize: processedImage.size,
+          uploadedAt: new Date().toISOString(),
+          source: 'api-upload'
+        });
+        console.log(`✅ SQS message sent: ${sqsMessageId}`);
+      } catch (sqsError) {
+        console.error('⚠️ SQS message failed (S3 upload still successful):', sqsError);
+        // Don't fail the entire request if SQS fails
+      }
+
+      // Return with the actual image data
+      return NextResponse.json({
+        success: true,
+        imageId: imageDoc._id.toString(),
+        s3Result: {
+          key: s3Result.key,
+          bucket: s3Result.bucket,
+          url: s3Result.url
+        },
+        sqsMessageId,
+        message: 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
+        customerName,
+        analysisStatus: 'queued'
+      });
+
+    } catch (s3Error) {
+      console.error('❌ S3 Upload failed:', s3Error);
+      const errorMessage = s3Error instanceof Error ? s3Error.message : 'Unknown S3 upload error';
+      return NextResponse.json(
+        { error: `S3 upload failed: ${errorMessage}` },
+        { status: 500 }
+      );
+    }
 
   } catch (error) {
     console.error('❌ Error uploading customer image:', error);

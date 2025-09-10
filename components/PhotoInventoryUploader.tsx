@@ -7,6 +7,17 @@ import RealTimeUploadStatus from './RealTimeUploadStatus';
 import VideoUpload from './video/VideoUpload';
 import { uploadImageDirectly, uploadVideoDirectly } from '@/lib/directCloudinaryUpload';
 
+// S3UploadResult type for client-side usage
+interface S3UploadResult {
+  key: string;
+  bucket: string;
+  url: string;
+  etag: string;
+  uploadedAt: Date;
+  contentType: string;
+  size: number;
+}
+
 export interface InventoryItem {
   name: string;
   description?: string;
@@ -460,14 +471,9 @@ export default function PhotoInventoryUploader({
   const [processingStatus, setProcessingStatus] = useState<{[key: string]: 'processing' | 'completed' | 'failed'}>({});
   const [uploadMode, setUploadMode] = useState<'image' | 'video'>('image');
   const [hasVideoFiles, setHasVideoFiles] = useState(false);
-  const [pendingJobIds, setPendingJobIds] = useState<string[]>([]);
-  const [transferStatus, setTransferStatus] = useState<{
-    total: number;
-    sent: number;
-    pending: number;
-    failed: number;
-  } | null>(null);
-  const [checkingTransferStatus, setCheckingTransferStatus] = useState(false);
+  // Job tracking removed - using simple S3 upload with SQS instead
+  const [s3UploadStatus, setS3UploadStatus] = useState<{[fileName: string]: 'uploading' | 'completed' | 'failed'}>({});
+  const [s3UploadResults, setS3UploadResults] = useState<{[fileName: string]: S3UploadResult}>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -592,60 +598,7 @@ export default function PhotoInventoryUploader({
     fileInputRef.current?.click();
   };
 
-  // Poll transfer status
-  const checkTransferStatus = async () => {
-    if (pendingJobIds.length === 0) return;
-    
-    try {
-      const response = await fetch('/api/background-queue/transfer-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobIds: pendingJobIds })
-      });
-
-      if (response.ok) {
-        const status = await response.json();
-        setTransferStatus({
-          total: status.total,
-          sent: status.sent,
-          pending: status.pending,
-          failed: status.failed
-        });
-
-        // If all transferred, we can allow closing
-        if (status.allTransferred) {
-          setCheckingTransferStatus(false);
-          
-          // Show success message and close after delay
-          const { toast } = await import('sonner');
-          toast.success('All images sent to processing server!', {
-            description: 'You can now safely close this window.',
-            duration: 3000,
-          });
-          
-          // Reset and close after showing success
-          setTimeout(() => {
-            handleReset();
-            if (onClose) {
-              onClose();
-            }
-          }, 2000);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to check transfer status:', error);
-    }
-  };
-
-  // Start polling when we have pending jobs
-  useEffect(() => {
-    if (pendingJobIds.length === 0 || !checkingTransferStatus) return;
-
-    const interval = setInterval(checkTransferStatus, 2000);
-    checkTransferStatus(); // Initial check
-
-    return () => clearInterval(interval);
-  }, [pendingJobIds, checkingTransferStatus]);
+  // Transfer status polling removed - using simple S3 upload with SQS instead
 
   const saveImageToDatabase = async (file: File, analysisResult: AnalysisResult) => {
     if (!projectId) return;
@@ -675,8 +628,67 @@ export default function PhotoInventoryUploader({
     }
   };
 
+  // Upload raw file to S3 via server-side API
+  const uploadRawFileToS3 = async (file: File, fileNum: number): Promise<S3UploadResult | null> => {
+    try {
+      console.log(`📤 Starting S3 raw file upload for file ${fileNum}: ${file.name}`);
+      
+      // Update S3 upload status
+      setS3UploadStatus(prev => ({
+        ...prev,
+        [file.name]: 'uploading'
+      }));
+
+      // Create form data for API call
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('projectId', projectId || 'unknown');
+      formData.append('fileIndex', fileNum.toString());
+
+      // Call server-side API to upload to S3
+      const response = await fetch('/api/upload-to-s3', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'S3 upload failed');
+      }
+
+      const result = await response.json();
+      const s3Result = result.s3Result as S3UploadResult;
+
+      console.log(`✅ S3 raw file upload successful for file ${fileNum}:`, s3Result.key);
+
+      // Update status and store result
+      setS3UploadStatus(prev => ({
+        ...prev,
+        [file.name]: 'completed'
+      }));
+      
+      setS3UploadResults(prev => ({
+        ...prev,
+        [file.name]: s3Result
+      }));
+
+      return s3Result;
+
+    } catch (error) {
+      console.error(`❌ S3 raw file upload failed for file ${fileNum}:`, error);
+      
+      setS3UploadStatus(prev => ({
+        ...prev,
+        [file.name]: 'failed'
+      }));
+
+      // Don't throw - we want to continue with existing functionality even if S3 fails
+      return null;
+    }
+  };
+
   // Handle direct Cloudinary upload for large files (images only)
-  const handleDirectUpload = async (file: File, fileNum: number) => {
+  const handleDirectUpload = async (file: File, fileNum: number, s3Result?: S3UploadResult | null) => {
     try {
       console.log('📤 Starting direct Cloudinary upload for admin');
       
@@ -689,7 +701,7 @@ export default function PhotoInventoryUploader({
       const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
       
       const cloudinaryResult = await uploadImageDirectly(file, uploadPreset, {
-        folder: `qubesheets/admin-uploads/${projectId}`,
+        folder: `qubesheets/processed-images/${projectId}`,
         context: 'admin_upload=true'
       });
       
@@ -725,7 +737,16 @@ export default function PhotoInventoryUploader({
         fileType: file.type,
         cloudinaryResult,
         imageBuffer,
-        description: imageDescription
+        description: imageDescription,
+        // Include S3 information if available
+        s3RawFile: s3Result ? {
+          key: s3Result.key,
+          bucket: s3Result.bucket,
+          url: s3Result.url,
+          etag: s3Result.etag,
+          uploadedAt: s3Result.uploadedAt,
+          contentType: s3Result.contentType
+        } : undefined
       };
       
       console.log('💾 Saving admin metadata to:', metadataUrl);
@@ -790,7 +811,22 @@ export default function PhotoInventoryUploader({
         }));
 
         try {
-          // Step 0: Process mobile images to prevent upload failures
+          // Step 0: Upload raw file to S3 BEFORE any processing
+          console.log(`📤 Step 0: Uploading raw file ${fileNum} to S3...`);
+          let s3Result: S3UploadResult | null = null;
+          try {
+            s3Result = await uploadRawFileToS3(file, fileNum);
+            if (s3Result) {
+              console.log(`✅ Raw file ${fileNum} uploaded to S3:`, s3Result.key);
+            } else {
+              console.log(`⚠️ S3 upload failed for file ${fileNum}, continuing with existing flow`);
+            }
+          } catch (s3Error) {
+            console.warn(`⚠️ S3 upload failed for file ${fileNum}:`, s3Error);
+            // Continue with existing functionality even if S3 fails
+          }
+
+          // Step 1: Process mobile images to prevent upload failures
           let processedFile = file;
           try {
             processedFile = await processImageForMobile(file);
@@ -824,7 +860,7 @@ export default function PhotoInventoryUploader({
           
           if (shouldUseDirectUpload) {
             console.log(`📤 File ${fileNum} using direct Cloudinary upload (size > 2MB)`);
-            savedImage = await handleDirectUpload(processedFile, fileNum);
+            savedImage = await handleDirectUpload(processedFile, fileNum, s3Result);
           } else {
             // Regular upload for smaller files
             const formData = new FormData();
@@ -833,6 +869,18 @@ export default function PhotoInventoryUploader({
             
             if (projectId) {
               formData.append('projectId', projectId);
+            }
+
+            // Include S3 information if available
+            if (s3Result) {
+              formData.append('s3RawFile', JSON.stringify({
+                key: s3Result.key,
+                bucket: s3Result.bucket,
+                url: s3Result.url,
+                etag: s3Result.etag,
+                uploadedAt: s3Result.uploadedAt,
+                contentType: s3Result.contentType
+              }));
             }
 
             console.log(`💾 Saving image ${fileNum} to MongoDB...`);
@@ -870,7 +918,7 @@ export default function PhotoInventoryUploader({
               if (saveResponse.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE') || errorText.includes('Request Entity Too Large')) {
                 console.log(`🔄 File ${fileNum} payload too large, falling back to direct upload`);
                 try {
-                  savedImage = await handleDirectUpload(processedFile, fileNum);
+                  savedImage = await handleDirectUpload(processedFile, fileNum, s3Result);
                   console.log(`✅ Fallback direct upload successful for file ${fileNum}`);
                 } catch (directError) {
                   console.error(`❌ Direct upload fallback also failed for file ${fileNum}:`, directError);
@@ -913,73 +961,20 @@ export default function PhotoInventoryUploader({
             isMobile: isMobileDevice()
           });
           
-          try {
-            const queueResponse = await fetch('/api/background-queue', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                type: 'image_analysis',
-                imageId: savedImage._id,
-                projectId: projectId,
-                useRailwayService: useRailway,
-                estimatedSize: file.size // Pass file size for smart queue prioritization
-              }),
-              // Add timeout for mobile networks
-              signal: AbortSignal.timeout(30000) // 30 second timeout for queue API
+          // Background queue removed - SQS message sent automatically in S3 upload API
+          setProcessingStatus(prev => ({
+            ...prev,
+            [file.name]: 'completed'
+          }));
+          
+          // Show notification after first successful save
+          if (!modalClosed) {
+            const { toast } = await import('sonner');
+            toast.success(`Saving ${selectedFiles.length} image${selectedFiles.length > 1 ? 's' : ''}...`, {
+              description: 'Images will be processed automatically...',
+              duration: 4000,
             });
-
-            if (!queueResponse.ok) {
-              const queueErrorText = await queueResponse.text();
-              console.error(`⚠️ Failed to queue background job for image ${fileNum}:`, queueErrorText);
-              console.error(`📱 Queue error details:`, {
-                status: queueResponse.status,
-                statusText: queueResponse.statusText,
-                isMobile: isMobileDevice()
-              });
-              setProcessingStatus(prev => ({
-                ...prev,
-                [file.name]: 'completed' // Image was saved successfully
-              }));
-            } else {
-              const queueResult = await queueResponse.json();
-              console.log(`✅ Background job queued for image ${fileNum}:`, queueResult.jobId);
-              
-              // Track job ID for transfer monitoring
-              if (queueResult.jobId) {
-                console.log('📋 [PhotoUploader] Tracking job ID:', queueResult.jobId);
-                setPendingJobIds(prev => [...prev, queueResult.jobId]);
-              }
-              
-              setProcessingStatus(prev => ({
-                ...prev,
-                [file.name]: 'completed'
-              }));
-              
-              // After first successful save AND queue, show notification but DON'T close modal
-              if (!modalClosed) {
-                // Import toast and show notification
-                const { toast } = await import('sonner');
-                toast.success(`Saving ${selectedFiles.length} image${selectedFiles.length > 1 ? 's' : ''}...`, {
-                  description: 'Sending images to processing server...',
-                  duration: 4000,
-                });
-                modalClosed = true;
-              }
-            }
-          } catch (queueError) {
-            console.error(`❌ Queue request failed for image ${fileNum}:`, queueError);
-            console.error(`📱 Queue network error on mobile:`, {
-              error: queueError instanceof Error ? queueError.message : 'Unknown error',
-              isMobile: isMobileDevice(),
-              isTimeout: queueError instanceof Error && queueError.name === 'AbortError'
-            });
-            // Still mark as completed since image was saved
-            setProcessingStatus(prev => ({
-              ...prev,
-              [file.name]: 'completed'
-            }));
+            modalClosed = true;
           }
 
         } catch (fileError) {
@@ -995,25 +990,11 @@ export default function PhotoInventoryUploader({
       setIsAnalyzing(false);
       setError(null);
 
-      // Start monitoring transfer status if we have job IDs
-      console.log('📋 [PhotoUploader] Checking pending job IDs:', pendingJobIds);
-      if (pendingJobIds.length > 0) {
-        console.log('📋 [PhotoUploader] Starting transfer monitoring for', pendingJobIds.length, 'jobs');
-        setCheckingTransferStatus(true);
-        
-        // Import toast dynamically for completion notification
-        const { toast: completionToast } = await import('sonner');
-        completionToast.info(`Sending ${pendingJobIds.length} images to processing server...`, {
-          description: 'Please wait while we transfer your images.',
-          duration: 5000,
-        });
-      } else {
-        console.log('📋 [PhotoUploader] No pending job IDs - closing immediately');
-        // No jobs queued, just close
-        handleReset();
-        if (onClose) {
-          onClose();
-        }
+      // Simple completion - no job tracking needed with SQS
+      console.log('📋 [PhotoUploader] All images processed - closing');
+      handleReset();
+      if (onClose) {
+        onClose();
       }
 
       // Call success callback to refresh gallery
@@ -1225,9 +1206,9 @@ export default function PhotoInventoryUploader({
     setIsConverting(false);
     setUploadMode('image');
     setHasVideoFiles(false);
-    setPendingJobIds([]);
-    setTransferStatus(null);
-    setCheckingTransferStatus(false);
+    // Job tracking state removed
+    setS3UploadStatus({});
+    setS3UploadResults({});
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -1464,45 +1445,50 @@ export default function PhotoInventoryUploader({
         </div>
       )}
 
-      {/* Transfer Status */}
-      {checkingTransferStatus && transferStatus && (
-        <div className="mb-6">
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-              <div>
-                <h3 className="font-medium text-blue-900">Sending to Processing Server</h3>
-                <p className="text-sm text-blue-700">Please don't close this window</p>
-              </div>
-            </div>
-            
+      {/* Transfer status UI removed - using simple S3 upload with SQS */}
+
+      {/* S3 Upload Status */}
+      {Object.keys(s3UploadStatus).length > 0 && (
+        <div className="mb-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h3 className="text-sm font-medium text-blue-900 mb-3">📤 S3 Raw File Upload Status</h3>
             <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-blue-700">Progress:</span>
-                <span className="font-medium text-blue-900">
-                  {transferStatus.sent} of {transferStatus.total} sent
-                </span>
-              </div>
-              
-              <div className="w-full bg-blue-200 rounded-full h-2">
-                <div
-                  className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${(transferStatus.sent / transferStatus.total) * 100}%` }}
-                />
-              </div>
-              
-              {transferStatus.failed > 0 && (
-                <p className="text-sm text-red-600">
-                  {transferStatus.failed} images failed to transfer
-                </p>
-              )}
+              {Object.entries(s3UploadStatus).map(([fileName, status]) => (
+                <div key={fileName} className="flex items-center justify-between text-sm">
+                  <span className="text-blue-800 truncate max-w-xs">{fileName}</span>
+                  <div className="flex items-center gap-2">
+                    {status === 'uploading' && (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                        <span className="text-blue-600">Uploading...</span>
+                      </>
+                    )}
+                    {status === 'completed' && (
+                      <>
+                        <span className="text-green-600">✅ Uploaded</span>
+                        {s3UploadResults[fileName] && (
+                          <span className="text-xs text-gray-500">
+                            ({(s3UploadResults[fileName].size / (1024 * 1024)).toFixed(2)}MB)
+                          </span>
+                        )}
+                      </>
+                    )}
+                    {status === 'failed' && (
+                      <span className="text-red-600">❌ Failed</span>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
+            <p className="text-xs text-blue-600 mt-2">
+              Raw files are uploaded to S3 for backup before processing
+            </p>
           </div>
         </div>
       )}
 
       {/* Real-time Upload Status */}
-      {Object.keys(processingStatus).length > 0 && !checkingTransferStatus && (
+      {Object.keys(processingStatus).length > 0 && (
         <div className="mb-6">
           <RealTimeUploadStatus 
             uploads={Object.fromEntries(

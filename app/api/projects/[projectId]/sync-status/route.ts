@@ -38,30 +38,51 @@ export async function GET(
       createdAt: { $gt: lastUpdateDate }
     }).sort({ createdAt: -1 });
 
-    // Check for recent images with analysis results
+    // Check for recent images with analysis results (include customer uploads)
     const recentImages = await Image.find({
       projectId,
-      userId,
+      $or: [
+        { userId: userId }, // Regular project uploads
+        { source: 'customer_upload' }, // Customer uploads (any userId)
+        { userId: null } // Anonymous uploads
+      ],
       updatedAt: { $gt: lastUpdateDate },
       'analysisResult.itemsCount': { $gt: 0 }
-    }).select('_id name analysisResult updatedAt').sort({ updatedAt: -1 });
+    }).select('_id name analysisResult updatedAt source').sort({ updatedAt: -1 });
 
-    // Check for images currently being processed
+    // Check for images currently being processed (include customer uploads)
     const processingImages = await Image.find({
       projectId,
-      userId,
-      $or: [
-        { 'analysisResult.status': 'processing' },
-        { 'analysisResult.status': 'pending' },
-        { 'analysisResult.summary': 'Analysis pending...' },
-        { 'analysisResult.summary': /processing|analyzing/i },
-        { 'analysisResult.summary': 'AI analysis in progress...' }
+      $and: [
+        {
+          $or: [
+            { userId: userId }, // Regular project uploads
+            { source: 'customer_upload' }, // Customer uploads (any userId)
+            { userId: null } // Anonymous uploads
+          ]
+        },
+        {
+          $or: [
+            { 'analysisResult.status': 'processing' },
+            { 'analysisResult.status': 'pending' },
+            { 'analysisResult.summary': 'Analysis pending...' },
+            { 'analysisResult.summary': /processing|analyzing/i },
+            { 'analysisResult.summary': 'AI analysis in progress...' }
+          ]
+        }
       ]
-    }).select('_id name analysisResult').sort({ createdAt: -1 });
+    }).select('_id name analysisResult source').sort({ createdAt: -1 });
 
-    // Calculate totals
+    // Calculate totals (include customer uploads)
     const totalItems = await InventoryItem.countDocuments({ projectId, userId });
-    const totalImages = await Image.countDocuments({ projectId, userId });
+    const totalImages = await Image.countDocuments({
+      projectId,
+      $or: [
+        { userId: userId }, // Regular project uploads
+        { source: 'customer_upload' }, // Customer uploads
+        { userId: null } // Anonymous uploads
+      ]
+    });
 
     return NextResponse.json({
       hasUpdates: recentItems.length > 0 || recentImages.length > 0,
@@ -76,7 +97,9 @@ export async function GET(
       processingStatus: processingImages.map(img => ({
         id: img._id,
         name: img.name,
-        status: img.analysisResult?.summary || 'Processing...'
+        status: img.analysisResult?.summary || 'Processing...',
+        source: img.source || 'project_upload',
+        isCustomerUpload: img.source === 'customer_upload'
       }))
     });
 

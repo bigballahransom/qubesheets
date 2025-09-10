@@ -125,7 +125,7 @@ const sseRetryTimeoutRef = useRef(null);
         }
       };
 
-      eventSource.onmessage = (event) => {
+      eventSource.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
           console.log('📨 Received SSE message:', data);
@@ -137,8 +137,29 @@ const sseRetryTimeoutRef = useRef(null);
             setProcessingStatus([]);
             setShowProcessingNotification(false);
             
-            // Then refresh data and UI
-            loadProjectData(currentProject._id);
+            // Refresh inventory items and spreadsheet (like polling does)
+            try {
+              const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
+              if (itemsResponse.ok) {
+                const items = await itemsResponse.json();
+                setInventoryItems(items);
+                
+                // Also refresh spreadsheet data to include new items
+                const spreadsheetResponse = await fetch(`/api/projects/${currentProject._id}/spreadsheet`);
+                if (spreadsheetResponse.ok) {
+                  const spreadsheetData = await spreadsheetResponse.json();
+                  if (spreadsheetData.rows) {
+                    setSpreadsheetRows(spreadsheetData.rows);
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Error refreshing data after SSE completion:', error);
+              // Fallback to full reload if there's an error
+              loadProjectData(currentProject._id);
+            }
+            
+            // Refresh image gallery
             setImageGalleryKey(prev => prev + 1);
             
             // Show appropriate notification
@@ -718,12 +739,26 @@ useEffect(() => {
 const ProcessingNotification = () => {
   if (!showProcessingNotification || processingStatus.length === 0) return null;
   
+  const customerUploads = processingStatus.filter(item => item.isCustomerUpload);
+  const regularUploads = processingStatus.filter(item => !item.isCustomerUpload);
+  const total = processingStatus.length;
+  
+  let message;
+  if (customerUploads.length > 0 && regularUploads.length > 0) {
+    // Mixed uploads
+    message = `Processing ${total} photo${total > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+  } else if (customerUploads.length > 0) {
+    // Only customer uploads
+    message = `Processing ${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''}...`;
+  } else {
+    // Only regular uploads
+    message = `Processing ${regularUploads.length} photo${regularUploads.length > 1 ? 's' : ''}...`;
+  }
+  
   return (
     <div className="ml-4 flex items-center px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg">
       <Loader2 className="w-4 h-4 mr-2 animate-spin text-blue-500" />
-      <span className="text-sm text-blue-700">
-        Processing {processingStatus.length} customer upload{processingStatus.length > 1 ? 's' : ''}...
-      </span>
+      <span className="text-sm text-blue-700">{message}</span>
     </div>
   );
 };

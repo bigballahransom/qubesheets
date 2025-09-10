@@ -80,6 +80,7 @@ export async function POST(
     const image = formData.get('image') as File;
     const description = formData.get('description') as string;
     const analysisResult = formData.get('analysisResult') as string;
+    const s3RawFile = formData.get('s3RawFile') as string;
 
     if (!image) {
       return NextResponse.json(
@@ -154,6 +155,21 @@ export async function POST(
       }
     }
 
+    // Parse S3 raw file information if provided
+    let parsedS3RawFile;
+    if (s3RawFile) {
+      try {
+        parsedS3RawFile = JSON.parse(s3RawFile);
+        console.log('📤 S3 raw file info received:', {
+          key: parsedS3RawFile.key,
+          bucket: parsedS3RawFile.bucket,
+          size: parsedS3RawFile.size || 'unknown'
+        });
+      } catch (e) {
+        console.warn('Failed to parse S3 raw file info:', e);
+      }
+    }
+
     // Create the image document with normalized MIME type
     let normalizedMimeType = image.type;
     
@@ -201,6 +217,15 @@ export async function POST(
         itemsCount: parsedAnalysisResult.items?.length || 0,
         totalBoxes: parsedAnalysisResult.total_boxes ? 
           Object.values(parsedAnalysisResult.total_boxes).reduce((a: number, b: unknown) => a + (typeof b === 'number' ? b : 0), 0) : 0
+      } : undefined,
+      // Add S3 raw file information if provided
+      s3RawFile: parsedS3RawFile ? {
+        key: parsedS3RawFile.key,
+        bucket: parsedS3RawFile.bucket,
+        url: parsedS3RawFile.url,
+        etag: parsedS3RawFile.etag,
+        uploadedAt: new Date(parsedS3RawFile.uploadedAt),
+        contentType: parsedS3RawFile.contentType
       } : undefined
     };
     

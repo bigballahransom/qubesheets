@@ -18,6 +18,15 @@ export interface IImage extends Document {
     status?: 'pending' | 'processing' | 'completed' | 'failed';
     error?: string;
   };
+  // S3 raw file storage information
+  s3RawFile?: {
+    key: string;
+    bucket: string;
+    url: string;
+    etag: string;
+    uploadedAt: Date;
+    contentType: string;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -44,6 +53,15 @@ const ImageSchema: Schema = new Schema(
       totalBoxes: { type: Number },
       status: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
       error: { type: String }
+    },
+    // S3 raw file storage
+    s3RawFile: {
+      key: { type: String, index: true }, // Index for fast SQS correlation
+      bucket: { type: String },
+      url: { type: String },
+      etag: { type: String },
+      uploadedAt: { type: Date },
+      contentType: { type: String }
     }
   },
   { timestamps: true }

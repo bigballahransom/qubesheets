@@ -34,7 +34,8 @@ export async function POST(
       fileType,
       cloudinaryResult,
       userName = 'Admin User',
-      imageBuffer // Base64 encoded image data for analysis
+      imageBuffer, // Base64 encoded image data for analysis
+      s3RawFile // S3 raw file information
     } = body;
     
     console.log('💾 Received admin image metadata:', {
@@ -44,7 +45,8 @@ export async function POST(
       cloudinaryPublicId: cloudinaryResult?.publicId,
       userId,
       orgId,
-      hasImageBuffer: !!imageBuffer
+      hasImageBuffer: !!imageBuffer,
+      hasS3RawFile: !!s3RawFile
     });
     
     // Verify project exists and user has access
@@ -93,6 +95,15 @@ export async function POST(
       organizationId: orgId,
       description: `Image uploaded by ${userName} via admin interface`,
       source: 'admin_upload',
+      // Add S3 raw file information if provided
+      s3RawFile: s3RawFile ? {
+        key: s3RawFile.key,
+        bucket: s3RawFile.bucket,
+        url: s3RawFile.url,
+        etag: s3RawFile.etag,
+        uploadedAt: new Date(s3RawFile.uploadedAt),
+        contentType: s3RawFile.contentType
+      } : undefined,
       metadata: {
         directUpload: true,
         uploadedBy: userName,
@@ -103,6 +114,11 @@ export async function POST(
           width: cloudinaryResult.width || 0,
           height: cloudinaryResult.height || 0,
           createdAt: cloudinaryResult.createdAt || new Date().toISOString()
+        } : null,
+        s3RawFileInfo: s3RawFile ? {
+          key: s3RawFile.key,
+          bucket: s3RawFile.bucket,
+          uploadedAt: s3RawFile.uploadedAt
         } : null
       },
       // Initialize with pending analysis status

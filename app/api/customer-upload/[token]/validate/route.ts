@@ -134,6 +134,7 @@ export async function GET(
     return NextResponse.json({
       customerName: customerUpload.customerName,
       projectName: customerUpload.projectId.name,
+      projectId: customerUpload.projectId._id.toString(),
       expiresAt: customerUpload.expiresAt,
       isValid: true,
       branding: branding ? {

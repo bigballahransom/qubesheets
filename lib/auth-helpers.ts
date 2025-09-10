@@ -1,6 +1,7 @@
 // lib/auth-helpers.ts
 import { auth } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 
 export interface AuthContext {
   userId: string;
@@ -34,16 +35,22 @@ export async function getAuthContext(): Promise<AuthContext | NextResponse> {
  * Organization accounts: filter by organizationId only (userId not needed)
  */
 export function getOrgFilter(authContext: AuthContext, additionalFilters: Record<string, any> = {}) {
+  // Convert _id to ObjectId if present in additionalFilters
+  const processedFilters = { ...additionalFilters };
+  if (processedFilters._id && typeof processedFilters._id === 'string') {
+    processedFilters._id = new mongoose.Types.ObjectId(processedFilters._id);
+  }
+  
   if (authContext.isPersonalAccount) {
     return {
       userId: authContext.userId,
       organizationId: { $exists: false }, // Ensure personal account data doesn't have organizationId
-      ...additionalFilters
+      ...processedFilters
     };
   } else {
     return {
       organizationId: authContext.organizationId,
-      ...additionalFilters
+      ...processedFilters
     };
   }
 }
@@ -54,17 +61,20 @@ export function getOrgFilter(authContext: AuthContext, additionalFilters: Record
  * Organization accounts: filter by organizationId and projectId (userId not needed)
  */
 export function getProjectFilter(authContext: AuthContext, projectId: string, additionalFilters: Record<string, any> = {}) {
+  // Convert projectId string to ObjectId for MongoDB query
+  const projectObjectId = new mongoose.Types.ObjectId(projectId);
+  
   if (authContext.isPersonalAccount) {
     return {
       userId: authContext.userId,
       organizationId: { $exists: false }, // Ensure personal account data doesn't have organizationId
-      projectId,
+      projectId: projectObjectId,
       ...additionalFilters
     };
   } else {
     return {
       organizationId: authContext.organizationId,
-      projectId,
+      projectId: projectObjectId,
       ...additionalFilters
     };
   }
