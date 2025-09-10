@@ -628,63 +628,79 @@ export default function PhotoInventoryUploader({
     }
   };
 
-  // Upload raw file to S3 via server-side API
+  // Upload raw file to S3 via server-side API with automatic retry
   const uploadRawFileToS3 = async (file: File, fileNum: number): Promise<S3UploadResult | null> => {
-    try {
-      console.log(`📤 Starting S3 raw file upload for file ${fileNum}: ${file.name}`);
-      
-      // Update S3 upload status
-      setS3UploadStatus(prev => ({
-        ...prev,
-        [file.name]: 'uploading'
-      }));
+    const maxRetries = 3;
+    const retryDelays = [1000, 2000]; // 1s, 2s delays between retries
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`📤 S3 upload attempt ${attempt}/${maxRetries} for file ${fileNum}: ${file.name}`);
+        
+        // Update S3 upload status with retry info
+        const statusText = attempt === 1 ? 'uploading' : `retrying (${attempt}/${maxRetries})`;
+        setS3UploadStatus(prev => ({
+          ...prev,
+          [file.name]: statusText as any
+        }));
 
-      // Create form data for API call
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('projectId', projectId || 'unknown');
-      formData.append('fileIndex', fileNum.toString());
+        // Create form data for API call
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('projectId', projectId || 'unknown');
+        formData.append('fileIndex', fileNum.toString());
 
-      // Call server-side API to upload to S3
-      const response = await fetch('/api/upload-to-s3', {
-        method: 'POST',
-        body: formData,
-      });
+        // Call server-side API to upload to S3
+        const response = await fetch('/api/upload-to-s3', {
+          method: 'POST',
+          body: formData,
+        });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'S3 upload failed');
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'S3 upload failed');
+        }
+
+        const result = await response.json();
+        const s3Result = result.s3Result as S3UploadResult;
+
+        console.log(`✅ S3 upload successful on attempt ${attempt} for file ${fileNum}:`, s3Result.key);
+
+        // Update status and store result
+        setS3UploadStatus(prev => ({
+          ...prev,
+          [file.name]: 'completed'
+        }));
+        
+        setS3UploadResults(prev => ({
+          ...prev,
+          [file.name]: s3Result
+        }));
+
+        return s3Result;
+
+      } catch (error) {
+        console.error(`❌ S3 upload attempt ${attempt}/${maxRetries} failed for file ${fileNum}:`, error);
+        
+        // If this was the last attempt, mark as failed and give up
+        if (attempt === maxRetries) {
+          console.error(`❌ S3 upload failed permanently for file ${fileNum} after ${maxRetries} attempts`);
+          setS3UploadStatus(prev => ({
+            ...prev,
+            [file.name]: 'failed'
+          }));
+          return null;
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = retryDelays[attempt - 1];
+        console.log(`⏳ Waiting ${delay}ms before retry attempt ${attempt + 1} for file ${fileNum}`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
-
-      const result = await response.json();
-      const s3Result = result.s3Result as S3UploadResult;
-
-      console.log(`✅ S3 raw file upload successful for file ${fileNum}:`, s3Result.key);
-
-      // Update status and store result
-      setS3UploadStatus(prev => ({
-        ...prev,
-        [file.name]: 'completed'
-      }));
-      
-      setS3UploadResults(prev => ({
-        ...prev,
-        [file.name]: s3Result
-      }));
-
-      return s3Result;
-
-    } catch (error) {
-      console.error(`❌ S3 raw file upload failed for file ${fileNum}:`, error);
-      
-      setS3UploadStatus(prev => ({
-        ...prev,
-        [file.name]: 'failed'
-      }));
-
-      // Don't throw - we want to continue with existing functionality even if S3 fails
-      return null;
     }
+    
+    // This should never be reached due to the logic above, but TypeScript needs it
+    return null;
   };
 
   // Handle direct Cloudinary upload for large files (images only)
@@ -1445,10 +1461,17 @@ export default function PhotoInventoryUploader({
                 <div key={fileName} className="flex items-center justify-between text-sm">
                   <span className="text-blue-800 truncate max-w-xs">{fileName}</span>
                   <div className="flex items-center gap-2">
-                    {status === 'uploading' && (
+                    {(status === 'uploading' || status.includes('retrying')) && (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                        <span className="text-blue-600">Uploading...</span>
+                        <span className="text-blue-600">
+                          {status === 'uploading' ? 'Uploading...' : `Retrying...`}
+                        </span>
+                        {status.includes('retrying') && (
+                          <span className="text-xs text-blue-500">
+                            {status.match(/\((\d+\/\d+)\)/)?.[1]}
+                          </span>
+                        )}
                       </>
                     )}
                     {status === 'completed' && (
