@@ -3,7 +3,7 @@ import connectMongoDB from '../../../lib/mongodb';
 import Video from '../../../models/Video';
 import Image from '../../../models/Image';
 import Project from '../../../models/Project';
-import { backgroundQueue } from '../../../lib/backgroundQueue';
+import { sendImageProcessingMessage } from '../../../lib/sqsUtils';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -104,15 +104,21 @@ export default async function handler(req, res) {
 
           const imageDoc = await Image.create(imageData);
           
-          // Queue for analysis with high priority
-          const jobId = backgroundQueue.enqueue('video_frame_analysis', {
+          // Queue for analysis using SQS
+          const jobId = await sendImageProcessingMessage({
             imageId: imageDoc._id.toString(),
             projectId: video.projectId.toString(),
             userId: video.userId?.toString(),
             organizationId: video.organizationId?.toString(),
-            frameTimestamp: frame.timestamp,
-            source: 'railway_video_processing',
-            priority: 'high' // Prioritize video frames
+            s3ObjectKey: `video-frame-${imageDoc._id}`,
+            s3Bucket: 'qubesheets-uploads',
+            s3Url: 'mongodb-stored',
+            originalFileName: `${video.originalName} - Frame ${i + 1}`,
+            mimeType: 'image/jpeg',
+            fileSize: frameBuffer.length,
+            uploadedAt: new Date().toISOString(),
+            source: 'video-upload',
+            frameTimestamp: frame.timestamp
           });
 
           processedFrames.push({

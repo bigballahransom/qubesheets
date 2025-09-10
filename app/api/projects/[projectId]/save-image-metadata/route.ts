@@ -4,7 +4,7 @@ import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
-import { backgroundQueue } from '@/lib/backgroundQueue';
+import { sendImageProcessingMessage } from '@/lib/sqsUtils';
 
 export async function POST(
   request: NextRequest,
@@ -140,15 +140,23 @@ export async function POST(
     let jobId = 'no-analysis-data';
     if (buffer) {
       try {
-        jobId = backgroundQueue.enqueue('image_analysis', {
+        jobId = await sendImageProcessingMessage({
           imageId: imageDoc._id.toString(),
           projectId: projectId.toString(),
           userId,
-          organizationId: orgId
+          organizationId: orgId,
+          s3ObjectKey: s3RawFile?.key || 'unknown',
+          s3Bucket: s3RawFile?.bucket || 'unknown',  
+          s3Url: s3RawFile?.url || 'unknown',
+          originalFileName: fileName,
+          mimeType: fileType,
+          fileSize: buffer.length,
+          uploadedAt: new Date().toISOString(),
+          source: 'admin-upload'
         });
-        console.log(`✅ Analysis job queued: ${jobId}`);
+        console.log(`✅ SQS Analysis job queued: ${jobId}`);
       } catch (queueError) {
-        console.warn('⚠️ Background queue failed, but image was saved:', queueError);
+        console.warn('⚠️ SQS queue failed, but image was saved:', queueError);
         jobId = 'queue-failed-manual-required';
       }
     }

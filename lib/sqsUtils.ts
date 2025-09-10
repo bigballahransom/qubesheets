@@ -108,7 +108,7 @@ export async function receiveImageProcessingMessages(maxMessages: number = 1): P
       QueueUrl: queueUrl,
       MaxNumberOfMessages: maxMessages,
       WaitTimeSeconds: 20, // Long polling
-      VisibilityTimeoutSeconds: 900, // 15 minutes to process
+      VisibilityTimeout: 900, // 15 minutes to process
       MessageAttributeNames: ['All']
     }).promise();
 

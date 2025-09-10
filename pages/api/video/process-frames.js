@@ -1,6 +1,6 @@
 // pages/api/video/process-frames.js - Process video frames separately from regular photos
 import connectMongoDB from '../../../lib/mongodb';
-import { backgroundQueue } from '../../../lib/backgroundQueue';
+import { sendImageProcessingMessage } from '../../../lib/sqsUtils';
 import Image from '../../../models/Image';
 import Video from '../../../models/Video';
 import Project from '../../../models/Project';
@@ -107,20 +107,22 @@ export default async function handler(req, res) {
 
         console.log(`🎬 Created image document: ${imageDoc._id}`);
 
-        // Queue for background analysis (separate type for video frames)
-        const queueId = backgroundQueue.enqueue(
-          'video_frame_analysis', // Different type from regular 'image_analysis'
-          {
-            imageId: imageDoc._id.toString(),
-            projectId,
-            userId: project.userId.toString(),
-            organizationId: project.organizationId?.toString(),
-            frameTimestamp: frame.timestamp,
-            source: 'video_upload'
-          },
-          0, // No delay
-          imageBuffer.length
-        );
+        // Queue for background analysis using SQS (video frames processed like regular images)
+        const queueId = await sendImageProcessingMessage({
+          imageId: imageDoc._id.toString(),
+          projectId,
+          userId: project.userId.toString(),
+          organizationId: project.organizationId?.toString(),
+          s3ObjectKey: `video-frame-${imageDoc._id}`, // Placeholder since frames are stored in MongoDB
+          s3Bucket: 'qubesheets-uploads', // Default bucket
+          s3Url: 'mongodb-stored', // Indicate this is stored in MongoDB
+          originalFileName: `video_frame_${frame.timestamp.toFixed(1)}s.jpg`,
+          mimeType: 'image/jpeg',
+          fileSize: imageBuffer.length,
+          uploadedAt: new Date().toISOString(),
+          source: 'video-upload',
+          frameTimestamp: frame.timestamp
+        });
 
         processedFrames.push({
           frameTimestamp: frame.timestamp,

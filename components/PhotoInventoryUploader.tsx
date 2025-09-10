@@ -1299,25 +1299,13 @@ export default function PhotoInventoryUploader({
                   onAnalysisComplete={async (results: any) => {
                     console.log('Video analysis complete:', results);
                     
-                    // If we have queued jobs, start monitoring transfer status
-                    if (results?.queuedJobs && results.queuedJobs.length > 0) {
-                      setPendingJobIds(results.queuedJobs);
-                      setCheckingTransferStatus(true);
-                      
-                      const { toast: videoTransferToast } = await import('sonner');
-                      videoTransferToast.info(`Sending ${results.queuedJobs.length} video frames to processing server...`, {
-                        description: 'Please wait while we transfer your video frames.',
-                        duration: 5000,
-                      });
-                    } else {
-                      // No jobs queued, just close after delay
-                      setTimeout(() => {
-                        handleReset();
-                        if (onClose) {
-                          onClose();
-                        }
-                      }, 2000);
-                    }
+                    // Video analysis complete - close after delay
+                    setTimeout(() => {
+                      handleReset();
+                      if (onClose) {
+                        onClose();
+                      }
+                    }, 2000);
                     
                     // Trigger gallery refresh when analysis completes
                     if (onImageSaved) onImageSaved();
