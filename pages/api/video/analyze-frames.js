@@ -11,6 +11,15 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // DISABLED: Frame-based video processing is replaced by Google Cloud Video Intelligence
+  console.log('🎬 Video analyze-frames API called but DISABLED - using Google Cloud Video Intelligence instead');
+  return res.status(200).json({ 
+    success: true, 
+    message: 'Frame-based analysis disabled. Videos are now processed by Google Cloud Video Intelligence.',
+    selectedTimestamps: [],
+    frameScores: {}
+  });
+
   try {
     const { frames, projectId, task = 'inventory_selection' } = req.body;
 

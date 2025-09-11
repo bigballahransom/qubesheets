@@ -26,6 +26,27 @@ export interface ImageProcessingMessage {
   source: 'photo-inventory-uploader' | 'admin-upload' | 'api-upload';
 }
 
+export interface VideoProcessingMessage {
+  videoId: string;
+  projectId: string;
+  userId: string;
+  organizationId?: string;
+  s3VideoKey: string;
+  s3Bucket: string;
+  s3Url: string;
+  originalFileName: string;
+  mimeType: string;
+  fileSize: number;
+  duration?: number;
+  resolution?: {
+    width: number;
+    height: number;
+  };
+  frameRate?: number;
+  uploadedAt: string;
+  source: 'video-upload' | 'customer-video-upload' | 'admin-upload' | 'api-upload';
+}
+
 /**
  * Send image processing message to SQS queue
  */
@@ -92,6 +113,92 @@ export async function sendImageProcessingMessage(message: ImageProcessingMessage
     throw new Error(`SQS send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
+
+/**
+ * Send video processing message to SQS queue
+ */
+export async function sendVideoProcessingMessage(message: VideoProcessingMessage): Promise<string> {
+  const queueUrl = process.env.AWS_SQS_VIDEO_QUEUE_URL || process.env.AWS_SQS_QUEUE_URL;
+  
+  if (!queueUrl) {
+    throw new Error('AWS_SQS_VIDEO_QUEUE_URL or AWS_SQS_QUEUE_URL environment variable is not configured');
+  }
+
+  console.log('📤 Sending video processing message to SQS:', {
+    queueUrl,
+    videoId: message.videoId,
+    s3VideoKey: message.s3VideoKey,
+    fileSize: `${(message.fileSize / 1024 / 1024).toFixed(2)} MB`,
+    duration: message.duration ? `${message.duration}s` : 'unknown'
+  });
+
+  try {
+    const result = await sqs.sendMessage({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(message),
+      MessageAttributes: {
+        'videoId': {
+          DataType: 'String',
+          StringValue: message.videoId
+        },
+        'projectId': {
+          DataType: 'String',
+          StringValue: message.projectId
+        },
+        'source': {
+          DataType: 'String',
+          StringValue: message.source
+        },
+        'fileSize': {
+          DataType: 'Number',
+          StringValue: message.fileSize.toString()
+        },
+        'duration': {
+          DataType: 'Number',
+          StringValue: (message.duration || 0).toString()
+        },
+        'mimeType': {
+          DataType: 'String',
+          StringValue: message.mimeType
+        },
+        'messageType': {
+          DataType: 'String',
+          StringValue: 'VideoProcessing'
+        }
+      },
+      // Optional: Set message group ID for FIFO queues (not needed for standard queues)
+      // MessageGroupId: message.projectId,
+      // MessageDeduplicationId: `${message.videoId}-${Date.now()}`
+    }).promise();
+
+    console.log('✅ Video processing SQS message sent successfully:', {
+      messageId: result.MessageId,
+      sequenceNumber: result.SequenceNumber,
+      videoId: message.videoId,
+      projectId: message.projectId
+    });
+
+    return result.MessageId || 'unknown';
+
+  } catch (error) {
+    console.error('❌ Failed to send video processing SQS message:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('InvalidParameterValue')) {
+        throw new Error('Invalid SQS video message parameters. Check message format.');
+      } else if (error.message.includes('AccessDenied')) {
+        throw new Error('Access denied to video processing SQS queue. Check IAM permissions.');
+      } else if (error.message.includes('QueueDoesNotExist')) {
+        throw new Error('Video processing SQS queue does not exist. Check queue URL.');
+      }
+    }
+    
+    throw new Error(`Video SQS send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+// Explicit export for debugging
+export { sendVideoProcessingMessage as sendVideoProcessingMessageExport };
 
 /**
  * Receive messages from SQS queue (for worker processes)

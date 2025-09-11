@@ -1257,7 +1257,7 @@ export default function PhotoInventoryUploader({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif"
+          accept="image/*,.heic,.heif,video/*,.mp4,.mov,.avi,.webm,.mkv"
           onChange={handleFileSelect}
           className="hidden"
           multiple

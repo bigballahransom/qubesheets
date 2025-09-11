@@ -4,7 +4,70 @@ import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
-import { uploadVideo, deleteFile } from '@/lib/cloudinary';
+import { uploadFileToS3, deleteS3File } from '@/lib/s3Upload';
+import { VideoProcessingMessage } from '@/lib/sqsUtils';
+import AWS from 'aws-sdk';
+
+// Configure AWS SQS
+const sqs = new AWS.SQS({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || process.env.SECRET_AWS_ACCESS_KEY,
+  region: process.env.AWS_REGION || 'us-east-1',
+  signatureVersion: 'v4'
+});
+
+// Inline SQS message function to bypass import issues
+async function sendVideoProcessingMessageInline(message: VideoProcessingMessage): Promise<string> {
+  const queueUrl = process.env.AWS_SQS_VIDEO_QUEUE_URL || process.env.AWS_SQS_QUEUE_URL;
+  
+  if (!queueUrl) {
+    throw new Error('AWS_SQS_VIDEO_QUEUE_URL environment variable is not configured');
+  }
+
+  console.log('📤 Sending video processing message to SQS:', {
+    queueUrl,
+    videoId: message.videoId,
+    s3VideoKey: message.s3VideoKey,
+    fileSize: `${(message.fileSize / 1024 / 1024).toFixed(2)} MB`
+  });
+
+  try {
+    const result = await sqs.sendMessage({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(message),
+      MessageAttributes: {
+        'videoId': {
+          DataType: 'String',
+          StringValue: message.videoId
+        },
+        'projectId': {
+          DataType: 'String',
+          StringValue: message.projectId
+        },
+        'source': {
+          DataType: 'String',
+          StringValue: message.source
+        },
+        'messageType': {
+          DataType: 'String',
+          StringValue: 'VideoProcessing'
+        }
+      }
+    }).promise();
+
+    console.log('✅ Video processing SQS message sent successfully:', {
+      messageId: result.MessageId,
+      videoId: message.videoId,
+      projectId: message.projectId
+    });
+
+    return result.MessageId || 'unknown';
+
+  } catch (error) {
+    console.error('❌ Failed to send video processing SQS message:', error);
+    throw new Error(`Video SQS send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
 
 // GET /api/projects/:projectId/videos - Get all videos for a project
 export async function GET(
@@ -33,7 +96,7 @@ export async function GET(
     console.log('🎬 Video gallery filter:', filter);
     
     const videos = await Video.find(filter)
-      .select('name originalName mimeType size duration description source metadata createdAt updatedAt extractedFrames cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl')
+      .select('name originalName mimeType size duration resolution frameRate description source metadata s3RawFile thumbnail analysisResult createdAt updatedAt')
       .sort({ createdAt: -1 });
     
     console.log(`🎬 Found ${videos.length} videos for project ${projectId}`);
@@ -82,9 +145,9 @@ export async function POST(
       );
     }
 
-    // Enhanced file type validation for video files
+    // Enhanced file type validation for video files - Gemini API supported formats only
     const isVideoType = video.type.startsWith('video/');
-    const hasVideoExtension = /\.(mp4|mov|avi|webm|mkv|m4v)$/i.test(video.name);
+    const hasVideoExtension = /\.(mp4|mov|mpeg|mpg|avi|wmv|flv|webm|3gpp|m4v)$/i.test(video.name);
     const isPotentialVideo = (video.type === '' || video.type === 'application/octet-stream') && hasVideoExtension;
     const isAnyVideoType = isVideoType || isPotentialVideo;
     
@@ -102,13 +165,13 @@ export async function POST(
     
     if (!isAnyVideoType) {
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload a video (MP4, MOV, AVI, WebM).' },
+        { error: 'Invalid file type. Please upload a video in a supported format: MP4, MOV, MPEG, MPG, AVI, WMV, FLV, WebM, 3GPP, M4V.' },
         { status: 400 }
       );
     }
 
-    // Validate file size (100MB limit for videos)
-    const maxSize = parseInt(process.env.MAX_VIDEO_SIZE || '104857600'); // 100MB default
+    // Validate file size (500MB limit for videos)
+    const maxSize = parseInt(process.env.MAX_VIDEO_SIZE || '524288000'); // 500MB default
     if (video.size > maxSize) {
       const maxSizeMB = Math.round(maxSize / (1024 * 1024));
       return NextResponse.json(
@@ -117,67 +180,45 @@ export async function POST(
       );
     }
 
-    // Convert video to buffer for Cloudinary upload
-    let buffer: Buffer;
+    // Upload to S3
+    let s3Result;
     try {
-      console.log(`🎬 Converting video to buffer for Cloudinary: ${video.name} (${(video.size / (1024 * 1024)).toFixed(2)}MB)`);
-      const bytes = await video.arrayBuffer();
-      buffer = Buffer.from(bytes);
-      console.log(`✅ Buffer conversion successful: ${buffer.length} bytes`);
-    } catch (bufferError) {
-      console.error('❌ Buffer conversion failed:', bufferError);
-      return NextResponse.json(
-        { error: 'Failed to process video. The file may be corrupted or too large for processing.' },
-        { status: 400 }
-      );
-    }
-
-    // Upload to Cloudinary
-    let cloudinaryResult: {
-      success: boolean;
-      publicId: string;
-      url: string;
-      secureUrl: string;
-      duration?: number;
-      format?: string;
-      bytes?: number;
-      width?: number;
-      height?: number;
-      createdAt?: string;
-    };
-    
-    try {
-      console.log('📤 Uploading video to Cloudinary...');
+      console.log(`📤 Uploading video to S3: ${video.name} (${(video.size / (1024 * 1024)).toFixed(2)}MB)`);
       
-      // Generate a unique public ID for the video (remove file extension)
-      const timestamp = Date.now();
-      const nameWithoutExt = video.name.replace(/\.[^/.]+$/, ''); // Remove file extension
-      const sanitizedName = nameWithoutExt.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const publicId = `${projectId}_${timestamp}_${sanitizedName}`;
+      s3Result = await uploadFileToS3(video, {
+        folder: `Media/Videos/${projectId}`,
+        contentType: video.type,
+        metadata: {
+          projectId,
+          userId,
+          originalName: video.name,
+          description: description || '',
+          source: 'video-upload'
+        }
+      });
       
-      cloudinaryResult = await uploadVideo(buffer, {
-        public_id: publicId,
-        folder: `qubesheets/projects/${projectId}/videos`,
-        transformation: [
-          { quality: 'auto:good' }, // Auto-optimize quality
-          { fetch_format: 'auto' }  // Auto-select best format
-        ]
-      }) as typeof cloudinaryResult;
+      console.log('✅ Video uploaded to S3 successfully:', s3Result.key);
+      console.log('🔍 S3 Result structure:', {
+        key: s3Result.key,
+        bucket: s3Result.bucket,
+        url: s3Result.url,
+        etag: s3Result.etag,
+        uploadedAt: s3Result.uploadedAt,
+        contentType: s3Result.contentType,
+        allKeys: Object.keys(s3Result)
+      });
       
-      console.log('✅ Video uploaded to Cloudinary successfully:', cloudinaryResult.publicId);
-      
-    } catch (cloudinaryError) {
-      console.error('❌ Cloudinary upload failed:', cloudinaryError);
-      const errorMessage = cloudinaryError instanceof Error ? cloudinaryError.message : 'Unknown error';
+    } catch (s3Error) {
+      console.error('❌ S3 upload failed:', s3Error);
+      const errorMessage = s3Error instanceof Error ? s3Error.message : 'Unknown error';
       return NextResponse.json(
         { error: `Failed to upload video to cloud storage: ${errorMessage}` },
         { status: 500 }
       );
     }
 
-    // Generate unique name
-    const timestamp = Date.now();
-    const name = `${timestamp}-${video.name}`;
+    // Generate unique name from S3 key
+    const name = s3Result.key.split('/').pop() || `video-${Date.now()}.${video.name.split('.').pop()}`;
 
     // Normalize MIME type
     let normalizedMimeType = video.type;
@@ -186,19 +227,30 @@ export async function POST(
       const ext = video.name.toLowerCase().split('.').pop();
       switch (ext) {
         case 'mp4':
+        case 'm4v':
           normalizedMimeType = 'video/mp4';
           break;
         case 'mov':
           normalizedMimeType = 'video/quicktime';
           break;
+        case 'mpeg':
+        case 'mpg':
+          normalizedMimeType = 'video/mpeg';
+          break;
         case 'avi':
           normalizedMimeType = 'video/x-msvideo';
+          break;
+        case 'wmv':
+          normalizedMimeType = 'video/x-ms-wmv';
+          break;
+        case 'flv':
+          normalizedMimeType = 'video/x-flv';
           break;
         case 'webm':
           normalizedMimeType = 'video/webm';
           break;
-        case 'mkv':
-          normalizedMimeType = 'video/x-matroska';
+        case '3gpp':
+          normalizedMimeType = 'video/3gpp';
           break;
         default:
           normalizedMimeType = 'video/mp4'; // Default fallback
@@ -211,27 +263,26 @@ export async function POST(
       originalName: video.name,
       mimeType: normalizedMimeType,
       size: video.size,
-      duration: cloudinaryResult.duration || 0,
-      // Cloudinary URLs instead of Buffer data
-      cloudinaryPublicId: cloudinaryResult.publicId,
-      cloudinaryUrl: cloudinaryResult.url,
-      cloudinarySecureUrl: cloudinaryResult.secureUrl,
+      duration: 0, // Will be updated after processing
+      s3RawFile: {
+        key: s3Result.key,
+        bucket: s3Result.bucket,
+        url: s3Result.url,
+        etag: s3Result.etag,
+        uploadedAt: new Date(s3Result.uploadedAt),
+        contentType: normalizedMimeType
+      },
       projectId,
       userId,
       description: description || '',
-      source: 'admin_upload',
-      extractedFrames: [],
+      analysisResult: {
+        status: 'pending',
+        itemsCount: 0,
+        totalBoxes: 0
+      },
       metadata: {
-        processingStatus: 'uploaded',
-        processingComplete: false,
-        uploadedAt: new Date(),
-        cloudinaryInfo: {
-          format: cloudinaryResult.format || 'unknown',
-          bytes: cloudinaryResult.bytes || 0,
-          width: cloudinaryResult.width || 0,
-          height: cloudinaryResult.height || 0,
-          createdAt: cloudinaryResult.createdAt || new Date().toISOString()
-        }
+        source: 'video-upload',
+        originalUploader: userId
       }
     };
     
@@ -243,8 +294,24 @@ export async function POST(
     let videoDoc;
     try {
       console.log(`💾 Saving video to MongoDB: ${name}`);
+      console.log(`📋 Video data to save:`, {
+        hasS3RawFile: !!videoData.s3RawFile,
+        s3Key: videoData.s3RawFile?.key,
+        s3Url: videoData.s3RawFile?.url,
+        videoDataKeys: Object.keys(videoData)
+      });
       videoDoc = await Video.create(videoData);
       console.log(`✅ Video saved successfully: ${videoDoc._id}`);
+      console.log(`🔍 Saved video has s3RawFile:`, !!videoDoc.s3RawFile);
+      
+      // Re-fetch the video to see what was actually saved
+      const savedVideo = await Video.findById(videoDoc._id);
+      console.log(`🔍 Re-fetched video s3RawFile:`, !!savedVideo?.s3RawFile);
+      if (savedVideo?.s3RawFile) {
+        console.log(`🔍 S3RawFile data:`, savedVideo.s3RawFile);
+      } else {
+        console.log(`🔍 Video fields in DB:`, Object.keys(savedVideo?.toObject() || {}));
+      }
     } catch (mongoError) {
       console.error('❌ MongoDB save failed:', mongoError);
       console.error('❌ MongoDB error details:', {
@@ -254,13 +321,13 @@ export async function POST(
       });
       console.error('❌ Video data being saved:', JSON.stringify(videoData, null, 2));
       
-      // Clean up Cloudinary upload if MongoDB save fails
+      // Clean up S3 upload if MongoDB save fails
       try {
-        console.log('🧹 Cleaning up Cloudinary upload due to MongoDB failure...');
-        await deleteFile(cloudinaryResult.publicId, 'video');
-        console.log('✅ Cloudinary cleanup successful');
+        console.log('🧹 Cleaning up S3 upload due to MongoDB failure...');
+        await deleteS3File(s3Result.key);
+        console.log('✅ S3 cleanup successful');
       } catch (cleanupError) {
-        console.error('⚠️ Failed to cleanup Cloudinary upload:', cleanupError);
+        console.error('⚠️ Failed to cleanup S3 upload:', cleanupError);
       }
       
       if (mongoError instanceof Error) {
@@ -282,13 +349,37 @@ export async function POST(
       );
     }
 
+    // Send SQS message for video processing
+    try {
+      const sqsMessage: VideoProcessingMessage = {
+        videoId: videoDoc._id.toString(),
+        projectId,
+        userId,
+        organizationId: authContext.organizationId || undefined,
+        s3VideoKey: s3Result.key,
+        s3Bucket: s3Result.bucket,
+        s3Url: s3Result.url,
+        originalFileName: video.name,
+        mimeType: normalizedMimeType,
+        fileSize: video.size,
+        uploadedAt: new Date().toISOString(),
+        source: 'video-upload'
+      };
+
+      await sendVideoProcessingMessageInline(sqsMessage);
+      console.log('✅ Video processing message sent to SQS');
+    } catch (sqsError) {
+      console.error('⚠️ Failed to send SQS message:', sqsError);
+      // Don't fail the upload, just log the error
+    }
+
     // Update project's updatedAt timestamp
     await Project.findByIdAndUpdate(projectId, { 
       updatedAt: new Date(),
       hasVideos: true
     });
 
-    // Return video info with Cloudinary URLs
+    // Return video info with S3 URLs
     const responseData = {
       videoId: videoDoc._id,
       _id: videoDoc._id,
@@ -298,10 +389,9 @@ export async function POST(
       size: videoDoc.size,
       duration: videoDoc.duration,
       description: videoDoc.description,
-      source: videoDoc.source,
-      cloudinaryPublicId: videoDoc.cloudinaryPublicId,
-      cloudinaryUrl: videoDoc.cloudinaryUrl,
-      cloudinarySecureUrl: videoDoc.cloudinarySecureUrl,
+      source: videoDoc.metadata?.source,
+      s3RawFile: videoDoc.s3RawFile,
+      analysisResult: videoDoc.analysisResult,
       metadata: videoDoc.metadata,
       createdAt: videoDoc.createdAt,
       updatedAt: videoDoc.updatedAt

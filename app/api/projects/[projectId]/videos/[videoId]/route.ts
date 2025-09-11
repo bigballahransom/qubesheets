@@ -5,11 +5,13 @@ import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import { deleteFile } from '@/lib/cloudinary';
+import { getS3SignedUrl } from '@/lib/s3Upload';
 
-// GET /api/projects/:projectId/videos/:videoId - Get specific video file
-export async function GET(
+// Handle video streaming for both GET and HEAD requests
+async function handleVideoRequest(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string; videoId: string }> }
+  { params }: { params: Promise<{ projectId: string; videoId: string }> },
+  isHeadRequest = false
 ) {
   try {
     const authContext = await getAuthContext();
@@ -40,9 +42,124 @@ export async function GET(
     
     console.log(`🎬 Video request for: ${video.name}`, {
       hasCloudinaryUrl: !!video.cloudinarySecureUrl,
+      hasS3File: !!video.s3RawFile,
       hasData: !!video.data,
-      size: video.size
+      size: video.size,
+      userAgent: request.headers.get('user-agent')?.substring(0, 50),
+      range: request.headers.get('range'),
+      requestUrl: request.url
     });
+    
+    // If video has S3 file, stream from S3 directly
+    if (video.s3RawFile?.key) {
+      try {
+        console.log('🎬 Streaming video from S3:', video.s3RawFile.key);
+        
+        // Configure AWS S3
+        const AWS = require('aws-sdk');
+        const s3 = new AWS.S3({
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          region: process.env.AWS_REGION || 'us-east-1',
+          signatureVersion: 'v4'
+        });
+        
+        const bucketName = process.env.AWS_S3_BUCKET_NAME;
+        if (!bucketName) {
+          throw new Error('AWS_S3_BUCKET_NAME not configured');
+        }
+
+        // Get video size from S3 first
+        const headObject = await s3.headObject({
+          Bucket: bucketName,
+          Key: video.s3RawFile.key
+        }).promise();
+        
+        const videoSize = headObject.ContentLength!;
+        const range = request.headers.get('range');
+        
+        if (range && !isHeadRequest) {
+          // Parse range header properly (e.g., "bytes=0-1023" or "bytes=1024-")
+          const rangeMatch = range.match(/bytes=(\d+)-(\d*)/);
+          if (!rangeMatch) {
+            throw new Error('Invalid range header format');
+          }
+          
+          const start = parseInt(rangeMatch[1], 10);
+          const end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : Math.min(start + 1024 * 1024, videoSize - 1); // 1MB chunks
+          
+          console.log('🎬 Range request:', { start, end, videoSize });
+          
+          // Get specific range from S3
+          const s3Object = await s3.getObject({
+            Bucket: bucketName,
+            Key: video.s3RawFile.key,
+            Range: `bytes=${start}-${end}`
+          }).promise();
+          
+          if (!s3Object.Body) {
+            throw new Error('No video data received from S3');
+          }
+          
+          const chunk = Buffer.from(s3Object.Body as any);
+          const contentLength = end - start + 1;
+          
+          return new NextResponse(isHeadRequest ? null : chunk, {
+            status: 206, // Partial Content
+            headers: {
+              'Content-Range': `bytes ${start}-${end}/${videoSize}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': contentLength.toString(),
+              'Content-Type': video.mimeType || 'video/mp4',
+              'Cache-Control': 'public, max-age=3600',
+              'Connection': 'keep-alive',
+            },
+          });
+        } else {
+          // For HEAD requests or full file requests, return headers only for HEAD
+          if (!isHeadRequest) {
+            const s3Object = await s3.getObject({
+              Bucket: bucketName,
+              Key: video.s3RawFile.key
+            }).promise();
+            
+            if (!s3Object.Body) {
+              throw new Error('No video data received from S3');
+            }
+            
+            const videoBuffer = Buffer.from(s3Object.Body as any);
+            
+            return new NextResponse(videoBuffer, {
+              status: 200,
+              headers: {
+                'Content-Type': video.mimeType || 'video/mp4',
+                'Content-Length': videoSize.toString(),
+                'Content-Disposition': `inline; filename="${video.originalName}"`,
+                'Cache-Control': 'public, max-age=3600',
+                'Accept-Ranges': 'bytes',
+                'Connection': 'keep-alive',
+              },
+            });
+          } else {
+            // HEAD request - return only headers
+            return new NextResponse(null, {
+              status: 200,
+              headers: {
+                'Content-Type': video.mimeType || 'video/mp4',
+                'Content-Length': videoSize.toString(),
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'public, max-age=3600',
+                'Connection': 'keep-alive',
+              },
+            });
+          }
+        }
+        
+      } catch (s3Error) {
+        console.error('🎬 Error streaming video from S3:', s3Error);
+        // Fall through to other methods
+      }
+    }
     
     // If video has Cloudinary URL, redirect to it
     if (video.cloudinarySecureUrl || video.cloudinaryUrl) {
@@ -51,10 +168,14 @@ export async function GET(
       return NextResponse.redirect(cloudinaryUrl);
     }
     
-    // Handle legacy videos stored as Buffer in MongoDB
-    if (!video.data) {
-      console.error('🎬 Video has no data buffer or Cloudinary URL');
-      return NextResponse.json({ error: 'Video data not available' }, { status: 404 });
+    // Handle legacy videos stored as Buffer in MongoDB or missing data
+    if (!video.data && !video.s3RawFile?.key && !video.cloudinarySecureUrl && !video.cloudinaryUrl) {
+      console.error('🎬 Video has no data buffer, S3 file, or Cloudinary URL - video may need to be re-uploaded');
+      return NextResponse.json({ 
+        error: 'Video data not available - this video may need to be re-uploaded',
+        videoId: video._id,
+        suggestions: ['Please re-upload this video to make it viewable']
+      }, { status: 404 });
     }
     
     console.log(`🎬 Serving video from MongoDB buffer: ${video.name} (${video.size} bytes)`);
@@ -171,4 +292,20 @@ export async function DELETE(
       { status: 500 }
     );
   }
+}
+
+// GET /api/projects/:projectId/videos/:videoId - Get specific video file
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ projectId: string; videoId: string }> }
+) {
+  return handleVideoRequest(request, { params }, false);
+}
+
+// HEAD /api/projects/:projectId/videos/:videoId - Get video metadata for browser
+export async function HEAD(
+  request: NextRequest,
+  { params }: { params: Promise<{ projectId: string; videoId: string }> }
+) {
+  return handleVideoRequest(request, { params }, true);
 }

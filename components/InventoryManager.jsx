@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import EditableProjectName from './EditableProjectName';
 import PhotoInventoryUploader from './PhotoInventoryUploader';
 import ImageGallery from './ImageGallery';
-/* Video gallery tab is disabled, but video room modal is still needed */
+import VideoGallery from './VideoGallery';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
@@ -75,8 +75,9 @@ export default function InventoryManager() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [savingStatus, setSavingStatus] = useState('idle'); // 'idle', 'saving', 'saved', 'error'
-  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
+  const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images', 'videos'
   const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of gallery
+  const [videoGalleryKey, setVideoGalleryKey] = useState(0); // Force re-render of video gallery
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [videoRoomId, setVideoRoomId] = useState(null);
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
@@ -159,8 +160,9 @@ const sseRetryTimeoutRef = useRef(null);
               loadProjectData(currentProject._id);
             }
             
-            // Refresh image gallery
+            // Refresh image and video galleries
             setImageGalleryKey(prev => prev + 1);
+            setVideoGalleryKey(prev => prev + 1);
             
             // Show appropriate notification
             if (typeof window !== 'undefined' && window.sonner) {
@@ -221,6 +223,13 @@ const sseRetryTimeoutRef = useRef(null);
     const pollForUpdates = async () => {
       // Skip polling if page is hidden (browser optimization)
       if (document.hidden) return;
+      
+      // Skip polling if any video is currently playing to avoid interrupting playback
+      const playingVideos = document.querySelectorAll('video:not([paused])');
+      if (playingVideos.length > 0) {
+        console.log('🎬 Video playing, skipping sync polling to avoid interruption');
+        return;
+      }
       
       try {
         const response = await fetch(
@@ -1033,12 +1042,10 @@ const ProcessingNotification = () => {
                 <Images size={16} />
                 Images
               </TabsTrigger>
-{/* COMMENTED OUT - Videos tab (videos disabled)
               <TabsTrigger value="videos" className="flex items-center gap-2">
                 <Video size={16} />
                 Videos
               </TabsTrigger>
-              */}
             </TabsList>
             
             <TabsContent value="inventory">
@@ -1092,12 +1099,12 @@ const ProcessingNotification = () => {
               </div>
             </TabsContent>
             
-{/* COMMENTED OUT - Videos tab content (videos disabled)
             <TabsContent value="videos">
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6">
                   {currentProject && (
                     <VideoGallery 
+                      key={videoGalleryKey}
                       projectId={currentProject._id}
                       onVideoSelect={(video) => {
                         console.log('Video selected:', video);
@@ -1107,7 +1114,6 @@ const ProcessingNotification = () => {
                 </div>
               </div>
             </TabsContent>
-            */}
           </Tabs>
         </div>
       </div>

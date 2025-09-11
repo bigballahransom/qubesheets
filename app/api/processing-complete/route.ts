@@ -9,15 +9,17 @@ export async function POST(request: NextRequest) {
   try {
     // Verify webhook source
     const webhookSource = request.headers.get('x-webhook-source');
-    if (webhookSource !== 'railway-image-service') {
+    if (webhookSource !== 'railway-image-service' && webhookSource !== 'railway-video-service') {
       return NextResponse.json({ error: 'Invalid webhook source' }, { status: 401 });
     }
 
     const body = await request.json();
-    const { imageId, projectId, success, itemsProcessed, totalBoxes, timestamp, error } = body;
+    const { imageId, videoId, projectId, success, itemsProcessed, totalBoxes, timestamp, error, type } = body;
 
     console.log('🔔 Received processing completion webhook:', {
+      type: type || (imageId ? 'image' : 'video'),
       imageId,
+      videoId,
       projectId,
       success,
       itemsProcessed,
@@ -28,12 +30,14 @@ export async function POST(request: NextRequest) {
     const eventData = {
       type: 'processing-complete',
       projectId,
-      imageId,
+      imageId: imageId || null,
+      videoId: videoId || null,
       success,
       itemsProcessed: itemsProcessed || 0,
       totalBoxes: totalBoxes || 0,
       error: error || null,
-      timestamp
+      timestamp,
+      mediaType: imageId ? 'image' : 'video'
     };
 
     // Send to all connections for this project

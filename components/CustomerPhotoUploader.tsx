@@ -316,36 +316,34 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       });
       
-      // Check if file is a supported image type or HEIC (videos disabled)
+      // Check if file is a supported image type, HEIC, or video
       const isRegularImage = file.type.startsWith('image/');
       const isHeic = isHeicFile(file);
+      const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|mpeg|mpg|avi|wmv|flv|webm|3gpp|m4v)$/i.test(file.name);
       
       // Special handling for iPhone photos that may have empty MIME types
       const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
       const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
       
-      // Block videos explicitly
-      if (file.type.startsWith('video/') || /\.(mp4|mov|avi|webm|mkv)$/i.test(file.name)) {
-        alert('Video uploads are temporarily disabled. Please upload images only.');
-        return;
-      }
-      
-      if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
+      if (!isRegularImage && !isHeic && !isVideo && !(isPotentialImage && hasImageExtension)) {
         const errorMsg = isMobile 
-          ? 'Please select a photo from your device.'
-          : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF). Note: Some iPhone photos may need to be converted to JPEG first.';
+          ? 'Please select a photo or video from your device.'
+          : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, MPEG, MPG, AVI, WMV, FLV, WebM, 3GPP, M4V). Note: Some iPhone photos may need to be converted to JPEG first.';
         alert(errorMsg);
         return;
       }
       
-      // Client-side file size validation (images only)
-      const maxSize = 15 * 1024 * 1024; // 15MB for images
+      // Client-side file size validation (different limits for images vs videos)
+      const maxImageSize = 15 * 1024 * 1024; // 15MB for images
+      const maxVideoSize = parseInt(process.env.NEXT_PUBLIC_MAX_VIDEO_SIZE || '524288000', 10); // 500MB for videos
+      const maxSize = isVideo ? maxVideoSize : maxImageSize;
       
       if (file.size > maxSize) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
         
-        const errorMsg = `File too large: ${fileSizeMB}MB. Please select an image smaller than ${maxSizeMB}MB.`;
+        const fileType = isVideo ? 'video' : 'image';
+        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
         alert(errorMsg);
         return;
       }
@@ -353,6 +351,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       console.log('📷 Customer uploader file validation passed:', {
         isRegularImage,
         isHeic,
+        isVideo,
         isPotentialImage,
         hasImageExtension,
         proceeding: true
@@ -360,8 +359,8 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
 
       let finalFile = file;
 
-      // Try client-side HEIC conversion
-      if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
+      // Try client-side HEIC conversion (skip for videos)
+      if (!isVideo && (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic')))) {
         setIsConverting(true);
         try {
           console.log('🔍 Attempting client-side HEIC conversion...');
@@ -382,12 +381,14 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       }
 
-      // Process images for mobile devices to prevent upload failures
-      try {
-        finalFile = await processImageForMobile(finalFile);
-      } catch (processingError) {
-        console.warn('⚠️ Customer uploader: Image processing failed, using original file:', processingError);
-        // Continue with original file
+      // Process images for mobile devices to prevent upload failures (skip for videos)
+      if (!isVideo) {
+        try {
+          finalFile = await processImageForMobile(finalFile);
+        } catch (processingError) {
+          console.warn('⚠️ Customer uploader: Image processing failed, using original file:', processingError);
+          // Continue with original file
+        }
       }
 
       // Mobile-optimized upload with retry logic
@@ -483,7 +484,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif"
+          accept="image/*,.heic,.heif,video/*,.mp4,.mov,.mpeg,.mpg,.avi,.wmv,.flv,.webm,.3gpp,.m4v"
           onChange={handleFileSelect}
           className="hidden"
           disabled={uploading || isConverting}
