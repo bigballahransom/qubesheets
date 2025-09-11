@@ -107,7 +107,7 @@ export async function POST(
     
     return NextResponse.json({
       success: true,
-      videoId: videoDoc._id.toString(),
+      videoId: (videoDoc._id as any).toString(),
       requiresClientProcessing: true,
       videoInfo: {
         fileName,
@@ -116,7 +116,7 @@ export async function POST(
         customerName: customerName || 'anonymous',
         projectId: projectId?.toString(),
         uploadToken: token,
-        videoId: videoDoc._id.toString(),
+        videoId: (videoDoc._id as any).toString(),
         cloudinaryUrl: cloudinaryResult.secureUrl
       },
       message: 'Video uploaded successfully to cloud storage - ready for processing',
