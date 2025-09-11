@@ -1,5 +1,6 @@
 // app/api/projects/[projectId]/save-video-metadata/route.ts - Save video metadata after direct upload on projects page
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
@@ -97,7 +98,7 @@ export async function POST(
     
     return NextResponse.json({
       success: true,
-      videoId: videoDoc._id.toString(),
+      videoId: (videoDoc._id as mongoose.Types.ObjectId).toString(),
       requiresClientProcessing: true,
       videoInfo: {
         fileName,
@@ -105,7 +106,7 @@ export async function POST(
         type: fileType,
         userName,
         projectId,
-        videoId: videoDoc._id.toString(),
+        videoId: (videoDoc._id as mongoose.Types.ObjectId).toString(),
         cloudinaryUrl: cloudinaryResult.secureUrl
       },
       message: 'Video uploaded successfully to cloud storage - ready for processing',

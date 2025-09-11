@@ -1,6 +1,7 @@
 // app/api/projects/[projectId]/save-image-metadata/route.ts - Save image metadata after direct upload on projects page
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
+import mongoose from 'mongoose';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
@@ -141,7 +142,7 @@ export async function POST(
     if (buffer) {
       try {
         jobId = await sendImageProcessingMessage({
-          imageId: imageDoc._id.toString(),
+          imageId: (imageDoc._id as mongoose.Types.ObjectId).toString(),
           projectId: projectId.toString(),
           userId,
           organizationId: orgId,
@@ -163,7 +164,7 @@ export async function POST(
     
     return NextResponse.json({
       success: true,
-      imageId: imageDoc._id.toString(),
+      imageId: (imageDoc._id as mongoose.Types.ObjectId).toString(),
       jobId: jobId,
       message: buffer 
         ? 'Image uploaded successfully! AI analysis is processing in the background.'

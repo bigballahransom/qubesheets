@@ -1,5 +1,6 @@
 // app/api/projects/[projectId]/videos/route.ts - Get videos for a project
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
@@ -352,7 +353,7 @@ export async function POST(
     // Send SQS message for video processing
     try {
       const sqsMessage: VideoProcessingMessage = {
-        videoId: videoDoc._id.toString(),
+        videoId: (videoDoc._id as mongoose.Types.ObjectId).toString(),
         projectId,
         userId,
         organizationId: authContext.organizationId || undefined,

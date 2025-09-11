@@ -1,6 +1,7 @@
 // app/api/customer-upload/[token]/upload/route.ts - Updated with queue system
 
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Image from '@/models/Image';
@@ -305,7 +306,7 @@ export async function POST(
         // Send SQS message for Google Cloud Video Intelligence processing
         try {
           await sendVideoProcessingMessage({
-            videoId: videoDoc._id.toString(),
+            videoId: (videoDoc._id as mongoose.Types.ObjectId).toString(),
             projectId: projectId?.toString() || 'unknown',
             userId: userId || 'anonymous',
             organizationId: organizationId || undefined,
@@ -332,7 +333,7 @@ export async function POST(
         // Return success response
         return NextResponse.json({
           success: true,
-          videoId: videoDoc._id.toString(),
+          videoId: (videoDoc._id as mongoose.Types.ObjectId).toString(),
           s3Result: {
             key: s3Result.key,
             bucket: s3Result.bucket,
@@ -519,7 +520,7 @@ export async function POST(
       let sqsMessageId = null;
       try {
         sqsMessageId = await sendImageProcessingMessage({
-          imageId: imageDoc._id.toString(), // Now we have the actual image ID
+          imageId: (imageDoc._id as mongoose.Types.ObjectId).toString(), // Now we have the actual image ID
           projectId: projectId?.toString() || 'unknown',
           userId: userId || 'anonymous',
           organizationId: organizationId || undefined,
@@ -541,7 +542,7 @@ export async function POST(
       // Return with the actual image data
       return NextResponse.json({
         success: true,
-        imageId: imageDoc._id.toString(),
+        imageId: (imageDoc._id as mongoose.Types.ObjectId).toString(),
         s3Result: {
           key: s3Result.key,
           bucket: s3Result.bucket,

@@ -1300,18 +1300,6 @@ export default function PhotoInventoryUploader({
                   uploadLinkId={null}
                   initialVideoFile={selectedFiles.length > 0 ? selectedFiles[0] : null as any} // Pass the video file directly
                   autoStart={true} // Automatically start processing
-                  onFramesExtracted={async () => {
-                    console.log('Video frames extracted, triggering gallery refresh');
-                    // Show toast but DON'T close modal yet
-                    const { toast: videoToast } = await import('sonner');
-                    videoToast.success('Processing video frames...', {
-                      description: 'Extracting and analyzing frames from your video.',
-                      duration: 4000,
-                    });
-                    
-                    // Trigger gallery refresh when frames are extracted
-                    if (onImageSaved) onImageSaved();
-                  }}
                   onAnalysisComplete={async (results: any) => {
                     console.log('Video analysis complete:', results);
                     

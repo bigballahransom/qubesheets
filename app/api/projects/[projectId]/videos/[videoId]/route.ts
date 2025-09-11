@@ -4,7 +4,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
-import { deleteFile } from '@/lib/cloudinary';
+// import { deleteFile } from '@/lib/cloudinary'; // Not used in current version
 import { getS3SignedUrl } from '@/lib/s3Upload';
 
 // Handle video streaming for both GET and HEAD requests
@@ -41,9 +41,7 @@ async function handleVideoRequest(
     }
     
     console.log(`🎬 Video request for: ${video.name}`, {
-      hasCloudinaryUrl: !!video.cloudinarySecureUrl,
       hasS3File: !!video.s3RawFile,
-      hasData: !!video.data,
       size: video.size,
       userAgent: request.headers.get('user-agent')?.substring(0, 50),
       range: request.headers.get('range'),
@@ -161,16 +159,16 @@ async function handleVideoRequest(
       }
     }
     
-    // If video has Cloudinary URL, redirect to it
-    if (video.cloudinarySecureUrl || video.cloudinaryUrl) {
-      const cloudinaryUrl = video.cloudinarySecureUrl || video.cloudinaryUrl;
-      console.log('🎬 Redirecting to Cloudinary:', cloudinaryUrl);
-      return NextResponse.redirect(cloudinaryUrl);
-    }
+    // Note: Cloudinary properties not available in current Video model
+    // if (video.cloudinarySecureUrl || video.cloudinaryUrl) {
+    //   const cloudinaryUrl = video.cloudinarySecureUrl || video.cloudinaryUrl;
+    //   console.log('🎬 Redirecting to Cloudinary:', cloudinaryUrl);
+    //   return NextResponse.redirect(cloudinaryUrl);
+    // }
     
-    // Handle legacy videos stored as Buffer in MongoDB or missing data
-    if (!video.data && !video.s3RawFile?.key && !video.cloudinarySecureUrl && !video.cloudinaryUrl) {
-      console.error('🎬 Video has no data buffer, S3 file, or Cloudinary URL - video may need to be re-uploaded');
+    // Handle videos with no S3 file
+    if (!video.s3RawFile?.key) {
+      console.error('🎬 Video has no S3 file - video may need to be re-uploaded');
       return NextResponse.json({ 
         error: 'Video data not available - this video may need to be re-uploaded',
         videoId: video._id,
@@ -178,45 +176,12 @@ async function handleVideoRequest(
       }, { status: 404 });
     }
     
-    console.log(`🎬 Serving video from MongoDB buffer: ${video.name} (${video.size} bytes)`);
-    
-    // Handle range requests for video streaming
-    const range = request.headers.get('range');
-    const videoBuffer = video.data;
-    const videoSize = videoBuffer.length;
-    
-    if (range) {
-      // Parse range header (e.g., "bytes=0-1023")
-      const CHUNK_SIZE = 10 ** 6; // 1MB chunks
-      const start = Number(range.replace(/\D/g, ""));
-      const end = Math.min(start + CHUNK_SIZE, videoSize - 1);
-      const contentLength = end - start + 1;
-      
-      const chunk = videoBuffer.slice(start, end + 1);
-      
-      return new NextResponse(chunk, {
-        status: 206, // Partial Content
-        headers: {
-          'Content-Range': `bytes ${start}-${end}/${videoSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': contentLength.toString(),
-          'Content-Type': video.mimeType,
-          'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        },
-      });
-    }
-    
-    // Return entire video if no range specified
-    return new NextResponse(videoBuffer, {
-      status: 200,
-      headers: {
-        'Content-Type': video.mimeType,
-        'Content-Length': videoSize.toString(),
-        'Content-Disposition': `inline; filename="${video.originalName}"`,
-        'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        'Accept-Ranges': 'bytes',
-      },
-    });
+    // Note: Video should be served from S3, not MongoDB buffer
+    console.error('🎬 Attempting to serve video from non-existent MongoDB buffer');
+    return NextResponse.json({ 
+      error: 'Video streaming from database not supported - video should be served from S3',
+      videoId: video._id
+    }, { status: 500 });
     
   } catch (error) {
     console.error('Error serving video:', error);
@@ -260,21 +225,20 @@ export async function DELETE(
     }
     
     console.log(`🗑️ Deleting video: ${video.originalName}`, {
-      hasCloudinaryId: !!video.cloudinaryPublicId,
       size: video.size
     });
     
-    // Delete from Cloudinary if it exists there
-    if (video.cloudinaryPublicId) {
-      try {
-        console.log(`🌩️ Deleting from Cloudinary: ${video.cloudinaryPublicId}`);
-        await deleteFile(video.cloudinaryPublicId, 'video');
-        console.log('✅ Cloudinary deletion successful');
-      } catch (cloudinaryError) {
-        console.warn('⚠️ Failed to delete from Cloudinary (continuing with DB deletion):', cloudinaryError);
-        // Continue with database deletion even if Cloudinary fails
-      }
-    }
+    // Note: Cloudinary deletion disabled - Video model doesn't have cloudinaryPublicId
+    // if (video.cloudinaryPublicId) {
+    //   try {
+    //     console.log(`🌩️ Deleting from Cloudinary: ${video.cloudinaryPublicId}`);
+    //     await deleteFile(video.cloudinaryPublicId, 'video');
+    //     console.log('✅ Cloudinary deletion successful');
+    //   } catch (cloudinaryError) {
+    //     console.warn('⚠️ Failed to delete from Cloudinary (continuing with DB deletion):', cloudinaryError);
+    //     // Continue with database deletion even if Cloudinary fails
+    //   }
+    // }
     
     // Delete from MongoDB
     await Video.deleteOne({ _id: videoId });

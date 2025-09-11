@@ -1,5 +1,6 @@
 // app/api/customer-upload/[token]/save-image-metadata/route.ts - Save image metadata after direct upload
 import { NextRequest, NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Image from '@/models/Image';
@@ -168,7 +169,7 @@ export async function POST(
         
         // Send to SQS for Railway processing
         sqsMessageId = await sendImageProcessingMessage({
-          imageId: imageDoc._id.toString(),
+          imageId: (imageDoc._id as mongoose.Types.ObjectId).toString(),
           projectId: projectId?.toString() || 'unknown',
           userId: userId || 'anonymous',
           organizationId: organizationId,
@@ -192,7 +193,7 @@ export async function POST(
     
     return NextResponse.json({
       success: true,
-      imageId: imageDoc._id.toString(),
+      imageId: (imageDoc._id as mongoose.Types.ObjectId).toString(),
       sqsMessageId: sqsMessageId,
       s3Info: s3Result ? {
         key: s3Result.key,
