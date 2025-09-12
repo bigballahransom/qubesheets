@@ -16,12 +16,15 @@ export default function BrandingPage() {
   const [logo, setLogo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load branding data on component mount
+  // Load branding data on component mount - but don't reload if user has unsaved changes
   useEffect(() => {
-    loadBrandingData();
-  }, [user, organization]);
+    if (!hasUnsavedChanges) {
+      loadBrandingData();
+    }
+  }, [user, organization, hasUnsavedChanges]);
 
   const loadBrandingData = async () => {
     try {
@@ -29,17 +32,17 @@ export default function BrandingPage() {
       if (response.ok) {
         const branding = await response.json();
         setCompanyName(branding.companyName || getDefaultCompanyName());
-        setLogo(branding.companyLogo || getDefaultLogo());
+        setLogo(branding.companyLogo || null); // Use saved logo or null, don't fall back to defaults
       } else {
         // No existing branding, use defaults
         setCompanyName(getDefaultCompanyName());
-        setLogo(getDefaultLogo());
+        setLogo(null); // Start with no logo
       }
     } catch (error) {
       console.error('Error loading branding:', error);
       // Use defaults on error
       setCompanyName(getDefaultCompanyName());
-      setLogo(getDefaultLogo());
+      setLogo(null); // Start with no logo on error
     } finally {
       setLoading(false);
     }
@@ -52,12 +55,6 @@ export default function BrandingPage() {
     return user?.fullName || user?.firstName || 'Your Company';
   };
 
-  const getDefaultLogo = () => {
-    if (organization && organization.imageUrl) {
-      return organization.imageUrl;
-    }
-    return null;
-  };
 
   const saveBranding = async () => {
     console.log('💾 Saving branding:', { companyName, hasLogo: !!logo });
@@ -84,6 +81,7 @@ export default function BrandingPage() {
       
       const result = await response.json();
       console.log('✅ Save successful:', result);
+      setHasUnsavedChanges(false);
       toast.success('Branding settings saved successfully!');
     } catch (error) {
       console.error('❌ Error saving branding:', error);
@@ -114,6 +112,7 @@ export default function BrandingPage() {
         const result = e.target?.result as string;
         console.log('🖼️ Logo uploaded, size:', result?.length);
         setLogo(result);
+        setHasUnsavedChanges(true);
         toast.success('Logo uploaded successfully!');
       };
       reader.onerror = () => {
@@ -188,13 +187,27 @@ export default function BrandingPage() {
                       </div>
                     )}
                     <div>
-                      <Button
-                        onClick={() => fileInputRef.current?.click()}
-                        variant="outline"
-                      >
-                        <Upload className="mr-2 h-4 w-4" />
-                        Upload Logo
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => fileInputRef.current?.click()}
+                          variant="outline"
+                        >
+                          <Upload className="mr-2 h-4 w-4" />
+                          {logo ? 'Replace Logo' : 'Upload Logo'}
+                        </Button>
+                        {logo && (
+                          <Button
+                            onClick={() => {
+                              setLogo(null);
+                              setHasUnsavedChanges(true);
+                            }}
+                            variant="outline"
+                            size="sm"
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-500 mt-1">PNG, JPG up to 2MB</p>
                     </div>
                   </div>
@@ -216,8 +229,14 @@ export default function BrandingPage() {
                 className="w-full"
               >
                 <Save className="mr-2 h-4 w-4" />
-                {saving ? 'Saving...' : 'Save Branding Settings'}
+                {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Changes' : 'Save Branding Settings'}
               </Button>
+              
+              {hasUnsavedChanges && (
+                <p className="text-sm text-orange-600 text-center mt-2">
+                  You have unsaved changes
+                </p>
+              )}
             </div>
           </div>
         )}
