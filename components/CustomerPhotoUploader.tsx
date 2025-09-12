@@ -505,11 +505,10 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
           <div className="space-y-4">
             <div className="flex justify-center items-center gap-4 mb-4">
               <Camera className="w-12 h-12 text-gray-400" />
-              <Video className="w-12 h-12 text-gray-400" />
             </div>
             <div>
               <p className="text-lg font-medium text-gray-700 mb-2">
-                Upload photos or videos of your items
+                Upload photos of your items
               </p>
               <p className="text-sm text-gray-500 mb-4">
                 Drag and drop files here, or click to select
