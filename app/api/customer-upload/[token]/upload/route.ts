@@ -8,6 +8,7 @@ import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { uploadFileToS3 } from '@/lib/s3Upload';
 import { sendImageProcessingMessage, sendVideoProcessingMessage } from '@/lib/sqsUtils';
+import { convertMovToMp4, needsMovConversion } from '@/lib/videoConversion';
 import sharp from 'sharp';
 
 // Helper function to detect video files server-side - Updated for Gemini API compatibility
@@ -264,26 +265,52 @@ export async function POST(
     if (isVideo) {
       console.log('🎬 Processing video file for customer upload:', image.name);
       
-      const videoBuffer = Buffer.from(await image.arrayBuffer());
+      let videoBuffer = Buffer.from(await image.arrayBuffer());
+      let processedVideoFile = image;
+      let finalFileName = image.name;
+      let finalMimeType = image.type;
+      
+      // Check if MOV conversion is needed
+      if (needsMovConversion(image)) {
+        console.log('Uploading video...');
+        try {
+          const conversionResult = await convertMovToMp4(image, {
+            quality: 'medium',
+            maxFileSize: videoMaxSize,
+            timeoutMs: 120000 // 2 minutes
+          });
+          
+          if (conversionResult.success && conversionResult.outputFile) {
+            processedVideoFile = conversionResult.outputFile;
+            videoBuffer = Buffer.from(await processedVideoFile.arrayBuffer());
+            finalFileName = conversionResult.outputFile.name;
+            finalMimeType = conversionResult.outputFile.type;
+            
+            console.log('Video processing complete');
+          } else {
+            console.log('Uploading video...');
+            // Continue with original file as fallback
+          }
+        } catch (conversionError) {
+          console.log('Uploading video...');
+          // Continue with original file as fallback
+        }
+      }
+      
       const timestamp = Date.now();
       const customerName = customerUpload?.customerName || 'anonymous';
       const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
-      const name = `customer-video-${cleanCustomerName}-${timestamp}-${image.name}`;
+      const name = `customer-video-${cleanCustomerName}-${timestamp}-${finalFileName}`;
       
       // Normalize MIME type for Gemini API compatibility
-      const normalizedMimeType = normalizeVideoMimeType(image.name, image.type);
-      console.log(`🎬 Normalized MIME type from '${image.type}' to '${normalizedMimeType}' for Gemini compatibility`);
-      
-      // Note: Duration validation will be performed during Railway video processing
-      // Max duration: ${maxVideoDurationHours} hours (Gemini API limit)
-      console.log(`🕐 Max video duration allowed: ${maxVideoDurationHours} hours (will be validated during processing)`);
+      const normalizedMimeType = normalizeVideoMimeType(finalFileName, finalMimeType);
       
       // Upload to S3
       try {
-        console.log('📤 Uploading customer video to S3...');
+        console.log('Uploading video...');
         
         // Create File object from buffer for S3 upload with normalized MIME type
-        const videoFile = new File([videoBuffer], image.name, { type: normalizedMimeType });
+        const videoFile = new File([videoBuffer], finalFileName, { type: normalizedMimeType });
         
         const s3Result = await uploadFileToS3(videoFile, {
           folder: 'Media/Videos',
@@ -294,19 +321,20 @@ export async function POST(
             uploadToken: token || 'no-token',
             originalMimeType: image.type,
             normalizedMimeType: normalizedMimeType,
+            convertedFromMov: needsMovConversion(image).toString(),
             uploadedAt: new Date().toISOString()
           },
           contentType: normalizedMimeType
         });
         
-        console.log('✅ Customer video uploaded to S3:', s3Result.key);
+        console.log('Video uploaded successfully');
         
         // Save video metadata with S3 URLs
         const videoDoc = await Video.create({
           name,
           originalName: image.name,
           mimeType: normalizedMimeType, // Use normalized MIME type for Gemini compatibility
-          size: image.size,
+          size: videoBuffer.length, // Use processed file size
           duration: 0, // Will be updated after processing
           projectId,
           userId,
@@ -334,11 +362,13 @@ export async function POST(
             uploadSource: 'customer-upload',
             customerName: customerName,
             originalMimeType: image.type, // Keep original for reference
-            normalizedMimeType: normalizedMimeType
+            normalizedMimeType: normalizedMimeType,
+            convertedFromMov: needsMovConversion(image).toString(),
+            finalFileName: finalFileName
           }
         });
         
-        console.log('✅ Customer video metadata saved:', videoDoc._id);
+        console.log('Video saved successfully');
         
         // Update project timestamp
         await Project.findByIdAndUpdate(projectId, { 
@@ -359,12 +389,12 @@ export async function POST(
             originalFileName: image.name,
             mimeType: normalizedMimeType, // Use normalized MIME type for processing
             originalMimeType: image.type, // Keep original for reference
-            fileSize: image.size,
+            fileSize: videoBuffer.length, // Use processed file size
             uploadedAt: new Date().toISOString(),
             source: 'video-upload'
           });
           
-          console.log(`✅ Video SQS message sent: ${sqsMessageId}`);
+          console.log('Video queued for processing');
         } catch (sqsError) {
           console.error('⚠️ Video SQS message failed (S3 upload still successful):', sqsError);
           // Don't fail the entire request if SQS fails

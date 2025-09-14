@@ -94,6 +94,157 @@ function isVideoFile(file: File): boolean {
   return hasVideoExtension || hasVideoMimeType;
 }
 
+// Convert video to Gemini-compatible MP4 format
+async function convertVideoToMP4(file: File): Promise<File> {
+  // ALWAYS convert .MOV files - they are never compatible with Gemini
+  const isMovFile = file.name.toLowerCase().endsWith('.mov');
+  
+  if (!isMovFile && file.type === 'video/mp4') {
+    console.log('🎬 Video is already compatible MP4');
+    return file;
+  }
+
+  console.log(`🔄 Converting ${file.name} (${file.type}) for compatibility...`);
+
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.crossOrigin = 'anonymous';
+
+    const timeout = setTimeout(() => {
+      reject(new Error('Video conversion timeout'));
+    }, 120000);
+
+    video.onloadedmetadata = () => {
+      try {
+        clearTimeout(timeout);
+
+        // Find supported codec
+        const mimeTypes = [
+          'video/mp4; codecs="avc1.42E01E"', // H.264 baseline
+          'video/mp4',
+          'video/webm; codecs="vp8"'
+        ];
+
+        let supportedMimeType = null;
+        for (const mimeType of mimeTypes) {
+          if (MediaRecorder.isTypeSupported(mimeType)) {
+            supportedMimeType = mimeType;
+            break;
+          }
+        }
+
+        if (!supportedMimeType) {
+          throw new Error('Browser does not support video conversion');
+        }
+
+        console.log(`🎬 Using codec: ${supportedMimeType}`);
+
+        // Set up canvas with mobile-optimized dimensions
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        const maxDimension = 1280; // Good for mobile
+        const aspectRatio = video.videoWidth / video.videoHeight;
+        
+        if (video.videoWidth > video.videoHeight) {
+          canvas.width = Math.min(video.videoWidth, maxDimension);
+          canvas.height = Math.round(canvas.width / aspectRatio);
+        } else {
+          canvas.height = Math.min(video.videoHeight, maxDimension);
+          canvas.width = Math.round(canvas.height * aspectRatio);
+        }
+
+        const stream = canvas.captureStream(15); // 15 FPS
+
+        // Add audio if available
+        try {
+          if ((video as any).captureStream) {
+            const videoStream = (video as any).captureStream();
+            const audioTracks = videoStream.getAudioTracks();
+            audioTracks.forEach((track: MediaStreamTrack) => stream.addTrack(track));
+          }
+        } catch (audioError) {
+          console.warn('🎬 Audio not available:', audioError);
+        }
+
+        const recorder = new MediaRecorder(stream, {
+          mimeType: supportedMimeType,
+          videoBitsPerSecond: 1000000, // 1 Mbps for good quality
+          audioBitsPerSecond: 128000
+        });
+
+        const chunks: BlobPart[] = [];
+        
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            chunks.push(event.data);
+          }
+        };
+
+        recorder.onstop = () => {
+          const outputType = supportedMimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
+          const blob = new Blob(chunks, { type: outputType });
+          
+          const fileName = file.name.replace(/\.[^/.]+$/, '.mp4');
+          const convertedFile = new File([blob], fileName, {
+            type: 'video/mp4',
+            lastModified: Date.now()
+          });
+
+          const sizeMB = (convertedFile.size / 1024 / 1024).toFixed(2);
+          const originalSizeMB = (file.size / 1024 / 1024).toFixed(2);
+          console.log(`✅ Video converted: ${originalSizeMB}MB → ${sizeMB}MB`);
+          
+          resolve(convertedFile);
+        };
+
+        recorder.onerror = (event) => {
+          console.error('🎬 Conversion error:', event.error);
+          reject(new Error(`Conversion failed: ${event.error?.message || 'Unknown error'}`));
+        };
+
+        recorder.start(1000);
+
+        // Video playback and canvas drawing
+        const startTime = Date.now();
+        const maxDuration = 60000; // 60 second limit
+
+        const drawFrame = () => {
+          if (video.paused || video.ended || Date.now() - startTime > maxDuration) {
+            recorder.stop();
+            return;
+          }
+
+          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+          requestAnimationFrame(drawFrame);
+        };
+
+        video.onplay = drawFrame;
+        video.onended = () => setTimeout(() => recorder.stop(), 500);
+        
+        video.play().catch(error => {
+          reject(new Error(`Playback failed: ${error.message}`));
+        });
+
+      } catch (error) {
+        clearTimeout(timeout);
+        console.error('🎬 Setup error:', error);
+        reject(new Error(`Setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`));
+      }
+    };
+
+    video.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error('Failed to load video'));
+    };
+
+    video.src = URL.createObjectURL(file);
+    video.load();
+  });
+}
+
 // Enhanced HEIC file detection for iPhone compatibility
 function isHeicFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
@@ -529,9 +680,21 @@ export default function PhotoInventoryUploader({
         
         let finalFile = file;
 
-        // Videos now go through the same upload flow as images
+        // Handle video conversion for .MOV files
         if (isVideo) {
-          console.log(`🎬 Video file will be uploaded via standard flow: ${file.name}`);
+          const isMovFile = file.name.toLowerCase().endsWith('.mov');
+          if (isMovFile) {
+            try {
+              console.log(`🔄 Converting .MOV file: ${file.name}`);
+              finalFile = await convertVideoToMP4(file);
+              console.log(`✅ Video converted successfully: ${file.name} → ${finalFile.name}`);
+            } catch (conversionError) {
+              console.warn(`⚠️ Video conversion failed for ${file.name}, uploading original:`, conversionError);
+              // Continue with original file as fallback
+            }
+          } else {
+            console.log(`🎬 Video file ${file.name} is already compatible`);
+          }
           validFiles.push(finalFile);
           continue;
         }
@@ -1339,10 +1502,7 @@ export default function PhotoInventoryUploader({
           <div className="border-2 border-dashed border-blue-300 rounded-lg p-8 text-center bg-blue-50">
             <Loader2 className="mx-auto h-12 w-12 text-blue-500 animate-spin mb-4" />
             <p className="text-lg font-medium text-blue-700 mb-2">
-              Processing images...
-            </p>
-            <p className="text-sm text-blue-600">
-              Please wait while we process your images
+              Uploading...
             </p>
           </div>
         ) : selectedFiles.length > 0 ? (
@@ -1490,7 +1650,7 @@ export default function PhotoInventoryUploader({
       {Object.keys(s3UploadStatus).length > 0 && (
         <div className="mb-4">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-blue-900 mb-3">📤 S3 Raw File Upload Status</h3>
+            {/* <h3 className="text-sm font-medium text-blue-900 mb-3">📤 S3 Raw File Upload Status</h3> */}
             <div className="space-y-2">
               {Object.entries(s3UploadStatus).map(([fileName, status]) => (
                 <div key={fileName} className="flex items-center justify-between text-sm">
@@ -1526,9 +1686,9 @@ export default function PhotoInventoryUploader({
                 </div>
               ))}
             </div>
-            <p className="text-xs text-blue-600 mt-2">
+            {/* <p className="text-xs text-blue-600 mt-2">
               Raw files are uploaded to S3 for backup before processing
-            </p>
+            </p> */}
           </div>
         </div>
       )}
