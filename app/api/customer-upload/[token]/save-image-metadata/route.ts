@@ -23,7 +23,6 @@ export async function POST(
       fileName,
       fileSize,
       fileType,
-      cloudinaryResult,
       customerName,
       imageBuffer // Base64 encoded image data for analysis
     } = body;
@@ -31,7 +30,6 @@ export async function POST(
     console.log('💾 Received customer image metadata:', {
       fileName,
       fileSize,
-      cloudinaryPublicId: cloudinaryResult?.publicId,
       hasImageBuffer: !!imageBuffer
     });
     
@@ -97,9 +95,6 @@ export async function POST(
       mimeType: fileType,
       size: fileSize,
       data: buffer, // Store image data for analysis
-      cloudinaryPublicId: cloudinaryResult?.publicId,
-      cloudinaryUrl: cloudinaryResult?.url,
-      cloudinarySecureUrl: cloudinaryResult?.secureUrl,
       projectId,
       userId,
       organizationId,
@@ -108,13 +103,8 @@ export async function POST(
       metadata: {
         uploadToken: token,
         directUpload: true,
-        cloudinaryInfo: cloudinaryResult ? {
-          format: cloudinaryResult.format || 'unknown',
-          bytes: cloudinaryResult.bytes || 0,
-          width: cloudinaryResult.width || 0,
-          height: cloudinaryResult.height || 0,
-          createdAt: cloudinaryResult.createdAt || new Date().toISOString()
-        } : null
+        uploadSource: 'customer-upload-metadata',
+        customerName: customerName || 'anonymous'
       },
       // Initialize with pending analysis status
       analysisResult: {

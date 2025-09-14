@@ -31,8 +31,6 @@ export default function VideoUpload({
   const [videoFile, setVideoFile] = useState(null);
   const [videoUrl, setVideoUrl] = useState('');
   const [videoDuration, setVideoDuration] = useState(0);
-  const [extractedFrames, setExtractedFrames] = useState([]);
-  const [selectedFrames, setSelectedFrames] = useState([]);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisResults, setAnalysisResults] = useState([]);
   const [extractionProgress, setExtractionProgress] = useState(0);
@@ -522,7 +520,7 @@ export default function VideoUpload({
           <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <p className="text-xl font-medium text-gray-900 mb-2">Drop your video here</p>
           <p className="text-gray-500 mb-4">or click to browse</p>
-          <p className="text-sm text-gray-400">Supports MP4, MOV, AVI (max 100MB)</p>
+          <p className="text-sm text-gray-400">Supports MP4, MOV, AVI, WebM, FLV, MPG, WMV, 3GP (max 100MB)</p>
           <input
             ref={fileInputRef}
             type="file"

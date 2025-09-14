@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import EditableProjectName from './EditableProjectName';
 import PhotoInventoryUploader from './PhotoInventoryUploader';
 import ImageGallery from './ImageGallery';
-/* Video gallery tab is disabled, but video room modal is still needed */
+import VideoGallery from './VideoGallery';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
@@ -76,7 +76,8 @@ export default function InventoryManager() {
   const [error, setError] = useState(null);
   const [savingStatus, setSavingStatus] = useState('idle'); // 'idle', 'saving', 'saved', 'error'
   const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
-  const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of gallery
+  const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of image gallery
+  const [videoGalleryKey, setVideoGalleryKey] = useState(0); // Force re-render of video gallery
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [videoRoomId, setVideoRoomId] = useState(null);
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
@@ -84,9 +85,18 @@ const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
 const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
+const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const sseRetryTimeoutRef = useRef(null);
+const isVideoPlayingRef = useRef(false);
+
+// Keep ref in sync with state
+useEffect(() => {
+  isVideoPlayingRef.current = isVideoPlaying;
+}, [isVideoPlaying]);
+
+// No longer need to refresh spreadsheet - using on-demand loading
   
   // Default columns setup
   const defaultColumns = [
@@ -95,6 +105,7 @@ const sseRetryTimeoutRef = useRef(null);
     { id: 'col3', name: 'Count', type: 'text' },
     { id: 'col4', name: 'Cuft', type: 'url' },
     { id: 'col5', name: 'Weight', type: 'url' },
+    { id: 'col6', name: 'Going', type: 'select' },
   ];
   
   // Initialize with default empty spreadsheet
@@ -129,29 +140,64 @@ const sseRetryTimeoutRef = useRef(null);
         try {
           const data = JSON.parse(event.data);
           console.log('📨 Received SSE message:', data);
+          
+          // Skip processing if video is playing
+          if (isVideoPlayingRef.current) {
+            console.log('⏸️ Skipping SSE update - video is playing');
+            return;
+          }
 
           if (data.type === 'processing-complete') {
-            console.log(`${data.success ? '✅' : '❌'} Processing ${data.success ? 'completed' : 'failed'} via SSE, refreshing data...`);
+            console.log(`${data.success ? '✅' : '❌'} Processing ${data.success ? 'completed' : 'failed'} via SSE (source: ${data.source || 'unknown'}), refreshing data...`);
             
-            // Immediate UI feedback - update processing status first
-            setProcessingStatus([]);
-            setShowProcessingNotification(false);
+            // Add a small delay to ensure database operations have completed
+            // This is especially important for video processing which might have transaction timing
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Refresh processing status from server (like polling does)
+            try {
+              const statusResponse = await fetch(`/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`);
+              if (statusResponse.ok) {
+                const syncData = await statusResponse.json();
+                console.log('📊 SSE Status refresh:', {
+                  processingImages: syncData.processingImages,
+                  processingVideos: syncData.processingVideos,
+                  recentItems: syncData.recentItems,
+                  recentImages: syncData.recentImages,
+                  recentVideos: syncData.recentVideos,
+                  hasUpdates: syncData.hasUpdates
+                });
+                
+                // Update processing status and notification
+                setProcessingStatus(syncData.processingStatus || []);
+                setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
+                
+                // Update last check time
+                setLastUpdateCheck(syncData.lastChecked);
+              }
+            } catch (error) {
+              console.error('Error refreshing processing status after SSE:', error);
+              // Fallback - clear processing status
+              setProcessingStatus([]);
+              setShowProcessingNotification(false);
+            }
             
             // Refresh inventory items and spreadsheet (like polling does)
             try {
+              console.log('📦 SSE: Refreshing inventory and spreadsheet data...');
               const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
               if (itemsResponse.ok) {
                 const items = await itemsResponse.json();
+                console.log(`📦 SSE: Got ${items.length} inventory items`);
                 setInventoryItems(items);
                 
-                // Also refresh spreadsheet data to include new items
-                const spreadsheetResponse = await fetch(`/api/projects/${currentProject._id}/spreadsheet`);
-                if (spreadsheetResponse.ok) {
-                  const spreadsheetData = await spreadsheetResponse.json();
-                  if (spreadsheetData.rows) {
-                    setSpreadsheetRows(spreadsheetData.rows);
-                  }
-                }
+                // Regenerate spreadsheet rows from updated inventory items to preserve source tracking
+                const updatedRows = convertItemsToRows(items);
+                setSpreadsheetRows(updatedRows);
+                console.log(`📊 SSE: Regenerated ${updatedRows.length} spreadsheet rows with source tracking`);
+                
+                // Save the updated spreadsheet data to ensure persistence
+                await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
               }
             } catch (error) {
               console.error('Error refreshing data after SSE completion:', error);
@@ -159,8 +205,12 @@ const sseRetryTimeoutRef = useRef(null);
               loadProjectData(currentProject._id);
             }
             
-            // Refresh image gallery
+            // Refresh image and video galleries
             setImageGalleryKey(prev => prev + 1);
+            // Only refresh video gallery if no video is playing
+            if (!isVideoPlayingRef.current) {
+              setVideoGalleryKey(prev => prev + 1);
+            }
             
             // Show appropriate notification
             if (typeof window !== 'undefined' && window.sonner) {
@@ -219,8 +269,8 @@ const sseRetryTimeoutRef = useRef(null);
     const pollInterval = isMobile ? 5000 : 3000; // 5s mobile, 3s desktop for better responsiveness
     
     const pollForUpdates = async () => {
-      // Skip polling if page is hidden (browser optimization)
-      if (document.hidden) return;
+      // Skip polling if page is hidden or video is playing
+      if (document.hidden || isVideoPlaying) return;
       
       try {
         const response = await fetch(
@@ -233,7 +283,7 @@ const sseRetryTimeoutRef = useRef(null);
           
           // Update processing status immediately for better UX
           setProcessingStatus(syncData.processingStatus || []);
-          setShowProcessingNotification(syncData.processingImages > 0);
+          setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
           
           // If there are updates, reload the project data
           if (syncData.hasUpdates) {
@@ -249,6 +299,16 @@ const sseRetryTimeoutRef = useRef(null);
               }
             }
             
+            // Show notifications for completed video analysis
+            if (syncData.recentVideos > 0) {
+              console.log(`🎬 Processed ${syncData.recentVideos} videos`);
+              
+              // Show immediate feedback
+              if (typeof window !== 'undefined' && window.sonner) {
+                window.sonner.toast.success(`Video analysis complete! Processed ${syncData.recentVideos} video${syncData.recentVideos > 1 ? 's' : ''}.`);
+              }
+            }
+            
             // Reload inventory items with error handling
             try {
               const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`, {
@@ -259,20 +319,19 @@ const sseRetryTimeoutRef = useRef(null);
                 const items = await itemsResponse.json();
                 setInventoryItems(items);
                 
-                // Reload spreadsheet data
-                const spreadsheetResponse = await fetch(`/api/projects/${currentProject._id}/spreadsheet`, {
-                  signal: AbortSignal.timeout(15000)
-                });
+                // Regenerate spreadsheet rows from updated inventory items to preserve source tracking
+                const updatedRows = convertItemsToRows(items);
+                setSpreadsheetRows(updatedRows);
                 
-                if (spreadsheetResponse.ok) {
-                  const spreadsheetData = await spreadsheetResponse.json();
-                  if (spreadsheetData.rows) {
-                    setSpreadsheetRows(spreadsheetData.rows);
-                  }
-                }
+                // Also save the updated spreadsheet data to ensure persistence
+                await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
                 
-                // Refresh image gallery
+                // Refresh image and video galleries
                 setImageGalleryKey(prev => prev + 1);
+                // Only refresh video gallery if no video is playing
+                if (!isVideoPlaying) {
+                  setVideoGalleryKey(prev => prev + 1);
+                }
               }
             } catch (dataError) {
               console.error('Error reloading project data:', dataError);
@@ -303,7 +362,7 @@ const sseRetryTimeoutRef = useRef(null);
         clearInterval(pollIntervalRef.current);
       }
     };
-  }, [currentProject, lastUpdateCheck]);
+  }, [currentProject, lastUpdateCheck, isVideoPlaying]);
 
   // Add this useEffect to handle visibility change (pause polling when tab is not active)
 useEffect(() => {
@@ -398,43 +457,81 @@ useEffect(() => {
         let rowsAlreadyMigrated = false;
         
         if (spreadsheetData.columns && spreadsheetData.columns.length > 0) {
-          // Check if we need to migrate columns to include Count column
+          // Check if we need to migrate columns to include Count and Going columns
           hasCountColumn = spreadsheetData.columns.some(col => col.name === 'Count');
+          const hasGoingColumn = spreadsheetData.columns.some(col => col.name === 'Going');
           
-          if (!hasCountColumn) {
-            // Migrate existing columns by inserting Count column at position 3
-            const migratedColumns = [
-              ...spreadsheetData.columns.slice(0, 2), // Location, Item
-              { id: 'col3', name: 'Count', type: 'text' }, // Insert Count
-              ...spreadsheetData.columns.slice(2).map(col => ({
-                ...col,
-                id: `col${parseInt(col.id.replace('col', '')) + 1}` // Shift IDs by 1
-              }))
-            ];
+          if (!hasCountColumn || !hasGoingColumn) {
+            // Migrate existing columns by inserting Count and Going columns
+            let migratedColumns = [...spreadsheetData.columns];
             
-            // Migrate existing rows to include Count column
-            const migratedRows = spreadsheetData.rows?.map(row => ({
-              ...row,
-              cells: {
-                col1: row.cells?.col1 || '', // Location stays
-                col2: row.cells?.col2 || '', // Item stays  
-                col3: '1', // New Count column - default to 1
-                col4: row.cells?.col3 || '', // Old col3 (Cuft) moves to col4
-                col5: row.cells?.col4 || '', // Old col4 (Weight) moves to col5
-                // Preserve any additional columns
-                ...Object.fromEntries(
-                  Object.entries(row.cells || {})
-                    .filter(([key]) => !['col1', 'col2', 'col3', 'col4'].includes(key))
-                    .map(([key, value]) => [
-                      key.startsWith('col') ? `col${parseInt(key.replace('col', '')) + 1}` : key,
-                      value
-                    ])
-                )
+            // Add Count column if missing (at position 3)
+            if (!hasCountColumn) {
+              migratedColumns = [
+                ...migratedColumns.slice(0, 2), // Location, Item
+                { id: 'col3', name: 'Count', type: 'text' }, // Insert Count
+                ...migratedColumns.slice(2).map(col => ({
+                  ...col,
+                  id: `col${parseInt(col.id.replace('col', '')) + 1}` // Shift IDs by 1
+                }))
+              ];
+            }
+            
+            // Add Going column if missing (should be at position 6, after Weight)
+            if (!hasGoingColumn) {
+              // Ensure we have exactly 6 columns with Going at the end
+              if (migratedColumns.length < 6) {
+                migratedColumns.push({ id: 'col6', name: 'Going', type: 'select' });
+              } else if (migratedColumns.length === 5 && !migratedColumns.find(col => col.name === 'Going')) {
+                migratedColumns.push({ id: 'col6', name: 'Going', type: 'select' });
               }
-            })) || [];
+            } else {
+              // Update existing Going column to be select type if it's currently text
+              migratedColumns = migratedColumns.map(col => 
+                col.name === 'Going' && col.type === 'text' 
+                  ? { ...col, type: 'select' } 
+                  : col
+              );
+            }
+            
+            // Migrate existing rows to include Count and Going columns
+            const migratedRows = spreadsheetData.rows?.map(row => {
+              let newCells = { ...row.cells };
+              
+              // Handle Count column migration (if not already done)
+              if (!hasCountColumn) {
+                newCells = {
+                  col1: row.cells?.col1 || '', // Location stays
+                  col2: row.cells?.col2 || '', // Item stays  
+                  col3: '1', // New Count column - default to 1
+                  col4: row.cells?.col3 || '', // Old col3 (Cuft) moves to col4
+                  col5: row.cells?.col4 || '', // Old col4 (Weight) moves to col5
+                  // Preserve any additional columns
+                  ...Object.fromEntries(
+                    Object.entries(row.cells || {})
+                      .filter(([key]) => !['col1', 'col2', 'col3', 'col4'].includes(key))
+                      .map(([key, value]) => [
+                        key.startsWith('col') ? `col${parseInt(key.replace('col', '')) + 1}` : key,
+                        value
+                      ])
+                  )
+                };
+              }
+              
+              // Ensure Going column exists (col6)
+              if (!newCells.col6) {
+                newCells.col6 = 'going'; // Default to "going"
+              }
+              
+              return {
+                ...row,
+                cells: newCells
+              };
+            }) || [];
             
             setSpreadsheetColumns(migratedColumns);
             setSpreadsheetRows(migratedRows);
+            previousRowsRef.current = JSON.parse(JSON.stringify(migratedRows));
             rowsAlreadyMigrated = true;
             dataLoadedRef.current = true;
             
@@ -463,11 +560,13 @@ useEffect(() => {
           const manualRows = spreadsheetData.rows.filter(r => !r.inventoryItemId);
           console.log(`📊 Breakdown: ${rowsWithInventoryIds.length} rows with inventory IDs, ${manualRows.length} manual rows`);
           setSpreadsheetRows(spreadsheetData.rows);
+          previousRowsRef.current = JSON.parse(JSON.stringify(spreadsheetData.rows));
           dataLoadedRef.current = true;
         } else if (items.length > 0) {
           // Convert inventory items to rows if no existing rows but we have items
           const newRows = convertItemsToRows(items);
           setSpreadsheetRows(newRows);
+          previousRowsRef.current = JSON.parse(JSON.stringify(newRows));
           dataLoadedRef.current = true;
           
           // Save these rows to the database
@@ -566,19 +665,72 @@ useEffect(() => {
         quantity: item.quantity,
         cuft: item.cuft,
         weight: item.weight,
-        inventoryItemId: item._id
+        inventoryItemId: item._id,
+        sourceImageId: item.sourceImageId,
+        sourceImageIdType: typeof item.sourceImageId,
+        sourceImageIdValue: item.sourceImageId?._id || item.sourceImageId,
+        sourceVideoId: item.sourceVideoId,
+        sourceVideoIdType: typeof item.sourceVideoId,
+        sourceVideoIdValue: item.sourceVideoId?._id || item.sourceVideoId,
+        hasSourceImage: !!item.sourceImageId,
+        hasSourceVideo: !!item.sourceVideoId
       });
-      return {
+      const quantity = item.quantity || 1;
+      const row = {
         id: generateId(),
         inventoryItemId: item._id, // Preserve inventory item ID for deletion
+        sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
+        sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
+        quantity: quantity, // Add quantity at the top level for spreadsheet logic
         cells: {
           col1: item.location || '',
           col2: item.name || '',
           col3: item.quantity?.toString() || '1',
           col4: item.cuft?.toString() || '',
           col5: item.weight?.toString() || '',
+          col6: (() => {
+            // Defensive checks for missing or invalid data
+            let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
+            let safeGoingQuantity = item.goingQuantity;
+            
+            // Handle missing or undefined goingQuantity
+            if (safeGoingQuantity === undefined || safeGoingQuantity === null) {
+              if (item.going === 'not going') {
+                safeGoingQuantity = 0;
+              } else if (item.going === 'partial') {
+                // If marked as partial but no goingQuantity, default to half (rounded down)
+                safeGoingQuantity = Math.floor(safeQuantity / 2);
+              } else {
+                // Default to all going
+                safeGoingQuantity = safeQuantity;
+              }
+            }
+            
+            // Validate goingQuantity bounds
+            safeGoingQuantity = Math.max(0, Math.min(safeQuantity, safeGoingQuantity));
+            
+            if (safeQuantity === 1) {
+              return safeGoingQuantity === 1 ? 'going' : 'not going';
+            } else {
+              if (safeGoingQuantity === 0) {
+                return 'not going';
+              } else {
+                return `going (${safeGoingQuantity}/${safeQuantity})`;
+              }
+            }
+          })(),
         }
       };
+      
+      console.log('🔄 Final row object created:', {
+        name: row.cells.col2,
+        sourceImageId: row.sourceImageId,
+        sourceVideoId: row.sourceVideoId,
+        hasSourceImage: !!row.sourceImageId,
+        hasSourceVideo: !!row.sourceVideoId
+      });
+      
+      return row;
     });
   }, []);
   
@@ -686,8 +838,11 @@ useEffect(() => {
     }
   };
   
+  // Store previous row state to detect changes
+  const previousRowsRef = useRef([]);
+
   // Spreadsheet change handlers
-  const handleSpreadsheetRowsChange = useCallback((newRows) => {
+  const handleSpreadsheetRowsChange = useCallback(async (newRows) => {
     setSpreadsheetRows(newRows);
     
     // Don't save if we don't have a project
@@ -697,8 +852,93 @@ useEffect(() => {
     setSavingStatus('saving');
     debouncedSave(currentProject._id, spreadsheetColumns, newRows);
     
-    // Convert spreadsheet rows back to inventory items when needed (optional)
-    // This would synchronize manual edits back to inventory items
+    // Only sync changes back to inventory items if there are actual changes
+    try {
+      const previousRows = previousRowsRef.current;
+      const changedRows = [];
+      
+      newRows.forEach(newRow => {
+        if (!newRow.inventoryItemId) return; // Skip rows without inventory items
+        
+        const previousRow = previousRows.find(r => r.inventoryItemId === newRow.inventoryItemId);
+        if (!previousRow) {
+          // This is a new row, add it to changed
+          changedRows.push(newRow);
+          return;
+        }
+        
+        // Check if any cell values changed
+        const hasChanges = Object.keys(newRow.cells || {}).some(cellKey => {
+          return (newRow.cells[cellKey] || '') !== (previousRow.cells?.[cellKey] || '');
+        });
+        
+        if (hasChanges) {
+          changedRows.push(newRow);
+        }
+      });
+      
+      // Store current rows for next comparison
+      previousRowsRef.current = JSON.parse(JSON.stringify(newRows));
+      
+      if (changedRows.length === 0) {
+        console.log('📝 No inventory item changes detected');
+        return;
+      }
+      
+      console.log(`📝 Detected ${changedRows.length} changed inventory items`);
+      
+      const updatePromises = changedRows.map(async (row) => {
+        // Parse the going status from spreadsheet format to database format
+        const goingValue = row.cells?.col6 || 'going';
+        const quantity = parseInt(row.cells?.col3) || 1;
+        let goingQuantity = 0;
+        
+        if (goingValue === 'not going') {
+          goingQuantity = 0;
+        } else if (goingValue === 'going') {
+          goingQuantity = quantity;
+        } else if (goingValue.includes('(') && goingValue.includes('/')) {
+          // Extract count from "going (X/Y)" format
+          const match = goingValue.match(/going \((\d+)\/\d+\)/);
+          goingQuantity = match ? parseInt(match[1]) : quantity;
+        } else {
+          // Default to full going if format is unrecognized
+          goingQuantity = quantity;
+        }
+        
+        const inventoryData = {
+          location: row.cells?.col1 || '',
+          name: row.cells?.col2 || '',
+          quantity: quantity,
+          cuft: parseFloat(row.cells?.col4) || 0,
+          weight: parseFloat(row.cells?.col5) || 0,
+          goingQuantity: goingQuantity, // Send goingQuantity instead of going string
+        };
+        
+        console.log(`📝 Updating inventory item ${row.inventoryItemId}:`, inventoryData);
+        
+        const response = await fetch(`/api/projects/${currentProject._id}/inventory/${row.inventoryItemId}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(inventoryData),
+        });
+        
+        if (!response.ok) {
+          console.error(`Failed to update inventory item ${row.inventoryItemId}`);
+        }
+        
+        return response;
+      });
+      
+      // Wait for all updates to complete
+      await Promise.all(updatePromises);
+      console.log(`✅ Successfully synced ${updatePromises.length} inventory items`);
+      
+    } catch (error) {
+      console.error('Error syncing spreadsheet changes to inventory items:', error);
+    }
   }, [currentProject, spreadsheetColumns, debouncedSave]);
   
   const handleSpreadsheetColumnsChange = useCallback((newColumns) => {
@@ -765,28 +1005,212 @@ useEffect(() => {
     await saveSpreadsheetData(currentProject._id, spreadsheetColumns, newRows);
     console.log('✅ Manual sync complete. Spreadsheet rows now have inventory IDs for proper deletion.');
   }, [currentProject, inventoryItems, convertItemsToRows, spreadsheetColumns]);
+
+  // Function to reload inventory items from server (for cascading deletes)
+  const reloadInventoryItems = useCallback(async () => {
+    if (!currentProject) return;
+    
+    try {
+      console.log('🔄 Reloading inventory items after deletion...');
+      
+      // Fetch fresh inventory items from server
+      const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
+      
+      if (!itemsResponse.ok) {
+        throw new Error('Failed to fetch inventory items');
+      }
+      
+      const items = await itemsResponse.json();
+      setInventoryItems(items);
+      
+      // Generate new spreadsheet rows from fresh inventory
+      const updatedRows = convertItemsToRows(items);
+      setSpreadsheetRows(updatedRows);
+      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
+      
+      // Save updated rows
+      await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
+      
+      console.log('✅ Inventory items reloaded successfully');
+    } catch (error) {
+      console.error('Error reloading inventory items:', error);
+    }
+  }, [currentProject, convertItemsToRows, spreadsheetColumns]);
+
+  // Function to refresh only spreadsheet rows (inventory items already updated immediately)
+  const refreshSpreadsheetRows = useCallback(async () => {
+    if (!currentProject) return;
+    
+    try {
+      console.log('🔄 Refreshing spreadsheet rows after inventory update...');
+      
+      // Use current inventory items (already updated immediately) to regenerate rows
+      const updatedRows = convertItemsToRows(inventoryItems);
+      setSpreadsheetRows(updatedRows);
+      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
+      
+      // Save the updated spreadsheet data to ensure persistence
+      await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
+      
+      console.log('✅ Spreadsheet rows refreshed successfully');
+    } catch (error) {
+      console.error('Error refreshing spreadsheet rows:', error);
+    }
+  }, [currentProject, convertItemsToRows, spreadsheetColumns, inventoryItems]);
+
+  // Function to immediately update inventory item status for real-time stat updates
+  const handleInventoryUpdate = useCallback(async (inventoryItemId, newGoingQuantity) => {
+    console.log(`🔄 Immediately updating inventory item ${inventoryItemId} goingQuantity to ${newGoingQuantity}`);
+    
+    // First, update the local state immediately for instant UI feedback
+    setInventoryItems(prev => {
+      const updated = prev.map(item => {
+        if (item._id === inventoryItemId) {
+          const quantity = item.quantity || 1;
+          const going = newGoingQuantity === 0 ? 'not going' : 
+                        newGoingQuantity === quantity ? 'going' : 'partial';
+          return { ...item, goingQuantity: newGoingQuantity, going };
+        }
+        return item;
+      });
+      
+      // Immediately update spreadsheet rows with the new data
+      const updatedRows = convertItemsToRows(updated);
+      setSpreadsheetRows(updatedRows);
+      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
+      
+      return updated;
+    });
+
+    // Then, persist the change to the server to ensure it's saved
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ goingQuantity: newGoingQuantity }),
+      });
+      
+      if (!response.ok) {
+        console.error(`Failed to persist inventory update for item ${inventoryItemId}`);
+        // Note: We don't revert the local state here to avoid UI flicker
+        // The local state will be corrected on next data refresh if needed
+      } else {
+        console.log(`✅ Successfully persisted goingQuantity ${newGoingQuantity} for item ${inventoryItemId}`);
+      }
+    } catch (error) {
+      console.error('Error persisting inventory update:', error);
+    }
+  }, [convertItemsToRows, currentProject]);
   
-  // Calculate stats
-  const totalItems = inventoryItems.length;
+  // Calculate stats using goingQuantity for accurate counts
+  const totalItems = inventoryItems.reduce((total, item) => {
+    const quantity = Math.max(1, item.quantity || 1);
+    let goingQuantity = item.goingQuantity;
+    
+    // Handle missing or undefined goingQuantity with same logic as display
+    if (goingQuantity === undefined || goingQuantity === null) {
+      if (item.going === 'not going') {
+        goingQuantity = 0;
+      } else if (item.going === 'partial') {
+        goingQuantity = Math.floor(quantity / 2);
+      } else {
+        goingQuantity = quantity;
+      }
+    }
+    
+    // Validate bounds
+    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+    return total + goingQuantity;
+  }, 0);
+  
+  const notGoingItems = inventoryItems.reduce((total, item) => {
+    const quantity = Math.max(1, item.quantity || 1);
+    let goingQuantity = item.goingQuantity;
+    
+    // Handle missing or undefined goingQuantity with same logic as display
+    if (goingQuantity === undefined || goingQuantity === null) {
+      if (item.going === 'not going') {
+        goingQuantity = 0;
+      } else if (item.going === 'partial') {
+        goingQuantity = Math.floor(quantity / 2);
+      } else {
+        goingQuantity = quantity;
+      }
+    }
+    
+    // Validate bounds
+    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+    return total + (quantity - goingQuantity);
+  }, 0);
+  
   const totalBoxes = inventoryItems.reduce((total, item) => {
     if (item.box_recommendation) {
-      return total + item.box_recommendation.box_quantity;
+      const quantity = Math.max(1, item.quantity || 1);
+      let goingQuantity = item.goingQuantity;
+      
+      // Handle missing or undefined goingQuantity
+      if (goingQuantity === undefined || goingQuantity === null) {
+        if (item.going === 'not going') {
+          goingQuantity = 0;
+        } else if (item.going === 'partial') {
+          goingQuantity = Math.floor(quantity / 2);
+        } else {
+          goingQuantity = quantity;
+        }
+      }
+      
+      // Validate bounds
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      const ratio = goingQuantity / quantity;
+      return total + Math.ceil(item.box_recommendation.box_quantity * ratio);
     }
     return total;
   }, 0);
   
-  // Calculate total cubic feet
+  // Calculate total cubic feet using goingQuantity
   const totalCubicFeet = inventoryItems.reduce((total, item) => {
     const cuft = item.cuft || 0;
-    const quantity = item.quantity || 1;
-    return total + (cuft * quantity);
+    const quantity = Math.max(1, item.quantity || 1);
+    let goingQuantity = item.goingQuantity;
+    
+    // Handle missing or undefined goingQuantity
+    if (goingQuantity === undefined || goingQuantity === null) {
+      if (item.going === 'not going') {
+        goingQuantity = 0;
+      } else if (item.going === 'partial') {
+        goingQuantity = Math.floor(quantity / 2);
+      } else {
+        goingQuantity = quantity;
+      }
+    }
+    
+    // Validate bounds
+    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+    return total + (cuft * goingQuantity);
   }, 0).toFixed(0);
   
-  // Calculate total weight
+  // Calculate total weight using goingQuantity
   const totalWeight = inventoryItems.reduce((total, item) => {
     const weight = item.weight || 0;
-    const quantity = item.quantity || 1;
-    return total + (weight * quantity);
+    const quantity = Math.max(1, item.quantity || 1);
+    let goingQuantity = item.goingQuantity;
+    
+    // Handle missing or undefined goingQuantity
+    if (goingQuantity === undefined || goingQuantity === null) {
+      if (item.going === 'not going') {
+        goingQuantity = 0;
+      } else if (item.going === 'partial') {
+        goingQuantity = Math.floor(quantity / 2);
+      } else {
+        goingQuantity = quantity;
+      }
+    }
+    
+    // Validate bounds
+    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+    return total + (weight * goingQuantity);
   }, 0).toFixed(0);
   
   // Render appropriate status indicator
@@ -822,18 +1246,40 @@ const ProcessingNotification = () => {
   
   const customerUploads = processingStatus.filter(item => item.isCustomerUpload);
   const regularUploads = processingStatus.filter(item => !item.isCustomerUpload);
+  
+  // Separate by media type
+  const images = processingStatus.filter(item => item.type === 'image');
+  const videos = processingStatus.filter(item => item.type === 'video');
   const total = processingStatus.length;
   
   let message;
   if (customerUploads.length > 0 && regularUploads.length > 0) {
-    // Mixed uploads
-    message = `Processing ${total} photo${total > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+    // Mixed uploads - show media breakdown
+    if (images.length > 0 && videos.length > 0) {
+      message = `Processing ${images.length} image${images.length > 1 ? 's' : ''} and ${videos.length} video${videos.length > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+    } else if (images.length > 0) {
+      message = `Processing ${total} image${total > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+    } else {
+      message = `Processing ${total} video${total > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+    }
   } else if (customerUploads.length > 0) {
-    // Only customer uploads
-    message = `Processing ${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''}...`;
+    // Only customer uploads - show media type
+    if (images.length > 0 && videos.length > 0) {
+      message = `Processing ${images.length} image${images.length > 1 ? 's' : ''} and ${videos.length} video${videos.length > 1 ? 's' : ''} (customer uploads)...`;
+    } else if (images.length > 0) {
+      message = `Processing ${customerUploads.length} image${customerUploads.length > 1 ? 's' : ''} (customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+    } else {
+      message = `Processing ${customerUploads.length} video${customerUploads.length > 1 ? 's' : ''} (customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+    }
   } else {
-    // Only regular uploads
-    message = `Processing ${regularUploads.length} photo${regularUploads.length > 1 ? 's' : ''}...`;
+    // Only regular uploads - show media type
+    if (images.length > 0 && videos.length > 0) {
+      message = `Processing ${images.length} image${images.length > 1 ? 's' : ''} and ${videos.length} video${videos.length > 1 ? 's' : ''}...`;
+    } else if (images.length > 0) {
+      message = `Processing ${regularUploads.length} image${regularUploads.length > 1 ? 's' : ''}...`;
+    } else {
+      message = `Processing ${regularUploads.length} video${regularUploads.length > 1 ? 's' : ''}...`;
+    }
   }
   
   return (
@@ -1033,12 +1479,10 @@ const ProcessingNotification = () => {
                 <Images size={16} />
                 Images
               </TabsTrigger>
-{/* COMMENTED OUT - Videos tab (videos disabled)
               <TabsTrigger value="videos" className="flex items-center gap-2">
                 <Video size={16} />
                 Videos
               </TabsTrigger>
-              */}
             </TabsList>
             
             <TabsContent value="inventory">
@@ -1071,6 +1515,10 @@ const ProcessingNotification = () => {
                       onRowsChange={handleSpreadsheetRowsChange}
                       onColumnsChange={handleSpreadsheetColumnsChange}
                       onDeleteInventoryItem={handleDeleteInventoryItem}
+                      refreshSpreadsheet={refreshSpreadsheetRows}
+                      onInventoryUpdate={handleInventoryUpdate}
+                      projectId={projectId}
+                      inventoryItems={inventoryItems}
                     />
                   )}
                 </div>
@@ -1086,28 +1534,34 @@ const ProcessingNotification = () => {
                       key={imageGalleryKey}
                       projectId={currentProject._id}
                       onUploadClick={() => setIsUploaderOpen(true)}
+                      refreshSpreadsheet={reloadInventoryItems}
+                      inventoryItems={inventoryItems.filter(item => item.sourceImageId)}
+                      onInventoryUpdate={handleInventoryUpdate}
                     />
                   )}
                 </div>
               </div>
             </TabsContent>
             
-{/* COMMENTED OUT - Videos tab content (videos disabled)
             <TabsContent value="videos">
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6">
                   {currentProject && (
                     <VideoGallery 
                       projectId={currentProject._id}
+                      refreshTrigger={videoGalleryKey}
                       onVideoSelect={(video) => {
                         console.log('Video selected:', video);
                       }}
+                      onPlayingStateChange={setIsVideoPlaying}
+                      refreshSpreadsheet={reloadInventoryItems}
+                      inventoryItems={inventoryItems.filter(item => item.sourceVideoId)}
+                      onInventoryUpdate={handleInventoryUpdate}
                     />
                   )}
                 </div>
               </div>
             </TabsContent>
-            */}
           </Tabs>
         </div>
       </div>

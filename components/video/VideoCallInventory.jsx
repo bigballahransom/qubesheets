@@ -674,6 +674,39 @@ const AgentView = React.memo(({
     }
   };
   
+  // Centralized inventory update function - matches InventoryManager pattern
+  const handleInventoryUpdate = useCallback(async (inventoryItemId, newGoingQuantity) => {
+    // Update local state immediately for responsive UI
+    setInventoryItems(prev => prev.map(item => {
+      if (item._id === inventoryItemId) {
+        const quantity = item.quantity || 1;
+        const going = newGoingQuantity === 0 ? 'not going' : 
+                      newGoingQuantity === quantity ? 'going' : 'partial';
+        return { ...item, goingQuantity: newGoingQuantity, going };
+      }
+      return item;
+    }));
+
+    // Persist to server
+    try {
+      const response = await fetch(`/api/projects/${projectId}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goingQuantity: newGoingQuantity }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update inventory item');
+      }
+      
+      console.log(`📦 Video call inventory item updated: ${inventoryItemId} -> goingQuantity: ${newGoingQuantity}`);
+    } catch (error) {
+      console.error('Error persisting inventory update:', error);
+      // Revert local state on error
+      await fetchInventoryItems();
+    }
+  }, [projectId]);
+
   // Fetch real inventory items from database
   const fetchInventoryItems = async () => {
     setInventoryLoading(true);
@@ -1044,6 +1077,7 @@ const AgentView = React.memo(({
                 imagesLoading={imagesLoading}
                 projectId={projectId}
                 fetchCapturedImages={fetchCapturedImages}
+                onInventoryUpdate={handleInventoryUpdate}
                 onRemoveItem={async (id) => {
                   // Remove from database via API
                   try {
@@ -1184,6 +1218,7 @@ const AgentView = React.memo(({
               imagesLoading={imagesLoading}
               projectId={projectId}
               fetchCapturedImages={fetchCapturedImages}
+              onInventoryUpdate={handleInventoryUpdate}
               onRemoveItem={async (id) => {
                 // Remove from database via API
                 try {
@@ -1231,7 +1266,7 @@ const AgentView = React.memo(({
 });
 
 // Enhanced InventorySidebar component - Updated for real database items
-const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId }) => {
+const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isMobile, setIsMobile] = useState(false);
@@ -1346,6 +1381,43 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
         </div>
       </div>
 
+      {/* Inventory Items Section */}
+      {items.length > 0 && (
+        <div className="bg-white border-b border-gray-200 p-4 md:p-6">
+          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <Package size={20} />
+            Inventory Items ({items.reduce((total, item) => total + (item.quantity || 1), 0)})
+          </h3>
+          <div className="space-y-3 max-h-48 overflow-y-auto">
+            {items.map((item) => (
+              <div key={item._id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-900 truncate">{item.name}</p>
+                  <p className="text-sm text-gray-500 flex items-center gap-1">
+                    {getRoomIcon(item.location)} {item.location}
+                    {item.quantity > 1 && <span>• Qty: {item.quantity}</span>}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1 ml-3">
+                  {/* Create ToggleGoingBadge for each quantity */}
+                  {Array.from({ length: item.quantity || 1 }, (_, index) => (
+                    <ToggleGoingBadge 
+                      key={`${item._id}-${index}`}
+                      inventoryItem={item}
+                      quantityIndex={index}
+                      projectId={projectId}
+                      onInventoryUpdate={onInventoryUpdate}
+                      showItemName={false}
+                      className="text-xs"
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Photos Gallery - Scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50">
         {imagesLoading ? (
@@ -1444,6 +1516,39 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
                       {image.analysisResult.summary}
                     </p>
                   )}
+
+                  {/* Inventory Items from this image */}
+                  {(() => {
+                    const imageInventoryItems = items.filter(item => {
+                      const imageId = item.sourceImageId?._id || item.sourceImageId;
+                      return imageId === image._id;
+                    });
+                    
+                    if (imageInventoryItems.length > 0) {
+                      return (
+                        <div className="mt-2">
+                          <p className="text-xs font-medium text-gray-700 mb-1">Items from this photo:</p>
+                          <div className="flex flex-wrap gap-1">
+                            {imageInventoryItems.map((invItem) => {
+                              const quantity = invItem.quantity || 1;
+                              return Array.from({ length: quantity }, (_, index) => (
+                                <ToggleGoingBadge 
+                                  key={`${invItem._id}-${index}`}
+                                  inventoryItem={invItem}
+                                  quantityIndex={index}
+                                  projectId={projectId}
+                                  onInventoryUpdate={onInventoryUpdate}
+                                  showItemName={true}
+                                  className="text-xs"
+                                />
+                              ));
+                            }).flat()}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   
                   {/* File Size */}
                   <div className="mt-2 text-xs text-gray-500">

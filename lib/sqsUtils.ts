@@ -26,6 +26,89 @@ export interface ImageProcessingMessage {
   source: 'photo-inventory-uploader' | 'admin-upload' | 'api-upload';
 }
 
+export interface VideoProcessingMessage {
+  videoId: string;
+  projectId: string;
+  userId: string;
+  organizationId?: string;
+  s3ObjectKey: string;
+  s3Bucket: string;
+  s3Url: string;
+  originalFileName: string;
+  mimeType: string;
+  fileSize: number;
+  uploadedAt: string;
+  source: 'video-upload';
+}
+
+/**
+ * Send video processing message to SQS video queue
+ */
+export async function sendVideoProcessingMessage(message: VideoProcessingMessage): Promise<string> {
+  const queueUrl = process.env.AWS_SQS_VIDEO_QUEUE_URL;
+  
+  if (!queueUrl) {
+    throw new Error('AWS_SQS_VIDEO_QUEUE_URL environment variable is not configured');
+  }
+
+  console.log('📤 Sending video message to SQS:', {
+    queueUrl,
+    videoId: message.videoId,
+    s3ObjectKey: message.s3ObjectKey
+  });
+
+  try {
+    const result = await sqs.sendMessage({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(message),
+      MessageAttributes: {
+        'videoId': {
+          DataType: 'String',
+          StringValue: message.videoId
+        },
+        'projectId': {
+          DataType: 'String',
+          StringValue: message.projectId
+        },
+        'source': {
+          DataType: 'String',
+          StringValue: message.source
+        },
+        'fileSize': {
+          DataType: 'Number',
+          StringValue: message.fileSize.toString()
+        },
+        'fileType': {
+          DataType: 'String',
+          StringValue: 'video'
+        }
+      }
+    }).promise();
+
+    console.log('✅ SQS video message sent successfully:', {
+      messageId: result.MessageId,
+      sequenceNumber: result.SequenceNumber
+    });
+
+    return result.MessageId || 'unknown';
+
+  } catch (error) {
+    console.error('❌ Failed to send SQS video message:', error);
+    
+    if (error instanceof Error) {
+      if (error.message.includes('InvalidParameterValue')) {
+        throw new Error('Invalid SQS video message parameters. Check message format.');
+      } else if (error.message.includes('AccessDenied')) {
+        throw new Error('Access denied to SQS video queue. Check IAM permissions.');
+      } else if (error.message.includes('QueueDoesNotExist')) {
+        throw new Error('SQS video queue does not exist. Check queue URL.');
+      }
+    }
+    
+    throw new Error(`SQS video send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
 /**
  * Send image processing message to SQS queue
  */

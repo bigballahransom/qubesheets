@@ -7,21 +7,23 @@ const sseConnections = new Map<string, ReadableStreamDefaultController>();
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify webhook source
+    // Verify webhook source (accept both image and video services)
     const webhookSource = request.headers.get('x-webhook-source');
-    if (webhookSource !== 'railway-image-service') {
+    if (webhookSource !== 'railway-image-service' && webhookSource !== 'railway-video-service') {
       return NextResponse.json({ error: 'Invalid webhook source' }, { status: 401 });
     }
 
     const body = await request.json();
-    const { imageId, projectId, success, itemsProcessed, totalBoxes, timestamp, error } = body;
+    const { imageId, videoId, projectId, success, itemsProcessed, totalBoxes, timestamp, error, source } = body;
 
     console.log('🔔 Received processing completion webhook:', {
       imageId,
+      videoId,
       projectId,
       success,
       itemsProcessed,
-      totalBoxes
+      totalBoxes,
+      source: source || (imageId ? 'image' : 'video')
     });
 
     // Broadcast to all connected SSE clients for this project
@@ -29,10 +31,12 @@ export async function POST(request: NextRequest) {
       type: 'processing-complete',
       projectId,
       imageId,
+      videoId,
       success,
       itemsProcessed: itemsProcessed || 0,
       totalBoxes: totalBoxes || 0,
       error: error || null,
+      source: source || (imageId ? 'image' : 'video'),
       timestamp
     };
 

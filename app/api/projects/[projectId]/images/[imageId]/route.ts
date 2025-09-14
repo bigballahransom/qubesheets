@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
+import InventoryItem from '@/models/InventoryItem';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/images/:imageId - Get a specific image (with binary data)
@@ -147,6 +148,17 @@ export async function DELETE(
       projectId: existingImage.projectId
     });
     
+    // First, find and delete all associated inventory items
+    const inventoryFilter = getProjectFilter(authContext, projectId, { sourceImageId: imageId });
+    const associatedInventoryItems = await InventoryItem.find(inventoryFilter);
+    
+    console.log(`🗑️ Found ${associatedInventoryItems.length} inventory items to delete with image`);
+    
+    if (associatedInventoryItems.length > 0) {
+      await InventoryItem.deleteMany(inventoryFilter);
+      console.log(`✅ Deleted ${associatedInventoryItems.length} associated inventory items`);
+    }
+    
     // Delete the image
     const deletedImage = await Image.findOneAndDelete(filter);
     
@@ -164,7 +176,10 @@ export async function DELETE(
     
     console.log('✅ Project timestamp updated');
     
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ 
+      success: true,
+      deletedInventoryItems: associatedInventoryItems.length
+    });
   } catch (error) {
     console.error('❌ Error deleting image:', error);
     console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack');

@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/auth-helpers';
 import { uploadFileToS3 } from '@/lib/s3Upload';
-import { sendImageProcessingMessage } from '@/lib/sqsUtils';
+import { sendImageProcessingMessage, sendVideoProcessingMessage } from '@/lib/sqsUtils';
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,45 +28,34 @@ export async function POST(request: NextRequest) {
 
     console.log(`📤 S3 Upload API - Processing file: ${file.name} for project: ${projectId}`);
 
+    // Detect if this is a video file
+    const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|avi|webm|mkv)$/i.test(file.name);
+    const folder = isVideo ? 'Media/Videos' : 'Media/Images';
+    
+    console.log(`📂 File type detection: ${isVideo ? 'video' : 'image'} -> ${folder}`);
+
     try {
       // Upload to S3 from server side where we have access to AWS credentials
       const s3Result = await uploadFileToS3(file, {
-        folder: `Media/Images`,
+        folder,
         metadata: {
           projectId: projectId || 'unknown',
           uploadSource: 'photo-inventory-uploader',
           fileIndex: fileIndex || '0',
           originalMimeType: file.type,
           uploadedBy: userId,
-          uploadedAt: new Date().toISOString()
+          uploadedAt: new Date().toISOString(),
+          fileType: isVideo ? 'video' : 'image'
         },
         contentType: file.type
       });
 
       console.log(`✅ S3 Upload API - Success: ${s3Result.key}`);
 
-      // Send message to SQS for processing
-      let sqsMessageId = null;
-      try {
-        sqsMessageId = await sendImageProcessingMessage({
-          imageId: 'pending', // Will be set when image is saved to MongoDB
-          projectId: projectId || 'unknown',
-          userId,
-          organizationId: organizationId || undefined,
-          s3ObjectKey: s3Result.key,
-          s3Bucket: s3Result.bucket,
-          s3Url: s3Result.url,
-          originalFileName: file.name,
-          mimeType: file.type,
-          fileSize: file.size,
-          uploadedAt: new Date().toISOString(),
-          source: 'photo-inventory-uploader'
-        });
-        console.log(`✅ SQS message sent: ${sqsMessageId}`);
-      } catch (sqsError) {
-        console.error('⚠️ SQS message failed (S3 upload still successful):', sqsError);
-        // Don't fail the entire request if SQS fails
-      }
+      // Note: SQS message will be sent later by save-image-metadata/save-video-metadata 
+      // with the actual imageId/videoId after the record is created in MongoDB
+      const sqsMessageId = null;
+      console.log(`📝 S3 upload complete. SQS message will be sent after metadata save with actual ${isVideo ? 'video' : 'image'}Id`);
 
       return NextResponse.json({
         success: true,

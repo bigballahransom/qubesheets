@@ -7,20 +7,54 @@ import Image from '@/models/Image';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { uploadFileToS3 } from '@/lib/s3Upload';
-import { sendImageProcessingMessage } from '@/lib/sqsUtils';
+import { sendImageProcessingMessage, sendVideoProcessingMessage } from '@/lib/sqsUtils';
 import sharp from 'sharp';
-import { uploadVideo, uploadImage as uploadImageToCloudinary } from '@/lib/cloudinary';
 
-// Helper function to detect video files server-side
+// Helper function to detect video files server-side - Updated for Gemini API compatibility
 function isVideoFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
   const mimeType = file.type.toLowerCase();
   
-  const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv'];
+  // All video formats supported by Google Gemini API (2025)
+  const videoExtensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.mpg', '.mpeg', '.wmv', '.3gp'];
   const hasVideoExtension = videoExtensions.some(ext => fileName.endsWith(ext));
   const hasVideoMimeType = mimeType.startsWith('video/');
   
   return hasVideoExtension || hasVideoMimeType;
+}
+
+// Helper function to normalize video MIME types for Gemini API compatibility
+function normalizeVideoMimeType(fileName: string, originalMimeType: string): string {
+  // If we already have a proper video MIME type, use it
+  if (originalMimeType && originalMimeType.startsWith('video/') && originalMimeType !== 'video/quicktime') {
+    return originalMimeType;
+  }
+  
+  // Extract extension and map to Gemini-compatible MIME types
+  const ext = fileName.toLowerCase().split('.').pop();
+  switch (ext) {
+    case 'mp4':
+      return 'video/mp4';
+    case 'mov':
+      return 'video/mov'; // Gemini uses video/mov, not video/quicktime
+    case 'avi':
+      return 'video/avi';
+    case 'webm':
+      return 'video/webm';
+    case 'flv':
+      return 'video/x-flv';
+    case 'mpg':
+    case 'mpeg':
+      return 'video/mpeg';
+    case 'wmv':
+      return 'video/wmv';
+    case '3gp':
+      return 'video/3gpp';
+    case 'mkv':
+      return 'video/x-matroska'; // Keep existing for MKV
+    default:
+      return originalMimeType || 'video/mp4'; // Default fallback
+  }
 }
 
 // Helper function to detect HEIC files server-side
@@ -190,7 +224,7 @@ export async function POST(
     
     if (!isRegularImage && !isVideo && !isHeic && !isPotentialMobileImage) {
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM).' },
+        { error: 'Invalid file type. Please upload an image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM, FLV, MPG, WMV, 3GP).' },
         { status: 400 }
       );
     }
@@ -199,6 +233,7 @@ export async function POST(
     const mongoDBLimit = 16 * 1024 * 1024; // 16MB MongoDB limit
     const imageMaxSize = 15 * 1024 * 1024; // 15MB for images (leaving buffer for metadata)
     const videoMaxSize = parseInt(process.env.MAX_VIDEO_UPLOAD_SIZE || '104857600'); // 100MB for videos (stored separately)
+    const maxVideoDurationHours = parseInt(process.env.MAX_VIDEO_DURATION_HOURS || '2'); // 2 hours default for Gemini compatibility
     const maxSize = isVideo ? videoMaxSize : imageMaxSize;
     
     console.log('📄 File size validation:', {
@@ -220,7 +255,7 @@ export async function POST(
       );
     }
 
-    // Handle video files - upload to Cloudinary and save metadata
+    // Handle video files - upload to S3 and save metadata
     if (isVideo) {
       console.log('🎬 Processing video file for customer upload:', image.name);
       
@@ -230,100 +265,129 @@ export async function POST(
       const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
       const name = `customer-video-${cleanCustomerName}-${timestamp}-${image.name}`;
       
-      // Upload to Cloudinary
-      let cloudinaryResult: {
-        success: boolean;
-        publicId: string;
-        url: string;
-        secureUrl: string;
-        duration?: number;
-        format?: string;
-        bytes?: number;
-        width?: number;
-        height?: number;
-        createdAt?: string;
-      };
+      // Normalize MIME type for Gemini API compatibility
+      const normalizedMimeType = normalizeVideoMimeType(image.name, image.type);
+      console.log(`🎬 Normalized MIME type from '${image.type}' to '${normalizedMimeType}' for Gemini compatibility`);
       
+      // Note: Duration validation will be performed during Railway video processing
+      // Max duration: ${maxVideoDurationHours} hours (Gemini API limit)
+      console.log(`🕐 Max video duration allowed: ${maxVideoDurationHours} hours (will be validated during processing)`);
+      
+      // Upload to S3
       try {
-        console.log('📤 Uploading customer video to Cloudinary...');
+        console.log('📤 Uploading customer video to S3...');
         
-        const nameWithoutExt = image.name.replace(/\.[^/.]+$/, ''); // Remove file extension  
-        const sanitizedName = nameWithoutExt.replace(/[^a-zA-Z0-9.-]/g, '_');
-        const publicId = `customer_${cleanCustomerName}_${timestamp}_${sanitizedName}`;
+        // Create File object from buffer for S3 upload with normalized MIME type
+        const videoFile = new File([videoBuffer], image.name, { type: normalizedMimeType });
         
-        cloudinaryResult = await uploadVideo(videoBuffer, {
-          public_id: publicId,
-          folder: `qubesheets/customer-uploads/${projectId || 'anonymous'}/videos`,
-          transformation: [
-            { quality: 'auto:good' },
-            { fetch_format: 'auto' }
-          ]
-        }) as typeof cloudinaryResult;
+        const s3Result = await uploadFileToS3(videoFile, {
+          folder: 'Media/Videos',
+          metadata: {
+            projectId: projectId?.toString() || 'unknown',
+            uploadSource: 'customer-upload',
+            customerName: customerName,
+            uploadToken: token || 'no-token',
+            originalMimeType: image.type,
+            normalizedMimeType: normalizedMimeType,
+            uploadedAt: new Date().toISOString()
+          },
+          contentType: normalizedMimeType
+        });
         
-        console.log('✅ Customer video uploaded to Cloudinary:', cloudinaryResult.publicId);
+        console.log('✅ Customer video uploaded to S3:', s3Result.key);
         
-      } catch (cloudinaryError) {
-        console.error('❌ Customer video Cloudinary upload failed:', cloudinaryError);
-        const errorMessage = cloudinaryError instanceof Error ? cloudinaryError.message : 'Unknown error';
+        // Save video metadata with S3 URLs
+        const videoDoc = await Video.create({
+          name,
+          originalName: image.name,
+          mimeType: normalizedMimeType, // Use normalized MIME type for Gemini compatibility
+          size: image.size,
+          duration: 0, // Will be updated after processing
+          projectId,
+          userId,
+          organizationId,
+          description: `Video uploaded by ${customerName}`,
+          source: 'customer_upload',
+          s3RawFile: {
+            key: s3Result.key,
+            bucket: s3Result.bucket,
+            url: s3Result.url,
+            etag: s3Result.etag,
+            uploadedAt: new Date(),
+            contentType: s3Result.contentType
+          },
+          // Initialize with pending analysis status
+          analysisResult: {
+            summary: 'Analysis pending...',
+            itemsCount: 0,
+            totalBoxes: 0,
+            status: 'pending'
+          },
+          metadata: {
+            uploadToken: token,
+            processingPending: true,
+            uploadSource: 'customer-upload',
+            customerName: customerName,
+            originalMimeType: image.type, // Keep original for reference
+            normalizedMimeType: normalizedMimeType
+          }
+        });
+        
+        console.log('✅ Customer video metadata saved:', videoDoc._id);
+        
+        // Update project timestamp
+        await Project.findByIdAndUpdate(projectId, { 
+          updatedAt: new Date() 
+        });
+        
+        // Send to SQS for Railway video processing
+        let sqsMessageId = null;
+        try {
+          sqsMessageId = await sendVideoProcessingMessage({
+            videoId: videoDoc._id.toString(),
+            projectId: projectId?.toString() || 'unknown',
+            userId: userId || 'anonymous',
+            organizationId: organizationId,
+            s3ObjectKey: s3Result.key,
+            s3Bucket: s3Result.bucket,
+            s3Url: s3Result.url,
+            originalFileName: image.name,
+            mimeType: normalizedMimeType, // Use normalized MIME type for processing
+            originalMimeType: image.type, // Keep original for reference
+            fileSize: image.size,
+            uploadedAt: new Date().toISOString(),
+            source: 'video-upload'
+          });
+          
+          console.log(`✅ Video SQS message sent: ${sqsMessageId}`);
+        } catch (sqsError) {
+          console.error('⚠️ Video SQS message failed (S3 upload still successful):', sqsError);
+          // Don't fail the entire request if SQS fails
+        }
+        
+        // Return success response
+        return NextResponse.json({
+          success: true,
+          videoId: videoDoc._id.toString(),
+          sqsMessageId,
+          s3Info: {
+            key: s3Result.key,
+            bucket: s3Result.bucket,
+            url: s3Result.url
+          },
+          message: 'Video uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
+          customerName,
+          analysisStatus: 'queued'
+        });
+        
+      } catch (s3Error) {
+        console.error('❌ Customer video S3 upload failed:', s3Error);
+        const errorMessage = s3Error instanceof Error ? s3Error.message : 'Unknown error';
         return NextResponse.json(
           { error: `Failed to upload video: ${errorMessage}` },
           { status: 500 }
         );
       }
-      
-      // Save video metadata with Cloudinary URLs
-      const videoDoc = await Video.create({
-        name,
-        originalName: image.name,
-        mimeType: image.type,
-        size: image.size,
-        duration: cloudinaryResult.duration || 0,
-        cloudinaryPublicId: cloudinaryResult.publicId,
-        cloudinaryUrl: cloudinaryResult.url,
-        cloudinarySecureUrl: cloudinaryResult.secureUrl,
-        projectId,
-        userId,
-        organizationId,
-        description: `Video uploaded by ${customerName}`,
-        source: 'customer_upload',
-        metadata: {
-          uploadToken: token,
-          processingPending: true,
-          cloudinaryInfo: {
-            format: cloudinaryResult.format || 'unknown',
-            bytes: cloudinaryResult.bytes || 0,
-            width: cloudinaryResult.width || 0,
-            height: cloudinaryResult.height || 0,
-            createdAt: cloudinaryResult.createdAt || new Date().toISOString()
-          }
-        }
-      });
-      
-      console.log('✅ Customer video metadata saved:', videoDoc._id);
-      
-      // Update project timestamp
-      await Project.findByIdAndUpdate(projectId, { 
-        updatedAt: new Date() 
-      });
-      
-      // Return instructions for client-side frame extraction
-      return NextResponse.json({
-        success: true,
-        videoId: videoDoc._id.toString(),
-        requiresClientProcessing: true,
-        videoInfo: {
-          fileName: image.name,
-          size: image.size,
-          type: image.type,
-          customerName,
-          projectId: projectId?.toString(),
-          uploadToken: token,
-          videoId: videoDoc._id.toString(),
-          cloudinaryUrl: cloudinaryResult.secureUrl
-        },
-        message: 'Video uploaded successfully to cloud storage - ready for processing',
-        instructions: 'extract_frames_and_upload'
-      });
     }
 
     // Process image (handle HEIC if needed)

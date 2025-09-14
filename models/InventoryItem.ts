@@ -15,12 +15,16 @@ export interface IInventoryItem extends Document {
   location?: string;
   cuft?: number;
   weight?: number;
+  going?: string; // "going" or "not going" - defaults to "going" if null
+  goingQuantity?: number; // How many of this item are going (0 to quantity)
   fragile?: boolean;
   special_handling?: string;
   box_recommendation?: IBoxRecommendation;
   projectId: mongoose.Types.ObjectId | string;
   userId: string;
   organizationId?: string;
+  sourceImageId?: mongoose.Types.ObjectId | string;
+  sourceVideoId?: mongoose.Types.ObjectId | string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +47,8 @@ const InventoryItemSchema: Schema = new Schema(
     location: { type: String },
     cuft: { type: Number },
     weight: { type: Number },
+    going: { type: String, enum: ['going', 'not going', 'partial'], default: 'going' },
+    goingQuantity: { type: Number, min: 0 },
     fragile: { type: Boolean, default: false },
     special_handling: { type: String },
     box_recommendation: { type: BoxRecommendationSchema },
@@ -54,6 +60,18 @@ const InventoryItemSchema: Schema = new Schema(
     },
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
+    sourceImageId: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'Image',
+      required: false,
+      index: true
+    },
+    sourceVideoId: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'Video',
+      required: false,
+      index: true
+    },
   },
   { timestamps: true }
 );

@@ -351,147 +351,6 @@ export default function CustomerUploadPage() {
   };
   */
 
-  // Handle direct Cloudinary upload for large files
-  const handleDirectUpload = async (file: File, tempImage: UploadedImage) => {
-    try {
-      console.log('📤 Starting direct Cloudinary upload');
-      
-      // Check environment variables
-      const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
-      const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
-      
-      if (!uploadPreset || !cloudName) {
-        console.error('❌ Missing Cloudinary environment variables:', {
-          hasUploadPreset: !!uploadPreset,
-          hasCloudName: !!cloudName
-        });
-        throw new Error('Cloudinary configuration missing. Please check environment variables.');
-      }
-      
-      // Upload directly to Cloudinary (images only)
-      if (file.type.startsWith('video/')) {
-        throw new Error('Video uploads are not supported at this time.');
-      }
-      
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('upload_preset', uploadPreset);
-      formData.append('folder', `qubesheets/customer-uploads/${token}`);
-      
-      const resourceType = 'image';
-      const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
-      
-      console.log('📤 Uploading to:', uploadUrl);
-      
-      const cloudinaryResponse = await fetch(uploadUrl, {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!cloudinaryResponse.ok) {
-        const error = await cloudinaryResponse.text();
-        throw new Error(`Cloudinary upload failed: ${cloudinaryResponse.status} - ${error}`);
-      }
-      
-      const cloudinaryResult = await cloudinaryResponse.json();
-      console.log('✅ Cloudinary upload successful:', cloudinaryResult);
-      
-      // Get base64 for analysis (images only)
-      let imageBuffer = null;
-      try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        const img = new Image();
-        
-        await new Promise((resolve, reject) => {
-          img.onload = () => {
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx?.drawImage(img, 0, 0);
-            imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-            resolve(null);
-          };
-          img.onerror = reject;
-          img.src = URL.createObjectURL(file);
-        });
-      } catch (error) {
-        console.warn('Could not generate base64:', error);
-      }
-      
-      // Save metadata to database (images only)
-      const metadataUrl = `/api/customer-upload/${token}/save-image-metadata`;
-        
-      const metadataPayload = {
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type,
-        cloudinaryResult,
-        customerName: validation?.customerName || 'Customer',
-        imageBuffer // Only for images
-      };
-      
-      console.log('💾 Saving metadata to:', metadataUrl);
-      
-      const metadataResponse = await fetch(metadataUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(metadataPayload)
-      });
-      
-      if (!metadataResponse.ok) {
-        const errorData = await metadataResponse.text();
-        throw new Error(`Metadata save failed: ${metadataResponse.status} - ${errorData}`);
-      }
-      
-      const result = await metadataResponse.json();
-      console.log('✅ Metadata saved successfully:', result);
-      
-      // Handle the result same as regular upload
-      const uploadId = result.imageId || result.videoId;
-      
-      // Track job ID for Railway SQS processing
-      if (result.sqsMessageId && result.sqsMessageId !== 'no-analysis-data') {
-        console.log('📋 Direct upload: SQS Job ID tracked:', result.sqsMessageId);
-        setPendingJobIds(prev => [...prev, result.sqsMessageId]);
-        setShowProcessingStatus(true);
-        console.log('⏳ Direct upload: Upload complete, AI analysis processing in background...');
-      } else {
-        console.log('✅ Direct upload: Upload complete');
-      }
-      
-      // Replace temp image with real data (but keep overlay until Railway transfer)
-      setUploadedImages(prev => prev.map(img => 
-        img.id === tempImage.id 
-          ? {
-              id: uploadId,
-              name: file.name,
-              uploadedAt: new Date().toISOString()
-            }
-          : img
-      ));
-      
-      // Don't show success toast yet - let Railway transfer overlay handle it
-      console.log('📄 Direct upload: Photo uploaded to database, waiting for Railway transfer...');
-      
-    } catch (error) {
-      console.error('❌ Direct upload failed:', error);
-      
-      // Remove temp image on error
-      setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
-      
-      // Show user-friendly error message
-      const errorMessage = error instanceof Error ? error.message : 'Upload failed';
-      
-      toast.error(`Upload failed: ${errorMessage}`, {
-        description: 'Please try again with a smaller file or check your connection.',
-        duration: 8000,
-      });
-      
-      throw error;
-    }
-  };
 
   const handleFileUpload = async (file: File) => {
     setUploading(true);
@@ -513,26 +372,9 @@ export default function CustomerUploadPage() {
         sizeMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
       });
       
-      // VIDEOS TEMPORARILY DISABLED - only allow images
-      if (file.type.startsWith('video/')) {
-        throw new Error('Video uploads are temporarily disabled. Please upload images only.');
-      }
+      // Video uploads now supported with S3 backend
       
-      // For files larger than 2MB, use direct Cloudinary upload to avoid payload limits
-      const PAYLOAD_LIMIT = 2 * 1024 * 1024; // 2MB
-      const shouldUseDirectUpload = file.size > PAYLOAD_LIMIT;
-      
-      console.log('📊 Upload decision:', {
-        fileSize: file.size,
-        fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
-        payloadLimit: PAYLOAD_LIMIT,
-        shouldUseDirectUpload
-      });
-      
-      if (shouldUseDirectUpload) {
-        console.log('📤 Using direct Cloudinary upload (file size > 2MB)');
-        return await handleDirectUpload(file, tempImage);
-      }
+      // All uploads now go through our S3 API route (no size limit with S3)
       
       const formData = new FormData();
       formData.append('image', file);
@@ -560,11 +402,7 @@ export default function CustomerUploadPage() {
           headers: Object.fromEntries(response.headers.entries())
         });
         
-        // If it's a payload too large error, try direct upload as fallback
-        if (response.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE') || errorText.includes('Request Entity Too Large')) {
-          console.log('🔄 Payload too large error detected, falling back to direct upload');
-          return await handleDirectUpload(file, tempImage);
-        }
+        // S3 can handle large files, so no fallback needed
         
         let errorData;
         try {

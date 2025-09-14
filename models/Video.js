@@ -59,25 +59,27 @@ const VideoSchema = new mongoose.Schema({
   },
   source: {
     type: String,
-    enum: ['admin_upload', 'customer_upload', 'video_call'],
+    enum: ['admin_upload', 'customer_upload', 'video_call', 'inventory_upload'],
     default: 'admin_upload'
   },
-  thumbnail: {
-    type: Buffer, // First frame as thumbnail
-    required: false
+  // S3 raw file info for streaming (from new video processing flow)
+  s3RawFile: {
+    bucket: String,
+    key: String,
+    url: String
   },
-  thumbnailMimeType: {
-    type: String,
-    default: 'image/jpeg'
-  },
-  extractedFrames: [{
-    frameId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Image'
+  // Analysis results from Gemini processing  
+  analysisResult: {
+    summary: String,
+    itemsCount: Number,
+    totalBoxes: Number,
+    status: { 
+      type: String, 
+      enum: ['pending', 'processing', 'completed', 'failed'], 
+      default: 'pending' 
     },
-    timestamp: Number,
-    relevanceScore: Number
-  }],
+    error: String
+  },
   metadata: {
     type: Object,
     default: {}

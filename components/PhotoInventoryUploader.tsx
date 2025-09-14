@@ -4,7 +4,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Upload, Camera, Loader2, X, Package, Box, BoxesIcon, Video, Play, Clock } from 'lucide-react';
 import RealTimeUploadStatus from './RealTimeUploadStatus';
-import VideoUpload from './video/VideoUpload';
 import { uploadImageDirectly, uploadVideoDirectly } from '@/lib/directCloudinaryUpload';
 
 // S3UploadResult type for client-side usage
@@ -530,8 +529,9 @@ export default function PhotoInventoryUploader({
         
         let finalFile = file;
 
-        // Skip processing for video files - they'll be handled by VideoUpload component
+        // Videos now go through the same upload flow as images
         if (isVideo) {
+          console.log(`🎬 Video file will be uploaded via standard flow: ${file.name}`);
           validFiles.push(finalFile);
           continue;
         }
@@ -577,11 +577,25 @@ export default function PhotoInventoryUploader({
       
       // Create preview for single file, or show count for multiple
       if (validFiles.length === 1) {
-        try {
-          setPreviewUrl(URL.createObjectURL(validFiles[0]));
-        } catch (previewError) {
-          console.log('Could not create preview, will show placeholder');
-          setPreviewUrl(null);
+        const file = validFiles[0];
+        const isVideo = isVideoFile(file);
+        
+        if (isVideo) {
+          // For videos, create preview URL for video element
+          try {
+            setPreviewUrl(URL.createObjectURL(file));
+          } catch (previewError) {
+            console.log('Could not create video preview, will show placeholder');
+            setPreviewUrl(null);
+          }
+        } else {
+          // For images, create preview URL for img element
+          try {
+            setPreviewUrl(URL.createObjectURL(file));
+          } catch (previewError) {
+            console.log('Could not create image preview, will show placeholder');
+            setPreviewUrl(null);
+          }
         }
       } else {
         setPreviewUrl(null); // No preview for multiple files
@@ -842,24 +856,23 @@ export default function PhotoInventoryUploader({
             // Continue with existing functionality even if S3 fails
           }
 
-          // Step 1: Process mobile images to prevent upload failures
+          // Step 1: Process mobile images to prevent upload failures (skip for videos)
           let processedFile = file;
-          try {
-            processedFile = await processImageForMobile(file);
-          } catch (processingError) {
-            console.warn('⚠️ Image processing failed, using original file:', processingError);
-            processedFile = file;
+          const isVideo = file.type.startsWith('video/');
+          
+          if (!isVideo) {
+            try {
+              processedFile = await processImageForMobile(file);
+            } catch (processingError) {
+              console.warn('⚠️ Image processing failed, using original file:', processingError);
+              processedFile = file;
+            }
+          } else {
+            console.log(`🎬 Skipping image processing for video file: ${file.name}`);
           }
 
-          // VIDEOS TEMPORARILY DISABLED - only allow images
-          if (processedFile.type.startsWith('video/')) {
-            console.error(`❌ Video upload rejected for file ${fileNum}: ${processedFile.name}`);
-            setProcessingStatus(prev => ({
-              ...prev,
-              [file.name]: 'failed'
-            }));
-            continue; // Skip video files
-          }
+          // Handle both images and videos
+          console.log(`📹 Processing ${isVideo ? 'video' : 'image'} file ${fileNum}: ${processedFile.name}`);
           
           // Step 1: Check if file is too large for regular upload
           const PAYLOAD_LIMIT = 2 * 1024 * 1024; // 2MB
@@ -874,77 +887,43 @@ export default function PhotoInventoryUploader({
             shouldUseDirectUpload
           });
           
-          if (shouldUseDirectUpload) {
-            console.log(`📤 File ${fileNum} using direct Cloudinary upload (size > 2MB)`);
-            savedImage = await handleDirectUpload(processedFile, fileNum, s3Result);
-          } else {
-            // Regular upload for smaller files
-            const formData = new FormData();
-            formData.append('image', processedFile);
-            formData.append('description', imageDescription);
-            
-            if (projectId) {
-              formData.append('projectId', projectId);
-            }
-
-            // Include S3 information if available
+          if (isVideo) {
+            // Videos: Save metadata to MongoDB and trigger SQS processing
+            console.log(`🎬 Video ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
             if (s3Result) {
-              formData.append('s3RawFile', JSON.stringify({
-                key: s3Result.key,
-                bucket: s3Result.bucket,
-                url: s3Result.url,
-                etag: s3Result.etag,
-                uploadedAt: s3Result.uploadedAt,
-                contentType: s3Result.contentType
-              }));
-            }
+              try {
+                const videoMetadata = {
+                  fileName: file.name,
+                  fileSize: file.size,
+                  fileType: file.type,
+                  s3RawFile: {
+                    key: s3Result.key,
+                    bucket: s3Result.bucket,
+                    url: s3Result.url,
+                    etag: s3Result.etag,
+                    uploadedAt: s3Result.uploadedAt,
+                    contentType: s3Result.contentType
+                  }
+                };
 
-            console.log(`💾 Saving image ${fileNum} to MongoDB...`);
-            console.log(`📱 Mobile upload debug - File details:`, {
-              originalName: file.name,
-              originalSize: file.size,
-              originalType: file.type,
-              processedName: processedFile.name,
-              processedSize: processedFile.size,
-              processedType: processedFile.type,
-              compressionRatio: processedFile.size !== file.size ? `${((1 - processedFile.size / file.size) * 100).toFixed(1)}% reduced` : 'no compression',
-              isMobile: isMobileDevice(),
-              isIPhone: /iPhone/i.test(navigator.userAgent),
-              userAgent: navigator.userAgent.substring(0, 100)
-            });
-            
-            const saveResponse = await fetch(`/api/projects/${projectId}/images`, {
-              method: 'POST',
-              body: formData,
-              // Add timeout for mobile networks
-              signal: AbortSignal.timeout(120000) // 2 minute timeout for mobile
-            });
+                const metadataResponse = await fetch(`/api/projects/${projectId}/save-video-metadata`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(videoMetadata),
+                });
 
-            if (!saveResponse.ok) {
-              const errorText = await saveResponse.text();
-              console.error(`❌ Failed to save image ${fileNum}:`, errorText);
-              console.error(`📱 Mobile upload error details:`, {
-                status: saveResponse.status,
-                statusText: saveResponse.statusText,
-                headers: Object.fromEntries(saveResponse.headers.entries()),
-                isMobile: isMobileDevice()
-              });
-              
-              // If it's a payload too large error, try direct upload as fallback
-              if (saveResponse.status === 413 || errorText.includes('PAYLOAD_TOO_LARGE') || errorText.includes('Request Entity Too Large')) {
-                console.log(`🔄 File ${fileNum} payload too large, falling back to direct upload`);
-                try {
-                  savedImage = await handleDirectUpload(processedFile, fileNum, s3Result);
-                  console.log(`✅ Fallback direct upload successful for file ${fileNum}`);
-                } catch (directError) {
-                  console.error(`❌ Direct upload fallback also failed for file ${fileNum}:`, directError);
-                  setProcessingStatus(prev => ({
-                    ...prev,
-                    [file.name]: 'failed'
-                  }));
-                  continue; // Skip to next file
+                if (!metadataResponse.ok) {
+                  const errorText = await metadataResponse.text();
+                  console.error(`❌ Failed to save video metadata for ${file.name}:`, errorText);
+                  throw new Error(`Failed to save video metadata: ${errorText}`);
                 }
-              } else {
+
+                savedImage = await metadataResponse.json();
+                console.log(`✅ Video metadata saved for ${file.name}:`, savedImage);
+              } catch (metadataError) {
+                console.error(`❌ Error saving video metadata for ${file.name}:`, metadataError);
                 setProcessingStatus(prev => ({
                   ...prev,
                   [file.name]: 'failed'
@@ -952,32 +931,108 @@ export default function PhotoInventoryUploader({
                 continue; // Skip to next file
               }
             } else {
-              savedImage = await saveResponse.json();
+              console.error(`❌ No S3 result available for video ${file.name}`);
+              savedImage = { success: false, message: 'S3 upload failed' };
+            }
+          } else if (shouldUseDirectUpload) {
+            console.log(`📤 File ${fileNum} using direct Cloudinary upload (size > 2MB)`);
+            savedImage = await handleDirectUpload(processedFile, fileNum, s3Result);
+          } else {
+            // Regular upload for smaller files - use save-image-metadata endpoint to trigger SQS processing
+            console.log(`💾 Image ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
+            if (s3Result) {
+              try {
+                // Convert image to base64 for analysis
+                let imageBuffer = null;
+                try {
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d');
+                  const img = new Image();
+                  
+                  await new Promise((resolve, reject) => {
+                    img.onload = () => {
+                      canvas.width = img.width;
+                      canvas.height = img.height;
+                      ctx?.drawImage(img, 0, 0);
+                      imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+                      resolve(null);
+                    };
+                    img.onerror = reject;
+                    img.src = URL.createObjectURL(processedFile);
+                  });
+                } catch (error) {
+                  console.warn('Could not generate base64 for analysis:', error);
+                }
+
+                const imageMetadata = {
+                  fileName: processedFile.name,
+                  fileSize: processedFile.size,
+                  fileType: processedFile.type,
+                  imageBuffer,
+                  s3RawFile: {
+                    key: s3Result.key,
+                    bucket: s3Result.bucket,
+                    url: s3Result.url,
+                    etag: s3Result.etag,
+                    uploadedAt: s3Result.uploadedAt,
+                    contentType: s3Result.contentType,
+                    size: s3Result.size
+                  }
+                };
+
+                console.log(`📱 Mobile upload debug - File details:`, {
+                  originalName: file.name,
+                  originalSize: file.size,
+                  originalType: file.type,
+                  processedName: processedFile.name,
+                  processedSize: processedFile.size,
+                  processedType: processedFile.type,
+                  compressionRatio: processedFile.size !== file.size ? `${((1 - processedFile.size / file.size) * 100).toFixed(1)}% reduced` : 'no compression',
+                  isMobile: isMobileDevice(),
+                  isIPhone: /iPhone/i.test(navigator.userAgent),
+                  userAgent: navigator.userAgent.substring(0, 100)
+                });
+
+                const saveResponse = await fetch(`/api/projects/${projectId}/save-image-metadata`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(imageMetadata),
+                  // Add timeout for mobile networks
+                  signal: AbortSignal.timeout(120000) // 2 minute timeout for mobile
+                });
+
+                if (!saveResponse.ok) {
+                  const errorText = await saveResponse.text();
+                  console.error(`❌ Failed to save image metadata for ${file.name}:`, errorText);
+                  throw new Error(`Failed to save image metadata: ${errorText}`);
+                }
+
+                savedImage = await saveResponse.json();
+                console.log(`✅ Image metadata saved for ${file.name}:`, savedImage);
+              } catch (metadataError) {
+                console.error(`❌ Error saving image metadata for ${file.name}:`, metadataError);
+                setProcessingStatus(prev => ({
+                  ...prev,
+                  [file.name]: 'failed'
+                }));
+                continue; // Skip to next file
+              }
+            } else {
+              console.error(`❌ No S3 result available for image ${file.name}`);
+              savedImage = { success: false, message: 'S3 upload failed' };
             }
           }
-          console.log(`✅ Image ${fileNum} saved to MongoDB:`, savedImage._id);
+          console.log(`✅ ${isVideo ? 'Video' : 'Image'} ${fileNum} saved and queued for processing:`, savedImage.imageId || savedImage.videoId);
 
-          // Immediate UI feedback - trigger image gallery refresh right away
+          // Immediate UI feedback - trigger gallery refresh right away
           if (onImageSaved) {
-            console.log('🔄 Triggering immediate image gallery refresh...');
+            console.log('🔄 Triggering immediate gallery refresh...');
             onImageSaved();
           }
 
-          // Step 2: Queue background analysis job
-          console.log(`📋 Queueing background analysis job for image ${fileNum}...`);
-          const useRailway = file.size > 4 * 1024 * 1024 || 
-                           file.name.toLowerCase().match(/\.(heic|heif)$/) || 
-                           file.type.includes('heic');
-          
-          console.log(`🚂 Railway decision for ${file.name}:`, {
-            useRailway,
-            fileSize: file.size,
-            isLargeFile: file.size > 4 * 1024 * 1024,
-            isHEIC: file.name.toLowerCase().match(/\.(heic|heif)$/) || file.type.includes('heic'),
-            isMobile: isMobileDevice()
-          });
-          
-          // Background queue removed - SQS message sent automatically in S3 upload API
+          // SQS processing is automatically triggered by metadata save endpoints
           setProcessingStatus(prev => ({
             ...prev,
             [file.name]: 'completed'
@@ -1248,7 +1303,7 @@ export default function PhotoInventoryUploader({
     <div className="max-w-none w-full">
       <div className="text-center mb-6">
         <p className="text-gray-600">
-          Upload photos or videos to automatically extract frames and identify inventory items
+          Upload photos or videos to automatically identify inventory items
         </p>
       </div>
 
@@ -1257,7 +1312,7 @@ export default function PhotoInventoryUploader({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif"
+          accept="image/*,video/*,.heic,.heif"
           onChange={handleFileSelect}
           className="hidden"
           multiple
@@ -1276,7 +1331,7 @@ export default function PhotoInventoryUploader({
               Click to upload photos or videos
             </p>
             <p className="text-sm text-gray-500">
-              Images: JPG, PNG, GIF, HEIC, HEIF (up to 10MB each)<br/>
+              Images: JPG, PNG, GIF, HEIC, HEIF (up to 15MB each)<br/>
               Videos: MP4, MOV, AVI, WebM (up to 100MB each)
             </p>
           </div>
@@ -1292,71 +1347,54 @@ export default function PhotoInventoryUploader({
           </div>
         ) : selectedFiles.length > 0 ? (
           <div className="space-y-4">
-            {hasVideoFiles ? (
-              // Video upload mode - automatically process the selected video
-              <div>
-                <VideoUpload 
-                  projectId={projectId}
-                  uploadLinkId={null}
-                  initialVideoFile={selectedFiles.length > 0 ? selectedFiles[0] : null as any} // Pass the video file directly
-                  autoStart={true} // Automatically start processing
-                  onFramesExtracted={async () => {
-                    console.log('Video frames extracted, triggering gallery refresh');
-                    // Show toast but DON'T close modal yet
-                    const { toast: videoToast } = await import('sonner');
-                    videoToast.success('Processing video frames...', {
-                      description: 'Extracting and analyzing frames from your video.',
-                      duration: 4000,
-                    });
-                    
-                    // Trigger gallery refresh when frames are extracted
-                    if (onImageSaved) onImageSaved();
-                  }}
-                  onAnalysisComplete={async (results: any) => {
-                    console.log('Video analysis complete:', results);
-                    
-                    // Video analysis complete - close after delay
-                    setTimeout(() => {
-                      handleReset();
-                      if (onClose) {
-                        onClose();
-                      }
-                    }, 2000);
-                    
-                    // Trigger gallery refresh when analysis completes
-                    if (onImageSaved) onImageSaved();
-                  }}
-                  onReset={() => {
-                    // Reset the parent component when video upload resets
-                    handleReset();
-                  }}
-                />
-              </div>
-            ) : (
-              // Image upload mode - show existing image preview
-              <div className="relative">
-                {selectedFiles.length === 1 && previewUrl ? (
+            {/* Media preview - works for both images and videos */}
+            <div className="relative">
+              {selectedFiles.length === 1 && previewUrl ? (
+                hasVideoFiles ? (
+                  <video
+                    src={previewUrl}
+                    controls
+                    preload="metadata"
+                    className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
+                    style={{ maxHeight: '300px' }}
+                  />
+                ) : (
                   <img
                     src={previewUrl}
                     alt="Preview"
                     className="w-1/2 max-w-md mx-auto rounded-lg shadow-md"
                   />
-                ) : selectedFiles.length === 1 ? (
+                )
+              ) : selectedFiles.length === 1 ? (
                   <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-gray-100 border-2 border-dashed border-gray-300 flex flex-col items-center justify-center p-8">
-                    <Camera className="h-12 w-12 text-gray-400 mb-2" />
-                    <p className="text-sm font-medium text-gray-600">HEIC Image Selected</p>
-                    <p className="text-xs text-gray-500 text-center mt-1">
-                      {selectedFiles[0].name}
-                      <br />
-                      Preview will be available after analysis
-                    </p>
+                    {hasVideoFiles ? (
+                      <>
+                        <Video className="h-12 w-12 text-purple-500 mb-2" />
+                        <p className="text-sm font-medium text-gray-600">Video Selected</p>
+                        <p className="text-xs text-gray-500 text-center mt-1">
+                          {selectedFiles[0].name}
+                          <br />
+                          Video will be analyzed with full content
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="h-12 w-12 text-gray-400 mb-2" />
+                        <p className="text-sm font-medium text-gray-600">Image Selected</p>
+                        <p className="text-xs text-gray-500 text-center mt-1">
+                          {selectedFiles[0].name}
+                          <br />
+                          Preview will be available after analysis
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="w-1/2 max-w-md mx-auto rounded-lg shadow-md bg-blue-100 border-2 border-dashed border-blue-300 flex flex-col items-center justify-center p-8">
                     <Package className="h-12 w-12 text-blue-500 mb-2" />
-                    <p className="text-lg font-medium text-blue-700">{selectedFiles.length} Images Selected</p>
+                    <p className="text-lg font-medium text-blue-700">{selectedFiles.length} {hasVideoFiles ? 'Media Files' : 'Images'} Selected</p>
                     <p className="text-sm text-blue-600 text-center mt-1">
-                      Ready to analyze multiple images
+                      Ready to analyze {hasVideoFiles ? 'images and videos' : 'multiple images'}
                     </p>
                   </div>
                 )}
@@ -1367,30 +1405,27 @@ export default function PhotoInventoryUploader({
                   <X className="h-4 w-4" />
                 </button>
               </div>
-            )}
             
-            {/* Image Description Input - Only show for images, not videos */}
-            {!hasVideoFiles && (
-              <div className="max-w-md mx-auto">
-                <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
-                  Add a description (optional)
-                </label>
-                <input
-                  id="description"
-                  type="text"
-                  value={imageDescription}
-                  onChange={(e) => setImageDescription(e.target.value)}
-                  placeholder="e.g., Living room items, Kitchen inventory..."
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            )}
+            {/* Media Description Input - works for both images and videos */}
+            <div className="max-w-md mx-auto">
+              <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                Add a description (optional)
+              </label>
+              <input
+                id="description"
+                type="text"
+                value={imageDescription}
+                onChange={(e) => setImageDescription(e.target.value)}
+                placeholder="e.g., Living room items, Kitchen inventory, Home walkthrough..."
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
           </div>
         ) : null}
       </div>
 
-      {/* Action Buttons - Only show for image uploads */}
-      {selectedFiles.length > 0 && !analysisResult && !hasVideoFiles && (
+      {/* Action Buttons - Show for both image and video uploads */}
+      {selectedFiles.length > 0 && !analysisResult && (
         <div className="text-center mb-6">
           <button
             onClick={handleAnalyze}
@@ -1410,7 +1445,7 @@ export default function PhotoInventoryUploader({
             )}
           </button>
           <p className="text-xs text-gray-500 mt-2">
-            Your image will be saved to the project gallery
+            Your {hasVideoFiles ? 'video' : 'image'} will be saved to the project gallery
           </p>
         </div>
       )}

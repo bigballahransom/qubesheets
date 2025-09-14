@@ -5,6 +5,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import Image from '@/models/Image';
+import Video from '@/models/Video';
 
 export async function GET(
   request: NextRequest,
@@ -50,6 +51,18 @@ export async function GET(
       'analysisResult.itemsCount': { $gt: 0 }
     }).select('_id name analysisResult updatedAt source').sort({ updatedAt: -1 });
 
+    // Check for recent videos with analysis results (include customer uploads)
+    const recentVideos = await Video.find({
+      projectId,
+      $or: [
+        { userId: userId }, // Regular project uploads
+        { source: 'customer_upload' }, // Customer uploads (any userId)
+        { userId: null } // Anonymous uploads
+      ],
+      updatedAt: { $gt: lastUpdateDate },
+      'analysisResult.itemsCount': { $gt: 0 }
+    }).select('_id originalName analysisResult updatedAt source').sort({ updatedAt: -1 });
+
     // Check for images currently being processed (include customer uploads)
     const processingImages = await Image.find({
       projectId,
@@ -73,6 +86,29 @@ export async function GET(
       ]
     }).select('_id name analysisResult source').sort({ createdAt: -1 });
 
+    // Check for videos currently being processed
+    const processingVideos = await Video.find({
+      projectId,
+      $and: [
+        {
+          $or: [
+            { userId: userId }, // Regular project uploads
+            { source: 'customer_upload' }, // Customer uploads (any userId)
+            { userId: null } // Anonymous uploads
+          ]
+        },
+        {
+          $or: [
+            { 'analysisResult.status': 'processing' },
+            { 'analysisResult.status': 'pending' },
+            { 'analysisResult.summary': 'Analysis pending...' },
+            { 'analysisResult.summary': /processing|analyzing/i },
+            { 'analysisResult.summary': 'AI video analysis in progress...' }
+          ]
+        }
+      ]
+    }).select('_id originalName analysisResult source').sort({ createdAt: -1 });
+
     // Calculate totals (include customer uploads)
     const totalItems = await InventoryItem.countDocuments({ projectId, userId });
     const totalImages = await Image.countDocuments({
@@ -83,24 +119,46 @@ export async function GET(
         { userId: null } // Anonymous uploads
       ]
     });
+    const totalVideos = await Video.countDocuments({
+      projectId,
+      $or: [
+        { userId: userId }, // Regular project uploads
+        { source: 'customer_upload' }, // Customer uploads
+        { userId: null } // Anonymous uploads
+      ]
+    });
 
     return NextResponse.json({
-      hasUpdates: recentItems.length > 0 || recentImages.length > 0,
+      hasUpdates: recentItems.length > 0 || recentImages.length > 0 || recentVideos.length > 0,
       recentItems: recentItems.length,
       recentImages: recentImages.length,
+      recentVideos: recentVideos.length,
       processingImages: processingImages.length,
+      processingVideos: processingVideos.length,
       totals: {
         items: totalItems,
-        images: totalImages
+        images: totalImages,
+        videos: totalVideos
       },
       lastChecked: new Date().toISOString(),
-      processingStatus: processingImages.map(img => ({
-        id: img._id,
-        name: img.name,
-        status: img.analysisResult?.summary || 'Processing...',
-        source: img.source || 'project_upload',
-        isCustomerUpload: img.source === 'customer_upload'
-      }))
+      processingStatus: [
+        ...processingImages.map(img => ({
+          id: img._id,
+          name: img.name,
+          status: img.analysisResult?.summary || 'Processing...',
+          source: img.source || 'project_upload',
+          type: 'image',
+          isCustomerUpload: img.source === 'customer_upload'
+        })),
+        ...processingVideos.map(video => ({
+          id: video._id,
+          name: video.originalName,
+          status: video.analysisResult?.summary || 'Processing video...',
+          source: video.source || 'project_upload',
+          type: 'video',
+          isCustomerUpload: video.source === 'customer_upload'
+        }))
+      ]
     });
 
   } catch (error) {

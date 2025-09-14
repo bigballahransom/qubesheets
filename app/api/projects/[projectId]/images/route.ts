@@ -27,23 +27,49 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
     
-    // Get all images for the project (exclude binary data for list view)
+    // Get all images for the project (include binary data for gallery view)
     const filter = getProjectFilter(authContext, projectId);
     console.log('🖼️ Image gallery filter:', filter);
     
     const images = await Image.find(filter)
-      .select('name originalName mimeType size description analysisResult source metadata createdAt updatedAt')
+      .select('name originalName mimeType size description analysisResult source metadata data createdAt updatedAt')
       .sort({ createdAt: -1 });
     
     console.log(`🖼️ Found ${images.length} images for project ${projectId}`);
-    console.log('🖼️ Images:', images.map(img => ({
+    
+    // Convert binary data to base64 data URLs
+    const imagesWithDataUrls = images.map(img => {
+      let dataUrl = null;
+      if (img.data && img.data.length > 0) {
+        const base64 = img.data.toString('base64');
+        dataUrl = `data:${img.mimeType || 'image/jpeg'};base64,${base64}`;
+      }
+      
+      return {
+        _id: img._id,
+        name: img.name,
+        originalName: img.originalName,
+        mimeType: img.mimeType,
+        size: img.size,
+        description: img.description,
+        analysisResult: img.analysisResult,
+        source: img.source,
+        metadata: img.metadata,
+        dataUrl, // Base64 data URL for direct display
+        createdAt: img.createdAt,
+        updatedAt: img.updatedAt
+      };
+    });
+    
+    console.log('🖼️ Images with data URLs:', imagesWithDataUrls.map(img => ({
       name: img.name,
       source: img.source,
-      hasVideoMetadata: !!img.metadata?.videoSource,
+      hasDataUrl: !!img.dataUrl,
+      dataUrlLength: img.dataUrl ? img.dataUrl.length : 0,
       createdAt: img.createdAt
     })));
     
-    return NextResponse.json(images);
+    return NextResponse.json(imagesWithDataUrls);
   } catch (error) {
     console.error('Error fetching images:', error);
     return NextResponse.json(

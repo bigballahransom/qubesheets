@@ -2,13 +2,24 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu } from 'lucide-react';
+import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
+import { toast } from 'sonner';
 
 // Column type definitions
 const columnTypes = {
   text: { icon: 'T', label: 'Text' },
   company: { icon: '🏢', label: 'Company' },
   url: { icon: '🔗', label: 'URL' },
+  select: { icon: '📋', label: 'Select' },
 };
 
 // Generate unique ID for cells
@@ -19,7 +30,11 @@ export default function Spreadsheet({
   initialColumns = [],
   onRowsChange = () => {},
   onColumnsChange = () => {},
-  onDeleteInventoryItem = () => {}
+  onDeleteInventoryItem = () => {},
+  refreshSpreadsheet = null,
+  onInventoryUpdate = null,
+  projectId = null,
+  inventoryItems = []
 }) {
   // State for spreadsheet data
   const [columns, setColumns] = useState(
@@ -41,22 +56,132 @@ export default function Spreadsheet({
   const [activeCell, setActiveCell] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('Default view');
-  const [columnCount, setColumnCount] = useState(`${columns.length}/5 columns`);
+  const [columnCount, setColumnCount] = useState(`${columns.length}/6 columns`);
   const [rowCount, setRowCount] = useState(`${rows.length}/${rows.length} rows`);
   const [zoom, setZoom] = useState(100);
   const [showDropdown, setShowDropdown] = useState(null);
   const [editingCellContent, setEditingCellContent] = useState('');
   const [draggedColumn, setDraggedColumn] = useState(null);
   const [isResizing, setIsResizing] = useState(null);
+  const [previewMedia, setPreviewMedia] = useState(null); // For media preview modal
+  const [selectedMedia, setSelectedMedia] = useState(null); // Full media data with details
+  const [loadingMedia, setLoadingMedia] = useState(false);
   const [selectedRows, setSelectedRows] = useState([]);
+
   
   const cellInputRef = useRef(null);
   const spreadsheetRef = useRef(null);
   const columnRefs = useRef({});
   
+
+  // Fetch media data on-demand when user clicks
+  const fetchMediaData = async (type, id) => {
+    try {
+      console.log(`📡 Fetching ${type} data for:`, id);
+      
+      if (type === 'image') {
+        // Fetch from bulk images endpoint to get dataUrl
+        const response = await fetch(`/api/projects/${projectId}/images`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch images');
+        }
+        const images = await response.json();
+        const imageData = images.find(img => img._id === id);
+        
+        if (!imageData) {
+          throw new Error(`Image not found: ${id}`);
+        }
+        
+        return imageData;
+        
+      } else if (type === 'video') {
+        // Fetch from bulk videos endpoint to get metadata
+        const response = await fetch(`/api/projects/${projectId}/videos`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch videos');
+        }
+        const videos = await response.json();
+        const videoData = videos.find(video => video._id === id);
+        
+        if (!videoData) {
+          throw new Error(`Video not found: ${id}`);
+        }
+        
+        // Get stream URL if it's an S3 video
+        if (videoData.s3RawFile?.key) {
+          const streamResponse = await fetch(`/api/projects/${projectId}/videos/${id}/stream`);
+          if (streamResponse.ok) {
+            const streamData = await streamResponse.json();
+            videoData.streamUrl = streamData.streamUrl;
+          }
+        }
+        
+        return videoData;
+      }
+      
+      throw new Error(`Unknown media type: ${type}`);
+    } catch (error) {
+      console.error(`Error fetching ${type} data:`, error);
+      throw error;
+    }
+  };
+
+  // Handle media preview with on-demand loading
+  const handleMediaPreview = async (type, id, name) => {
+    setLoadingMedia(true);
+    setPreviewMedia({ type, id, name });
+    
+    try {
+      console.log(`🎯 Loading ${type} data on-demand for:`, id);
+      const mediaData = await fetchMediaData(type, id);
+      setSelectedMedia({ ...mediaData, type });
+      
+    } catch (error) {
+      console.error(`Error loading ${type} preview:`, error);
+      setSelectedMedia(null);
+    } finally {
+      setLoadingMedia(false);
+    }
+  };
+
+  // Utility functions for media display
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Unknown date';
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Unknown date';
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const formatDuration = (seconds) => {
+    if (!seconds) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+  
   // Update rows when initialRows changes
   useEffect(() => {
     if (initialRows) {
+      // Debug: Log sourceImageId/sourceVideoId info in spreadsheet rows
+      console.log('🔍 Spreadsheet received rows with source tracking:');
+      initialRows.forEach((row, index) => {
+        console.log(`  Row ${index + 1}: "${row.cells?.col2 || 'no name'}" - sourceImageId: ${row.sourceImageId || 'null'}, sourceVideoId: ${row.sourceVideoId || 'null'}`);
+      });
+      
       // Check if it's different from current rows to avoid infinite re-renders
       const currentRowsJson = JSON.stringify(rows.map(r => ({ id: r.id, cells: r.cells })));
       const initialRowsJson = JSON.stringify(initialRows.map(r => ({ id: r.id, cells: r.cells })));
@@ -102,6 +227,7 @@ export default function Spreadsheet({
       setColumns(initialColumns);
     }
   }, [initialColumns]);
+
   
   // Call the callbacks when data changes
   // Update the useEffect that calls callbacks
@@ -124,7 +250,7 @@ useEffect(() => {
 useEffect(() => {
   const columnsChanged = columns !== initialColumns;
   if (columns.length > 0 && columnsChanged) {
-    setColumnCount(`${columns.length}/5 columns`);
+    setColumnCount(`${columns.length}/6 columns`);
     
     const timeoutId = setTimeout(() => {
       onColumnsChange(columns);
@@ -516,6 +642,12 @@ useEffect(() => {
       cellValue => cellValue && cellValue.toString().toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
+
+  // Calculate "not going" items count
+  const notGoingCount = rows.filter(row => {
+    const goingValue = row.cells?.col6 || 'going';
+    return goingValue === 'not going';
+  }).length;
   
   // Generate company icon based on name
   const getCompanyIcon = useCallback((name) => {
@@ -545,7 +677,7 @@ useEffect(() => {
   }, []);
   
   // Render cell content based on column type
-  const renderCellContent = useCallback((colType, value, rowId, colId) => {
+  const renderCellContent = useCallback((colType, value, rowId, colId, row, column) => {
     if (activeCell && activeCell.rowId === rowId && activeCell.colId === colId) {
       return (
         <input
@@ -558,6 +690,43 @@ useEffect(() => {
           onKeyDown={handleKeyDown}
           autoFocus
         />
+      );
+    }
+    
+    // Special handling for item name column (col2) with media preview
+    if (column && column.id === 'col2' && row) {
+      console.log(`🔍 Checking row "${value}" for source tracking:`, {
+        hasRow: !!row,
+        sourceImageId: row.sourceImageId,
+        sourceVideoId: row.sourceVideoId,
+        sourceImageIdTruthy: !!row.sourceImageId,
+        sourceVideoIdTruthy: !!row.sourceVideoId,
+        shouldBeClickable: !!(row.sourceImageId || row.sourceVideoId)
+      });
+    }
+    
+    if (column && column.id === 'col2' && row && (row.sourceImageId || row.sourceVideoId)) {
+      return (
+        <div className="flex items-center gap-2">
+          <span className="text-lg">{getCompanyIcon(value)}</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const mediaType = row.sourceImageId ? 'image' : 'video';
+              const mediaId = row.sourceImageId || row.sourceVideoId;
+              handleMediaPreview(mediaType, mediaId, value);
+            }}
+            className="text-blue-600 hover:text-blue-800 underline text-left truncate flex-1"
+            title="Click to view source media"
+          >
+            {value}
+          </button>
+          {row.sourceImageId ? (
+            <Camera size={14} className="text-blue-500 flex-shrink-0" />
+          ) : (
+            <Video size={14} className="text-purple-500 flex-shrink-0" />
+          )}
+        </div>
       );
     }
     
@@ -575,10 +744,107 @@ useEffect(() => {
             <span className="truncate">{value}</span>
           </div>
         );
+      case 'select':
+        // Handle select dropdown for Going column
+        let selectOptions = ['Option 1', 'Option 2'];
+        let defaultValue = '';
+        if (column.name === 'Going') {
+          // Generate dynamic options based on item quantity
+          const currentRow = rows.find(r => r.id === rowId);
+          const quantity = currentRow?.quantity || parseInt(currentRow?.cells?.col3) || 1;
+          
+          selectOptions = ['not going'];
+          if (quantity === 1) {
+            selectOptions.push('going');
+            defaultValue = 'going';
+          } else {
+            for (let i = 1; i <= quantity; i++) {
+              selectOptions.push(`going (${i}/${quantity})`);
+            }
+            defaultValue = `going (${quantity}/${quantity})`;
+          }
+        }
+        const displayValue = value || defaultValue;
+        
+        return (
+          <div className="relative w-full">
+            <select
+              value={displayValue}
+              onChange={(e) => {
+                e.stopPropagation();
+                const newValue = e.target.value;
+                
+                // Find the current row to get item details
+                const currentRow = rows.find(r => r.id === rowId);
+                const itemName = currentRow?.cells?.col2 || 'Item';
+                
+                // Update the cell value immediately
+                const updatedRows = rows.map(r => {
+                  if (r.id === rowId) {
+                    return {
+                      ...r,
+                      cells: {
+                        ...r.cells,
+                        [colId]: newValue
+                      }
+                    };
+                  }
+                  return r;
+                });
+                
+                setRows(updatedRows);
+                setSaveStatus('saving');
+                
+                // Show toast notification
+                toast.success(
+                  `${itemName} marked as ${newValue}`,
+                  {
+                    icon: newValue === 'going' ? '✅' : '🔴',
+                    duration: 2000,
+                  }
+                );
+
+                // If we have inventory item ID, update the parent inventory state immediately
+                if (currentRow?.inventoryItemId && onInventoryUpdate) {
+                  // Convert the selected value to goingQuantity for inventory update
+                  const quantity = currentRow?.quantity || parseInt(currentRow?.cells?.col3) || 1;
+                  let goingQuantity = 0;
+                  
+                  if (newValue === 'not going') {
+                    goingQuantity = 0;
+                  } else if (newValue === 'going') {
+                    goingQuantity = quantity;
+                  } else if (newValue.includes('(') && newValue.includes('/')) {
+                    // Extract count from "going (X/Y)" format
+                    const match = newValue.match(/going \((\d+)\/\d+\)/);
+                    goingQuantity = match ? parseInt(match[1]) : 0;
+                  }
+                  
+                  onInventoryUpdate(currentRow.inventoryItemId, goingQuantity);
+                }
+                
+                // Trigger the save callback
+                setTimeout(() => {
+                  onRowsChange(updatedRows);
+                }, 100);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full h-full bg-transparent border-none outline-none appearance-none cursor-pointer"
+              style={{ fontSize: 'inherit' }}
+            >
+              {selectOptions.map(option => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={12} className="absolute right-1 top-1/2 transform -translate-y-1/2 pointer-events-none text-gray-400" />
+          </div>
+        );
       default:
         return <span className="truncate">{value}</span>;
     }
-  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon]);
+  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, onRowsChange, setRows, setSaveStatus]);
   
   // Render loading state
   if (isLoading) {
@@ -638,7 +904,7 @@ useEffect(() => {
             )}
           </div>
           
-          <div className="relative dropdown-container">
+          {/* <div className="relative dropdown-container">
             <button 
               className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100"
               onClick={() => setShowDropdown(showDropdown === 'columns' ? null : 'columns')}
@@ -646,7 +912,7 @@ useEffect(() => {
               <span>{columnCount}</span>
               <ChevronDown size={14} />
             </button>
-          </div>
+          </div> */}
           
           <div className="relative dropdown-container">
             <button 
@@ -654,11 +920,18 @@ useEffect(() => {
               onClick={() => setShowDropdown(showDropdown === 'rows' ? null : 'rows')}
             >
               <span>{rowCount}</span>
-              <ChevronDown size={14} />
+              {/* <ChevronDown size={14} /> */}
             </button>
           </div>
-          
-          <div className="relative dropdown-container">
+
+          {/* Not going items count */}
+          {/* {notGoingCount > 0 && (
+            <div className="px-2 py-1 text-sm text-red-600 bg-red-50 rounded">
+              {notGoingCount} items not going
+            </div>
+          )}
+           */}
+          {/* <div className="relative dropdown-container">
             <button 
               className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100"
               onClick={() => setShowDropdown(showDropdown === 'filters' ? null : 'filters')}
@@ -667,9 +940,9 @@ useEffect(() => {
               <span>No filters</span>
               <ChevronDown size={14} />
             </button>
-          </div>
+          </div> */}
           
-          <div className="relative dropdown-container">
+          {/* <div className="relative dropdown-container">
             <button 
               className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100"
               onClick={() => setShowDropdown(showDropdown === 'sort' ? null : 'sort')}
@@ -678,7 +951,7 @@ useEffect(() => {
               <span>Sort</span>
               <ChevronDown size={14} />
             </button>
-          </div>
+          </div> */}
         </div>
         
         <div className="relative">
@@ -725,7 +998,7 @@ useEffect(() => {
               onDrop={(e) => handleColumnDrop(column.id, e)}
             >
               <div className="flex-1 p-2 flex items-center gap-2">
-                <span className="text-sm font-medium">{column.type === 'text' ? 'T' : column.type === 'company' ? '🏢' : '🔗'}</span>
+                <span className="text-sm font-medium">{column.type === 'text' ? 'T' : column.type === 'company' ? '🏢' : column.type === 'select' ? '📋' : '🔗'}</span>
                 <span>{column.name}</span>
                 <div className="relative ml-auto">
                   <button 
@@ -748,7 +1021,7 @@ useEffect(() => {
                         Remove column
                       </div>
                       <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
-                        const newType = column.type === 'text' ? 'company' : column.type === 'company' ? 'url' : 'text';
+                        const newType = column.type === 'text' ? 'company' : column.type === 'company' ? 'url' : column.type === 'url' ? 'select' : 'text';
                         setColumns(prev => prev.map(col => col.id === column.id ? {...col, type: newType} : col));
                         setShowDropdown(null);
                         setSaveStatus('saving');
@@ -781,28 +1054,54 @@ useEffect(() => {
 
 {/* Spreadsheet Body */}
 <div>
-          {filteredRows.map((row, rowIndex) => (
+          {filteredRows.map((row, rowIndex) => {
+            // Check going status - handle both old format and new fractional format
+            const goingValue = row.cells?.col6 || 'going';
+            const quantity = row.quantity || parseInt(row.cells?.col3) || 1;
+            
+            // Parse going status from the new format
+            let goingCount = 0;
+            if (goingValue === 'not going') {
+              goingCount = 0;
+            } else if (goingValue === 'going') {
+              // Simple going format - assume all going
+              goingCount = quantity;
+            } else if (goingValue.includes('(') && goingValue.includes('/')) {
+              // Extract count from "going (X/Y)" format
+              const match = goingValue.match(/going \((\d+)\/\d+\)/);
+              goingCount = match ? parseInt(match[1]) : 0;
+            }
+            
+            const isFullyNotGoing = goingCount === 0;
+            const isPartial = goingCount > 0 && goingCount < quantity;
+            
+            return (
             <div key={row.id} className={`flex ${
               row.isAnalyzing 
                 ? 'bg-blue-50 border-l-4 border-l-blue-500' 
                 : selectedRows.includes(row.id) 
                   ? 'bg-blue-50' 
-                  : rowIndex % 2 === 0 
-                    ? 'bg-white' 
-                    : 'bg-gray-50'
+                  : isFullyNotGoing
+                    ? 'bg-red-50 border-l-2 border-l-red-300'
+                    : isPartial
+                      ? 'bg-yellow-50 border-l-2 border-l-yellow-300'
+                      : rowIndex % 2 === 0 
+                        ? 'bg-white' 
+                        : 'bg-gray-50'
             }`}>
               {/* Row number */}
               <div 
-                className="w-8 min-w-[32px] border-r border-b flex items-center justify-center cursor-pointer"
+                className="w-8 min-w-[32px] border-r border-b flex items-center justify-center cursor-pointer relative"
               >
                 {row.isAnalyzing ? (
                   <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                 ) : (
-                  <input 
-                    type="checkbox" 
-                    className="w-4 h-4"
-                    checked={selectedRows.includes(row.id)}
-                    onChange={(e) => {
+                  <>
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4"
+                      checked={selectedRows.includes(row.id)}
+                      onChange={(e) => {
                       e.stopPropagation(); // Prevent event bubbling
                       
                       console.log(`📋 Row selection changed for row ${row.id}:`, {
@@ -855,6 +1154,7 @@ useEffect(() => {
                     }}
                     onClick={(e) => e.stopPropagation()} // Prevent container click
                   />
+                  </>
                 )}
               </div>
               
@@ -877,7 +1177,7 @@ useEffect(() => {
                       <span>Analyzing...</span>
                     </div>
                   ) : (
-                    renderCellContent(column.type, row.cells[column.id] || '', row.id, column.id)
+                    renderCellContent(column.type, row.cells[column.id] || '', row.id, column.id, row, column)
                   )}
                 </div>
               ))}
@@ -894,7 +1194,8 @@ useEffect(() => {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
           
           {/* Add row button */}
           <div className="flex items-center border-b h-10 pl-8">
@@ -1015,6 +1316,192 @@ useEffect(() => {
           </div>
         </div>
       )}
+      
+      {/* Enhanced Media Preview Modal */}
+      <Dialog open={previewMedia !== null} onOpenChange={(open) => {
+        if (!open) {
+          setPreviewMedia(null);
+          setSelectedMedia(null);
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {previewMedia?.type === 'image' ? (
+                <Camera size={20} className="text-blue-500" />
+              ) : (
+                <Video size={20} className="text-purple-500" />
+              )}
+              {selectedMedia?.originalName || previewMedia?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Uploaded on {selectedMedia && formatDate(selectedMedia.createdAt)}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {loadingMedia ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+              <span className="ml-2 text-gray-600">Loading media...</span>
+            </div>
+          ) : selectedMedia ? (
+            <div className="space-y-4">
+              {/* Media Display */}
+              <div className="relative bg-gray-100 rounded-lg overflow-hidden">
+                {selectedMedia.type === 'image' ? (
+                  // Display image using base64 from MongoDB
+                  selectedMedia.dataUrl ? (
+                    <img
+                      src={selectedMedia.dataUrl}
+                      alt={selectedMedia.originalName}
+                      className="w-full h-auto max-h-96 object-contain"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-8 text-gray-500">
+                      <Camera className="w-16 h-16 mb-4" />
+                      <span className="text-center">No image data available</span>
+                    </div>
+                  )
+                ) : (
+                  // Display video using S3 streaming
+                  selectedMedia.streamUrl ? (
+                    <video
+                      src={selectedMedia.streamUrl}
+                      controls
+                      preload="metadata"
+                      className="w-full h-auto max-h-96 object-contain"
+                      style={{ maxHeight: '400px' }}
+                      onLoadedMetadata={(e) => {
+                        e.target.currentTime = 0;
+                      }}
+                      onError={(e) => {
+                        console.error('Video stream error:', e);
+                      }}
+                    />
+                  ) : (
+                    <div className="w-full h-96 flex items-center justify-center">
+                      <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )
+                )}
+              </div>
+              
+              {/* Inventory Items from this media */}
+              {(() => {
+                const items = inventoryItems.filter(item => {
+                  const mediaId = item.sourceImageId?._id || item.sourceImageId || item.sourceVideoId?._id || item.sourceVideoId;
+                  return mediaId === selectedMedia._id;
+                });
+                
+                if (items.length > 0) {
+                  return (
+                    <div className="mb-4">
+                      <h4 className="font-medium text-gray-900 mb-2">Inventory Items</h4>
+                      <div className="flex flex-wrap gap-1">
+                        {items.map((invItem) => {
+                          const quantity = invItem.quantity || 1;
+                          // Create an array with length equal to quantity to show each item separately
+                          return Array.from({ length: quantity }, (_, index) => (
+                            <ToggleGoingBadge 
+                              key={`${invItem._id}-${index}`}
+                              inventoryItem={invItem}
+                              quantityIndex={index}
+                              projectId={projectId}
+                              onInventoryUpdate={onInventoryUpdate}
+                              showItemName={true}
+                            />
+                          ));
+                        }).flat()}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Details</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">File size:</span>
+                      <span>{formatFileSize(selectedMedia.size)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Type:</span>
+                      <span>{selectedMedia.mimeType}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Uploaded:</span>
+                      <span>{formatDate(selectedMedia.createdAt)}</span>
+                    </div>
+                    {selectedMedia.type === 'video' && selectedMedia.duration > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Duration:</span>
+                        <span>{formatDuration(selectedMedia.duration)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Storage:</span>
+                      <span>{selectedMedia.type === 'video' ? 'S3' : 'MongoDB'}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                {selectedMedia.analysisResult && (
+                  <div>
+                    <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Items found:</span>
+                        <span>{selectedMedia.analysisResult.itemsCount || 0}</span>
+                      </div>
+                      {selectedMedia.analysisResult.totalBoxes && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Boxes needed:</span>
+                          <span>{selectedMedia.analysisResult.totalBoxes}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Status:</span>
+                        <span className={`inline-block px-2 py-1 text-xs rounded ${
+                          selectedMedia.analysisResult.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          selectedMedia.analysisResult.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                          selectedMedia.analysisResult.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {selectedMedia.analysisResult.status || 'pending'}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    
+                    {selectedMedia.analysisResult.summary && (
+                      <div className="mt-3">
+                        <h5 className="font-medium text-gray-900 mb-1">Summary</h5>
+                        <p className="text-sm text-gray-600">
+                          {selectedMedia.analysisResult.summary}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              {selectedMedia.description && (
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Description</h4>
+                  <p className="text-sm text-gray-600">{selectedMedia.description}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-8 text-gray-500">
+              <span>No media data available</span>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

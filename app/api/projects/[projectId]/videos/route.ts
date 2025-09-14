@@ -6,6 +6,40 @@ import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 import { uploadVideo, deleteFile } from '@/lib/cloudinary';
 
+// Helper function to normalize video MIME types for Gemini API compatibility
+function normalizeVideoMimeType(fileName: string, originalMimeType: string): string {
+  // If we already have a proper video MIME type, use it
+  if (originalMimeType && originalMimeType.startsWith('video/') && originalMimeType !== 'video/quicktime') {
+    return originalMimeType;
+  }
+  
+  // Extract extension and map to Gemini-compatible MIME types
+  const ext = fileName.toLowerCase().split('.').pop();
+  switch (ext) {
+    case 'mp4':
+      return 'video/mp4';
+    case 'mov':
+      return 'video/mov'; // Gemini uses video/mov, not video/quicktime
+    case 'avi':
+      return 'video/avi';
+    case 'webm':
+      return 'video/webm';
+    case 'flv':
+      return 'video/x-flv';
+    case 'mpg':
+    case 'mpeg':
+      return 'video/mpeg';
+    case 'wmv':
+      return 'video/wmv';
+    case '3gp':
+      return 'video/3gpp';
+    case 'mkv':
+      return 'video/x-matroska'; // Keep existing for MKV
+    default:
+      return originalMimeType || 'video/mp4'; // Default fallback
+  }
+}
+
 // GET /api/projects/:projectId/videos - Get all videos for a project
 export async function GET(
   request: NextRequest,
@@ -33,7 +67,7 @@ export async function GET(
     console.log('🎬 Video gallery filter:', filter);
     
     const videos = await Video.find(filter)
-      .select('name originalName mimeType size duration description source metadata createdAt updatedAt extractedFrames cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl')
+      .select('name originalName mimeType size duration description source metadata analysisResult s3RawFile createdAt updatedAt cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl')
       .sort({ createdAt: -1 });
     
     console.log(`🎬 Found ${videos.length} videos for project ${projectId}`);
@@ -82,9 +116,9 @@ export async function POST(
       );
     }
 
-    // Enhanced file type validation for video files
+    // Enhanced file type validation for video files - Updated for Gemini API compatibility
     const isVideoType = video.type.startsWith('video/');
-    const hasVideoExtension = /\.(mp4|mov|avi|webm|mkv|m4v)$/i.test(video.name);
+    const hasVideoExtension = /\.(mp4|mov|avi|webm|mkv|m4v|flv|mpg|mpeg|wmv|3gp)$/i.test(video.name);
     const isPotentialVideo = (video.type === '' || video.type === 'application/octet-stream') && hasVideoExtension;
     const isAnyVideoType = isVideoType || isPotentialVideo;
     
@@ -102,7 +136,7 @@ export async function POST(
     
     if (!isAnyVideoType) {
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload a video (MP4, MOV, AVI, WebM).' },
+        { error: 'Invalid file type. Please upload a video (MP4, MOV, AVI, WebM, FLV, MPG, WMV, 3GP).' },
         { status: 400 }
       );
     }
@@ -179,37 +213,14 @@ export async function POST(
     const timestamp = Date.now();
     const name = `${timestamp}-${video.name}`;
 
-    // Normalize MIME type
-    let normalizedMimeType = video.type;
-    
-    if (!normalizedMimeType || normalizedMimeType === 'application/octet-stream') {
-      const ext = video.name.toLowerCase().split('.').pop();
-      switch (ext) {
-        case 'mp4':
-          normalizedMimeType = 'video/mp4';
-          break;
-        case 'mov':
-          normalizedMimeType = 'video/quicktime';
-          break;
-        case 'avi':
-          normalizedMimeType = 'video/x-msvideo';
-          break;
-        case 'webm':
-          normalizedMimeType = 'video/webm';
-          break;
-        case 'mkv':
-          normalizedMimeType = 'video/x-matroska';
-          break;
-        default:
-          normalizedMimeType = 'video/mp4'; // Default fallback
-      }
-      console.log(`🎬 Normalized MIME type from ${video.type || 'empty'} to ${normalizedMimeType}`);
-    }
+    // Normalize MIME type for Gemini API compatibility
+    const normalizedMimeType = normalizeVideoMimeType(video.name, video.type);
+    console.log(`🎬 Normalized MIME type from '${video.type || 'empty'}' to '${normalizedMimeType}' for Gemini compatibility`);
 
     const videoData: any = {
       name,
       originalName: video.name,
-      mimeType: normalizedMimeType,
+      mimeType: normalizedMimeType, // Use normalized MIME type for Gemini compatibility
       size: video.size,
       duration: cloudinaryResult.duration || 0,
       // Cloudinary URLs instead of Buffer data
@@ -220,11 +231,19 @@ export async function POST(
       userId,
       description: description || '',
       source: 'admin_upload',
-      extractedFrames: [],
+      // Analysis result field for compatibility with new video processing
+      analysisResult: {
+        summary: 'Analysis pending...',
+        itemsCount: 0,
+        totalBoxes: 0,
+        status: 'pending'
+      },
       metadata: {
         processingStatus: 'uploaded',
         processingComplete: false,
         uploadedAt: new Date(),
+        originalMimeType: video.type, // Keep original for reference
+        normalizedMimeType: normalizedMimeType,
         cloudinaryInfo: {
           format: cloudinaryResult.format || 'unknown',
           bytes: cloudinaryResult.bytes || 0,

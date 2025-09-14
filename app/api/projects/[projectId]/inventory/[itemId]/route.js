@@ -59,6 +59,48 @@ export async function PATCH(
     
     const data = await request.json();
     
+    // Handle migration and validation for goingQuantity
+    if (data.goingQuantity !== undefined || data.going !== undefined) {
+      // Get the current item to check its quantity
+      const currentItem = await InventoryItem.findOne(
+        getProjectFilter(authContext, projectId, { _id: itemId })
+      );
+      
+      if (!currentItem) {
+        return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+      }
+      
+      const quantity = currentItem.quantity || 1;
+      
+      // If goingQuantity is being set, validate it
+      if (data.goingQuantity !== undefined) {
+        if (data.goingQuantity < 0 || data.goingQuantity > quantity) {
+          return NextResponse.json(
+            { error: `goingQuantity must be between 0 and ${quantity}` },
+            { status: 400 }
+          );
+        }
+        
+        // Update the going field based on goingQuantity
+        if (data.goingQuantity === 0) {
+          data.going = 'not going';
+        } else if (data.goingQuantity === quantity) {
+          data.going = 'going';
+        } else {
+          data.going = 'partial'; // New status for partial quantities
+        }
+      }
+      
+      // If only going is being set (for backward compatibility), calculate goingQuantity
+      else if (data.going !== undefined && data.goingQuantity === undefined) {
+        if (data.going === 'going') {
+          data.goingQuantity = quantity;
+        } else if (data.going === 'not going') {
+          data.goingQuantity = 0;
+        }
+      }
+    }
+    
     // Find and update the item
     const item = await InventoryItem.findOneAndUpdate(
       getProjectFilter(authContext, projectId, { _id: itemId }),

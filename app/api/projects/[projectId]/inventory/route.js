@@ -4,6 +4,8 @@ import { NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
+import Image from '@/models/Image';
+import Video from '@/models/Video';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/inventory - Get all inventory items for a project
@@ -31,12 +33,22 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
     
-    // Get all inventory items for the project
+    // Get all inventory items for the project with populated source media
     const items = await InventoryItem.find(
       getProjectFilter(authContext, projectId)
-    ).sort({ createdAt: -1 });
+    )
+    .populate('sourceImageId', 'name originalName mimeType') // Populate basic image info
+    .populate('sourceVideoId', 'originalName mimeType duration') // Populate basic video info
+    .sort({ createdAt: -1 });
     
     console.log(`✅ Found ${items.length} inventory items`);
+    
+    // Debug: Log sourceImageId/sourceVideoId info for debugging linking issues
+    console.log('🔍 Inventory items source tracking debug:');
+    items.forEach((item, index) => {
+      console.log(`  Item ${index + 1}: "${item.name}" - sourceImageId: ${item.sourceImageId ? item.sourceImageId._id || item.sourceImageId : 'null'}, sourceVideoId: ${item.sourceVideoId ? item.sourceVideoId._id || item.sourceVideoId : 'null'}`);
+    });
+    
     return NextResponse.json(items);
   } catch (error) {
     console.error('❌ Error in GET /api/projects/[projectId]/inventory:', error);

@@ -4,6 +4,8 @@ import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
+import { uploadFileToS3 } from '@/lib/s3Upload';
+import { sendVideoProcessingMessage } from '@/lib/sqsUtils';
 
 export async function POST(
   request: NextRequest,
@@ -21,14 +23,14 @@ export async function POST(
       fileName,
       fileSize,
       fileType,
-      cloudinaryResult,
+      videoBuffer, // Base64 encoded video data
       customerName
     } = body;
     
     console.log('💾 Received video metadata:', {
       fileName,
       fileSize,
-      cloudinaryPublicId: cloudinaryResult?.publicId
+      hasVideoBuffer: !!videoBuffer
     });
     
     // Find customer upload for project association
@@ -69,36 +71,111 @@ export async function POST(
     const cleanCustomerName = (customerName || 'anonymous').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const name = `customer-${cleanCustomerName}-${timestamp}-${fileName}`;
     
-    // Save video metadata to database
+    // Convert base64 to buffer for S3 upload
+    let buffer = null;
+    if (videoBuffer) {
+      try {
+        // Remove data URL prefix if present
+        const base64Data = videoBuffer.replace(/^data:video\/[a-z0-9]+;base64,/, '');
+        buffer = Buffer.from(base64Data, 'base64');
+        console.log('📊 Converted video buffer size:', buffer.length, 'bytes');
+      } catch (bufferError) {
+        console.error('❌ Failed to convert video buffer:', bufferError);
+        return NextResponse.json(
+          { error: 'Invalid video data provided' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Upload to S3 and queue for SQS processing if we have video data
+    let s3Result = null;
+    let sqsMessageId = 'no-analysis-data';
+    
+    // Save video metadata to database first
     const videoDoc = await Video.create({
       name,
       originalName: fileName,
       mimeType: fileType,
       size: fileSize,
-      duration: cloudinaryResult.duration || 0,
-      cloudinaryPublicId: cloudinaryResult.publicId,
-      cloudinaryUrl: cloudinaryResult.url,
-      cloudinarySecureUrl: cloudinaryResult.secureUrl,
+      duration: 0, // Will be updated after processing
       projectId,
       userId,
       organizationId,
       description: `Video uploaded by ${customerName || 'anonymous customer'}`,
       source: 'customer_upload',
+      // Initialize with pending analysis status
+      analysisResult: {
+        summary: 'Analysis pending...',
+        itemsCount: 0,
+        totalBoxes: 0,
+        status: 'pending'
+      },
       metadata: {
         uploadToken: token,
         processingPending: true,
         directUpload: true,
-        cloudinaryInfo: {
-          format: cloudinaryResult.format || 'unknown',
-          bytes: cloudinaryResult.bytes || 0,
-          width: cloudinaryResult.width || 0,
-          height: cloudinaryResult.height || 0,
-          createdAt: cloudinaryResult.createdAt || new Date().toISOString()
-        }
+        uploadSource: 'customer-upload-metadata',
+        customerName: customerName || 'anonymous'
       }
     });
     
     console.log('✅ Video metadata saved:', videoDoc._id);
+    
+    if (buffer) {
+      try {
+        // Upload to S3
+        const videoFile = new File([buffer], fileName, { type: fileType });
+        s3Result = await uploadFileToS3(videoFile, {
+          folder: 'Media/Videos',
+          metadata: {
+            projectId: projectId?.toString() || 'unknown',
+            uploadSource: 'customer-upload-metadata',
+            customerToken: token,
+            customerName: customerName || 'anonymous',
+            originalMimeType: fileType,
+            uploadedAt: new Date().toISOString()
+          },
+          contentType: fileType
+        });
+        
+        console.log(`✅ S3 upload successful: ${s3Result.key}`);
+        
+        // Update video document with S3 raw file info
+        await Video.findByIdAndUpdate(videoDoc._id, {
+          s3RawFile: {
+            key: s3Result.key,
+            bucket: s3Result.bucket,
+            url: s3Result.url,
+            etag: s3Result.etag,
+            uploadedAt: new Date(),
+            contentType: s3Result.contentType
+          }
+        });
+        
+        // Send to SQS for Railway processing
+        sqsMessageId = await sendVideoProcessingMessage({
+          videoId: videoDoc._id.toString(),
+          projectId: projectId?.toString() || 'unknown',
+          userId: userId || 'anonymous',
+          organizationId: organizationId,
+          s3ObjectKey: s3Result.key,
+          s3Bucket: s3Result.bucket,
+          s3Url: s3Result.url,
+          originalFileName: fileName,
+          mimeType: fileType,
+          fileSize: buffer.length,
+          uploadedAt: new Date().toISOString(),
+          source: 'video-upload'
+        });
+        
+        console.log(`✅ SQS message sent: ${sqsMessageId}`);
+        
+      } catch (s3Error) {
+        console.error('⚠️ S3/SQS upload failed, video still saved to MongoDB:', s3Error);
+        sqsMessageId = 'fallback-local-processing';
+      }
+    }
     
     // Update project timestamp
     await Project.findByIdAndUpdate(projectId, { 
@@ -108,19 +185,17 @@ export async function POST(
     return NextResponse.json({
       success: true,
       videoId: videoDoc._id.toString(),
-      requiresClientProcessing: true,
-      videoInfo: {
-        fileName,
-        size: fileSize,
-        type: fileType,
-        customerName: customerName || 'anonymous',
-        projectId: projectId?.toString(),
-        uploadToken: token,
-        videoId: videoDoc._id.toString(),
-        cloudinaryUrl: cloudinaryResult.secureUrl
-      },
-      message: 'Video uploaded successfully to cloud storage - ready for processing',
-      instructions: 'extract_frames_and_upload'
+      sqsMessageId: sqsMessageId,
+      s3Info: s3Result ? {
+        key: s3Result.key,
+        bucket: s3Result.bucket,
+        url: s3Result.url
+      } : null,
+      message: buffer 
+        ? 'Video uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.'
+        : 'Video uploaded successfully! Analysis requires video data.',
+      customerName: customerName || 'anonymous',
+      analysisStatus: buffer ? 'queued' : 'skipped'
     });
     
   } catch (error) {

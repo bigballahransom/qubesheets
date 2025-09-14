@@ -9,8 +9,7 @@ interface CustomerPhotoUploaderProps {
   uploading: boolean;
 }
 
-// COMMENTED OUT - Video file detection (videos disabled)
-/*
+// Video file detection (now enabled with S3 support)
 function isVideoFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
   const mimeType = file.type.toLowerCase();
@@ -27,7 +26,6 @@ function isVideoFile(file: File): boolean {
   
   return hasVideoExtension || hasVideoMimeType;
 }
-*/
 
 // Enhanced HEIC file detection for iPhone compatibility
 function isHeicFile(file: File): boolean {
@@ -316,36 +314,40 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       });
       
-      // Check if file is a supported image type or HEIC (videos disabled)
+      // File type detection - support both images and videos
       const isRegularImage = file.type.startsWith('image/');
       const isHeic = isHeicFile(file);
+      const isVideo = isVideoFile(file);
       
       // Special handling for iPhone photos that may have empty MIME types
       const isPotentialImage = file.type === '' || file.type === 'application/octet-stream';
       const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
       
-      // Block videos explicitly
-      if (file.type.startsWith('video/') || /\.(mp4|mov|avi|webm|mkv)$/i.test(file.name)) {
-        alert('Video uploads are temporarily disabled. Please upload images only.');
-        return;
-      }
+      console.log(`📹 File type detection:`, {
+        fileName: file.name,
+        mimeType: file.type,
+        isVideo,
+        isRegularImage,
+        isHeic
+      });
       
-      if (!isRegularImage && !isHeic && !(isPotentialImage && hasImageExtension)) {
+      if (!isRegularImage && !isHeic && !isVideo && !(isPotentialImage && hasImageExtension)) {
         const errorMsg = isMobile 
-          ? 'Please select a photo from your device.'
-          : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF). Note: Some iPhone photos may need to be converted to JPEG first.';
+          ? 'Please select a photo or video from your device.'
+          : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM).';
         alert(errorMsg);
         return;
       }
       
-      // Client-side file size validation (images only)
-      const maxSize = 15 * 1024 * 1024; // 15MB for images
+      // Client-side file size validation (different limits for images vs videos)
+      const maxSize = isVideo ? 100 * 1024 * 1024 : 15 * 1024 * 1024; // 100MB for videos, 15MB for images
       
       if (file.size > maxSize) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
+        const fileType = isVideo ? 'video' : 'image';
         
-        const errorMsg = `File too large: ${fileSizeMB}MB. Please select an image smaller than ${maxSizeMB}MB.`;
+        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
         alert(errorMsg);
         return;
       }
@@ -353,6 +355,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       console.log('📷 Customer uploader file validation passed:', {
         isRegularImage,
         isHeic,
+        isVideo,
         isPotentialImage,
         hasImageExtension,
         proceeding: true
@@ -360,8 +363,8 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
 
       let finalFile = file;
 
-      // Try client-side HEIC conversion
-      if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
+      // Try client-side HEIC conversion (only for images, skip for videos)
+      if (!isVideo && (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic')))) {
         setIsConverting(true);
         try {
           console.log('🔍 Attempting client-side HEIC conversion...');
@@ -382,12 +385,14 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       }
 
-      // Process images for mobile devices to prevent upload failures
-      try {
-        finalFile = await processImageForMobile(finalFile);
-      } catch (processingError) {
-        console.warn('⚠️ Customer uploader: Image processing failed, using original file:', processingError);
-        // Continue with original file
+      // Process images for mobile devices to prevent upload failures (skip for videos)
+      if (!isVideo) {
+        try {
+          finalFile = await processImageForMobile(finalFile);
+        } catch (processingError) {
+          console.warn('⚠️ Customer uploader: Image processing failed, using original file:', processingError);
+          // Continue with original file
+        }
       }
 
       // Mobile-optimized upload with retry logic
@@ -483,7 +488,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.heic,.heif"
+          accept="image/*,video/*,.heic,.heif"
           onChange={handleFileSelect}
           className="hidden"
           disabled={uploading || isConverting}
@@ -508,7 +513,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
             </div>
             <div>
               <p className="text-lg font-medium text-gray-700 mb-2">
-                Upload photos of your items
+                Upload photos or videos of your items
               </p>
               <p className="text-sm text-gray-500 mb-4">
                 Drag and drop files here, or click to select
