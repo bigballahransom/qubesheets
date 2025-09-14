@@ -36,6 +36,7 @@ export interface VideoProcessingMessage {
   s3Url: string;
   originalFileName: string;
   mimeType: string;
+  originalMimeType?: string; // Keep original MIME type for reference
   fileSize: number;
   uploadedAt: string;
   source: 'video-upload';
