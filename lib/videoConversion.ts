@@ -279,7 +279,7 @@ export async function getVideoMetadata(file: File): Promise<{
           duration: metadata.format.duration,
           width: videoStream?.width,
           height: videoStream?.height,
-          bitrate: metadata.format.bit_rate ? parseInt(metadata.format.bit_rate) : undefined,
+          bitrate: metadata.format.bit_rate ? Number(metadata.format.bit_rate) : undefined,
           codec: videoStream?.codec_name
         });
       });
