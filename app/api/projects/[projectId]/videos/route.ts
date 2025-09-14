@@ -336,7 +336,7 @@ export async function POST(
         videoId: videoDoc._id.toString(),
         projectId: projectId,
         userId: userId,
-        organizationId: authContext.isPersonalAccount ? undefined : authContext.organizationId,
+        organizationId: authContext.isPersonalAccount ? undefined : authContext.organizationId || undefined,
         s3ObjectKey: s3Result.key,
         s3Bucket: s3Result.bucket,
         s3Url: s3Result.url,
