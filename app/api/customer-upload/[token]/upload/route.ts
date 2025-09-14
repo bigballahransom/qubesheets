@@ -25,8 +25,13 @@ function isVideoFile(file: File): boolean {
 
 // Helper function to normalize video MIME types for Gemini API compatibility
 function normalizeVideoMimeType(fileName: string, originalMimeType: string): string {
-  // If we already have a proper video MIME type, use it
-  if (originalMimeType && originalMimeType.startsWith('video/') && originalMimeType !== 'video/quicktime') {
+  // Handle video/quicktime specifically - convert to video/mov for Gemini compatibility
+  if (originalMimeType === 'video/quicktime') {
+    return 'video/mov';
+  }
+  
+  // If we already have a proper video MIME type (except quicktime), use it
+  if (originalMimeType && originalMimeType.startsWith('video/')) {
     return originalMimeType;
   }
   
@@ -53,7 +58,7 @@ function normalizeVideoMimeType(fileName: string, originalMimeType: string): str
     case 'mkv':
       return 'video/x-matroska'; // Keep existing for MKV
     default:
-      return originalMimeType || 'video/mp4'; // Default fallback
+      return 'video/mp4'; // Always return safe fallback, never originalMimeType
   }
 }
 
