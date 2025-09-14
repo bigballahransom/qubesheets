@@ -345,7 +345,7 @@ export async function POST(
         originalMimeType: video.type, // Keep original for reference
         fileSize: videoBuffer.length, // Use processed file size
         uploadedAt: new Date().toISOString(),
-        source: 'admin-video-upload'
+        source: 'video-upload'
       });
       
       console.log('Video queued for processing');
