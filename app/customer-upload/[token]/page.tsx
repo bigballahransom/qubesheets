@@ -590,7 +590,7 @@ export default function CustomerUploadPage() {
               <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
                 <UploadIcon className="w-4 h-4 text-blue-600" />
               </div>
-              <h2 className="text-xl font-semibold text-slate-800">Upload Photos</h2>
+              <h2 className="text-xl font-semibold text-slate-800">Upload Photos or Videos</h2>
             </div>
             
             <CustomerPhotoUploader
