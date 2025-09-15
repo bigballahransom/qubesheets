@@ -1585,6 +1585,7 @@ const ProcessingNotification = () => {
               <MessageSquare size={16} className="mr-1" />
               Send Customer Upload Link
             </MenubarItem>
+            <MenubarSeparator />
             <MenubarItem onClick={() => handleDownloadProject()}>
               <Download size={16} className="mr-1" />
               Download
