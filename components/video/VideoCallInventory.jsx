@@ -54,7 +54,7 @@ import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
 import Logo from '../Logo';
 import { Button } from '../ui/button';
-import ToggleGoingBadge from '../ui/ToggleGoingBadge';
+import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
