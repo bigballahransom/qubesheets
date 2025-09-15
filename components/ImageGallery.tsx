@@ -730,7 +730,7 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
                 </div>
               )}
               
-              <div className="flex gap-2 pt-4">
+              {/* <div className="flex gap-2 pt-4">
                 <Button onClick={() => handleDownloadItem(selectedItem)}>
                   <Download size={16} className="mr-2" />
                   Download
@@ -756,7 +756,7 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
                   <Trash2 size={16} className="mr-2" />
                   Delete
                 </Button>
-              </div>
+              </div> */}
             </div>
           )}
         </DialogContent>

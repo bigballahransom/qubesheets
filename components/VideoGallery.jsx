@@ -1110,7 +1110,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                 </div>
               )}
               
-              <div className="flex gap-2 pt-4">
+              {/* <div className="flex gap-2 pt-4">
                 <Button onClick={() => handleDownload(selectedVideo)}>
                   <Download size={16} className="mr-2" />
                   Download
@@ -1132,7 +1132,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                   <Trash2 size={16} className="mr-2" />
                   Delete
                 </Button>
-              </div>
+              </div> */}
             </div>
           );
           })()}
