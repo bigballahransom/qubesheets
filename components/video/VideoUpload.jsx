@@ -512,41 +512,78 @@ export default function VideoUpload({
     }
     
     try {
-      // Upload video to server (use processedFile which is the converted MP4)
-      const formData = new FormData();
-      formData.append('video', processedFile);
-      formData.append('projectId', projectId);
+      // Step 1: Get pre-signed upload URL
+      console.log('🎬 Getting pre-signed upload URL...');
+      setCurrentStage('Preparing upload...');
+      setUploadProgress(10);
       
-      if (uploadLinkId) {
-        formData.append('uploadLinkId', uploadLinkId);
-      }
-      
-      console.log('🎬 Uploading video to server...');
-      setUploadProgress(20);
-      
-      const uploadUrl = uploadLinkId 
-        ? `/api/customer-upload/${uploadLinkId}/upload`
-        : `/api/projects/${projectId}/videos`;
-      
-      const uploadResponse = await fetch(uploadUrl, {
+      const presignedResponse = await fetch('/api/generate-video-upload-url', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: processedFile.name,
+          fileSize: processedFile.size,
+          mimeType: processedFile.type,
+          projectId: projectId,
+          isCustomerUpload: !!uploadLinkId,
+          customerToken: uploadLinkId
+        })
       });
       
-      setUploadProgress(60);
-      
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text();
-        throw new Error(`Upload failed: ${errorText}`);
+      if (!presignedResponse.ok) {
+        const errorText = await presignedResponse.text();
+        throw new Error(`Failed to get upload URL: ${errorText}`);
       }
       
-      const uploadResult = await uploadResponse.json();
-      console.log('🎬 Video uploaded successfully:', uploadResult.videoId);
+      const { uploadUrl, s3Key, metadata } = await presignedResponse.json();
+      console.log('🎬 Pre-signed URL obtained, uploading to S3...');
       
-      // Set video URL for preview (no CORS needed since no client-side extraction)
-      if (uploadResult.videoInfo?.cloudinaryUrl) {
-        setVideoUrl(uploadResult.videoInfo.cloudinaryUrl);
-        console.log('🎬 Using Cloudinary URL for video preview:', uploadResult.videoInfo.cloudinaryUrl);
+      // Step 2: Upload directly to S3
+      setCurrentStage('Uploading video...');
+      setUploadProgress(20);
+      
+      const s3UploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: processedFile,
+        headers: {
+          'Content-Type': processedFile.type,
+        }
+      });
+      
+      if (!s3UploadResponse.ok) {
+        throw new Error(`S3 upload failed: ${s3UploadResponse.status} ${s3UploadResponse.statusText}`);
+      }
+      
+      setUploadProgress(70);
+      console.log('🎬 Video uploaded to S3 successfully');
+      
+      // Step 3: Confirm upload with server
+      setCurrentStage('Finalizing upload...');
+      
+      const confirmResponse = await fetch('/api/confirm-video-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          s3Key,
+          metadata,
+          actualFileSize: processedFile.size
+        })
+      });
+      
+      setUploadProgress(90);
+      
+      if (!confirmResponse.ok) {
+        const errorText = await confirmResponse.text();
+        throw new Error(`Upload confirmation failed: ${errorText}`);
+      }
+      
+      const uploadResult = await confirmResponse.json();
+      console.log('🎬 Video upload confirmed:', uploadResult.videoId);
+      
+      // Set video URL for preview 
+      if (uploadResult.videoUrl) {
+        setVideoUrl(uploadResult.videoUrl);
+        console.log('🎬 Using S3 signed URL for video preview:', uploadResult.videoUrl);
       }
       
       setUploadProgress(100);
@@ -582,6 +619,12 @@ export default function VideoUpload({
         errorMessage = 'Video upload endpoint not found. Please check the project configuration.';
       } else if (errorMessage.includes('413') || errorMessage.includes('too large')) {
         errorMessage = 'Video file is too large. Please compress the video or use a smaller file (max 100MB).';
+      } else if (errorMessage.includes('Failed to get upload URL')) {
+        errorMessage = 'Failed to prepare upload. Please check your permissions and try again.';
+      } else if (errorMessage.includes('S3 upload failed')) {
+        errorMessage = 'Video upload to cloud storage failed. Please check your connection and try again.';
+      } else if (errorMessage.includes('Upload confirmation failed')) {
+        errorMessage = 'Upload completed but confirmation failed. The video may still be processed. Please refresh and check.';
       } else if (errorMessage.includes('timeout')) {
         errorMessage = 'Upload timed out. Please check your internet connection and try again.';
       } else if (errorMessage.includes('network') || errorMessage.includes('fetch')) {

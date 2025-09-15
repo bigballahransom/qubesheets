@@ -1,4 +1,13 @@
 // app/api/customer-upload/[token]/upload/route.ts - Updated with queue system
+//
+// NOTE: This route handles customer uploads via FormData. For videos larger than Vercel's 4.5MB limit:
+// 1. Frontend components (VideoUpload.jsx, PhotoInventoryUploader.tsx) now use pre-signed URLs
+// 2. For direct API usage, consider implementing pre-signed URL workflow:
+//    - /api/generate-video-upload-url (with customerToken)
+//    - Direct S3 upload 
+//    - /api/confirm-video-upload
+//
+// This route remains for backward compatibility and smaller files.
 
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
@@ -254,9 +263,25 @@ export async function POST(
     
     if (image.size > maxSize) {
       const maxSizeMB = Math.round(maxSize / (1024 * 1024));
+      const fileSizeMB = (image.size / (1024 * 1024)).toFixed(2);
       const fileType = isVideo ? 'video' : 'image';
+      
+      // For large videos, suggest the pre-signed URL approach
+      if (isVideo && image.size > 4.5 * 1024 * 1024) {
+        return NextResponse.json(
+          { 
+            error: `Video file is too large (${fileSizeMB}MB) for direct upload. Please use the upload interface provided, which handles large files automatically.`,
+            errorCode: 'FILE_TOO_LARGE_FOR_DIRECT_UPLOAD',
+            suggestedAction: 'Use the web interface for large video uploads',
+            fileSize: image.size,
+            fileSizeMB: fileSizeMB
+          },
+          { status: 413 }
+        );
+      }
+      
       return NextResponse.json(
-        { error: `File size too large. Please upload a ${fileType} smaller than ${maxSizeMB}MB. Your file is ${(image.size / (1024 * 1024)).toFixed(2)}MB.` },
+        { error: `File size too large. Please upload a ${fileType} smaller than ${maxSizeMB}MB. Your file is ${fileSizeMB}MB.` },
         { status: 400 }
       );
     }

@@ -294,6 +294,79 @@ export function getS3SignedUrl(key: string, expiresIn: number = 3600): string {
 }
 
 /**
+ * Generate a pre-signed URL for uploading to S3
+ * @param key - S3 object key for the upload
+ * @param contentType - MIME type of the file
+ * @param fileSizeBytes - Size of the file in bytes
+ * @param expiresIn - URL expiration time in seconds (default: 3600 = 1 hour)
+ * @returns Pre-signed PUT URL
+ */
+export async function generatePresignedUploadUrl(
+  key: string, 
+  contentType: string,
+  fileSizeBytes: number,
+  expiresIn: number = 3600
+): Promise<string | null> {
+  const bucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+  
+  if (!bucketName) {
+    console.error('AWS bucket name not configured');
+    return null;
+  }
+
+  if (!awsConfig.accessKeyId || !awsConfig.secretAccessKey) {
+    console.error('AWS credentials not configured');
+    return null;
+  }
+
+  try {
+    const params = {
+      Bucket: bucketName,
+      Key: key,
+      ContentType: contentType,
+      Expires: expiresIn,
+      Conditions: [
+        ['content-length-range', 0, fileSizeBytes + 1024] // Allow small buffer for metadata
+      ]
+    };
+
+    const signedUrl = s3.getSignedUrl('putObject', params);
+    
+    console.log('✅ Pre-signed upload URL generated:', {
+      key,
+      bucket: bucketName,
+      contentType,
+      expiresIn
+    });
+    
+    return signedUrl;
+  } catch (error) {
+    console.error('❌ Failed to generate pre-signed URL:', error);
+    return null;
+  }
+}
+
+/**
+ * Generate pre-signed POST policy for direct browser uploads
+ * More secure than pre-signed PUT URLs for client-side uploads
+ * NOTE: Currently disabled due to AWS SDK type issues
+ */
+/*
+export async function generatePresignedPostPolicy(
+  key: string,
+  contentType: string, 
+  fileSizeBytes: number,
+  expiresIn: number = 3600
+): Promise<{
+  url: string;
+  fields: Record<string, string>;
+} | null> {
+  // Implementation temporarily disabled
+  return null;
+}
+*/
+
+/**
  * Delete file from S3
  * @param key - S3 object key to delete
  * @returns Success boolean

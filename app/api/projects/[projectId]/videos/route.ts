@@ -1,4 +1,12 @@
 // app/api/projects/[projectId]/videos/route.ts - Get videos for a project
+// 
+// NOTE: For video uploads, the preferred method is now:
+// 1. /api/generate-video-upload-url - Get pre-signed URL (bypasses Vercel 4.5MB limit)
+// 2. Direct S3 upload using pre-signed URL
+// 3. /api/confirm-video-upload - Confirm upload and trigger processing
+//
+// This route (POST method) remains for backward compatibility but is limited by Vercel's 4.5MB payload limit.
+
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
