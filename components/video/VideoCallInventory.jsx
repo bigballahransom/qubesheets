@@ -52,7 +52,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
-import Logo from '../Logo';
+import Logo from '../../public/logo';
 import { Button } from '../ui/button';
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 
