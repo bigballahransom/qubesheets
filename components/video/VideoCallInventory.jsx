@@ -52,7 +52,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
-import Logo from '../../public/logo';
+import Logo from '../Logo';
 import { Button } from '../ui/button';
 
 // Modern glassmorphism utility class
