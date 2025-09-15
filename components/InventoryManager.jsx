@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -16,6 +16,8 @@ import VideoGallery from './VideoGallery';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 import {
   Menubar,
@@ -1240,6 +1242,219 @@ useEffect(() => {
     }
   };
 
+  // Handle downloading project as PDF
+  const handleDownloadProject = () => {
+    // Dynamic import to ensure jspdf-autotable is loaded
+    const doc = new jsPDF();
+    
+    // Set up fonts and colors
+    const primaryColor = [59, 130, 246]; // blue-500
+    const textColor = [71, 85, 105]; // slate-600
+    const lightGray = [248, 250, 252]; // slate-50
+    
+    // Add header with project name
+    doc.setFontSize(24);
+    doc.setTextColor(...primaryColor);
+    doc.text(currentProject?.name || 'Inventory Report', 20, 20);
+    
+    // Add date
+    doc.setFontSize(10);
+    doc.setTextColor(...textColor);
+    doc.text(`Generated on ${new Date().toLocaleDateString()}`, 20, 30);
+    
+    // Add stats section
+    let yPosition = 45;
+    doc.setFontSize(16);
+    doc.setTextColor(...primaryColor);
+    doc.text('Summary Statistics', 20, yPosition);
+    
+    yPosition += 15;
+    
+    // Stats grid
+    const stats = [
+      { label: 'Total Items', value: totalItems.toString(), icon: '📦' },
+      { label: 'Total Boxes', value: totalBoxes.toString(), icon: '📦' },
+      { label: 'Total Cu.Ft.', value: totalCubicFeet.toString(), icon: '📐' },
+      { label: 'Total Weight', value: `${totalWeight} lbs`, icon: '⚖️' }
+    ];
+    
+    doc.setFontSize(11);
+    stats.forEach((stat, index) => {
+      const xPos = 20 + (index % 2) * 90;
+      const yPos = yPosition + Math.floor(index / 2) * 20;
+      
+      // Stat box background
+      doc.setFillColor(...lightGray);
+      doc.roundedRect(xPos - 5, yPos - 10, 80, 15, 2, 2, 'F');
+      
+      // Stat label
+      doc.setTextColor(...textColor);
+      doc.setFontSize(9);
+      doc.text(stat.label, xPos, yPos - 3);
+      
+      // Stat value
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(stat.value, xPos, yPos + 4);
+      doc.setFont('helvetica', 'normal');
+    });
+    
+    yPosition += 50;
+    
+    // Add inventory table
+    doc.setFontSize(16);
+    doc.setTextColor(...primaryColor);
+    doc.text('Inventory Items', 20, yPosition);
+    
+    yPosition += 10;
+    
+    // Prepare table data
+    const tableHeaders = spreadsheetColumns.map(col => col.header);
+    const tableRows = spreadsheetRows.map(row => {
+      return spreadsheetColumns.map(col => {
+        const value = row.cells[col.id] || '';
+        // Handle going status display
+        if (col.id === 'col6' && value.includes('(')) {
+          return value; // Keep the "going (X/Y)" format
+        }
+        return value;
+      });
+    });
+    
+    // Manual table creation without autoTable
+    const startX = 20;
+    let currentY = yPosition;
+    const cellPadding = 2;
+    const rowHeight = 8;
+    
+    // Column widths
+    const colWidths = [30, 50, 20, 20, 25, 35];
+    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+    
+    // Draw header
+    doc.setFillColor(...primaryColor);
+    doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    
+    let xPos = startX;
+    tableHeaders.forEach((header, i) => {
+      doc.text(String(header || ''), xPos + cellPadding, currentY + rowHeight - 2);
+      xPos += colWidths[i];
+    });
+    
+    currentY += rowHeight;
+    doc.setFont('helvetica', 'normal');
+    
+    // Draw rows
+    tableRows.forEach((row, rowIndex) => {
+      const rowData = spreadsheetRows[rowIndex];
+      const goingValue = rowData.cells?.col6 || 'going';
+      const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
+      
+      let goingCount = quantity;
+      if (goingValue === 'not going') {
+        goingCount = 0;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingCount = match ? parseInt(match[1]) : quantity;
+      }
+      
+      const isFullyNotGoing = goingCount === 0;
+      const isPartial = goingCount > 0 && goingCount < quantity;
+      
+      // Row background
+      if (isFullyNotGoing) {
+        doc.setFillColor(254, 226, 226); // red-100
+      } else if (isPartial) {
+        doc.setFillColor(254, 249, 195); // yellow-100
+      } else if (rowIndex % 2 === 0) {
+        doc.setFillColor(...lightGray);
+      } else {
+        doc.setFillColor(255, 255, 255);
+      }
+      
+      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+      
+      // Draw cell borders
+      doc.setDrawColor(200, 200, 200);
+      doc.rect(startX, currentY, totalWidth, rowHeight, 'S');
+      
+      // Draw cell content
+      doc.setTextColor(...textColor);
+      doc.setFontSize(8);
+      
+      xPos = startX;
+      row.forEach((cell, i) => {
+        // Ensure cell is a string
+        const text = (cell !== null && cell !== undefined) ? String(cell) : '';
+        const maxWidth = colWidths[i] - cellPadding * 2;
+        
+        // Truncate text if too long
+        let displayText = text;
+        while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
+          displayText = displayText.slice(0, -1);
+        }
+        if (displayText !== text && displayText.length > 3) {
+          displayText = displayText.slice(0, -3) + '...';
+        }
+        
+        doc.text(displayText, xPos + cellPadding, currentY + rowHeight - 2);
+        
+        // Draw vertical line
+        if (i < row.length - 1) {
+          doc.line(xPos + colWidths[i], currentY, xPos + colWidths[i], currentY + rowHeight);
+        }
+        
+        xPos += colWidths[i];
+      });
+      
+      currentY += rowHeight;
+      
+      // Check if we need a new page
+      if (currentY > doc.internal.pageSize.height - 30) {
+        doc.addPage();
+        currentY = 20;
+        
+        // Redraw header on new page
+        doc.setFillColor(...primaryColor);
+        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        
+        xPos = startX;
+        tableHeaders.forEach((header, i) => {
+          doc.text(String(header || ''), xPos + cellPadding, currentY + rowHeight - 2);
+          xPos += colWidths[i];
+        });
+        
+        currentY += rowHeight;
+        doc.setFont('helvetica', 'normal');
+      }
+    });
+    
+    // Add footer
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(...textColor);
+      doc.text(
+        `Page ${i} of ${pageCount}`,
+        doc.internal.pageSize.width / 2,
+        doc.internal.pageSize.height - 10,
+        { align: 'center' }
+      );
+    }
+    
+    // Save the PDF
+    const fileName = `${currentProject?.name || 'inventory'}-${new Date().toISOString().split('T')[0]}.pdf`;
+    doc.save(fileName);
+  };
+
   // Add this component to show processing status in the header
 const ProcessingNotification = () => {
   if (!showProcessingNotification || processingStatus.length === 0) return null;
@@ -1369,6 +1584,10 @@ const ProcessingNotification = () => {
             <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
               <MessageSquare size={16} className="mr-1" />
               Send Customer Upload Link
+            </MenubarItem>
+            <MenubarItem onClick={() => handleDownloadProject()}>
+              <Download size={16} className="mr-1" />
+              Download
             </MenubarItem>
             <MenubarSeparator />
             <MenubarItem 
