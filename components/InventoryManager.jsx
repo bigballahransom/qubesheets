@@ -1487,7 +1487,7 @@ const ProcessingNotification = () => {
             
             <TabsContent value="inventory">
               {/* Spreadsheet Container */}
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
                 {/* Optional toolbar */}
                 <div className="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                   <h2 className="text-sm font-medium text-slate-700">Inventory Spreadsheet</h2>

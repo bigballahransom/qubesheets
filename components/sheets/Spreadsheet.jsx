@@ -966,9 +966,9 @@ useEffect(() => {
         </div>
       </div>
       
-      <div className="relative overflow-x-auto">
+      <div className="relative overflow-x-auto overflow-y-visible">
         {/* Spreadsheet Header */}
-        <div className="sticky top-0 z-10 flex">
+        <div className="sticky top-0 z-10 flex" style={{ minWidth: `${32 + (columns.length * 240) + 48}px` }}>
           {/* Row number header */}
           <div className="w-8 min-w-[32px] bg-gray-100 border-r border-b flex items-center justify-center">
             <input 
@@ -1053,7 +1053,7 @@ useEffect(() => {
         </div>
 
 {/* Spreadsheet Body */}
-<div>
+<div style={{ minWidth: `${32 + (columns.length * 240) + 48}px` }}>
           {filteredRows.map((row, rowIndex) => {
             // Check going status - handle both old format and new fractional format
             const goingValue = row.cells?.col6 || 'going';
@@ -1076,7 +1076,7 @@ useEffect(() => {
             const isPartial = goingCount > 0 && goingCount < quantity;
             
             return (
-            <div key={row.id} className={`flex ${
+            <div key={row.id} style={{ minWidth: `${32 + (columns.length * 240) + 48}px` }} className={`flex ${
               row.isAnalyzing 
                 ? 'bg-blue-50 border-l-4 border-l-blue-500' 
                 : selectedRows.includes(row.id) 
