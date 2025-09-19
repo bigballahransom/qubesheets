@@ -91,7 +91,7 @@ export async function uploadFileToS3(
     Body: fileBuffer, // Use Buffer instead of File
     ContentType: options.contentType || file.type || 'application/octet-stream',
     Metadata: {
-      originalName: file.name,
+      originalName: encodeURIComponent(file.name),
       uploadTimestamp: timestamp.toString(),
       fileSize: file.size.toString(),
       ...options.metadata
@@ -324,10 +324,7 @@ export async function generatePresignedUploadUrl(
       Bucket: bucketName,
       Key: key,
       ContentType: contentType,
-      Expires: expiresIn,
-      Conditions: [
-        ['content-length-range', 0, fileSizeBytes + 1024] // Allow small buffer for metadata
-      ]
+      Expires: expiresIn
     };
 
     const signedUrl = s3.getSignedUrl('putObject', params);

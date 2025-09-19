@@ -5,6 +5,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { sendVideoProcessingMessage } from '@/lib/sqsUtils';
+import mongoose from 'mongoose';
 
 export async function POST(
   request: NextRequest,
@@ -61,66 +62,78 @@ export async function POST(
     const cleanUserName = userName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const name = s3RawFile ? `video-${timestamp}-${fileName}` : `admin-${cleanUserName}-${timestamp}-${fileName}`;
     
-    // Save video metadata to database
-    const videoDoc = await Video.create({
-      name,
-      originalName: fileName,
-      mimeType: fileType,
-      size: fileSize,
-      duration: cloudinaryResult?.duration || 0,
-      cloudinaryPublicId: cloudinaryResult?.publicId,
-      cloudinaryUrl: cloudinaryResult?.url,
-      cloudinarySecureUrl: cloudinaryResult?.secureUrl,
-      projectId,
-      userId,
-      organizationId: orgId,
-      description: s3RawFile ? `Video uploaded via inventory uploader` : `Video uploaded by ${userName} via admin interface`,
-      source: s3RawFile ? 'inventory_upload' : 'admin_upload',
-      // Add S3 raw file information if provided
-      s3RawFile: s3RawFile ? {
-        key: s3RawFile.key,
-        bucket: s3RawFile.bucket,
-        url: s3RawFile.url,
-        etag: s3RawFile.etag,
-        uploadedAt: new Date(s3RawFile.uploadedAt),
-        contentType: s3RawFile.contentType
-      } : undefined,
-      metadata: {
-        processingPending: true,
-        directUpload: true,
-        uploadedBy: userName,
-        uploadedAt: new Date().toISOString(),
-        cloudinaryInfo: cloudinaryResult ? {
-          format: cloudinaryResult.format || 'unknown',
-          bytes: cloudinaryResult.bytes || 0,
-          width: cloudinaryResult.width || 0,
-          height: cloudinaryResult.height || 0,
-          createdAt: cloudinaryResult.createdAt || new Date().toISOString()
-        } : null,
-        s3RawFileInfo: s3RawFile ? {
-          key: s3RawFile.key,
-          bucket: s3RawFile.bucket,
-          uploadedAt: s3RawFile.uploadedAt
-        } : null
-      },
-      // Initialize with pending analysis status
-      analysisResult: {
-        summary: 'Analysis pending...',
-        itemsCount: 0,
-        totalBoxes: 0
-      }
-    });
-    
-    console.log('✅ Video metadata saved:', videoDoc._id);
-    
-    // Update project timestamp
-    await Project.findByIdAndUpdate(projectId, { 
-      updatedAt: new Date() 
-    });
-    
-    // Queue video for analysis if we have S3 data
+    // Use transaction to ensure MongoDB record is saved before SQS message
+    const session = await mongoose.startSession();
+    let videoDoc: any;
     let jobId = 'no-s3-data';
-    if (s3RawFile) {
+    
+    try {
+      await session.withTransaction(async () => {
+        // Save video metadata to database
+        [videoDoc] = await Video.create([{
+          name,
+          originalName: fileName,
+          mimeType: fileType,
+          size: fileSize,
+          duration: cloudinaryResult?.duration || 0,
+          cloudinaryPublicId: cloudinaryResult?.publicId,
+          cloudinaryUrl: cloudinaryResult?.url,
+          cloudinarySecureUrl: cloudinaryResult?.secureUrl,
+          projectId,
+          userId,
+          organizationId: orgId,
+          description: s3RawFile ? `Video uploaded via inventory uploader` : `Video uploaded by ${userName} via admin interface`,
+          source: s3RawFile ? 'inventory_upload' : 'admin_upload',
+          processingStatus: 'queued',
+          // Add S3 raw file information if provided
+          s3RawFile: s3RawFile ? {
+            key: s3RawFile.key,
+            bucket: s3RawFile.bucket,
+            url: s3RawFile.url,
+            etag: s3RawFile.etag,
+            uploadedAt: new Date(s3RawFile.uploadedAt),
+            contentType: s3RawFile.contentType
+          } : undefined,
+          metadata: {
+            processingPending: true,
+            directUpload: true,
+            uploadedBy: userName,
+            uploadedAt: new Date().toISOString(),
+            cloudinaryInfo: cloudinaryResult ? {
+              format: cloudinaryResult.format || 'unknown',
+              bytes: cloudinaryResult.bytes || 0,
+              width: cloudinaryResult.width || 0,
+              height: cloudinaryResult.height || 0,
+              createdAt: cloudinaryResult.createdAt || new Date().toISOString()
+            } : null,
+            s3RawFileInfo: s3RawFile ? {
+              key: s3RawFile.key,
+              bucket: s3RawFile.bucket,
+              uploadedAt: s3RawFile.uploadedAt
+            } : null
+          },
+          // Initialize with pending analysis status
+          analysisResult: {
+            summary: 'Analysis pending...',
+            itemsCount: 0,
+            totalBoxes: 0,
+            status: 'pending'
+          }
+        }], { session });
+        
+        // Update project timestamp
+        await Project.findByIdAndUpdate(projectId, { 
+          updatedAt: new Date() 
+        }, { session });
+        
+        console.log('✅ Video metadata saved in transaction:', videoDoc._id);
+      });
+    } finally {
+      await session.endSession();
+    }
+    
+    // Queue video for analysis AFTER transaction commits
+    if (s3RawFile && videoDoc) {
       try {
         jobId = await sendVideoProcessingMessage({
           videoId: videoDoc._id.toString(),
@@ -140,6 +153,15 @@ export async function POST(
       } catch (queueError) {
         console.warn('⚠️ SQS queue failed, but video was saved:', queueError);
         jobId = 'queue-failed-manual-required';
+        
+        // Update processing status to failed
+        if (videoDoc) {
+          await Video.findByIdAndUpdate(videoDoc._id, { 
+            processingStatus: 'failed',
+            'analysisResult.status': 'failed',
+            'analysisResult.error': queueError instanceof Error ? queueError.message : 'Queue failed'
+          });
+        }
       }
     }
     
@@ -148,7 +170,7 @@ export async function POST(
       // S3 upload response - for inventory uploader
       return NextResponse.json({
         success: true,
-        videoId: videoDoc._id.toString(),
+        videoId: videoDoc?._id.toString(),
         jobId: jobId,
         message: 'Video uploaded successfully! AI analysis is processing in the background.',
         analysisStatus: 'queued'
@@ -157,7 +179,7 @@ export async function POST(
       // Cloudinary upload response - for admin interface
       return NextResponse.json({
         success: true,
-        videoId: videoDoc._id.toString(),
+        videoId: videoDoc?._id.toString(),
         requiresClientProcessing: true,
         videoInfo: {
           fileName,
@@ -165,7 +187,7 @@ export async function POST(
           type: fileType,
           userName,
           projectId,
-          videoId: videoDoc._id.toString(),
+          videoId: videoDoc?._id.toString(),
           cloudinaryUrl: cloudinaryResult?.secureUrl
         },
         message: 'Video uploaded successfully to cloud storage - ready for processing',

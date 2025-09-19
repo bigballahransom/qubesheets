@@ -11,15 +11,20 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
+    console.log('🔍 Starting GET /api/projects/[projectId]/images request');
     const authContext = await getAuthContext();
     if (authContext instanceof NextResponse) {
+      console.log('❌ Auth context failed:', authContext);
       return authContext;
     }
     const { userId } = authContext;
+    console.log('✅ Auth context successful, userId:', userId);
 
     await connectMongoDB();
+    console.log('✅ MongoDB connected');
     
     const { projectId } = await params;
+    console.log('📋 Project ID:', projectId);
     
     // Check if project exists and belongs to the organization
     const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
@@ -71,7 +76,12 @@ export async function GET(
     
     return NextResponse.json(imagesWithDataUrls);
   } catch (error) {
-    console.error('Error fetching images:', error);
+    console.error('❌ Error fetching images:', error);
+    console.error('❌ Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : 'No stack trace',
+      name: error instanceof Error ? error.name : 'Unknown'
+    });
     return NextResponse.json(
       { error: 'Failed to fetch images' },
       { status: 500 }

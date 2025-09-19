@@ -1,7 +1,7 @@
 // components/sheets/Spreadsheet.jsx
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package } from 'lucide-react';
 import {
   Dialog,
@@ -24,6 +24,50 @@ const columnTypes = {
 
 // Generate unique ID for cells
 const generateId = () => `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
+
+// Get column width based on column type
+const getColumnWidth = (column) => {
+  // Count, Cuft, Weight, Going, and PBO/CP columns should be half width
+  if (column.name === 'Count' || column.name === 'Cuft' || column.name === 'Weight' || 
+      column.name === 'Going' || column.name === 'PBO/CP' || column.name === 'Packed By') {
+    return 'w-30 min-w-[120px]'; // Half of w-60 (240px)
+  }
+  return 'w-60 min-w-[150px]'; // Default width
+};
+
+// Calculate total width for all columns
+const getTotalColumnsWidth = (columns) => {
+  return columns.reduce((total, column) => {
+    if (column.name === 'Count' || column.name === 'Cuft' || column.name === 'Weight' || 
+        column.name === 'Going' || column.name === 'PBO/CP' || column.name === 'Packed By') {
+      return total + 120; // Half width columns
+    }
+    return total + 240; // Default width columns
+  }, 0);
+};
+
+// Truncate long file names for display
+const truncateFileName = (fileName, maxLength = 40) => {
+  if (!fileName || fileName.length <= maxLength) return fileName;
+  
+  // Find the last dot for file extension
+  const lastDotIndex = fileName.lastIndexOf('.');
+  
+  if (lastDotIndex === -1) {
+    // No extension, just truncate
+    return fileName.substring(0, maxLength - 3) + '...';
+  }
+  
+  const extension = fileName.substring(lastDotIndex);
+  const nameWithoutExt = fileName.substring(0, lastDotIndex);
+  const availableLength = maxLength - extension.length - 3; // 3 for "..."
+  
+  if (availableLength <= 0) {
+    return fileName.substring(0, maxLength - 3) + '...';
+  }
+  
+  return nameWithoutExt.substring(0, availableLength) + '...' + extension;
+};
 
 export default function Spreadsheet({ 
   initialRows = [], 
@@ -55,7 +99,7 @@ export default function Spreadsheet({
   // State for UI controls
   const [activeCell, setActiveCell] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [viewMode, setViewMode] = useState('Default view');
+  const [viewMode, setViewMode] = useState('By Media');
   const [columnCount, setColumnCount] = useState(`${columns.length}/6 columns`);
   const [rowCount, setRowCount] = useState(`${rows.length}/${rows.length} rows`);
   const [zoom, setZoom] = useState(100);
@@ -83,7 +127,13 @@ export default function Spreadsheet({
         // Fetch from bulk images endpoint to get dataUrl
         const response = await fetch(`/api/projects/${projectId}/images`);
         if (!response.ok) {
-          throw new Error('Failed to fetch images');
+          const errorText = await response.text();
+          console.error('❌ Images API error:', {
+            status: response.status,
+            statusText: response.statusText,
+            errorText
+          });
+          throw new Error(`Failed to fetch images: ${response.status} ${response.statusText}`);
         }
         const images = await response.json();
         const imageData = images.find(img => img._id === id);
@@ -182,11 +232,23 @@ export default function Spreadsheet({
         console.log(`  Row ${index + 1}: "${row.cells?.col2 || 'no name'}" - sourceImageId: ${row.sourceImageId || 'null'}, sourceVideoId: ${row.sourceVideoId || 'null'}`);
       });
       
-      // Check if it's different from current rows to avoid infinite re-renders
-      const currentRowsJson = JSON.stringify(rows.map(r => ({ id: r.id, cells: r.cells })));
-      const initialRowsJson = JSON.stringify(initialRows.map(r => ({ id: r.id, cells: r.cells })));
+      // More thorough comparison to detect real-time cuft/weight updates
+      const currentRowsData = rows.map(r => ({ 
+        id: r.id, 
+        cells: r.cells,
+        inventoryItemId: r.inventoryItemId 
+      }));
+      const initialRowsData = initialRows.map(r => ({ 
+        id: r.id, 
+        cells: r.cells,
+        inventoryItemId: r.inventoryItemId 
+      }));
       
-      if (currentRowsJson !== initialRowsJson) {
+      // Use a more detailed comparison to catch cuft/weight updates
+      const hasChanges = JSON.stringify(currentRowsData) !== JSON.stringify(initialRowsData);
+      
+      if (hasChanges) {
+        console.log('⚡ Spreadsheet updating rows due to changes (including real-time cuft/weight updates)');
         setRows(initialRows);
       }
       
@@ -331,6 +393,10 @@ useEffect(() => {
   
   // Handle cell editing
   const handleCellClick = useCallback((rowId, colId, currentValue) => {
+    // Prevent editing cuft (col4) and weight (col5) columns
+    if (colId === 'col4' || colId === 'col5') {
+      return;
+    }
     setActiveCell({ rowId, colId });
     setEditingCellContent(currentValue || '');
   }, []);
@@ -636,12 +702,133 @@ useEffect(() => {
   }, [isResizing]);
   
   // Filter rows based on search term
-  const filteredRows = rows.filter(row => {
+  let filteredRows = rows.filter(row => {
     if (!searchTerm) return true;
     return Object.values(row.cells).some(
       cellValue => cellValue && cellValue.toString().toLowerCase().includes(searchTerm.toLowerCase())
     );
   });
+
+  // Sort rows based on view mode
+  if (viewMode === 'By Category') {
+    filteredRows = [...filteredRows].sort((a, b) => {
+      // Define sort order: everything else -> existing boxes -> box recommendations
+      const getItemTypePriority = (row) => {
+        // Existing/packed boxes go second
+        if (row.itemType === 'existing_box' || row.itemType === 'packed_box') return 2;
+        // Box recommendations go last
+        if (row.itemType === 'boxes_needed') return 3;
+        
+        // Fallback: check item name patterns for legacy data
+        const itemName = row.cells?.col2 || '';
+        if (itemName.includes('Box') && !itemName.includes(' - ')) return 2;
+        if (itemName.includes('Box') && itemName.includes(' - ')) return 3;
+        
+        // Everything else (furniture, regular items) goes first
+        return 1;
+      };
+      
+      const priorityA = getItemTypePriority(a);
+      const priorityB = getItemTypePriority(b);
+      
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+      
+      // Within same category, sort alphabetically by item name
+      const nameA = a.cells?.col2 || '';
+      const nameB = b.cells?.col2 || '';
+      return nameA.localeCompare(nameB);
+    });
+  } else if (viewMode === 'By Media') {
+    // Sort by source image/video, then by category within each group
+    filteredRows = [...filteredRows].sort((a, b) => {
+      const getMediaId = (row) => {
+        return row.sourceImageId || row.sourceVideoId || 'no-source';
+      };
+      
+      const getItemTypePriority = (row) => {
+        // Existing/packed boxes go second
+        if (row.itemType === 'existing_box' || row.itemType === 'packed_box') return 2;
+        // Box recommendations go last
+        if (row.itemType === 'boxes_needed') return 3;
+        
+        // Fallback: check item name patterns for legacy data
+        const itemName = row.cells?.col2 || '';
+        if (itemName.includes('Box') && !itemName.includes(' - ')) return 2;
+        if (itemName.includes('Box') && itemName.includes(' - ')) return 3;
+        
+        // Everything else (furniture, regular items) goes first
+        return 1;
+      };
+      
+      const mediaIdA = getMediaId(a);
+      const mediaIdB = getMediaId(b);
+      
+      // Group by media source first
+      if (mediaIdA !== mediaIdB) {
+        return mediaIdA.localeCompare(mediaIdB);
+      }
+      
+      // Within same media source, sort by category
+      const priorityA = getItemTypePriority(a);
+      const priorityB = getItemTypePriority(b);
+      
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+      
+      // Within same category and media source, sort alphabetically by item name
+      const nameA = a.cells?.col2 || '';
+      const nameB = b.cells?.col2 || '';
+      return nameA.localeCompare(nameB);
+    });
+  } else if (viewMode === 'By Room') {
+    // Sort by room/location
+    filteredRows = [...filteredRows].sort((a, b) => {
+      const getRoomName = (row) => {
+        return row.cells?.col1 || 'No Room'; // col1 is the Location column
+      };
+      
+      const roomA = getRoomName(a);
+      const roomB = getRoomName(b);
+      
+      // Group by room first
+      if (roomA !== roomB) {
+        return roomA.localeCompare(roomB);
+      }
+      
+      // Within same room, sort by item type priority
+      const getItemTypePriority = (row) => {
+        // Check database field first
+        if (row.itemType === 'existing_box' || row.itemType === 'packed_box') return 2;
+        if (row.itemType === 'boxes_needed') return 3;
+        
+        // Fallback: check item name for box items
+        const itemName = row.cells?.col2 || '';
+        if (itemName.toLowerCase().includes('box')) {
+          // If it has a dash, it's likely a recommended box
+          if (itemName.includes(' - ')) return 3;
+          // Otherwise it's an existing box
+          return 2;
+        }
+        
+        return 1; // Furniture and regular items first
+      };
+      
+      const priorityA = getItemTypePriority(a);
+      const priorityB = getItemTypePriority(b);
+      
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+      
+      // Within same priority, sort alphabetically by item name
+      const nameA = a.cells?.col2 || '';
+      const nameB = b.cells?.col2 || '';
+      return nameA.localeCompare(nameB);
+    });
+  }
 
   // Calculate "not going" items count
   const notGoingCount = rows.filter(row => {
@@ -763,6 +950,10 @@ useEffect(() => {
             }
             defaultValue = `going (${quantity}/${quantity})`;
           }
+        } else if (column.name === 'PBO/CP' || column.name === 'Packed By') {
+          // Static options for PBO/CP column
+          selectOptions = ['N/A', 'PBO', 'CP'];
+          defaultValue = 'N/A';
         }
         const displayValue = value || defaultValue;
         
@@ -860,8 +1051,7 @@ useEffect(() => {
   
   return (
     <div 
-      className="w-full h-full overflow-auto font-sans" 
-      ref={spreadsheetRef}
+      className="w-full h-full flex flex-col font-sans" 
       style={{ 
         fontSize: `${14 * zoom / 100}px`,
         transform: `scale(${zoom/100})`,
@@ -869,7 +1059,7 @@ useEffect(() => {
       }}
     >
       {/* Toolbar */}
-      <div className="flex items-center justify-between p-2 bg-white border-b sticky top-0 z-10">
+      <div className="flex items-center justify-between p-2 bg-white border-b z-30">
         <div className="flex items-center gap-2">
           <div className="relative dropdown-container">
             <button 
@@ -881,24 +1071,24 @@ useEffect(() => {
               <ChevronDown size={14} />
             </button>
             {showDropdown === 'view' && (
-              <div className="absolute top-full left-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-20 w-48">
+              <div className="absolute top-full left-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-40 w-48">
                 <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
-                  setViewMode('Default view');
+                  setViewMode('By Media');
                   setShowDropdown(null);
                 }}>
-                  Default view
+                  By Media
                 </div>
                 <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
-                  setViewMode('Compact view');
+                  setViewMode('By Category');
                   setShowDropdown(null);
                 }}>
-                  Compact view
+                  By Category
                 </div>
                 <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
-                  setViewMode('Expanded view');
+                  setViewMode('By Room');
                   setShowDropdown(null);
                 }}>
-                  Expanded view
+                  By Room
                 </div>
               </div>
             )}
@@ -966,9 +1156,10 @@ useEffect(() => {
         </div>
       </div>
       
-      <div className="relative overflow-x-auto overflow-y-visible">
+      <div className="flex-1 overflow-auto" ref={spreadsheetRef}>
+        <div className="relative overflow-x-auto">
         {/* Spreadsheet Header */}
-        <div className="sticky top-0 z-10 flex" style={{ minWidth: `${32 + (columns.length * 240) + 48}px` }}>
+        <div className="sticky top-0 z-10 bg-white flex border-b shadow-sm" style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }}>
           {/* Row number header */}
           <div className="w-8 min-w-[32px] bg-gray-100 border-r border-b flex items-center justify-center">
             <input 
@@ -990,7 +1181,7 @@ useEffect(() => {
             <div 
               key={column.id}
               ref={el => columnRefs.current[column.id] = el}
-              className="min-w-[150px] w-60 relative bg-white border-r border-b flex items-center"
+              className={`${getColumnWidth(column)} relative bg-white border-r border-b flex items-center`}
               draggable={true}
               onDragStart={() => handleColumnDragStart(column.id)}
               onDragOver={(e) => handleColumnDragOver(column.id, e)}
@@ -1008,7 +1199,7 @@ useEffect(() => {
                     <ChevronDown size={14} />
                   </button>
                   {showDropdown === `column-${column.id}` && (
-                    <div className="absolute top-full right-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-20 w-48">
+                    <div className="absolute top-full right-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-40 w-48">
                       <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
                         const newName = prompt('Enter new column name', column.name);
                         if (newName) {
@@ -1053,8 +1244,52 @@ useEffect(() => {
         </div>
 
 {/* Spreadsheet Body */}
-<div style={{ minWidth: `${32 + (columns.length * 240) + 48}px` }}>
+<div style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }}>
           {filteredRows.map((row, rowIndex) => {
+            // Check if we need a separator before this row
+            const needsSeparator = rowIndex > 0 && (() => {
+              if (viewMode === 'By Media') {
+                // Separator between different media sources
+                const currentMediaId = row.sourceImageId || row.sourceVideoId || 'no-source';
+                const prevMediaId = filteredRows[rowIndex - 1]?.sourceImageId || filteredRows[rowIndex - 1]?.sourceVideoId || 'no-source';
+                return currentMediaId !== prevMediaId;
+              } else if (viewMode === 'By Category') {
+                // Separator between different item type categories
+                const getItemTypePriority = (row) => {
+                  if (row.itemType === 'existing_box' || row.itemType === 'packed_box') return 2;
+                  if (row.itemType === 'boxes_needed') return 3;
+                  
+                  const itemName = row.cells?.col2 || '';
+                  if (itemName.includes('Box') && !itemName.includes(' - ')) return 2;
+                  if (itemName.includes('Box') && itemName.includes(' - ')) return 3;
+                  
+                  return 1;
+                };
+                
+                const currentPriority = getItemTypePriority(row);
+                const prevPriority = getItemTypePriority(filteredRows[rowIndex - 1]);
+                return currentPriority !== prevPriority;
+              } else if (viewMode === 'By Room') {
+                // Separator between different rooms only
+                const currentRoom = row.cells?.col1 || 'No Room';
+                const prevRoom = filteredRows[rowIndex - 1]?.cells?.col1 || 'No Room';
+                return currentRoom !== prevRoom;
+              }
+              return false;
+            })();
+            
+            return (
+              <React.Fragment key={row.id}>
+                {/* Group separator (media or category) */}
+                {needsSeparator && (
+                  <div 
+                    style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }}
+                    className="border-t-2 border-gray-400 bg-gray-50 h-1"
+                  />
+                )}
+                
+                {/* Regular row */}
+                {(() => {
             // Check going status - handle both old format and new fractional format
             const goingValue = row.cells?.col6 || 'going';
             const quantity = row.quantity || parseInt(row.cells?.col3) || 1;
@@ -1075,19 +1310,51 @@ useEffect(() => {
             const isFullyNotGoing = goingCount === 0;
             const isPartial = goingCount > 0 && goingCount < quantity;
             
+            // Check item types - use database fields first, fall back to name patterns for legacy data
+            const isExistingBox = row.itemType === 'existing_box' || 
+                                row.itemType === 'packed_box' ||
+                                (row.itemType === 'regular_item' && row.cells?.col2 && 
+                                 (row.cells.col2.includes('Large Box') || 
+                                  row.cells.col2.includes('Medium Box') || 
+                                  row.cells.col2.includes('Small Box') || 
+                                  row.cells.col2.includes('Existing Box')) &&
+                                 !row.cells.col2.includes(' - '));
+            
+            const isRecommendedBoxes = row.itemType === 'boxes_needed' ||
+                                     (row.itemType === 'regular_item' && row.cells?.col2 && 
+                                      row.cells.col2.includes('Box') && 
+                                      row.cells.col2.includes(' - '));
+
+            // Debug logging - check ALL rows with "box" in name
+            if (row.cells?.col2 && row.cells.col2.toLowerCase().includes('box')) {
+              console.log('🔍 ALL box row debug:', {
+                itemName: row.cells.col2,
+                itemType: row.itemType,
+                itemType_defined: row.itemType !== undefined,
+                ai_generated: row.ai_generated,
+                isExistingBox,
+                isRecommendedBoxes,
+                allRowFields: Object.keys(row)
+              });
+            }
+            
             return (
-            <div key={row.id} style={{ minWidth: `${32 + (columns.length * 240) + 48}px` }} className={`flex ${
+            <div key={row.id} style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }} className={`flex ${
               row.isAnalyzing 
                 ? 'bg-blue-50 border-l-4 border-l-blue-500' 
                 : selectedRows.includes(row.id) 
                   ? 'bg-blue-50' 
-                  : isFullyNotGoing
-                    ? 'bg-red-50 border-l-2 border-l-red-300'
-                    : isPartial
-                      ? 'bg-yellow-50 border-l-2 border-l-yellow-300'
-                      : rowIndex % 2 === 0 
-                        ? 'bg-white' 
-                        : 'bg-gray-50'
+                  : isRecommendedBoxes
+                    ? 'bg-purple-50 border-l-2 border-l-purple-300'
+                    : isExistingBox
+                      ? 'bg-orange-50 border-l-2 border-l-orange-300'
+                      : isFullyNotGoing
+                        ? 'bg-red-50 border-l-2 border-l-red-300'
+                        : isPartial
+                          ? 'bg-yellow-50 border-l-2 border-l-yellow-300'
+                          : rowIndex % 2 === 0 
+                            ? 'bg-white' 
+                          : 'bg-gray-50'
             }`}>
               {/* Row number */}
               <div 
@@ -1162,7 +1429,7 @@ useEffect(() => {
               {columns.map((column) => (
                 <div 
                   key={`${row.id}-${column.id}`}
-                  className={`min-w-[150px] w-60 p-2 border-r border-b h-10 ${
+                  className={`${getColumnWidth(column)} p-2 border-r border-b h-10 ${
                     row.isAnalyzing 
                       ? 'text-blue-600 font-medium animate-pulse' 
                       : activeCell && activeCell.rowId === row.id && activeCell.colId === column.id 
@@ -1195,6 +1462,9 @@ useEffect(() => {
               </div>
             </div>
             );
+                })()}
+              </React.Fragment>
+            );
           })}
           
           {/* Add row button */}
@@ -1216,6 +1486,7 @@ useEffect(() => {
            saveStatus === 'saving' ? 'Saving changes...' : 
            'Error saving changes'}
         </div> */}
+        </div>
       </div>
       
       {/* Zoom controls */}
@@ -1332,7 +1603,7 @@ useEffect(() => {
               ) : (
                 <Video size={20} className="text-purple-500" />
               )}
-              {selectedMedia?.originalName || previewMedia?.name}
+              {truncateFileName(selectedMedia?.originalName || previewMedia?.name)}
             </DialogTitle>
             <DialogDescription>
               Uploaded on {selectedMedia && formatDate(selectedMedia.createdAt)}

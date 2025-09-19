@@ -59,6 +59,34 @@ export async function PATCH(
     
     const data = await request.json();
     
+    // Validate basic data types and ranges
+    if (data.quantity !== undefined) {
+      if (typeof data.quantity !== 'number' || data.quantity < 1 || data.quantity > 50000) {
+        return NextResponse.json(
+          { error: 'Quantity must be a number between 1 and 50,000' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    if (data.cuft !== undefined) {
+      if (typeof data.cuft !== 'number' || data.cuft < 0) {
+        return NextResponse.json(
+          { error: 'Cuft must be a non-negative number' },
+          { status: 400 }
+        );
+      }
+    }
+    
+    if (data.weight !== undefined) {
+      if (typeof data.weight !== 'number' || data.weight < 0) {
+        return NextResponse.json(
+          { error: 'Weight must be a non-negative number' },
+          { status: 400 }
+        );
+      }
+    }
+    
     // Handle migration and validation for goingQuantity
     if (data.goingQuantity !== undefined || data.going !== undefined) {
       // Get the current item to check its quantity
@@ -70,7 +98,8 @@ export async function PATCH(
         return NextResponse.json({ error: 'Item not found' }, { status: 404 });
       }
       
-      const quantity = currentItem.quantity || 1;
+      // Use new quantity if provided, otherwise use current quantity
+      const quantity = data.quantity !== undefined ? data.quantity : (currentItem.quantity || 1);
       
       // If goingQuantity is being set, validate it
       if (data.goingQuantity !== undefined) {

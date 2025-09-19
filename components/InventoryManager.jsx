@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
   Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download
@@ -66,6 +66,17 @@ const debounce = (func, wait) => {
   };
 };
 
+// Helper function to get item type (backward compatibility during migration)
+const getItemType = (item) => {
+  return item.itemType || item.item_type;
+};
+
+// Helper function to check if an item is any type of box
+const isBoxItem = (item) => {
+  const itemType = getItemType(item);
+  return itemType === 'boxes_needed' || itemType === 'existing_box' || itemType === 'packed_box';
+};
+
 export default function InventoryManager() {
   const router = useRouter();
   const params = useParams();
@@ -88,6 +99,7 @@ const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString())
 const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
 const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+const [spreadsheetUpdateKey, setSpreadsheetUpdateKey] = useState(0);
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const sseRetryTimeoutRef = useRef(null);
@@ -108,6 +120,7 @@ useEffect(() => {
     { id: 'col4', name: 'Cuft', type: 'url' },
     { id: 'col5', name: 'Weight', type: 'url' },
     { id: 'col6', name: 'Going', type: 'select' },
+    { id: 'col7', name: 'PBO/CP', type: 'select' },
   ];
   
   // Initialize with default empty spreadsheet
@@ -459,11 +472,12 @@ useEffect(() => {
         let rowsAlreadyMigrated = false;
         
         if (spreadsheetData.columns && spreadsheetData.columns.length > 0) {
-          // Check if we need to migrate columns to include Count and Going columns
+          // Check if we need to migrate columns to include Count, Going, and Packed By columns
           hasCountColumn = spreadsheetData.columns.some(col => col.name === 'Count');
           const hasGoingColumn = spreadsheetData.columns.some(col => col.name === 'Going');
+          const hasPackedByColumn = spreadsheetData.columns.some(col => col.name === 'PBO/CP' || col.name === 'Packed By');
           
-          if (!hasCountColumn || !hasGoingColumn) {
+          if (!hasCountColumn || !hasGoingColumn || !hasPackedByColumn) {
             // Migrate existing columns by inserting Count and Going columns
             let migratedColumns = [...spreadsheetData.columns];
             
@@ -496,7 +510,17 @@ useEffect(() => {
               );
             }
             
-            // Migrate existing rows to include Count and Going columns
+            // Add PBO/CP column if missing (should be at position 7, after Going)
+            if (!hasPackedByColumn) {
+              // Ensure we have exactly 7 columns with PBO/CP at the end
+              if (migratedColumns.length < 7) {
+                migratedColumns.push({ id: 'col7', name: 'PBO/CP', type: 'select' });
+              } else if (migratedColumns.length === 6 && !migratedColumns.find(col => col.name === 'PBO/CP' || col.name === 'Packed By')) {
+                migratedColumns.push({ id: 'col7', name: 'PBO/CP', type: 'select' });
+              }
+            }
+            
+            // Migrate existing rows to include Count, Going, and Packed By columns
             const migratedRows = spreadsheetData.rows?.map(row => {
               let newCells = { ...row.cells };
               
@@ -523,6 +547,11 @@ useEffect(() => {
               // Ensure Going column exists (col6)
               if (!newCells.col6) {
                 newCells.col6 = 'going'; // Default to "going"
+              }
+              
+              // Ensure Packed By column exists (col7)
+              if (!newCells.col7) {
+                newCells.col7 = 'N/A'; // Default to N/A
               }
               
               return {
@@ -664,6 +693,8 @@ useEffect(() => {
     return items.map(item => {
       console.log('📝 Converting item:', {
         name: item.name,
+        itemType: getItemType(item),
+        ai_generated: item.ai_generated,
         quantity: item.quantity,
         cuft: item.cuft,
         weight: item.weight,
@@ -684,12 +715,29 @@ useEffect(() => {
         sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
         sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
+        itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
+        ai_generated: item.ai_generated, // Preserve AI generated flag
         cells: {
           col1: item.location || '',
           col2: item.name || '',
           col3: item.quantity?.toString() || '1',
-          col4: item.cuft?.toString() || '',
-          col5: item.weight?.toString() || '',
+          col4: (() => {
+            // For all box types, cuft is already total (quantity × unit cuft)
+            // For regular items, we need to multiply by quantity
+            if (isBoxItem(item)) {
+              return (item.cuft || 0).toString();
+            } else {
+              return ((item.cuft || 0) * (item.quantity || 1)).toString();
+            }
+          })(),
+          col5: (() => {
+            // Similarly for weight - all box types store total values
+            if (isBoxItem(item)) {
+              return (item.weight || 0).toString();
+            } else {
+              return ((item.weight || 0) * (item.quantity || 1)).toString();
+            }
+          })(),
           col6: (() => {
             // Defensive checks for missing or invalid data
             let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
@@ -721,11 +769,14 @@ useEffect(() => {
               }
             }
           })(),
+          col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
         }
       };
       
       console.log('🔄 Final row object created:', {
         name: row.cells.col2,
+        itemType: row.itemType,
+        ai_generated: row.ai_generated,
         sourceImageId: row.sourceImageId,
         sourceVideoId: row.sourceVideoId,
         hasSourceImage: !!row.sourceImageId,
@@ -845,7 +896,23 @@ useEffect(() => {
 
   // Spreadsheet change handlers
   const handleSpreadsheetRowsChange = useCallback(async (newRows) => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    console.log(`🚀 [${timestamp}] handleSpreadsheetRowsChange called with`, newRows.length, 'rows');
+    console.log(`🚀 [${timestamp}] First few rows:`, newRows.slice(0, 3).map(r => ({ 
+      item: r.cells?.col2, 
+      qty: r.cells?.col3, 
+      cuft: r.cells?.col4,
+      weight: r.cells?.col5 
+    })));
+    
+    console.log(`🔄 [${timestamp}] SETTING SPREADSHEET ROWS (initial) - ${newRows.length} rows`);
     setSpreadsheetRows(newRows);
+    console.log(`✅ [${timestamp}] Spreadsheet rows updated (initial) - stats should recalculate`);
+    
+    // Schedule a check to see if stats were updated
+    setTimeout(() => {
+      console.log(`⏰ [${timestamp}] POST-UPDATE CHECK: Stats should have recalculated by now`);
+    }, 100);
     
     // Don't save if we don't have a project
     if (!currentProject) return;
@@ -855,8 +922,11 @@ useEffect(() => {
     debouncedSave(currentProject._id, spreadsheetColumns, newRows);
     
     // Only sync changes back to inventory items if there are actual changes
+    let hasQuantityChanges = false; // Declare outside try block so it's available in catch
+    
     try {
       const previousRows = previousRowsRef.current;
+      console.log('🚀 Previous rows for comparison:', previousRows.length);
       const changedRows = [];
       
       newRows.forEach(newRow => {
@@ -871,53 +941,414 @@ useEffect(() => {
         
         // Check if any cell values changed
         const hasChanges = Object.keys(newRow.cells || {}).some(cellKey => {
-          return (newRow.cells[cellKey] || '') !== (previousRow.cells?.[cellKey] || '');
+          const newValue = newRow.cells[cellKey] || '';
+          const oldValue = previousRow.cells?.[cellKey] || '';
+          const changed = newValue !== oldValue;
+          
+          if (changed) {
+            console.log(`🔍 Cell change detected in ${newRow.cells?.col2}: ${cellKey} "${oldValue}" → "${newValue}"`);
+          }
+          
+          return changed;
         });
         
+        // Add extra debugging for quantity changes specifically
+        if (newRow.cells?.col3 !== previousRow.cells?.col3) {
+          console.log(`🔍 QUANTITY CHANGE DETECTED: ${newRow.cells?.col2} qty: "${previousRow.cells?.col3}" → "${newRow.cells?.col3}"`);
+        }
+        
         if (hasChanges) {
+          console.log(`🔍 Row ${newRow.cells?.col2} has changes, adding to changedRows`);
           changedRows.push(newRow);
+        } else {
+          console.log(`🔍 Row ${newRow.cells?.col2} has NO changes`);
         }
       });
       
-      // Store current rows for next comparison
-      previousRowsRef.current = JSON.parse(JSON.stringify(newRows));
-      
       if (changedRows.length === 0) {
         console.log('📝 No inventory item changes detected');
+        console.log('📝 Previous rows:', previousRows.length);
+        console.log('📝 New rows:', newRows.length);
+        // Still update previousRowsRef even if no changes, so future comparisons work
+        previousRowsRef.current = JSON.parse(JSON.stringify(newRows));
         return;
       }
       
       console.log(`📝 Detected ${changedRows.length} changed inventory items`);
       
+      // Check if any quantity changes occurred and update cuft/weight in real-time
+      const updatedRows = [...newRows]; // Create a copy to modify
+      
+      console.log(`🔍 Processing ${changedRows.length} changed rows:`, changedRows.map(r => ({ 
+        item: r.cells?.col2, 
+        qty: r.cells?.col3, 
+        id: r.inventoryItemId 
+      })));
+      
+      changedRows.forEach((row) => {
+        console.log(`🔍 Processing row: ${row.cells?.col2} with qty: ${row.cells?.col3}`);
+        
+        // Validate quantity input
+        const quantityString = row.cells?.col3 || '1';
+        const newQuantity = parseInt(quantityString);
+        
+        // Validation checks for quantity
+        if (isNaN(newQuantity) || newQuantity < 0) {
+          console.warn(`⚠️  Invalid quantity "${quantityString}" for ${row.cells?.col2}. Using 1 as default.`);
+          row.cells.col3 = '1'; // Fix invalid quantity
+          return; // Skip this row for quantity change processing
+        }
+        
+        if (newQuantity > 10000) {
+          console.warn(`⚠️  Quantity ${newQuantity} for ${row.cells?.col2} seems unusually large. Please verify.`);
+        }
+        
+        const previousRow = previousRowsRef.current.find(r => r.inventoryItemId === row.inventoryItemId);
+        const oldQuantity = parseInt(previousRow?.cells?.col3) || 1;
+        const quantityChanged = newQuantity !== oldQuantity;
+        
+        console.log(`🔍 Quantity comparison for ${row.cells?.col2}:`, {
+          newQuantity,
+          oldQuantity,
+          quantityChanged,
+          previousRowFound: !!previousRow,
+          inventoryItemId: row.inventoryItemId
+        });
+        
+        if (quantityChanged) {
+          hasQuantityChanges = true;
+          console.log(`🔍 Quantity change detected for ${row.cells?.col2}: ${oldQuantity} → ${newQuantity}`);
+          const currentItem = inventoryItems.find(item => item._id === row.inventoryItemId);
+          console.log(`🔍 Looking for inventoryItemId: ${row.inventoryItemId} in ${inventoryItems.length} items`);
+          
+          // Declare displayCuft and displayWeight outside the if blocks
+          let displayCuft, displayWeight;
+          
+          if (currentItem) {
+            console.log(`🔍 Real-time update item type check for ${row.cells?.col2}:`, {
+              rawItemType: currentItem.itemType,
+              rawItem_type: currentItem.item_type,
+              helperResult: getItemType(currentItem),
+              isBoxItem: isBoxItem(currentItem),
+              isBoxesNeeded: getItemType(currentItem) === 'boxes_needed'
+            });
+            
+            if (isBoxItem(currentItem)) {
+              // For all box types, calculate based on unit capacity × new quantity
+              if (getItemType(currentItem) === 'boxes_needed') {
+                // boxes_needed: use capacity from box_details or calculate from total
+                const unitCapacity = currentItem.box_details?.capacity_cuft || (currentItem.cuft || 0) / (currentItem.quantity || 1);
+                const unitWeight = (currentItem.weight || 0) / (currentItem.quantity || 1);
+                displayCuft = unitCapacity * newQuantity;
+                displayWeight = unitWeight * newQuantity;
+              } else {
+                // existing_box/packed_box: calculate unit values from current totals
+                const unitCuft = (currentItem.cuft || 0) / (currentItem.quantity || 1);
+                const unitWeight = (currentItem.weight || 0) / (currentItem.quantity || 1);
+                displayCuft = unitCuft * newQuantity;
+                displayWeight = unitWeight * newQuantity;
+              }
+            } else {
+              // For regular items, calculate total = unit × new quantity
+              displayCuft = (currentItem.cuft || 0) * newQuantity;
+              displayWeight = (currentItem.weight || 0) * newQuantity;
+            }
+          } else {
+            // Fallback: calculate based on current spreadsheet values if item not found in database
+            console.log(`⚠️  Item not found in database, using spreadsheet fallback for ${row.cells?.col2}`);
+            const currentCuft = parseFloat(row.cells?.col4) || 0;
+            const currentWeight = parseFloat(row.cells?.col5) || 0;
+            
+            // Calculate unit values based on old quantity, then multiply by new quantity
+            const unitCuft = oldQuantity > 0 ? currentCuft / oldQuantity : 0;
+            const unitWeight = oldQuantity > 0 ? currentWeight / oldQuantity : 0;
+            
+            displayCuft = unitCuft * newQuantity;
+            displayWeight = unitWeight * newQuantity;
+          }
+          
+          // Update the row in the updated rows array
+          const rowIndex = updatedRows.findIndex(r => r.inventoryItemId === row.inventoryItemId);
+          if (rowIndex >= 0) {
+            updatedRows[rowIndex] = {
+              ...updatedRows[rowIndex],
+              cells: {
+                ...updatedRows[rowIndex].cells,
+                col4: displayCuft.toString(),
+                col5: displayWeight.toString()
+              }
+            };
+            
+            console.log(`🔄 Real-time update for ${row.cells?.col2}:`, {
+              itemId: row.inventoryItemId,
+              currentItem: currentItem ? { id: currentItem._id, cuft: currentItem.cuft, weight: currentItem.weight, itemType: getItemType(currentItem) } : 'FALLBACK_USED',
+              oldQuantity,
+              newQuantity,
+              calculatedCuft: displayCuft,
+              calculatedWeight: displayWeight,
+              rowIndex,
+              foundRow: 'YES'
+            });
+          } else {
+            console.error(`❌ Could not find row to update: inventoryItemId=${row.inventoryItemId}`);
+          }
+        }
+      });
+      
+      // If there were quantity changes, immediately update the spreadsheet state for real-time UI
+      if (hasQuantityChanges) {
+        const recalcTimestamp = new Date().toISOString().slice(11, 23);
+        console.log(`⚡ [${recalcTimestamp}] Applying real-time cuft/weight updates to spreadsheet`);
+        console.log(`🔄 [${recalcTimestamp}] SETTING SPREADSHEET ROWS (recalculation) - ${updatedRows.length} rows`);
+        
+        // Log sample of updated rows for debugging
+        const sampleUpdated = updatedRows.slice(0, 3).map(r => ({ 
+          item: r.cells?.col2, 
+          qty: r.cells?.col3, 
+          cuft: r.cells?.col4,
+          weight: r.cells?.col5 
+        }));
+        console.log(`⚡ [${recalcTimestamp}] Sample updated rows:`, sampleUpdated);
+        
+        setSpreadsheetRows(updatedRows);
+        console.log(`✅ [${recalcTimestamp}] Spreadsheet rows updated (recalculation) - stats should recalculate`);
+        setSpreadsheetUpdateKey(prev => prev + 1); // Force spreadsheet component to re-render
+        
+        // Schedule a check to see if stats were updated after recalculation
+        setTimeout(() => {
+          console.log(`⏰ [${recalcTimestamp}] POST-RECALC CHECK: Stats should have recalculated by now`);
+        }, 100);
+        
+        // Immediately update inventoryItems for optimistic stat bar updates
+        setInventoryItems(prevItems => {
+          return prevItems.map(item => {
+            const changedRow = changedRows.find(row => row.inventoryItemId === item._id);
+            if (changedRow) {
+              const newQuantity = parseInt(changedRow.cells?.col3) || 1;
+              const oldQuantity = item.quantity || 1;
+              const goingValue = changedRow.cells?.col6 || 'going';
+              
+              if (newQuantity !== oldQuantity) {
+                // Calculate optimistic going quantity using same logic as the main function
+                let optimisticGoingQuantity = 0;
+                
+                if (goingValue === 'not going') {
+                  optimisticGoingQuantity = 0;
+                } else if (goingValue === 'going' || newQuantity > oldQuantity) {
+                  optimisticGoingQuantity = newQuantity;
+                } else if (goingValue.includes('(') && goingValue.includes('/')) {
+                  const match = goingValue.match(/going \((\d+)\/\d+\)/);
+                  const oldGoingQuantity = match ? parseInt(match[1]) : oldQuantity;
+                  
+                  if (newQuantity < oldQuantity) {
+                    // When decreasing quantity, proportionally reduce going quantity
+                    const ratio = oldGoingQuantity / oldQuantity;
+                    optimisticGoingQuantity = Math.max(0, Math.min(newQuantity, Math.floor(newQuantity * ratio)));
+                  } else {
+                    // When increasing quantity, assume new items are also going (moving company logic)
+                    optimisticGoingQuantity = Math.min(newQuantity, oldGoingQuantity + (newQuantity - oldQuantity));
+                  }
+                } else {
+                  optimisticGoingQuantity = newQuantity;
+                }
+                
+                // Validate bounds for going quantity
+                optimisticGoingQuantity = Math.max(0, Math.min(newQuantity, optimisticGoingQuantity));
+                
+                console.log(`⚡ Optimistic inventory update for ${item.name}:`, {
+                  oldQuantity,
+                  newQuantity, 
+                  goingValue,
+                  oldGoingQuantity: item.goingQuantity,
+                  newGoingQuantity: optimisticGoingQuantity,
+                  unitCuft: item.cuft,
+                  totalCuftBefore: (item.cuft || 0) * (item.goingQuantity || 0),
+                  totalCuftAfter: (item.cuft || 0) * optimisticGoingQuantity
+                });
+                
+                // Validation warnings
+                if (optimisticGoingQuantity > newQuantity) {
+                  console.warn(`⚠️  Going quantity ${optimisticGoingQuantity} exceeds total quantity ${newQuantity} for ${item.name}`);
+                }
+                
+                return { ...item, quantity: newQuantity, goingQuantity: optimisticGoingQuantity };
+              }
+            }
+            return item;
+          });
+        });
+      }
+      
       const updatePromises = changedRows.map(async (row) => {
+        // Validate and parse quantity with comprehensive error handling
+        const quantityString = row.cells?.col3 || '1';
+        let newQuantity = parseInt(quantityString);
+        
+        // Additional validation in the database update loop
+        if (isNaN(newQuantity) || newQuantity < 1) {
+          console.error(`❌ Invalid quantity "${quantityString}" for item ${row.cells?.col2}. Skipping database update.`);
+          return null; // Skip this update
+        }
+        
+        if (newQuantity > 50000) {
+          console.error(`❌ Quantity ${newQuantity} for item ${row.cells?.col2} exceeds maximum limit (50,000). Skipping database update.`);
+          return null; // Skip this update
+        }
+        
+        const previousRow = previousRowsRef.current.find(r => r.inventoryItemId === row.inventoryItemId);
+        const oldQuantity = parseInt(previousRow?.cells?.col3) || 1;
+        const quantityChanged = newQuantity !== oldQuantity;
+        
+        // Get the current inventory item to check its type and get unit values
+        const currentItem = inventoryItems.find(item => item._id === row.inventoryItemId);
+        
+        // If quantity changed, recalculate cuft and weight display values in real-time
+        let displayCuft = parseFloat(row.cells?.col4) || 0;
+        let displayWeight = parseFloat(row.cells?.col5) || 0;
+        
+        if (quantityChanged && currentItem) {
+          console.log(`📊 Quantity changed for ${row.cells?.col2}: ${oldQuantity} → ${newQuantity}`);
+          console.log(`🔢 Current item unit values: cuft=${currentItem.cuft}, weight=${currentItem.weight}`);
+          console.log(`🔍 Quantity change item type check:`, {
+            rawItemType: currentItem.itemType,
+            rawItem_type: currentItem.item_type,
+            helperResult: getItemType(currentItem),
+            isBoxItem: isBoxItem(currentItem),
+            isBoxesNeeded: getItemType(currentItem) === 'boxes_needed'
+          });
+          
+          if (isBoxItem(currentItem)) {
+            // For all box types, calculate based on unit capacity × new quantity
+            if (getItemType(currentItem) === 'boxes_needed') {
+              // boxes_needed: use capacity from box_details or calculate from total
+              const unitCapacity = currentItem.box_details?.capacity_cuft || (currentItem.cuft || 0) / (currentItem.quantity || 1);
+              const unitWeight = (currentItem.weight || 0) / (currentItem.quantity || 1);
+              displayCuft = unitCapacity * newQuantity;
+              displayWeight = unitWeight * newQuantity;
+            } else {
+              // existing_box/packed_box: calculate unit values from current totals
+              const unitCuft = (currentItem.cuft || 0) / (currentItem.quantity || 1);
+              const unitWeight = (currentItem.weight || 0) / (currentItem.quantity || 1);
+              displayCuft = unitCuft * newQuantity;
+              displayWeight = unitWeight * newQuantity;
+            }
+          } else {
+            // For regular items, calculate total cuft/weight = unit × new quantity
+            displayCuft = (currentItem.cuft || 0) * newQuantity;
+            displayWeight = (currentItem.weight || 0) * newQuantity;
+          }
+          
+          console.log(`🔄 Updated display values: cuft=${displayCuft}, weight=${displayWeight}`);
+          
+          // Update the row with new calculated values for immediate UI display
+          row.cells.col4 = displayCuft.toString();
+          row.cells.col5 = displayWeight.toString();
+        }
+        
         // Parse the going status from spreadsheet format to database format
         const goingValue = row.cells?.col6 || 'going';
-        const quantity = parseInt(row.cells?.col3) || 1;
         let goingQuantity = 0;
         
-        if (goingValue === 'not going') {
-          goingQuantity = 0;
-        } else if (goingValue === 'going') {
-          goingQuantity = quantity;
-        } else if (goingValue.includes('(') && goingValue.includes('/')) {
-          // Extract count from "going (X/Y)" format
-          const match = goingValue.match(/going \((\d+)\/\d+\)/);
-          goingQuantity = match ? parseInt(match[1]) : quantity;
+        if (quantityChanged) {
+          // Quantity changed - implement smart going logic
+          if (goingValue === 'not going') {
+            // If explicitly not going, keep it as not going
+            goingQuantity = 0;
+          } else if (goingValue === 'going' || newQuantity > oldQuantity) {
+            // If "going" or quantity increased, assume all items are going
+            goingQuantity = newQuantity;
+          } else if (goingValue.includes('(') && goingValue.includes('/')) {
+            // Handle partial going quantities - adjust based on quantity change
+            const match = goingValue.match(/going \((\d+)\/\d+\)/);
+            const oldGoingQuantity = match ? parseInt(match[1]) : oldQuantity;
+            
+            if (newQuantity < oldQuantity) {
+              // When decreasing quantity, proportionally reduce going quantity
+              const ratio = oldGoingQuantity / oldQuantity;
+              goingQuantity = Math.max(0, Math.min(newQuantity, Math.floor(newQuantity * ratio)));
+            } else {
+              // When increasing quantity, assume new items are also going (moving company logic)
+              goingQuantity = Math.min(newQuantity, oldGoingQuantity + (newQuantity - oldQuantity));
+            }
+          } else {
+            // Default to all going for increased quantities
+            goingQuantity = newQuantity;
+          }
         } else {
-          // Default to full going if format is unrecognized
-          goingQuantity = quantity;
+          // Quantity didn't change - use existing going logic
+          if (goingValue === 'not going') {
+            goingQuantity = 0;
+          } else if (goingValue === 'going') {
+            goingQuantity = newQuantity;
+          } else if (goingValue.includes('(') && goingValue.includes('/')) {
+            // Extract count from "going (X/Y)" format
+            const match = goingValue.match(/going \((\d+)\/\d+\)/);
+            goingQuantity = match ? parseInt(match[1]) : newQuantity;
+          } else {
+            // Default to full going if format is unrecognized
+            goingQuantity = newQuantity;
+          }
+        }
+        
+        // Validate and bound the going quantity
+        goingQuantity = Math.max(0, Math.min(newQuantity, goingQuantity));
+        
+        if (goingQuantity > newQuantity) {
+          console.warn(`⚠️  Database update: Going quantity ${goingQuantity} exceeds total quantity ${newQuantity} for ${row.cells?.col2}`);
+        }
+        
+        // Calculate unit values based on item type with validation
+        let unitCuft, unitWeight;
+        if (isBoxItem(currentItem)) {
+          // For all box types, DB stores total values, so save display values as-is
+          unitCuft = displayCuft;
+          unitWeight = displayWeight;
+        } else {
+          // For regular items, DB stores unit values, so divide by quantity
+          unitCuft = newQuantity > 0 ? displayCuft / newQuantity : 0;
+          unitWeight = newQuantity > 0 ? displayWeight / newQuantity : 0;
+        }
+        
+        // Validate calculated values
+        if (isNaN(unitCuft) || unitCuft < 0) {
+          console.warn(`⚠️  Invalid cuft calculation for ${row.cells?.col2}: ${displayCuft}/${newQuantity} = ${unitCuft}. Setting to 0.`);
+          unitCuft = 0;
+        }
+        
+        if (isNaN(unitWeight) || unitWeight < 0) {
+          console.warn(`⚠️  Invalid weight calculation for ${row.cells?.col2}: ${displayWeight}/${newQuantity} = ${unitWeight}. Setting to 0.`);
+          unitWeight = 0;
+        }
+        
+        // Check for unreasonably large values
+        if (unitCuft > 1000) {
+          console.warn(`⚠️  Unit cuft ${unitCuft} for ${row.cells?.col2} seems unusually large.`);
+        }
+        
+        if (unitWeight > 10000) {
+          console.warn(`⚠️  Unit weight ${unitWeight} for ${row.cells?.col2} seems unusually large.`);
         }
         
         const inventoryData = {
           location: row.cells?.col1 || '',
           name: row.cells?.col2 || '',
-          quantity: quantity,
-          cuft: parseFloat(row.cells?.col4) || 0,
-          weight: parseFloat(row.cells?.col5) || 0,
+          quantity: newQuantity, // Fixed: use newQuantity instead of undefined quantity
+          cuft: unitCuft,
+          weight: unitWeight,
           goingQuantity: goingQuantity, // Send goingQuantity instead of going string
+          packed_by: row.cells?.col7 || 'N/A', // Add PBO/CP field
         };
         
-        console.log(`📝 Updating inventory item ${row.inventoryItemId}:`, inventoryData);
+        console.log(`📝 Database update for ${row.cells?.col2}:`, {
+          itemId: row.inventoryItemId,
+          oldQuantity,
+          newQuantity,
+          goingValue,
+          calculatedGoingQuantity: goingQuantity,
+          unitCuft: inventoryData.cuft,
+          unitWeight: inventoryData.weight,
+          data: inventoryData
+        });
         
         const response = await fetch(`/api/projects/${currentProject._id}/inventory/${row.inventoryItemId}`, {
           method: 'PATCH',
@@ -928,20 +1359,117 @@ useEffect(() => {
         });
         
         if (!response.ok) {
-          console.error(`Failed to update inventory item ${row.inventoryItemId}`);
+          const errorText = await response.text();
+          console.error(`❌ Failed to update inventory item ${row.inventoryItemId}:`, {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorText,
+            data: inventoryData
+          });
+          
+          // Try to parse error details and show user-friendly messages
+          try {
+            const errorData = JSON.parse(errorText);
+            console.error(`❌ Server error details:`, errorData);
+            
+            // Show user-friendly error messages
+            if (errorData.error) {
+              if (errorData.error.includes('goingQuantity')) {
+                console.error(`❌ GoingQuantity validation failed:`, {
+                  newQuantity: inventoryData.quantity,
+                  goingQuantity: inventoryData.goingQuantity,
+                  itemName: inventoryData.name
+                });
+                // Could add toast notification here for user feedback
+              } else if (errorData.error.includes('Quantity must be')) {
+                console.error(`❌ Invalid quantity value for ${inventoryData.name}: ${inventoryData.quantity}`);
+              } else if (errorData.error.includes('Cuft must be')) {
+                console.error(`❌ Invalid cuft value for ${inventoryData.name}: ${inventoryData.cuft}`);
+              } else if (errorData.error.includes('Weight must be')) {
+                console.error(`❌ Invalid weight value for ${inventoryData.name}: ${inventoryData.weight}`);
+              }
+            }
+          } catch (parseError) {
+            console.error(`❌ Could not parse error response:`, errorText);
+          }
+          
+          return null;
         }
         
-        return response;
+        // Update local state for real-time UI updates
+        const updatedItem = await response.json();
+        return updatedItem;
       });
       
       // Wait for all updates to complete
-      await Promise.all(updatePromises);
-      console.log(`✅ Successfully synced ${updatePromises.length} inventory items`);
+      const results = await Promise.all(updatePromises);
+      
+      // Filter out failed updates
+      const updatedItems = results.filter(item => item !== null);
+      
+      if (updatedItems.length > 0) {
+        // Update local inventory state with database results, ensuring consistency with optimistic updates
+        setInventoryItems(prevItems => {
+          const updatedItemsMap = new Map(updatedItems.map(item => [item._id, item]));
+          return prevItems.map(item => {
+            if (updatedItemsMap.has(item._id)) {
+              const dbItem = updatedItemsMap.get(item._id);
+              // Verify that database values match what we expected from optimistic updates
+              if (hasQuantityChanges && item.quantity !== dbItem.quantity) {
+                console.warn(`⚠️  Database quantity mismatch for ${item.name}: optimistic=${item.quantity}, db=${dbItem.quantity}`);
+              }
+              if (hasQuantityChanges && item.goingQuantity !== dbItem.goingQuantity) {
+                console.warn(`⚠️  Database goingQuantity mismatch for ${item.name}: optimistic=${item.goingQuantity}, db=${dbItem.goingQuantity}`);
+              }
+              // Use database values as the source of truth
+              return dbItem;
+            }
+            return item;
+          });
+        });
+        
+        console.log(`✅ Successfully synced ${updatedItems.length} inventory items with database`);
+      }
       
     } catch (error) {
       console.error('Error syncing spreadsheet changes to inventory items:', error);
+      
+      // If there were optimistic updates that failed, we should revert them
+      if (hasQuantityChanges) {
+        console.warn('⚠️  Reverting optimistic updates due to database sync error');
+        // Revert inventoryItems to previous state by reloading from previousRowsRef
+        setInventoryItems(prevItems => {
+          return prevItems.map(item => {
+            const originalRow = previousRowsRef.current.find(r => r.inventoryItemId === item._id);
+            if (originalRow) {
+              const originalQuantity = parseInt(originalRow.cells?.col3) || 1;
+              const originalGoingValue = originalRow.cells?.col6 || 'going';
+              let originalGoingQuantity = item.goingQuantity; // Keep current going quantity as fallback
+              
+              // Recalculate original going quantity from the going value
+              if (originalGoingValue === 'not going') {
+                originalGoingQuantity = 0;
+              } else if (originalGoingValue === 'going') {
+                originalGoingQuantity = originalQuantity;
+              } else if (originalGoingValue.includes('(') && originalGoingValue.includes('/')) {
+                const match = originalGoingValue.match(/going \((\d+)\/\d+\)/);
+                originalGoingQuantity = match ? parseInt(match[1]) : originalQuantity;
+              }
+              
+              return { ...item, quantity: originalQuantity, goingQuantity: originalGoingQuantity };
+            }
+            return item;
+          });
+        });
+        
+        // Also revert spreadsheet rows
+        setSpreadsheetRows(previousRowsRef.current);
+      }
     }
-  }, [currentProject, spreadsheetColumns, debouncedSave]);
+    
+    // Store current rows for next comparison (do this at the very end)
+    previousRowsRef.current = JSON.parse(JSON.stringify(newRows));
+  }, [currentProject, spreadsheetColumns, debouncedSave, inventoryItems]);
   
   const handleSpreadsheetColumnsChange = useCallback((newColumns) => {
     setSpreadsheetColumns(newColumns);
@@ -1106,114 +1634,304 @@ useEffect(() => {
     }
   }, [convertItemsToRows, currentProject]);
   
-  // Calculate stats using goingQuantity for accurate counts
-  const totalItems = inventoryItems.reduce((total, item) => {
-    const quantity = Math.max(1, item.quantity || 1);
-    let goingQuantity = item.goingQuantity;
-    
-    // Handle missing or undefined goingQuantity with same logic as display
-    if (goingQuantity === undefined || goingQuantity === null) {
-      if (item.going === 'not going') {
+  // Calculate stats based on what's displayed in the spreadsheet (source of truth)
+  const totalItems = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      // Skip analyzing rows and get item type info
+      if (row.isAnalyzing) return total;
+      
+      // Exclude all box-related items from item count using itemType field or name fallback
+      const isBox = row.itemType === 'existing_box' || 
+                   row.itemType === 'boxes_needed' || 
+                   (row.cells?.col2 || '').toLowerCase().includes('box');
+      
+      if (isBox) return total;
+      
+      // Parse going status from spreadsheet
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
         goingQuantity = 0;
-      } else if (item.going === 'partial') {
-        goingQuantity = Math.floor(quantity / 2);
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
       } else {
         goingQuantity = quantity;
       }
-    }
-    
-    // Validate bounds
-    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
-    return total + goingQuantity;
-  }, 0);
+      
+      return total + Math.max(0, Math.min(quantity, goingQuantity));
+    }, 0);
+  }, [spreadsheetRows]);
   
-  const notGoingItems = inventoryItems.reduce((total, item) => {
-    const quantity = Math.max(1, item.quantity || 1);
-    let goingQuantity = item.goingQuantity;
-    
-    // Handle missing or undefined goingQuantity with same logic as display
-    if (goingQuantity === undefined || goingQuantity === null) {
-      if (item.going === 'not going') {
+  const notGoingItems = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      // Skip analyzing rows
+      if (row.isAnalyzing) return total;
+      
+      // Parse going status from spreadsheet
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
         goingQuantity = 0;
-      } else if (item.going === 'partial') {
-        goingQuantity = Math.floor(quantity / 2);
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
       } else {
         goingQuantity = quantity;
       }
-    }
-    
-    // Validate bounds
-    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
-    return total + (quantity - goingQuantity);
-  }, 0);
-  
-  const totalBoxes = inventoryItems.reduce((total, item) => {
-    if (item.box_recommendation) {
-      const quantity = Math.max(1, item.quantity || 1);
-      let goingQuantity = item.goingQuantity;
       
-      // Handle missing or undefined goingQuantity
-      if (goingQuantity === undefined || goingQuantity === null) {
-        if (item.going === 'not going') {
-          goingQuantity = 0;
-        } else if (item.going === 'partial') {
-          goingQuantity = Math.floor(quantity / 2);
-        } else {
-          goingQuantity = quantity;
-        }
-      }
-      
-      // Validate bounds
       goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
-      const ratio = goingQuantity / quantity;
-      return total + Math.ceil(item.box_recommendation.box_quantity * ratio);
-    }
-    return total;
-  }, 0);
+      return total + (quantity - goingQuantity);
+    }, 0);
+  }, [spreadsheetRows]);
   
-  // Calculate total cubic feet using goingQuantity
-  const totalCubicFeet = inventoryItems.reduce((total, item) => {
-    const cuft = item.cuft || 0;
-    const quantity = Math.max(1, item.quantity || 1);
-    let goingQuantity = item.goingQuantity;
-    
-    // Handle missing or undefined goingQuantity
-    if (goingQuantity === undefined || goingQuantity === null) {
-      if (item.going === 'not going') {
+  const totalBoxes = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      // Skip analyzing rows
+      if (row.isAnalyzing) return total;
+      
+      // Check if this row represents a box using itemType field or name fallback
+      const isBox = row.itemType === 'existing_box' || 
+                   row.itemType === 'boxes_needed' || 
+                   (row.cells?.col2 || '').toLowerCase().includes('box');
+      
+      if (!isBox) return total;
+      
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      // For boxes_needed (recommended), always count full quantity
+      if (row.itemType === 'boxes_needed') {
+        return total + quantity;
+      }
+      
+      // For existing/packed boxes, count going quantity
+      const goingValue = row.cells?.col6 || 'going';
+      let goingQuantity = 0;
+      
+      if (goingValue === 'not going') {
         goingQuantity = 0;
-      } else if (item.going === 'partial') {
-        goingQuantity = Math.floor(quantity / 2);
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
       } else {
         goingQuantity = quantity;
       }
-    }
-    
-    // Validate bounds
-    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
-    return total + (cuft * goingQuantity);
-  }, 0).toFixed(0);
+      
+      return total + Math.max(0, Math.min(quantity, goingQuantity));
+    }, 0);
+  }, [spreadsheetRows]);
   
-  // Calculate total weight using goingQuantity
-  const totalWeight = inventoryItems.reduce((total, item) => {
-    const weight = item.weight || 0;
-    const quantity = Math.max(1, item.quantity || 1);
-    let goingQuantity = item.goingQuantity;
+  // Calculate total cubic feet from spreadsheet (source of truth)
+  const totalCubicFeet = useMemo(() => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    console.log(`📊 [${timestamp}] Calculating cuft from spreadsheet rows:`, spreadsheetRows.length);
     
-    // Handle missing or undefined goingQuantity
-    if (goingQuantity === undefined || goingQuantity === null) {
-      if (item.going === 'not going') {
+    let runningTotal = 0;
+    let totalDisplayCuft = 0;
+    
+    const result = spreadsheetRows.reduce((total, row, index) => {
+      // Skip analyzing rows
+      if (row.isAnalyzing) return total;
+      
+      // Get cuft value directly from spreadsheet display (col4)
+      const displayCuft = parseFloat(row.cells?.col4) || 0;
+      totalDisplayCuft += displayCuft;
+      
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
         goingQuantity = 0;
-      } else if (item.going === 'partial') {
-        goingQuantity = Math.floor(quantity / 2);
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
       } else {
         goingQuantity = quantity;
       }
-    }
+      
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      
+      // Calculate going cuft - displayCuft is already the total for the row
+      // We only need to proportion it if not all items are going
+      let goingCuft;
+      if (goingQuantity === quantity) {
+        // All items going - use the full displayCuft
+        goingCuft = displayCuft;
+      } else {
+        // Partial items going - proportion based on going quantity
+        goingCuft = quantity > 0 ? (displayCuft * goingQuantity) / quantity : 0;
+      }
+      
+      runningTotal += goingCuft;
+      
+      // Log detailed calculation for debugging
+      if (displayCuft > 0) {
+        console.log(`📊 [${timestamp}] Row ${index + 1}: ${row.cells?.col2 || 'unknown'} - qty: ${quantity}, going: "${goingValue}" (${goingQuantity}), displayCuft: ${displayCuft}, goingCuft: ${goingCuft.toFixed(2)}, runningTotal: ${runningTotal.toFixed(2)}`);
+      }
+      
+      return total + goingCuft;
+    }, 0);
     
-    // Validate bounds
-    goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
-    return total + (weight * goingQuantity);
-  }, 0).toFixed(0);
+    const finalResult = result.toFixed(0);
+    console.log(`📊 [${timestamp}] CUFT CALCULATION COMPLETE: totalDisplayCuft: ${totalDisplayCuft.toFixed(2)}, finalGoingCuft: ${finalResult}`);
+    
+    return finalResult;
+  }, [spreadsheetRows]);
+  
+  // Calculate total weight from spreadsheet (source of truth)
+  const totalWeight = useMemo(() => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    console.log(`⚖️ [${timestamp}] Calculating weight from spreadsheet rows:`, spreadsheetRows.length);
+    
+    let runningTotal = 0;
+    let totalDisplayWeight = 0;
+    
+    const result = spreadsheetRows.reduce((total, row, index) => {
+      // Skip analyzing rows
+      if (row.isAnalyzing) return total;
+      
+      // Get weight value directly from spreadsheet display (col5)
+      const displayWeight = parseFloat(row.cells?.col5) || 0;
+      totalDisplayWeight += displayWeight;
+      
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      
+      // Calculate going weight - displayWeight is already the total for the row
+      // We only need to proportion it if not all items are going
+      let goingWeight;
+      if (goingQuantity === quantity) {
+        // All items going - use the full displayWeight
+        goingWeight = displayWeight;
+      } else {
+        // Partial items going - proportion based on going quantity
+        goingWeight = quantity > 0 ? (displayWeight * goingQuantity) / quantity : 0;
+      }
+      
+      runningTotal += goingWeight;
+      
+      // Log detailed calculation for debugging
+      if (displayWeight > 0) {
+        console.log(`⚖️ [${timestamp}] Row ${index + 1}: ${row.cells?.col2 || 'unknown'} - qty: ${quantity}, going: "${goingValue}" (${goingQuantity}), displayWeight: ${displayWeight}, goingWeight: ${goingWeight.toFixed(2)}, runningTotal: ${runningTotal.toFixed(2)}`);
+      }
+      
+      return total + goingWeight;
+    }, 0);
+    
+    const finalResult = result.toFixed(0);
+    console.log(`⚖️ [${timestamp}] WEIGHT CALCULATION COMPLETE: totalDisplayWeight: ${totalDisplayWeight.toFixed(2)}, finalGoingWeight: ${finalResult}`);
+    
+    return finalResult;
+  }, [spreadsheetRows]);
+  
+  // Validation: Check for discrepancies between calculated stats and manual totals
+  useEffect(() => {
+    if (spreadsheetRows.length === 0) return;
+    
+    const timestamp = new Date().toISOString().slice(11, 23);
+    console.log(`🔍 [${timestamp}] VALIDATION CHECK: Comparing calculated stats vs manual totals`);
+    
+    // Manual calculation for comparison
+    let manualCuft = 0;
+    let manualWeight = 0;
+    let manualItems = 0;
+    
+    spreadsheetRows.forEach((row, index) => {
+      if (row.isAnalyzing) return;
+      
+      const displayCuft = parseFloat(row.cells?.col4) || 0;
+      const displayWeight = parseFloat(row.cells?.col5) || 0;
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      // Parse going quantity
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      
+      // Manual calculations
+      let goingCuft = goingQuantity === quantity ? displayCuft : (quantity > 0 ? (displayCuft * goingQuantity) / quantity : 0);
+      let goingWeight = goingQuantity === quantity ? displayWeight : (quantity > 0 ? (displayWeight * goingQuantity) / quantity : 0);
+      
+      manualCuft += goingCuft;
+      manualWeight += goingWeight;
+      
+      // Count items (exclude boxes)
+      const isBox = row.itemType === 'existing_box' || 
+                   row.itemType === 'boxes_needed' || 
+                   (row.cells?.col2 || '').toLowerCase().includes('box');
+      if (!isBox) {
+        manualItems += goingQuantity;
+      }
+    });
+    
+    // Compare with calculated stats
+    const calculatedCuft = parseFloat(totalCubicFeet);
+    const calculatedWeight = parseFloat(totalWeight);
+    const calculatedItems = parseInt(totalItems);
+    
+    const cuftDiff = Math.abs(manualCuft - calculatedCuft);
+    const weightDiff = Math.abs(manualWeight - calculatedWeight);
+    const itemsDiff = Math.abs(manualItems - calculatedItems);
+    
+    console.log(`🔍 [${timestamp}] VALIDATION RESULTS:`);
+    console.log(`📊 Cu.Ft: Manual=${manualCuft.toFixed(2)}, Calculated=${calculatedCuft}, Diff=${cuftDiff.toFixed(2)}`);
+    console.log(`⚖️ Weight: Manual=${manualWeight.toFixed(2)}, Calculated=${calculatedWeight}, Diff=${weightDiff.toFixed(2)}`);
+    console.log(`📦 Items: Manual=${manualItems}, Calculated=${calculatedItems}, Diff=${itemsDiff}`);
+    
+    // Alert if significant discrepancies
+    if (cuftDiff > 0.1 || weightDiff > 0.1 || itemsDiff > 0) {
+      console.warn(`⚠️ [${timestamp}] DISCREPANCY DETECTED!`);
+      if (cuftDiff > 0.1) console.warn(`❌ Cu.Ft mismatch: ${cuftDiff.toFixed(2)} difference`);
+      if (weightDiff > 0.1) console.warn(`❌ Weight mismatch: ${weightDiff.toFixed(2)} difference`);
+      if (itemsDiff > 0) console.warn(`❌ Items mismatch: ${itemsDiff} difference`);
+    } else {
+      console.log(`✅ [${timestamp}] All calculations match - no discrepancies detected`);
+    }
+  }, [spreadsheetRows, totalCubicFeet, totalWeight, totalItems]);
+  
+  // Monitor when stats values actually change
+  useEffect(() => {
+    const timestamp = new Date().toISOString().slice(11, 23);
+    console.log(`📈 [${timestamp}] STATS VALUES UPDATED: Cu.Ft=${totalCubicFeet}, Weight=${totalWeight}, Items=${totalItems}, Boxes=${totalBoxes}, NotGoing=${notGoingItems}`);
+  }, [totalCubicFeet, totalWeight, totalItems, totalBoxes, notGoingItems]);
   
   // Render appropriate status indicator
   const renderSavingStatus = () => {
@@ -1717,6 +2435,7 @@ const ProcessingNotification = () => {
                 <div className="h-[calc(100vh-320px)]">
                   {currentProject && (
                     <Spreadsheet 
+                      key={`spreadsheet-${spreadsheetUpdateKey}`}
                       initialRows={showProcessingNotification ? [
                         {
                           id: `analyzing-row-${Date.now()}`,

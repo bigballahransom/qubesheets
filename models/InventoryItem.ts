@@ -7,6 +7,18 @@ export interface IBoxRecommendation {
   box_dimensions: string;
 }
 
+export interface IBoxDetails {
+  box_type: string;
+  capacity_cuft: number;
+  for_items: string;
+  room?: string;
+}
+
+export interface IPackedBoxDetails {
+  size: string;
+  label?: string;
+}
+
 export interface IInventoryItem extends Document {
   name: string;
   description?: string;
@@ -17,9 +29,14 @@ export interface IInventoryItem extends Document {
   weight?: number;
   going?: string; // "going" or "not going" - defaults to "going" if null
   goingQuantity?: number; // How many of this item are going (0 to quantity)
+  packed_by?: string; // "N/A", "PBO", or "CP" - who packed the item
   fragile?: boolean;
   special_handling?: string;
   box_recommendation?: IBoxRecommendation;
+  itemType?: 'furniture' | 'packed_box' | 'existing_box' | 'boxes_needed' | 'regular_item';
+  box_details?: IBoxDetails;
+  packed_box_details?: IPackedBoxDetails;
+  ai_generated?: boolean;
   projectId: mongoose.Types.ObjectId | string;
   userId: string;
   organizationId?: string;
@@ -38,6 +55,24 @@ const BoxRecommendationSchema: Schema = new Schema(
   { _id: false }
 );
 
+const BoxDetailsSchema: Schema = new Schema(
+  {
+    box_type: { type: String, required: true },
+    capacity_cuft: { type: Number, required: true },
+    for_items: { type: String, required: true },
+    room: { type: String },
+  },
+  { _id: false }
+);
+
+const PackedBoxDetailsSchema: Schema = new Schema(
+  {
+    size: { type: String, required: true },
+    label: { type: String },
+  },
+  { _id: false }
+);
+
 const InventoryItemSchema: Schema = new Schema(
   {
     name: { type: String, required: true },
@@ -49,9 +84,18 @@ const InventoryItemSchema: Schema = new Schema(
     weight: { type: Number },
     going: { type: String, enum: ['going', 'not going', 'partial'], default: 'going' },
     goingQuantity: { type: Number, min: 0 },
+    packed_by: { type: String, enum: ['N/A', 'PBO', 'CP'], default: 'N/A' },
     fragile: { type: Boolean, default: false },
     special_handling: { type: String },
     box_recommendation: { type: BoxRecommendationSchema },
+    itemType: { 
+      type: String, 
+      enum: ['furniture', 'packed_box', 'existing_box', 'boxes_needed', 'regular_item'],
+      default: 'regular_item'
+    },
+    box_details: { type: BoxDetailsSchema },
+    packed_box_details: { type: PackedBoxDetailsSchema },
+    ai_generated: { type: Boolean, default: false },
     projectId: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: 'Project',

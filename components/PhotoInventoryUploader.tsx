@@ -824,94 +824,27 @@ export default function PhotoInventoryUploader({
 
         let s3Result: S3UploadResult;
 
-        if (isVideo) {
-          // Use pre-signed URL for video uploads to bypass Vercel 4.5MB limit
-          console.log(`🎬 Using pre-signed URL upload for video: ${file.name}`);
-          
-          // Step 1: Get pre-signed URL
-          const presignedResponse = await fetch('/api/generate-video-upload-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileName: file.name,
-              fileSize: file.size,
-              mimeType: file.type,
-              projectId: projectId,
-              isCustomerUpload: false
-            })
-          });
+        // Use server-side upload for both images and videos
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('projectId', projectId || 'unknown');
+        formData.append('fileIndex', fileNum.toString());
 
-          if (!presignedResponse.ok) {
-            const errorText = await presignedResponse.text();
-            throw new Error(`Failed to get pre-signed URL: ${errorText}`);
-          }
+        console.log(`📤 Using server-side upload for ${isVideo ? 'video' : 'image'}: ${file.name}`);
 
-          const { uploadUrl, s3Key, metadata } = await presignedResponse.json();
+        // Call server-side API to upload to S3
+        const response = await fetch('/api/upload-to-s3', {
+          method: 'POST',
+          body: formData,
+        });
 
-          // Step 2: Upload directly to S3
-          const s3UploadResponse = await fetch(uploadUrl, {
-            method: 'PUT',
-            body: file,
-            headers: {
-              'Content-Type': file.type,
-            }
-          });
-
-          if (!s3UploadResponse.ok) {
-            throw new Error(`S3 upload failed: ${s3UploadResponse.status} ${s3UploadResponse.statusText}`);
-          }
-
-          // Step 3: Confirm upload with server
-          const confirmResponse = await fetch('/api/confirm-video-upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              s3Key,
-              metadata,
-              actualFileSize: file.size
-            })
-          });
-
-          if (!confirmResponse.ok) {
-            const errorText = await confirmResponse.text();
-            throw new Error(`Upload confirmation failed: ${errorText}`);
-          }
-
-          const confirmResult = await confirmResponse.json();
-          
-          // Convert to S3UploadResult format expected by the rest of the component
-          s3Result = {
-            key: s3Key,
-            bucket: process.env.NEXT_PUBLIC_AWS_BUCKET_NAME || metadata.bucket || 'default-bucket',
-            url: confirmResult.videoUrl,
-            etag: 'video-upload', // Placeholder since we don't get ETag from pre-signed upload
-            size: file.size,
-            contentType: file.type,
-            uploadedAt: new Date()
-          };
-
-          console.log('🎬 Video pre-signed upload completed:', s3Result);
-        } else {
-          // Use existing FormData approach for images
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('projectId', projectId || 'unknown');
-          formData.append('fileIndex', fileNum.toString());
-
-          // Call server-side API to upload to S3
-          const response = await fetch('/api/upload-to-s3', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'S3 upload failed');
-          }
-
-          const result = await response.json();
-          s3Result = result.s3Result as S3UploadResult;
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'S3 upload failed');
         }
+
+        const result = await response.json();
+        s3Result = result.s3Result as S3UploadResult;
 
         console.log(`✅ S3 upload successful on attempt ${attempt} for file ${fileNum}:`, s3Result.key);
 

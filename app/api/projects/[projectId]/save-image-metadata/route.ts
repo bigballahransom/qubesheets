@@ -5,6 +5,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
 import { sendImageProcessingMessage } from '@/lib/sqsUtils';
+import mongoose from 'mongoose';
 
 export async function POST(
   request: NextRequest,
@@ -80,65 +81,77 @@ export async function POST(
     const cleanUserName = userName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const name = `admin-${cleanUserName}-${timestamp}-${fileName}`;
     
-    // Save image metadata to database
-    const imageDoc = await Image.create({
-      name,
-      originalName: fileName,
-      mimeType: fileType,
-      size: fileSize,
-      data: buffer, // Store image data for analysis
-      cloudinaryPublicId: cloudinaryResult?.publicId,
-      cloudinaryUrl: cloudinaryResult?.url,
-      cloudinarySecureUrl: cloudinaryResult?.secureUrl,
-      projectId,
-      userId,
-      organizationId: orgId,
-      description: `Image uploaded by ${userName} via admin interface`,
-      source: 'admin_upload',
-      // Add S3 raw file information if provided
-      s3RawFile: s3RawFile ? {
-        key: s3RawFile.key,
-        bucket: s3RawFile.bucket,
-        url: s3RawFile.url,
-        etag: s3RawFile.etag,
-        uploadedAt: new Date(s3RawFile.uploadedAt),
-        contentType: s3RawFile.contentType
-      } : undefined,
-      metadata: {
-        directUpload: true,
-        uploadedBy: userName,
-        uploadedAt: new Date().toISOString(),
-        cloudinaryInfo: cloudinaryResult ? {
-          format: cloudinaryResult.format || 'unknown',
-          bytes: cloudinaryResult.bytes || 0,
-          width: cloudinaryResult.width || 0,
-          height: cloudinaryResult.height || 0,
-          createdAt: cloudinaryResult.createdAt || new Date().toISOString()
-        } : null,
-        s3RawFileInfo: s3RawFile ? {
-          key: s3RawFile.key,
-          bucket: s3RawFile.bucket,
-          uploadedAt: s3RawFile.uploadedAt
-        } : null
-      },
-      // Initialize with pending analysis status
-      analysisResult: {
-        summary: 'Analysis pending...',
-        itemsCount: 0,
-        totalBoxes: 0
-      }
-    });
-    
-    console.log('✅ Admin image metadata saved:', imageDoc._id);
-    
-    // Update project timestamp
-    await Project.findByIdAndUpdate(projectId, { 
-      updatedAt: new Date() 
-    });
-    
-    // Queue image for analysis if we have image data
+    // Use transaction to ensure MongoDB record is saved before SQS message
+    const session = await mongoose.startSession();
+    let imageDoc: any;
     let jobId = 'no-analysis-data';
-    if (buffer) {
+    
+    try {
+      await session.withTransaction(async () => {
+        // Save image metadata to database
+        [imageDoc] = await Image.create([{
+          name,
+          originalName: fileName,
+          mimeType: fileType,
+          size: fileSize,
+          data: buffer, // Store image data for analysis
+          cloudinaryPublicId: cloudinaryResult?.publicId,
+          cloudinaryUrl: cloudinaryResult?.url,
+          cloudinarySecureUrl: cloudinaryResult?.secureUrl,
+          projectId,
+          userId,
+          organizationId: orgId,
+          description: `Image uploaded by ${userName} via admin interface`,
+          source: 'admin_upload',
+          processingStatus: 'queued',
+          // Add S3 raw file information if provided
+          s3RawFile: s3RawFile ? {
+            key: s3RawFile.key,
+            bucket: s3RawFile.bucket,
+            url: s3RawFile.url,
+            etag: s3RawFile.etag,
+            uploadedAt: new Date(s3RawFile.uploadedAt),
+            contentType: s3RawFile.contentType
+          } : undefined,
+          metadata: {
+            directUpload: true,
+            uploadedBy: userName,
+            uploadedAt: new Date().toISOString(),
+            cloudinaryInfo: cloudinaryResult ? {
+              format: cloudinaryResult.format || 'unknown',
+              bytes: cloudinaryResult.bytes || 0,
+              width: cloudinaryResult.width || 0,
+              height: cloudinaryResult.height || 0,
+              createdAt: cloudinaryResult.createdAt || new Date().toISOString()
+            } : null,
+            s3RawFileInfo: s3RawFile ? {
+              key: s3RawFile.key,
+              bucket: s3RawFile.bucket,
+              uploadedAt: s3RawFile.uploadedAt
+            } : null
+          },
+          // Initialize with pending analysis status
+          analysisResult: {
+            summary: 'Analysis pending...',
+            itemsCount: 0,
+            totalBoxes: 0,
+            status: 'pending'
+          }
+        }], { session });
+        
+        // Update project timestamp
+        await Project.findByIdAndUpdate(projectId, { 
+          updatedAt: new Date() 
+        }, { session });
+        
+        console.log('✅ Admin image metadata saved in transaction:', imageDoc._id);
+      });
+    } finally {
+      await session.endSession();
+    }
+    
+    // Queue image for analysis AFTER transaction commits
+    if (buffer && imageDoc) {
       try {
         jobId = await sendImageProcessingMessage({
           imageId: imageDoc._id.toString(),
@@ -158,12 +171,21 @@ export async function POST(
       } catch (queueError) {
         console.warn('⚠️ SQS queue failed, but image was saved:', queueError);
         jobId = 'queue-failed-manual-required';
+        
+        // Update processing status to failed
+        if (imageDoc) {
+          await Image.findByIdAndUpdate(imageDoc._id, { 
+            processingStatus: 'failed',
+            'analysisResult.status': 'failed',
+            'analysisResult.error': queueError instanceof Error ? queueError.message : 'Queue failed'
+          });
+        }
       }
     }
     
     return NextResponse.json({
       success: true,
-      imageId: imageDoc._id.toString(),
+      imageId: imageDoc?._id.toString(),
       jobId: jobId,
       message: buffer 
         ? 'Image uploaded successfully! AI analysis is processing in the background.'

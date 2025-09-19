@@ -62,6 +62,11 @@ const VideoSchema = new mongoose.Schema({
     enum: ['admin_upload', 'customer_upload', 'video_call', 'inventory_upload'],
     default: 'admin_upload'
   },
+  processingStatus: {
+    type: String,
+    enum: ['queued', 'processing', 'completed', 'failed'],
+    default: 'queued'
+  },
   // S3 raw file info for streaming (from new video processing flow)
   s3RawFile: {
     bucket: String,

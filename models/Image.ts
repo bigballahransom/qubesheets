@@ -11,6 +11,7 @@ export interface IImage extends Document {
   userId: string;
   organizationId?: string;
   description?: string;
+  processingStatus?: 'queued' | 'processing' | 'completed' | 'failed';
   analysisResult?: {
     summary: string;
     itemsCount: number;
@@ -47,6 +48,7 @@ const ImageSchema: Schema = new Schema(
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
     description: { type: String },
+    processingStatus: { type: String, enum: ['queued', 'processing', 'completed', 'failed'], default: 'queued' },
     analysisResult: {
       summary: { type: String },
       itemsCount: { type: Number },
