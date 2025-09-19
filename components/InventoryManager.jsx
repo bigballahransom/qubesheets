@@ -2046,8 +2046,10 @@ useEffect(() => {
     const cellPadding = 2;
     const rowHeight = 8;
     
-    // Column widths
-    const colWidths = [30, 50, 20, 20, 25, 35];
+    // Column widths - adjusted for 7 columns including new PBO/CP column
+    // [Location, Item, Count, Cuft, Weight, Going, PBO/CP]
+    const colWidths = [25, 45, 18, 18, 20, 30, 25];
+    // Total width: 181 points (fits well within PDF margins)
     const totalWidth = colWidths.reduce((a, b) => a + b, 0);
     
     // Draw header
