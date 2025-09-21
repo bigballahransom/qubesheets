@@ -10,6 +10,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
 import { toast } from 'sonner';
@@ -893,9 +899,25 @@ useEffect(() => {
     }
     
     if (column && column.id === 'col2' && row && (row.sourceImageId || row.sourceVideoId)) {
+      // Check if this is a recommended box (purple highlighted)
+      const isRecommendedBoxes = row.itemType === 'boxes_needed' ||
+                               (row.itemType === 'regular_item' && value && 
+                                value.includes('Box') && 
+                                value.includes(' - '));
+      
+      // Check if this is an existing/packed box (orange highlighted)
+      const isExistingBox = row.itemType === 'existing_box' || 
+                          row.itemType === 'packed_box' ||
+                          (row.itemType === 'regular_item' && value && 
+                           (value.includes('Large Box') || 
+                            value.includes('Medium Box') || 
+                            value.includes('Small Box') || 
+                            value.includes('Existing Box')) &&
+                           !value.includes(' - '));
+      
       return (
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{getCompanyIcon(value)}</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -908,6 +930,30 @@ useEffect(() => {
           >
             {value}
           </button>
+          {isRecommendedBoxes && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">R</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Recommended Boxes</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {isExistingBox && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">B</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Already Packed Boxes</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           {row.sourceImageId ? (
             <Camera size={14} className="text-blue-500 flex-shrink-0" />
           ) : (
@@ -919,10 +965,54 @@ useEffect(() => {
     
     switch (colType) {
       case 'company':
+        // Check if this is a recommended box (purple highlighted) for col2
+        const isRecommendedBox = column && column.id === 'col2' && row && (
+          row.itemType === 'boxes_needed' ||
+          (row.itemType === 'regular_item' && value && 
+           value.includes('Box') && 
+           value.includes(' - '))
+        );
+        
+        // Check if this is an existing/packed box (orange highlighted) for col2
+        const isExistingBox = column && column.id === 'col2' && row && (
+          row.itemType === 'existing_box' || 
+          row.itemType === 'packed_box' ||
+          (row.itemType === 'regular_item' && value && 
+           (value.includes('Large Box') || 
+            value.includes('Medium Box') || 
+            value.includes('Small Box') || 
+            value.includes('Existing Box')) &&
+           !value.includes(' - '))
+        );
+        
         return (
-          <div className="flex items-center gap-2">
-            <span className="text-lg">{getCompanyIcon(value)}</span>
-            <span className="truncate">{value}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
+            <span className="truncate min-w-0">{value}</span>
+            {isRecommendedBox && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">R</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Recommended Boxes</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {isExistingBox && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">B</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Already Packed Boxes</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
         );
       case 'url':
@@ -1033,7 +1123,7 @@ useEffect(() => {
           </div>
         );
       default:
-        return <span className="truncate">{value}</span>;
+        return <span className="block truncate">{value}</span>;
     }
   }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, onRowsChange, setRows, setSaveStatus]);
   
@@ -1429,7 +1519,7 @@ useEffect(() => {
               {columns.map((column) => (
                 <div 
                   key={`${row.id}-${column.id}`}
-                  className={`${getColumnWidth(column)} p-2 border-r border-b h-10 ${
+                  className={`${getColumnWidth(column)} p-2 border-r border-b h-10 overflow-hidden ${
                     row.isAnalyzing 
                       ? 'text-blue-600 font-medium animate-pulse' 
                       : activeCell && activeCell.rowId === row.id && activeCell.colId === column.id 

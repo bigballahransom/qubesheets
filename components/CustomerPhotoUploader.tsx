@@ -27,6 +27,26 @@ function isVideoFile(file: File): boolean {
   return hasVideoExtension || hasVideoMimeType;
 }
 
+// Check video duration (max 1 minute)
+async function checkVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(video.duration);
+    };
+    
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load video metadata'));
+    };
+    
+    video.src = url;
+  });
+}
+
 // Enhanced HEIC file detection for iPhone compatibility
 function isHeicFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
@@ -297,6 +317,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
   const [isConverting, setIsConverting] = useState(false);
   const [conversionProgress, setConversionProgress] = useState(0);
   const [conversionStage, setConversionStage] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Convert video to Gemini-compatible MP4 format
@@ -500,6 +521,23 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         return;
       }
       
+      // Check video duration (max 1 minute) before other validations
+      if (isVideo) {
+        try {
+          const duration = await checkVideoDuration(file);
+          console.log(`🎬 Video duration check: ${file.name} = ${duration.toFixed(2)} seconds`);
+          
+          if (duration > 60) { // 60 seconds = 1 minute
+            const durationMinutes = (duration / 60).toFixed(1);
+            setError(`Video is too long: ${durationMinutes} minutes. Please upload videos shorter than 1 minute for optimal processing.`);
+            return;
+          }
+        } catch (durationError) {
+          console.warn('⚠️ Could not check video duration:', durationError);
+          // Continue with upload - server can handle duration check as fallback
+        }
+      }
+      
       // Client-side file size validation (different limits for images vs videos)
       const maxSize = isVideo ? 100 * 1024 * 1024 : 15 * 1024 * 1024; // 100MB for videos, 15MB for images
       
@@ -509,7 +547,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         const fileType = isVideo ? 'video' : 'image';
         
         const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
-        alert(errorMsg);
+        setError(errorMsg);
         return;
       }
       
@@ -660,16 +698,41 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    if (files.length > 0) {
-      // Process multiple files
-      files.forEach((file) => {
-        handleFile(file);
-      });
+    if (files.length === 0) return;
+
+    // Check if any files are videos
+    const videoFiles = files.filter(isVideoFile);
+    const imageFiles = files.filter(file => !isVideoFile(file));
+    
+    if (videoFiles.length > 0 && imageFiles.length > 0) {
+      setError('Please upload either images or videos, not both at the same time.');
+      return;
     }
+    
+    if (videoFiles.length > 1) {
+      setError('Please upload one video at a time for optimal processing.');
+      return;
+    }
+
+    // Clear any previous errors
+    setError(null);
+
+    // Process files
+    files.forEach((file) => {
+      handleFile(file);
+    });
   };
 
   return (
     <div className="space-y-4">
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <p className="font-medium text-red-800">Error</p>
+          <p className="text-red-600">{error}</p>
+        </div>
+      )}
+      
       {/* Upload Area */}
       <div
         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
@@ -729,7 +792,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       </div>
 
       <p className="text-xs text-gray-500 text-center">
-        Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 100MB)
+        Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 100MB, 1 minute)
       </p>
     </div>
   );

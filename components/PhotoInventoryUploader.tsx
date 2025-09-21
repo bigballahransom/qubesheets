@@ -94,6 +94,26 @@ function isVideoFile(file: File): boolean {
   return hasVideoExtension || hasVideoMimeType;
 }
 
+// Check video duration (max 1 minute)
+async function checkVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(video.duration);
+    };
+    
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load video metadata'));
+    };
+    
+    video.src = url;
+  });
+}
+
 // Convert video to Gemini-compatible MP4 format
 async function convertVideoToMP4(file: File): Promise<File> {
   // ALWAYS convert .MOV files - they are never compatible with Gemini
@@ -680,8 +700,24 @@ export default function PhotoInventoryUploader({
         
         let finalFile = file;
 
-        // Handle video conversion for .MOV files
+        // Handle video files
         if (isVideo) {
+          // Check video duration first (max 1 minute)
+          try {
+            const duration = await checkVideoDuration(file);
+            console.log(`🎬 Video duration check: ${file.name} = ${duration.toFixed(2)} seconds`);
+            
+            if (duration > 60) { // 60 seconds = 1 minute
+              const durationMinutes = (duration / 60).toFixed(1);
+              setError(`Video "${file.name}" is too long: ${durationMinutes} minutes. Please upload videos shorter than 1 minute for optimal processing.`);
+              continue; // Skip this file
+            }
+          } catch (durationError) {
+            console.warn('⚠️ Could not check video duration for', file.name, ':', durationError);
+            // Continue with upload - server can handle duration check as fallback
+          }
+          
+          // Handle video conversion for .MOV files
           const isMovFile = file.name.toLowerCase().endsWith('.mov');
           if (isMovFile) {
             try {
