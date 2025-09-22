@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
-import { Bell, Phone, Save } from 'lucide-react';
+import { Bell, Phone, Save, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -56,21 +56,39 @@ export default function NotificationsPage() {
   const { user } = useUser();
   const { organization } = useOrganization();
   
+  // Individual settings
   const [enableInventoryUpdates, setEnableInventoryUpdates] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
+  
+  // Organization settings
+  const [enableCustomerFollowUps, setEnableCustomerFollowUps] = useState(false);
+  const [followUpDelayHours, setFollowUpDelayHours] = useState(4);
+  const [isOrgAdmin, setIsOrgAdmin] = useState(false);
+  
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [hasOrgChanges, setHasOrgChanges] = useState(false);
+
+  // Check if user is org admin
+  useEffect(() => {
+    if (organization && user) {
+      // For now, allow all org members to update settings
+      // In production, you'd check the user's role in the organization
+      setIsOrgAdmin(true);
+    }
+  }, [organization, user]);
 
   // Load notification settings on component mount
   useEffect(() => {
-    if (!hasUnsavedChanges) {
+    if (!hasUnsavedChanges && !hasOrgChanges) {
       loadNotificationSettings();
     }
-  }, [user, organization, hasUnsavedChanges]);
+  }, [user, organization, hasUnsavedChanges, hasOrgChanges]);
 
   const loadNotificationSettings = async () => {
     try {
+      // Load individual settings
       const response = await fetch('/api/notification-settings');
       if (response.ok) {
         const settings = await response.json();
@@ -81,6 +99,16 @@ export default function NotificationsPage() {
         setEnableInventoryUpdates(false);
         setPhoneNumber('');
       }
+      
+      // Load organization settings if in an organization
+      if (organization) {
+        const orgResponse = await fetch('/api/organization-settings');
+        if (orgResponse.ok) {
+          const orgSettings = await orgResponse.json();
+          setEnableCustomerFollowUps(orgSettings.enableCustomerFollowUps || false);
+          setFollowUpDelayHours(orgSettings.followUpDelayHours || 4);
+        }
+      }
     } catch (error) {
       console.error('Error loading notification settings:', error);
       toast.error('Failed to load notification settings');
@@ -90,31 +118,52 @@ export default function NotificationsPage() {
   };
 
   const saveNotificationSettings = async () => {
-    console.log('💾 Saving notification settings:', { enableInventoryUpdates, phoneNumber });
+    console.log('💾 Saving notification settings');
     setSaving(true);
     try {
-      const response = await fetch('/api/notification-settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          enableInventoryUpdates,
-          phoneNumber: phoneNumber.trim() || null,
-        }),
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Failed to save settings: ${response.status}`);
+      // Save individual settings if changed
+      if (hasUnsavedChanges) {
+        const response = await fetch('/api/notification-settings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            enableInventoryUpdates,
+            phoneNumber: phoneNumber.trim() || null,
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || `Failed to save individual settings: ${response.status}`);
+        }
       }
       
-      const result = await response.json();
-      console.log('✅ Save successful:', result);
+      // Save organization settings if changed and user is admin
+      if (hasOrgChanges && isOrgAdmin && organization) {
+        const orgResponse = await fetch('/api/organization-settings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            enableCustomerFollowUps,
+            followUpDelayHours,
+          }),
+        });
+        
+        if (!orgResponse.ok) {
+          const errorData = await orgResponse.json();
+          throw new Error(errorData.error || `Failed to save organization settings: ${orgResponse.status}`);
+        }
+      }
+      
       setHasUnsavedChanges(false);
-      toast.success('Notification settings saved successfully!');
+      setHasOrgChanges(false);
+      toast.success('Settings saved successfully!');
     } catch (error) {
-      console.error('❌ Error saving notification settings:', error);
+      console.error('❌ Error saving settings:', error);
       toast.error(`Failed to save settings. ${error instanceof Error ? error.message : 'Please try again.'}`);
     } finally {
       setSaving(false);
@@ -211,17 +260,93 @@ export default function NotificationsPage() {
                 </div>
               </div>
 
+              {/* Customer Follow-up Notifications - Organization Settings */}
+              {organization && (
+                <div className="bg-white rounded-lg shadow-sm border p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-medium">Customer Follow-up Reminders</h2>
+                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+                      Organization Setting
+                    </span>
+                  </div>
+                  
+                  {!isOrgAdmin && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                      <p className="text-sm text-yellow-700">
+                        Only organization admins can modify these settings.
+                      </p>
+                    </div>
+                  )}
+                  
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-medium">Enable Follow-up Reminders</h3>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Automatically send follow-up messages to customers who haven't uploaded inventory
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer ml-4">
+                        <input
+                          type="checkbox"
+                          checked={enableCustomerFollowUps}
+                          onChange={(e) => {
+                            if (isOrgAdmin) {
+                              setEnableCustomerFollowUps(e.target.checked);
+                              setHasOrgChanges(true);
+                            }
+                          }}
+                          disabled={!isOrgAdmin}
+                          className="sr-only peer"
+                        />
+                        <div className={`w-11 h-6 ${!isOrgAdmin ? 'opacity-50' : ''} bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600`}></div>
+                      </label>
+                    </div>
+                    
+                    {enableCustomerFollowUps && (
+                      <div className="pt-4 border-t">
+                        <label className="block text-sm font-medium mb-2">
+                          Follow-up Delay
+                        </label>
+                        <div className="flex items-center gap-3">
+                          <Input
+                            type="number"
+                            value={followUpDelayHours}
+                            onChange={(e) => {
+                              if (isOrgAdmin) {
+                                const value = parseInt(e.target.value) || 4;
+                                const clamped = Math.max(1, Math.min(168, value));
+                                setFollowUpDelayHours(clamped);
+                                setHasOrgChanges(true);
+                              }
+                            }}
+                            disabled={!isOrgAdmin}
+                            min="1"
+                            max="168"
+                            className="w-24"
+                          />
+                          <span className="text-sm text-gray-600">hours after sending upload link</span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Send reminder if customer hasn't uploaded any photos (1-168 hours)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Save Button */}
               <Button 
                 onClick={saveNotificationSettings}
-                disabled={saving || !hasUnsavedChanges}
+                disabled={saving || (!hasUnsavedChanges && !hasOrgChanges)}
                 className="w-full"
               >
                 <Save className="mr-2 h-4 w-4" />
-                {saving ? 'Saving...' : hasUnsavedChanges ? 'Save Changes' : 'No Changes to Save'}
+                {saving ? 'Saving...' : (hasUnsavedChanges || hasOrgChanges) ? 'Save Changes' : 'No Changes to Save'}
               </Button>
               
-              {hasUnsavedChanges && (
+              {(hasUnsavedChanges || hasOrgChanges) && (
                 <p className="text-sm text-orange-600 text-center mt-2">
                   You have unsaved changes
                 </p>

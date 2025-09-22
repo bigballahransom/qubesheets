@@ -1,0 +1,10 @@
+{
+  "name": "customer-follow-up-lambda",
+  "version": "1.0.0",
+  "description": "AWS Lambda function for automated customer follow-up messages",
+  "main": "index.js",
+  "dependencies": {
+    "mongoose": "^8.0.0",
+    "twilio": "^4.19.0"
+  }
+}

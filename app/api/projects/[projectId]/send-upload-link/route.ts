@@ -75,6 +75,26 @@ export async function POST(
         to: customerPhone,
       });
 
+      // Update project with upload link tracking info
+      await Project.findByIdAndUpdate(projectId, {
+        $set: {
+          'uploadLinkTracking.lastSentAt': new Date(),
+          'uploadLinkTracking.lastSentTo': {
+            customerName,
+            customerPhone
+          },
+          'uploadLinkTracking.uploadToken': uploadToken,
+          // Reset follow-up flags when sending new link
+          'uploadLinkTracking.firstFollowUpSent': false,
+          'uploadLinkTracking.firstFollowUpSentAt': null,
+          'uploadLinkTracking.secondFollowUpSent': false,
+          'uploadLinkTracking.secondFollowUpSentAt': null
+        },
+        $inc: {
+          'uploadLinkTracking.totalSent': 1
+        }
+      });
+
       return NextResponse.json({
         success: true,
         uploadToken,

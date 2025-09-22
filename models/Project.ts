@@ -8,6 +8,19 @@ export interface IProject extends Document {
   userId: string;
   organizationId?: string;
   description?: string;
+  uploadLinkTracking?: {
+    lastSentAt?: Date;
+    lastSentTo?: {
+      customerName: string;
+      customerPhone: string;
+    };
+    uploadToken?: string;
+    totalSent: number;
+    firstFollowUpSent?: boolean;
+    firstFollowUpSentAt?: Date;
+    secondFollowUpSent?: boolean;
+    secondFollowUpSentAt?: Date;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -20,6 +33,19 @@ const ProjectSchema: Schema = new Schema(
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
     description: { type: String },
+    uploadLinkTracking: {
+      lastSentAt: { type: Date },
+      lastSentTo: {
+        customerName: { type: String },
+        customerPhone: { type: String }
+      },
+      uploadToken: { type: String },
+      totalSent: { type: Number, default: 0 },
+      firstFollowUpSent: { type: Boolean, default: false },
+      firstFollowUpSentAt: { type: Date },
+      secondFollowUpSent: { type: Boolean, default: false },
+      secondFollowUpSentAt: { type: Date }
+    }
   },
   { timestamps: true }
 );
