@@ -7,7 +7,7 @@ export interface ITemplate extends Document {
   organizationId?: string;
   
   // Template identification
-  templateType: 'customer_instructions';
+  templateType: 'customer_instructions' | 'sms_upload_link';
   name: string;
   
   // Template content

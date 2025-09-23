@@ -6,6 +6,9 @@ import Project from '@/models/Project';
 import CustomerUpload from '@/models/CustomerUpload';
 import { client, twilioPhoneNumber } from '@/lib/twilio';
 import crypto from 'crypto';
+import { replaceSMSVariables, DEFAULT_SMS_UPLOAD_TEMPLATE } from '@/lib/sms-template-helpers';
+import OrganizationSettings from '@/models/OrganizationSettings';
+import Branding from '@/models/Branding';
 
 export async function POST(
   request: NextRequest,
@@ -65,8 +68,37 @@ export async function POST(
     // Create upload URL
     const uploadUrl = `${process.env.NEXT_PUBLIC_APP_URL}/customer-upload/${uploadToken}`;
 
-    // Send SMS via Twilio
-    const message = `Hi ${customerName}! Please upload photos of your items for your moving inventory. Click here: ${uploadUrl} (Link expires in 7 days)`;
+    // Get SMS template based on organization
+    let smsTemplate = DEFAULT_SMS_UPLOAD_TEMPLATE;
+    if (!authContext.isPersonalAccount && authContext.organizationId) {
+      const orgSettings = await OrganizationSettings.findOne({ organizationId: authContext.organizationId });
+      if (orgSettings?.smsUploadLinkTemplate) {
+        smsTemplate = orgSettings.smsUploadLinkTemplate;
+      }
+    }
+    
+    // Get company name from branding
+    let companyName = 'Your Moving Company';
+    try {
+      const brandingQuery = authContext.isPersonalAccount 
+        ? { userId: authContext.userId }
+        : { organizationId: authContext.organizationId };
+      
+      const branding = await Branding.findOne(brandingQuery);
+      if (branding?.companyName) {
+        companyName = branding.companyName;
+      }
+    } catch (error) {
+      console.warn('Error fetching branding:', error);
+      // Continue with default company name
+    }
+    
+    // Replace variables in template
+    const message = replaceSMSVariables(smsTemplate, {
+      customerName,
+      uploadUrl,
+      companyName
+    });
 
     try {
       await client.messages.create({

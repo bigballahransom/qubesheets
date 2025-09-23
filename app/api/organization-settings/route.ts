@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import { getAuthContext } from '@/lib/auth-helpers';
+import { DEFAULT_SMS_UPLOAD_TEMPLATE, validateSMSTemplate } from '@/lib/sms-template-helpers';
 
 // GET /api/organization-settings - Get organization settings
 export async function GET(request: NextRequest) {
@@ -30,13 +31,15 @@ export async function GET(request: NextRequest) {
       // Return default settings if none exist
       return NextResponse.json({
         enableCustomerFollowUps: false,
-        followUpDelayHours: 4
+        followUpDelayHours: 4,
+        smsUploadLinkTemplate: DEFAULT_SMS_UPLOAD_TEMPLATE
       });
     }
     
     return NextResponse.json({
       enableCustomerFollowUps: settings.enableCustomerFollowUps,
-      followUpDelayHours: settings.followUpDelayHours
+      followUpDelayHours: settings.followUpDelayHours,
+      smsUploadLinkTemplate: settings.smsUploadLinkTemplate || DEFAULT_SMS_UPLOAD_TEMPLATE
     });
   } catch (error) {
     console.error('Error fetching organization settings:', error);
@@ -70,10 +73,25 @@ export async function POST(request: NextRequest) {
     
     const data = await request.json();
     
+    // Validate SMS template if provided
+    if (data.smsUploadLinkTemplate) {
+      const validation = validateSMSTemplate(data.smsUploadLinkTemplate);
+      if (!validation.isValid) {
+        return NextResponse.json(
+          { 
+            error: 'Invalid SMS template', 
+            details: `Missing required variables: ${validation.missingVariables.join(', ')}`
+          },
+          { status: 400 }
+        );
+      }
+    }
+    
     const settingsData = {
       organizationId: authContext.organizationId,
       enableCustomerFollowUps: Boolean(data.enableCustomerFollowUps),
-      followUpDelayHours: Math.max(1, Math.min(168, parseInt(data.followUpDelayHours) || 4))
+      followUpDelayHours: Math.max(1, Math.min(168, parseInt(data.followUpDelayHours) || 4)),
+      ...(data.smsUploadLinkTemplate && { smsUploadLinkTemplate: data.smsUploadLinkTemplate })
     };
     
     // Use findOneAndUpdate with upsert to create or update
@@ -89,7 +107,8 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({
       enableCustomerFollowUps: settings.enableCustomerFollowUps,
-      followUpDelayHours: settings.followUpDelayHours
+      followUpDelayHours: settings.followUpDelayHours,
+      smsUploadLinkTemplate: settings.smsUploadLinkTemplate || DEFAULT_SMS_UPLOAD_TEMPLATE
     }, { status: 200 });
   } catch (error) {
     console.error('Error saving organization settings:', error);

@@ -8,6 +8,9 @@ export interface IOrganizationSettings extends Document {
   enableCustomerFollowUps: boolean;
   followUpDelayHours: number; // How many hours after link sent to follow up
   
+  // SMS Templates
+  smsUploadLinkTemplate?: string;
+  
   // Metadata
   createdAt: Date;
   updatedAt: Date;
@@ -30,6 +33,10 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: 4,
       min: 1,
       max: 168 // Max 7 days
+    },
+    smsUploadLinkTemplate: {
+      type: String,
+      required: false
     }
   },
   { 
