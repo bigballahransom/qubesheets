@@ -21,6 +21,11 @@ export interface IProject extends Document {
     secondFollowUpSent?: boolean;
     secondFollowUpSentAt?: Date;
   };
+  metadata?: {
+    createdViaApi?: boolean;
+    apiKeyId?: string;
+    [key: string]: any;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +50,11 @@ const ProjectSchema: Schema = new Schema(
       firstFollowUpSentAt: { type: Date },
       secondFollowUpSent: { type: Boolean, default: false },
       secondFollowUpSentAt: { type: Date }
+    },
+    metadata: {
+      createdViaApi: { type: Boolean, default: false },
+      apiKeyId: { type: String },
+      type: mongoose.Schema.Types.Mixed
     }
   },
   { timestamps: true }

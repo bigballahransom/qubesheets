@@ -14,7 +14,8 @@ const isPublicRoute = createRouteMatcher([
 const isPublicApiRoute = createRouteMatcher([
   '/api/customer-upload/(.*)',
   '/api/livekit/token(.*)',
-  '/api/projects/(.*)/public-info'
+  '/api/projects/(.*)/public-info',
+  '/api/external/(.*)'  // External API endpoints with API key auth
 ]);
 
 // Routes that require organization context

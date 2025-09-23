@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, Settings, Bell, FileText, Palette, Plug } from 'lucide-react';
+import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SettingsItem {
@@ -31,6 +31,11 @@ const settingsItems: SettingsItem[] = [
     title: 'Integrations',
     icon: Plug,
     href: '/settings/integrations',
+  },
+  {
+    title: 'API Keys',
+    icon: Key,
+    href: '/settings/api-keys',
   },
 ];
 
