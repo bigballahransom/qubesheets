@@ -1,7 +1,8 @@
 // app/api/projects/[projectId]/sync-status/route.ts - For real-time updates
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
+import mongoose from 'mongoose';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import Image from '@/models/Image';
@@ -12,17 +13,17 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext; // Return 401 error response
     }
 
     await connectMongoDB();
     
     const { projectId } = await params;
     
-    // Verify project ownership
-    const project = await Project.findOne({ _id: projectId, userId });
+    // Verify project ownership using organization-aware filter
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
@@ -33,45 +34,66 @@ export async function GET(
     const lastUpdateDate = lastUpdate ? new Date(lastUpdate) : new Date(0);
 
     // Check for recent inventory items (added after lastUpdate)
-    const recentItems = await InventoryItem.find({
-      projectId,
-      userId,
-      createdAt: { $gt: lastUpdateDate }
-    }).sort({ createdAt: -1 });
+    const recentItems = await InventoryItem.find(
+      getProjectFilter(authContext, projectId, { createdAt: { $gt: lastUpdateDate } })
+    ).sort({ createdAt: -1 });
 
     // Check for recent images with analysis results (include customer uploads)
-    const recentImages = await Image.find({
-      projectId,
-      $or: [
-        { userId: userId }, // Regular project uploads
-        { source: 'customer_upload' }, // Customer uploads (any userId)
-        { userId: null } // Anonymous uploads
-      ],
+    const baseImageFilter = getProjectFilter(authContext, projectId, {
       updatedAt: { $gt: lastUpdateDate },
       'analysisResult.itemsCount': { $gt: 0 }
-    }).select('_id name analysisResult updatedAt source').sort({ updatedAt: -1 });
+    });
+    
+    // Add customer upload logic - for organization accounts, also include customer uploads for this project
+    const imageFilter = {
+      ...baseImageFilter,
+      $or: [
+        baseImageFilter, // Regular project uploads with org/user filter
+        { 
+          projectId: new mongoose.Types.ObjectId(projectId),
+          source: 'customer_upload',
+          updatedAt: { $gt: lastUpdateDate },
+          'analysisResult.itemsCount': { $gt: 0 }
+        }
+      ]
+    };
+    
+    const recentImages = await Image.find(imageFilter).select('_id name analysisResult updatedAt source').sort({ updatedAt: -1 });
 
     // Check for recent videos with analysis results (include customer uploads)
-    const recentVideos = await Video.find({
-      projectId,
-      $or: [
-        { userId: userId }, // Regular project uploads
-        { source: 'customer_upload' }, // Customer uploads (any userId)
-        { userId: null } // Anonymous uploads
-      ],
+    const baseVideoFilter = getProjectFilter(authContext, projectId, {
       updatedAt: { $gt: lastUpdateDate },
       'analysisResult.itemsCount': { $gt: 0 }
-    }).select('_id originalName analysisResult updatedAt source').sort({ updatedAt: -1 });
+    });
+    
+    // Add customer upload logic - for organization accounts, also include customer uploads for this project
+    const videoFilter = {
+      ...baseVideoFilter,
+      $or: [
+        baseVideoFilter, // Regular project uploads with org/user filter
+        { 
+          projectId: new mongoose.Types.ObjectId(projectId),
+          source: 'customer_upload',
+          updatedAt: { $gt: lastUpdateDate },
+          'analysisResult.itemsCount': { $gt: 0 }
+        }
+      ]
+    };
+    
+    const recentVideos = await Video.find(videoFilter).select('_id originalName analysisResult updatedAt source').sort({ updatedAt: -1 });
 
     // Check for images currently being processed (include customer uploads)
-    const processingImages = await Image.find({
-      projectId,
+    const baseProcessingImageFilter = getProjectFilter(authContext, projectId, {});
+    
+    const processingImageFilter = {
       $and: [
         {
           $or: [
-            { userId: userId }, // Regular project uploads
-            { source: 'customer_upload' }, // Customer uploads (any userId)
-            { userId: null } // Anonymous uploads
+            baseProcessingImageFilter, // Regular project uploads with org/user filter
+            { 
+              projectId: new mongoose.Types.ObjectId(projectId),
+              source: 'customer_upload'
+            }
           ]
         },
         {
@@ -84,17 +106,22 @@ export async function GET(
           ]
         }
       ]
-    }).select('_id name analysisResult source').sort({ createdAt: -1 });
+    };
+    
+    const processingImages = await Image.find(processingImageFilter).select('_id name analysisResult source').sort({ createdAt: -1 });
 
     // Check for videos currently being processed
-    const processingVideos = await Video.find({
-      projectId,
+    const baseProcessingVideoFilter = getProjectFilter(authContext, projectId, {});
+    
+    const processingVideoFilter = {
       $and: [
         {
           $or: [
-            { userId: userId }, // Regular project uploads
-            { source: 'customer_upload' }, // Customer uploads (any userId)
-            { userId: null } // Anonymous uploads
+            baseProcessingVideoFilter, // Regular project uploads with org/user filter
+            { 
+              projectId: new mongoose.Types.ObjectId(projectId),
+              source: 'customer_upload'
+            }
           ]
         },
         {
@@ -107,26 +134,34 @@ export async function GET(
           ]
         }
       ]
-    }).select('_id originalName analysisResult source').sort({ createdAt: -1 });
+    };
+    
+    const processingVideos = await Video.find(processingVideoFilter).select('_id originalName analysisResult source').sort({ createdAt: -1 });
 
     // Calculate totals (include customer uploads)
-    const totalItems = await InventoryItem.countDocuments({ projectId, userId });
-    const totalImages = await Image.countDocuments({
-      projectId,
+    const totalItems = await InventoryItem.countDocuments(getProjectFilter(authContext, projectId));
+    
+    const totalImagesFilter = {
       $or: [
-        { userId: userId }, // Regular project uploads
-        { source: 'customer_upload' }, // Customer uploads
-        { userId: null } // Anonymous uploads
+        getProjectFilter(authContext, projectId), // Regular project uploads with org/user filter
+        { 
+          projectId: new mongoose.Types.ObjectId(projectId),
+          source: 'customer_upload'
+        }
       ]
-    });
-    const totalVideos = await Video.countDocuments({
-      projectId,
+    };
+    const totalImages = await Image.countDocuments(totalImagesFilter);
+    
+    const totalVideosFilter = {
       $or: [
-        { userId: userId }, // Regular project uploads
-        { source: 'customer_upload' }, // Customer uploads
-        { userId: null } // Anonymous uploads
+        getProjectFilter(authContext, projectId), // Regular project uploads with org/user filter
+        { 
+          projectId: new mongoose.Types.ObjectId(projectId),
+          source: 'customer_upload'
+        }
       ]
-    });
+    };
+    const totalVideos = await Video.countDocuments(totalVideosFilter);
 
     return NextResponse.json({
       hasUpdates: recentItems.length > 0 || recentImages.length > 0 || recentVideos.length > 0,
