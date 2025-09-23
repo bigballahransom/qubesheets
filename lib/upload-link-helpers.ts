@@ -31,10 +31,28 @@ export function generateUploadToken(): string {
 }
 
 /**
+ * Get the correct base URL for the application
+ */
+function getBaseUrl(): string {
+  // Production URL
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.NEXT_PUBLIC_APP_URL || 'https://app.qubesheets.com';
+  }
+  
+  // Development URL
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL;
+  }
+  
+  // Fallback for development
+  return 'http://localhost:3000';
+}
+
+/**
  * Create upload URL from token
  */
 export function createUploadUrl(token: string): string {
-  return `${process.env.NEXT_PUBLIC_APP_URL}/customer-upload/${token}`;
+  return `${getBaseUrl()}/customer-upload/${token}`;
 }
 
 /**

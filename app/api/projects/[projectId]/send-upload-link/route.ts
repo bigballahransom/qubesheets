@@ -66,7 +66,13 @@ export async function POST(
     const customerUpload = await CustomerUpload.create(customerUploadData);
 
     // Create upload URL
-    const uploadUrl = `${process.env.NEXT_PUBLIC_APP_URL}/customer-upload/${uploadToken}`;
+    const getBaseUrl = () => {
+      if (process.env.NODE_ENV === 'production') {
+        return process.env.NEXT_PUBLIC_APP_URL || 'https://app.qubesheets.com';
+      }
+      return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    };
+    const uploadUrl = `${getBaseUrl()}/customer-upload/${uploadToken}`;
 
     // Get SMS template based on organization
     let smsTemplate = DEFAULT_SMS_UPLOAD_TEMPLATE;

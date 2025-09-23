@@ -29,7 +29,7 @@ export default function ApiDocumentationModal({ children }: ApiDocumentationModa
   };
 
   const baseUrl = process.env.NODE_ENV === 'production' 
-    ? 'https://your-domain.com' 
+    ? 'https://app.qubesheets.com' 
     : 'http://localhost:3000';
 
   const curlExample = `curl -X POST ${baseUrl}/api/external/projects \\
