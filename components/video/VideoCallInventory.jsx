@@ -60,16 +60,16 @@ import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
 const darkGlassStyle = "backdrop-blur-xl bg-black/20 border border-white/10 shadow-2xl";
 
-// Enhanced camera switching with mobile-first approach
+// Enhanced camera switching with responsive approach
 // components/video/VideoCallInventory.jsx
 function useAdvancedCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
   const [currentFacingMode, setCurrentFacingMode] = useState(() => {
-    const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+    const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
     const isAgent = typeof window !== 'undefined' && 
       window.location.search.includes('name=') && 
       window.location.search.toLowerCase().includes('agent');
-    return (isMobile && isAgent) ? 'user' : 'environment';
+    return (isSmallScreen && isAgent) ? 'user' : 'environment';
   });
   const [availableCameras, setAvailableCameras] = useState([]);
   const [isSwitching, setIsSwitching] = useState(false);
@@ -281,7 +281,7 @@ async function extractFrameFromRemoteTrack(track) {
 }
 
 // Modern Room Selector with sleek design
-function RoomSelector({ currentRoom, onChange, isMobile }) {
+function RoomSelector({ currentRoom, onChange, isSmallScreen }) {
   const [isOpen, setIsOpen] = useState(false);
   const rooms = [
     { value: 'Living Room', icon: '🛋️', color: 'from-blue-500 to-purple-600' },
@@ -348,25 +348,25 @@ function isAgent(participantName) {
 
 const CustomerView = React.memo(({ onCallEnd }) => {
   const [showControls, setShowControls] = useState(true);
-  const [isMobile, setIsMobile] = useState(true); // Default to true to avoid flash of content
+  const [isSmallScreen, setIsSmallScreen] = useState(true); // Default to true to avoid flash of content
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
 
-  // Detect if the user is on a mobile device
+  // Detect if the screen is small (mobile-sized)
   useEffect(() => {
-    const checkMobile = () => {
-      const mobile = window.innerWidth < 768;
-      setIsMobile(mobile);
+    const checkScreenSize = () => {
+      const smallScreen = window.innerWidth < 768;
+      setIsSmallScreen(smallScreen);
     };
     
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
   // Auto-enable video track on mount with retry logic
   useEffect(() => {
-    if (!isMobile || !localParticipant) return;
+    if (!isSmallScreen || !localParticipant) return;
 
     const enableCamera = async () => {
       try {
@@ -393,7 +393,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     };
 
     enableCamera();
-  }, [localParticipant, isMobile]);
+  }, [localParticipant, isSmallScreen]);
 
   // Sync video track state with ControlBar
   useEffect(() => {
@@ -421,9 +421,9 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     return () => clearInterval(interval);
   }, [localParticipant]);
 
-  // Auto-hide controls after 6 seconds of inactivity (only if on mobile)
+  // Auto-hide controls after 6 seconds of inactivity (only if on small screen)
   useEffect(() => {
-    if (!isMobile) return;
+    if (!isSmallScreen) return;
 
     let hideTimer;
     
@@ -447,9 +447,9 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       window.removeEventListener('click', handleActivity);
       window.removeEventListener('mousemove', handleActivity);
     };
-  }, [isMobile]);
+  }, [isSmallScreen]);
 
-  // Get all video tracks to display (only if on mobile)
+  // Get all video tracks to display
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -461,8 +461,8 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
   const agentName = remoteParticipants.find(p => isAgent(p.identity))?.name || 'Moving Agent';
 
-  // Render "Desktop not supported" message if not on mobile
-  if (!isMobile) {
+  // Render message for large screens
+  if (!isSmallScreen) {
     return (
       <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col items-center justify-center relative overflow-hidden">
         {/* Animated background elements */}
@@ -475,17 +475,17 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         {/* Message */}
         <div className={`p-8 rounded-3xl text-center max-w-md ${glassStyle} z-10`}>
           <h3 className="text-2xl font-bold text-white mb-3">
-            Desktop not supported
+            Screen too large
           </h3>
           <p className="text-white/80 leading-relaxed">
-            Thanks for coming! Please join with a mobile device, you'll need to give us a tour of your home.
+            Thanks for coming! Please use a smaller screen or resize your browser window to continue. You'll need to give us a tour of your home.
           </p>
         </div>
       </div>
     );
   }
 
-  // Render the video call interface if on mobile
+  // Render the video call interface for small screens
   return (
     <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col relative overflow-hidden">
       {/* Animated background elements */}
@@ -573,7 +573,7 @@ const AgentView = React.memo(({
   currentRoom,
   setCurrentRoom
 }) => {
-  const [isMobile, setIsMobile] = useState(false);
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
@@ -604,20 +604,20 @@ const AgentView = React.memo(({
   
 
   useEffect(() => {
-    const checkMobile = () => {
-      const mobile = window.innerWidth < 768;
-      setIsMobile(mobile);
-      if (!mobile && !showInventory) setShowInventory(true);
+    const checkScreenSize = () => {
+      const smallScreen = window.innerWidth < 768;
+      setIsSmallScreen(smallScreen);
+      if (!smallScreen && !showInventory) setShowInventory(true);
     };
     
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    return () => window.removeEventListener('resize', checkScreenSize);
   }, [showInventory]);
 
-  // Auto-hide controls on mobile after inactivity
+  // Auto-hide controls on small screens after inactivity
   useEffect(() => {
-    if (!isMobile) return;
+    if (!isSmallScreen) return;
     
     let hideTimer;
     
@@ -639,7 +639,7 @@ const AgentView = React.memo(({
       window.removeEventListener('touchstart', handleActivity);
       window.removeEventListener('click', handleActivity);
     };
-  }, [isMobile]);
+  }, [isSmallScreen]);
 
   // handleItemsDetected removed - items now saved directly to database via Railway
 
@@ -898,8 +898,8 @@ const AgentView = React.memo(({
 
   const hasCustomer = remoteParticipants.some(p => !isAgent(p.identity));
 
-  // Mobile view - full screen with overlays
-  if (isMobile) {
+  // Small screen view - full screen with overlays
+  if (isSmallScreen) {
     return (
       <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900 relative overflow-hidden">
         {/* Video area - Full screen */}
@@ -939,7 +939,7 @@ const AgentView = React.memo(({
               <RoomSelector 
                 currentRoom={currentRoom} 
                 onChange={setCurrentRoom}
-                isMobile={true}
+                isSmallScreen={true}
               />
             </div>
 
@@ -1150,7 +1150,7 @@ const AgentView = React.memo(({
               <RoomSelector 
                 currentRoom={currentRoom} 
                 onChange={setCurrentRoom}
-                isMobile={false}
+                isSmallScreen={false}
               />
             )}
             
@@ -1270,14 +1270,14 @@ const AgentView = React.memo(({
 const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
-  const [isMobile, setIsMobile] = useState(false);
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
   
 
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    const checkScreenSize = () => setIsSmallScreen(window.innerWidth < 768);
+    checkScreenSize();
+    window.addEventListener('resize', checkScreenSize);
+    return () => window.removeEventListener('resize', checkScreenSize);
   }, []);
 
   const groupedItems = useMemo(() => {
@@ -1324,7 +1324,7 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
         <div className="p-4 md:p-6 border-b border-blue-500/30">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 md:gap-4">
-              {isMobile && (
+              {isSmallScreen && (
                 <button
                   onClick={onClose}
                   className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 text-gray-700"
@@ -1339,7 +1339,7 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
                 {capturedImages.length}
               </div>
             </div>
-            {!isMobile && (
+            {!isSmallScreen && (
               <button
                 onClick={onClose}
                 className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 text-gray-700"
@@ -1638,9 +1638,9 @@ export default function VideoCallInventory({
     },
     videoCaptureDefaults: {
       facingMode: (() => {
-        const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+        const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
         const isAgent = participantName.toLowerCase().includes('agent');
-        return (isMobile && isAgent) ? 'user' : 'environment';
+        return (isSmallScreen && isAgent) ? 'user' : 'environment';
       })(),
       resolution: {
         width: 1280,
@@ -1648,8 +1648,8 @@ export default function VideoCallInventory({
       },
       frameRate: 30,
     },
-    // Improve mobile permissions handling
-    e2eeOptions: undefined, // Disable E2EE for better mobile compatibility
+    // Improve permissions handling
+    e2eeOptions: undefined, // Disable E2EE for better compatibility
     expWebAudioMix: false, // Disable experimental features that might cause issues
   };
   
