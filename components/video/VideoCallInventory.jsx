@@ -408,35 +408,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     }
   }, [isAndroid, isSmallScreen, localParticipant, remoteParticipants.length]);
 
-  // Android video element fixes - apply attributes after LiveKit creates video elements
-  useEffect(() => {
-    if (!isAndroid) return;
-
-    const fixVideoElements = () => {
-      const videoElements = document.querySelectorAll('video');
-      videoElements.forEach(video => {
-        if (!video.hasAttribute('data-android-fixed')) {
-          console.log('🤖 Fixing video element for Android compatibility');
-          video.setAttribute('playsinline', 'true');
-          video.setAttribute('webkit-playsinline', 'true');
-          video.setAttribute('muted', 'true');
-          video.setAttribute('x5-video-player-type', 'h5');
-          video.setAttribute('x5-video-player-fullscreen', 'true');
-          video.style.webkitTransform = 'translate3d(0,0,0)';
-          video.style.transform = 'translate3d(0,0,0)';
-          video.setAttribute('data-android-fixed', 'true');
-        }
-      });
-    };
-
-    // Fix immediately
-    fixVideoElements();
-
-    // Fix periodically in case new video elements are created
-    const interval = setInterval(fixVideoElements, 1000);
-
-    return () => clearInterval(interval);
-  }, [isAndroid, tracks]);
 
   // Auto-enable video track on mount with retry logic
   useEffect(() => {
@@ -447,24 +418,9 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         if (!localParticipant.isCameraEnabled) {
           console.log('📹 Attempting to enable camera for local participant...');
           
-          // Android-specific: Request permissions first
-          const isAndroid = /Android/i.test(navigator.userAgent);
-          if (isAndroid) {
-            console.log('📹 Android detected, requesting permissions explicitly...');
-            try {
-              const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-              stream.getTracks().forEach(track => track.stop());
-              console.log('📹 Android permissions granted');
-            } catch (permError) {
-              console.error('📹 Android permission denied:', permError);
-              toast.error('Camera permission required. Please allow camera access and refresh.');
-              return;
-            }
-          }
-          
+          // Android-specific camera constraints
           await localParticipant.setCameraEnabled(true, {
             resolution: { width: 1280, height: 720 },
-            // Android-specific camera constraints
             ...(isAndroid && {
               facingMode: 'environment',
               frameRate: { ideal: 15, max: 30 } // Lower frame rate for Android
@@ -478,7 +434,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         console.error('📹 Failed to enable camera:', error);
         
         // Android-specific error handling
-        const isAndroid = /Android/i.test(navigator.userAgent);
         if (isAndroid && error.name === 'NotAllowedError') {
           toast.error('Camera permission denied. Please allow camera access in browser settings.');
         } else if (isAndroid && error.name === 'NotFoundError') {
@@ -598,9 +553,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         ...(isAndroid && {
           minHeight: '100vh',
           minHeight: '100dvh', // Dynamic viewport height for Android
-          WebkitOverflowScrolling: 'touch',
-          WebkitTransform: 'translate3d(0,0,0)', // Force hardware acceleration
-          transform: 'translate3d(0,0,0)'
+          WebkitOverflowScrolling: 'touch'
         })
       }}
     >
@@ -612,37 +565,12 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       </div>
 
       {/* Video area - Full screen for both participants */}
-      <div 
-        className="absolute inset-0 z-10"
-        style={{
-          ...(isAndroid && {
-            WebkitTransform: 'translate3d(0,0,0)',
-            transform: 'translate3d(0,0,0)',
-            backfaceVisibility: 'hidden'
-          })
-        }}
-      >
+      <div className="absolute inset-0 z-10">
         <GridLayout 
           tracks={tracks}
-          style={{ 
-            height: '100%', 
-            width: '100%',
-            ...(isAndroid && {
-              WebkitTransform: 'translate3d(0,0,0)',
-              transform: 'translate3d(0,0,0)'
-            })
-          }}
+          style={{ height: '100%', width: '100%' }}
         >
-          <ParticipantTile 
-            style={{ 
-              borderRadius: '0px', 
-              overflow: 'hidden',
-              ...(isAndroid && {
-                WebkitTransform: 'translate3d(0,0,0)',
-                transform: 'translate3d(0,0,0)'
-              })
-            }} 
-          />
+          <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
         </GridLayout>
       </div>
 
