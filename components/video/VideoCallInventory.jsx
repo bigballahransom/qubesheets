@@ -76,9 +76,13 @@ function useAdvancedCameraSwitching() {
   const [hasBackCamera, setHasBackCamera] = useState(false);
   const [hasFrontCamera, setHasFrontCamera] = useState(false);
 
-  // Detect iOS device
+  // Detect mobile devices
   const isIOS = useMemo(() => {
     return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  }, []);
+
+  const isAndroid = useMemo(() => {
+    return /Android/i.test(navigator.userAgent);
   }, []);
 
   useEffect(() => {
@@ -166,8 +170,8 @@ function useAdvancedCameraSwitching() {
         }
       }
 
-      // Wait for tracks to fully stop
-      await new Promise(resolve => setTimeout(resolve, isIOS ? 1000 : 500));
+      // Wait for tracks to fully stop - Android needs longer delay
+      await new Promise(resolve => setTimeout(resolve, isIOS ? 1000 : isAndroid ? 1500 : 500));
 
       // Request new camera with specific deviceId if available, otherwise use facingMode
       const videoDevices = await navigator.mediaDevices.enumerateDevices();
@@ -248,6 +252,16 @@ async function extractFrameFromRemoteTrack(track) {
     videoElement.srcObject = new MediaStream([track.mediaStreamTrack]);
     videoElement.muted = true;
     videoElement.playsInline = true;
+    
+    // Android compatibility attributes
+    videoElement.setAttribute('playsinline', 'true');
+    videoElement.setAttribute('webkit-playsinline', 'true');
+    videoElement.setAttribute('muted', 'true');
+    videoElement.setAttribute('autoplay', 'false');
+    
+    // Additional Android-specific attributes
+    videoElement.setAttribute('x5-video-player-type', 'h5');
+    videoElement.setAttribute('x5-video-player-fullscreen', 'true');
     
     await new Promise((resolve, reject) => {
       videoElement.onloadedmetadata = () => {
@@ -352,17 +366,77 @@ const CustomerView = React.memo(({ onCallEnd }) => {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
 
+  // Detect Android for specific fixes
+  const isAndroid = useMemo(() => {
+    const androidDetected = /Android/i.test(navigator.userAgent);
+    if (androidDetected) {
+      console.log('🤖 Android device detected:', navigator.userAgent);
+      console.log('🤖 Screen dimensions:', window.innerWidth, 'x', window.innerHeight);
+      console.log('🤖 Viewport dimensions:', window.visualViewport?.width, 'x', window.visualViewport?.height);
+    }
+    return androidDetected;
+  }, []);
+
   // Detect if the screen is small (mobile-sized)
   useEffect(() => {
     const checkScreenSize = () => {
       const smallScreen = window.innerWidth < 768;
       setIsSmallScreen(smallScreen);
+      if (isAndroid) {
+        console.log('🤖 Screen size check:', { smallScreen, width: window.innerWidth });
+      }
     };
     
     checkScreenSize();
     window.addEventListener('resize', checkScreenSize);
     return () => window.removeEventListener('resize', checkScreenSize);
-  }, []);
+  }, [isAndroid]);
+
+  // Android debugging - track component state
+  useEffect(() => {
+    if (isAndroid) {
+      console.log('🤖 CustomerView mounted');
+      console.log('🤖 Initial state:', { 
+        isSmallScreen, 
+        hasLocalParticipant: !!localParticipant, 
+        remoteParticipantsCount: remoteParticipants.length 
+      });
+      
+      return () => {
+        console.log('🤖 CustomerView unmounting');
+      };
+    }
+  }, [isAndroid, isSmallScreen, localParticipant, remoteParticipants.length]);
+
+  // Android video element fixes - apply attributes after LiveKit creates video elements
+  useEffect(() => {
+    if (!isAndroid) return;
+
+    const fixVideoElements = () => {
+      const videoElements = document.querySelectorAll('video');
+      videoElements.forEach(video => {
+        if (!video.hasAttribute('data-android-fixed')) {
+          console.log('🤖 Fixing video element for Android compatibility');
+          video.setAttribute('playsinline', 'true');
+          video.setAttribute('webkit-playsinline', 'true');
+          video.setAttribute('muted', 'true');
+          video.setAttribute('x5-video-player-type', 'h5');
+          video.setAttribute('x5-video-player-fullscreen', 'true');
+          video.style.webkitTransform = 'translate3d(0,0,0)';
+          video.style.transform = 'translate3d(0,0,0)';
+          video.setAttribute('data-android-fixed', 'true');
+        }
+      });
+    };
+
+    // Fix immediately
+    fixVideoElements();
+
+    // Fix periodically in case new video elements are created
+    const interval = setInterval(fixVideoElements, 1000);
+
+    return () => clearInterval(interval);
+  }, [isAndroid, tracks]);
 
   // Auto-enable video track on mount with retry logic
   useEffect(() => {
@@ -372,8 +446,29 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       try {
         if (!localParticipant.isCameraEnabled) {
           console.log('📹 Attempting to enable camera for local participant...');
+          
+          // Android-specific: Request permissions first
+          const isAndroid = /Android/i.test(navigator.userAgent);
+          if (isAndroid) {
+            console.log('📹 Android detected, requesting permissions explicitly...');
+            try {
+              const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+              stream.getTracks().forEach(track => track.stop());
+              console.log('📹 Android permissions granted');
+            } catch (permError) {
+              console.error('📹 Android permission denied:', permError);
+              toast.error('Camera permission required. Please allow camera access and refresh.');
+              return;
+            }
+          }
+          
           await localParticipant.setCameraEnabled(true, {
-            resolution: { width: 1280, height: 720 }
+            resolution: { width: 1280, height: 720 },
+            // Android-specific camera constraints
+            ...(isAndroid && {
+              facingMode: 'environment',
+              frameRate: { ideal: 15, max: 30 } // Lower frame rate for Android
+            })
           });
           console.log('📹 Camera enabled successfully:', localParticipant.isCameraEnabled);
         } else {
@@ -381,14 +476,24 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         }
       } catch (error) {
         console.error('📹 Failed to enable camera:', error);
-        toast.error('Failed to start camera. Please enable it manually.');
-        // Retry after a short delay
+        
+        // Android-specific error handling
+        const isAndroid = /Android/i.test(navigator.userAgent);
+        if (isAndroid && error.name === 'NotAllowedError') {
+          toast.error('Camera permission denied. Please allow camera access in browser settings.');
+        } else if (isAndroid && error.name === 'NotFoundError') {
+          toast.error('No camera found. Please check your device camera.');
+        } else {
+          toast.error('Failed to start camera. Please enable it manually.');
+        }
+        
+        // Retry with longer delay for Android
         setTimeout(() => {
           if (!localParticipant.isCameraEnabled) {
             console.log('📹 Retrying to enable camera...');
             enableCamera();
           }
-        }, 2000);
+        }, isAndroid ? 5000 : 2000);
       }
     };
 
@@ -487,7 +592,18 @@ const CustomerView = React.memo(({ onCallEnd }) => {
 
   // Render the video call interface for small screens
   return (
-    <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col relative overflow-hidden">
+    <div 
+      className={`h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col relative overflow-hidden ${isAndroid ? 'android-video-fix' : ''}`}
+      style={{
+        ...(isAndroid && {
+          minHeight: '100vh',
+          minHeight: '100dvh', // Dynamic viewport height for Android
+          WebkitOverflowScrolling: 'touch',
+          WebkitTransform: 'translate3d(0,0,0)', // Force hardware acceleration
+          transform: 'translate3d(0,0,0)'
+        })
+      }}
+    >
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/30 rounded-full blur-3xl animate-pulse"></div>
@@ -496,12 +612,37 @@ const CustomerView = React.memo(({ onCallEnd }) => {
       </div>
 
       {/* Video area - Full screen for both participants */}
-      <div className="absolute inset-0 z-10">
+      <div 
+        className="absolute inset-0 z-10"
+        style={{
+          ...(isAndroid && {
+            WebkitTransform: 'translate3d(0,0,0)',
+            transform: 'translate3d(0,0,0)',
+            backfaceVisibility: 'hidden'
+          })
+        }}
+      >
         <GridLayout 
           tracks={tracks}
-          style={{ height: '100%', width: '100%' }}
+          style={{ 
+            height: '100%', 
+            width: '100%',
+            ...(isAndroid && {
+              WebkitTransform: 'translate3d(0,0,0)',
+              transform: 'translate3d(0,0,0)'
+            })
+          }}
         >
-          <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
+          <ParticipantTile 
+            style={{ 
+              borderRadius: '0px', 
+              overflow: 'hidden',
+              ...(isAndroid && {
+                WebkitTransform: 'translate3d(0,0,0)',
+                transform: 'translate3d(0,0,0)'
+              })
+            }} 
+          />
         </GridLayout>
       </div>
 
