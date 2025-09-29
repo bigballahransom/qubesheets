@@ -35,7 +35,7 @@ export default function IntercomChat() {
         Intercom({
           app_id: 'aj1af9ai',
           user_id: user.id,
-          name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User',
+          name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.emailAddresses[0]?.emailAddress || 'User',
           email: user.emailAddresses[0]?.emailAddress || '',
           created_at: user.createdAt ? Math.floor(user.createdAt.getTime() / 1000) : Math.floor(Date.now() / 1000),
           // Custom styling
