@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
+import IntercomChat from '@/components/IntercomChat';
 // Define Project type (optional in JSX but helpful for documentation)
 // interface Project {
 //   _id: string;
@@ -80,6 +81,7 @@ export default function ProjectsPage() {
   };
   
   return (
+    <>
         <SidebarProvider>
           <AppSidebar />
           <div className="h-16"></div>
@@ -150,5 +152,7 @@ export default function ProjectsPage() {
     </div>
           <SidebarTrigger />
         </SidebarProvider>
+        <IntercomChat />
+    </>
   );
 }
