@@ -37,7 +37,7 @@ export default function IntercomChat() {
           user_id: user.id,
           name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User',
           email: user.emailAddresses[0]?.emailAddress || '',
-          created_at: Math.floor(user.createdAt.getTime() / 1000),
+          created_at: user.createdAt ? Math.floor(user.createdAt.getTime() / 1000) : Math.floor(Date.now() / 1000),
           // Custom styling
           custom_launcher_selector: '.intercom-launcher',
           background_color: '#3B82F6', // Blue color (you can change this)
