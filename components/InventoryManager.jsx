@@ -13,6 +13,7 @@ import EditableProjectName from './EditableProjectName';
 import PhotoInventoryUploader from './PhotoInventoryUploader';
 import ImageGallery from './ImageGallery';
 import VideoGallery from './VideoGallery';
+import VideoProcessingStatus from './VideoProcessingStatus';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
@@ -2389,24 +2390,23 @@ const ProcessingNotification = () => {
             </div>
           </div>
           
-{/* COMMENTED OUT - Video Processing Status (videos disabled)
+{/* Video Processing Status - Shows real-time video processing updates */}
           {currentProject && (
             <VideoProcessingStatus 
               projectId={currentProject._id}
               onProcessingComplete={(completedVideos) => {
-                // Refresh the images gallery when video processing completes
+                // Refresh the image gallery when video processing completes
                 setImageGalleryKey(prev => prev + 1);
                 
                 // Show notification about completed videos
                 if (typeof window !== 'undefined' && window.sonner && completedVideos.length > 0) {
                   window.sonner.toast.success(
-                    `Video processing complete! ${completedVideos.length} video${completedVideos.length > 1 ? 's' : ''} processed with ${completedVideos.reduce((total, v) => total + v.framesExtracted, 0)} total frames.`
+                    `Video processing complete! ${completedVideos.length} video${completedVideos.length > 1 ? 's' : ''} analyzed successfully.`
                   );
                 }
               }}
             />
           )}
-          */}
           
           {/* Tabs for Inventory and Images */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">

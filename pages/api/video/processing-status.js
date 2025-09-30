@@ -42,30 +42,62 @@ export default async function handler(req, res) {
       await connectMongoDB();
 
       // Get all videos for the project that are currently processing
+      // Check both old metadata.processingStatus and new processingStatus/analysisResult.status fields
       const processingVideos = await Video.find({
         projectId: projectId,
-        'metadata.processingStatus': { 
-          $in: [
-            'queued_for_railway', 
-            'processing_on_railway', 
-            'extracting_frames',
-            'processing',
-            'completed'
-          ] 
-        }
-      }).select('name originalName metadata extractedFrames createdAt').sort({ createdAt: -1 });
+        $or: [
+          // Old system (frame-based processing)
+          {
+            'metadata.processingStatus': { 
+              $in: [
+                'queued_for_railway', 
+                'processing_on_railway', 
+                'extracting_frames',
+                'processing',
+                'completed'
+              ] 
+            }
+          },
+          // New system (Railway video processing)
+          {
+            $or: [
+              { processingStatus: { $in: ['queued', 'processing', 'completed'] } },
+              { 'analysisResult.status': { $in: ['pending', 'processing', 'completed'] } }
+            ]
+          }
+        ]
+      }).select('name originalName metadata extractedFrames processingStatus analysisResult createdAt').sort({ createdAt: -1 });
 
       if (processingVideos.length > 0) {
-        const updates = processingVideos.map(video => ({
-          videoId: video._id,
-          name: video.originalName,
-          status: video.metadata?.processingStatus || 'unknown',
-          progress: calculateProgress(video.metadata),
-          framesExtracted: video.extractedFrames?.length || 0,
-          estimatedCompletion: video.metadata?.estimatedCompletion,
-          error: video.metadata?.processingError,
-          lastUpdate: video.metadata?.lastUpdate || video.updatedAt
-        }));
+        const updates = processingVideos.map(video => {
+          // Determine which system this video uses
+          const isNewSystem = video.processingStatus || video.analysisResult?.status;
+          
+          let status, progress, error;
+          
+          if (isNewSystem) {
+            // New Railway system
+            status = video.analysisResult?.status || video.processingStatus || 'unknown';
+            progress = calculateProgressNew(video.processingStatus, video.analysisResult?.status);
+            error = video.analysisResult?.error;
+          } else {
+            // Old frame-based system
+            status = video.metadata?.processingStatus || 'unknown';
+            progress = calculateProgress(video.metadata);
+            error = video.metadata?.processingError;
+          }
+          
+          return {
+            videoId: video._id,
+            name: video.originalName,
+            status: status,
+            progress: progress,
+            framesExtracted: video.extractedFrames?.length || 0,
+            estimatedCompletion: video.metadata?.estimatedCompletion,
+            error: error,
+            lastUpdate: video.metadata?.lastUpdate || video.updatedAt
+          };
+        });
 
         res.write(`data: ${JSON.stringify({
           type: 'video_updates',
@@ -78,10 +110,25 @@ export default async function handler(req, res) {
       // Also check for newly completed videos that might need UI refresh
       const recentlyCompleted = await Video.find({
         projectId: projectId,
-        'metadata.processingStatus': 'completed',
-        'metadata.processingFinished': { 
-          $gte: new Date(Date.now() - 30000) // Last 30 seconds
-        }
+        $or: [
+          // Old system
+          {
+            'metadata.processingStatus': 'completed',
+            'metadata.processingFinished': { 
+              $gte: new Date(Date.now() - 30000) // Last 30 seconds
+            }
+          },
+          // New system - check for recently updated completed videos
+          {
+            $or: [
+              { processingStatus: 'completed' },
+              { 'analysisResult.status': 'completed' }
+            ],
+            updatedAt: { 
+              $gte: new Date(Date.now() - 30000) // Last 30 seconds
+            }
+          }
+        ]
       }).select('name originalName extractedFrames');
 
       if (recentlyCompleted.length > 0) {
@@ -131,7 +178,7 @@ export default async function handler(req, res) {
   });
 }
 
-// Calculate processing progress based on status
+// Calculate processing progress based on status (old system)
 function calculateProgress(metadata) {
   if (!metadata) return 0;
   
@@ -149,6 +196,26 @@ function calculateProgress(metadata) {
       return 100;
     case 'failed':
     case 'railway_failed':
+      return -1; // Indicate error
+    default:
+      return 0;
+  }
+}
+
+// Calculate processing progress for new Railway system
+function calculateProgressNew(processingStatus, analysisStatus) {
+  // Prioritize analysisResult.status as it's more specific
+  const status = analysisStatus || processingStatus;
+  
+  switch (status) {
+    case 'queued':
+    case 'pending':
+      return 10;
+    case 'processing':
+      return 70;
+    case 'completed':
+      return 100;
+    case 'failed':
       return -1; // Indicate error
     default:
       return 0;

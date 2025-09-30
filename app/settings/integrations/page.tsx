@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { toast } from 'sonner';
+import IntercomChat from '@/components/IntercomChat';
 
 export default function IntegrationsPage() {
   const { user } = useUser();
@@ -153,7 +154,8 @@ export default function IntegrationsPage() {
   };
 
   return (
-    <SidebarProvider>
+    <>
+      <SidebarProvider>
       <AppSidebar />
       <div className="h-16"></div>
       <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
@@ -318,7 +320,9 @@ export default function IntegrationsPage() {
           </div>
         )}
       </div>
-      <SidebarTrigger />
-    </SidebarProvider>
+        <SidebarTrigger />
+      </SidebarProvider>
+      <IntercomChat />
+    </>
   );
 }

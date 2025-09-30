@@ -9,6 +9,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { toast } from 'sonner';
 import { DEFAULT_SMS_UPLOAD_TEMPLATE } from '@/lib/sms-template-helpers';
+import IntercomChat from '@/components/IntercomChat';
 
 const DEFAULT_INSTRUCTIONS = `📸 Upload Tips from {companyName}
 
@@ -138,7 +139,8 @@ export default function TemplatesPage() {
 
 
   return (
-    <SidebarProvider>
+    <>
+      <SidebarProvider>
       <AppSidebar />
       <div className="h-16"></div>
       <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
@@ -256,7 +258,9 @@ export default function TemplatesPage() {
           </div>
         )}
       </div>
-      <SidebarTrigger />
-    </SidebarProvider>
+        <SidebarTrigger />
+      </SidebarProvider>
+      <IntercomChat />
+    </>
   );
 }

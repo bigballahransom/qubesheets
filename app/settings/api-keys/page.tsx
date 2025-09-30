@@ -8,6 +8,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { toast } from 'sonner';
 import ApiDocumentationModal from '@/components/modals/ApiDocumentationModal';
+import IntercomChat from '@/components/IntercomChat';
 
 interface ApiKey {
   _id: string;
@@ -133,7 +134,8 @@ export default function ApiKeysPage() {
   };
 
   return (
-    <SidebarProvider>
+    <>
+      <SidebarProvider>
       <AppSidebar />
       <div className="h-16"></div>
       <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
@@ -369,7 +371,9 @@ export default function ApiKeysPage() {
           </div>
         )}
       </div>
-      <SidebarTrigger />
-    </SidebarProvider>
+        <SidebarTrigger />
+      </SidebarProvider>
+      <IntercomChat />
+    </>
   );
 }
