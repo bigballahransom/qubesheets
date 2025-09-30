@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import InventoryManager from '@/components/InventoryManager';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import IntercomChat from '@/components/IntercomChat';
 import { Loader2 } from 'lucide-react';
 
 export default function ProjectPage() {
@@ -95,11 +96,14 @@ export default function ProjectPage() {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <div className="h-16"></div>
-      <InventoryManager />
-      <SidebarTrigger />
-    </SidebarProvider>
+    <>
+      <SidebarProvider>
+        <AppSidebar />
+        <div className="h-16"></div>
+        <InventoryManager />
+        <SidebarTrigger />
+      </SidebarProvider>
+      <IntercomChat />
+    </>
   );
 }
