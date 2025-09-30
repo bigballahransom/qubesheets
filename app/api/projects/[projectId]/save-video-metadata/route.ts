@@ -132,8 +132,11 @@ export async function POST(
       await session.endSession();
     }
     
-    // Queue video for analysis AFTER transaction commits
+    // Queue video for analysis AFTER transaction commits with small delay
     if (s3RawFile && videoDoc) {
+      // Add a small delay to ensure MongoDB transaction is fully committed across replica set
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       try {
         jobId = await sendVideoProcessingMessage({
           videoId: videoDoc._id.toString(),
