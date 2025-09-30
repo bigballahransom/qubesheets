@@ -2390,22 +2390,24 @@ const ProcessingNotification = () => {
             </div>
           </div>
           
-{/* Video Processing Status - Shows real-time video processing updates */}
+{/* Video Processing Status - Hidden from users but still handles completion events */}
           {currentProject && (
-            <VideoProcessingStatus 
-              projectId={currentProject._id}
-              onProcessingComplete={(completedVideos) => {
-                // Refresh the image gallery when video processing completes
-                setImageGalleryKey(prev => prev + 1);
-                
-                // Show notification about completed videos
-                if (typeof window !== 'undefined' && window.sonner && completedVideos.length > 0) {
-                  window.sonner.toast.success(
-                    `Video processing complete! ${completedVideos.length} video${completedVideos.length > 1 ? 's' : ''} analyzed successfully.`
-                  );
-                }
-              }}
-            />
+            <div style={{ display: 'none' }}>
+              <VideoProcessingStatus 
+                projectId={currentProject._id}
+                onProcessingComplete={(completedVideos) => {
+                  // Refresh the image gallery when video processing completes
+                  setImageGalleryKey(prev => prev + 1);
+                  
+                  // Show notification about completed videos
+                  if (typeof window !== 'undefined' && window.sonner && completedVideos.length > 0) {
+                    window.sonner.toast.success(
+                      `Video processing complete! ${completedVideos.length} video${completedVideos.length > 1 ? 's' : ''} analyzed successfully.`
+                    );
+                  }
+                }}
+              />
+            </div>
           )}
           
           {/* Tabs for Inventory and Images */}
