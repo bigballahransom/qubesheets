@@ -13,7 +13,8 @@ import {
   PhoneCall,
   Send,
   Archive,
-  Eye
+  Eye,
+  Package
 } from 'lucide-react';
 import { Button } from './ui/button';
 

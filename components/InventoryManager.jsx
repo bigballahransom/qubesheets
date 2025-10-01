@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -18,6 +18,7 @@ import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
 import ActivityLog from './ActivityLog';
+import BoxesManager from './BoxesManager';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
@@ -2424,6 +2425,10 @@ const ProcessingNotification = () => {
                 <Table size={16} />
                 Inventory
               </TabsTrigger>
+              <TabsTrigger value="boxes" className="flex items-center gap-2">
+                <Box size={16} />
+                Boxes
+              </TabsTrigger>
               <TabsTrigger value="images" className="flex items-center gap-2">
                 <Images size={16} />
                 Images
@@ -2506,6 +2511,19 @@ const ProcessingNotification = () => {
                       onPlayingStateChange={setIsVideoPlaying}
                       refreshSpreadsheet={reloadInventoryItems}
                       inventoryItems={inventoryItems.filter(item => item.sourceVideoId)}
+                      onInventoryUpdate={handleInventoryUpdate}
+                    />
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="boxes">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="p-6">
+                  {currentProject && (
+                    <BoxesManager 
+                      inventoryItems={inventoryItems}
                       onInventoryUpdate={handleInventoryUpdate}
                     />
                   )}
