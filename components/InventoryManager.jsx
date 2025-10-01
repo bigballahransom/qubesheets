@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -17,6 +17,7 @@ import VideoProcessingStatus from './VideoProcessingStatus';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
+import ActivityLog from './ActivityLog';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
@@ -96,6 +97,7 @@ export default function InventoryManager() {
   const [videoRoomId, setVideoRoomId] = useState(null);
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
 const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
 const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
@@ -2307,6 +2309,11 @@ const ProcessingNotification = () => {
               Send Customer Upload Link
             </MenubarItem>
             <MenubarSeparator />
+            <MenubarItem onClick={() => setIsActivityLogOpen(true)}>
+              <Clock size={16} className="mr-1" />
+              Activity Log
+            </MenubarItem>
+            <MenubarSeparator />
             <MenubarItem onClick={() => handleDownloadProject()}>
               <Download size={16} className="mr-1" />
               Download
@@ -2553,6 +2560,24 @@ const ProcessingNotification = () => {
     customerName={currentProject.customerName}
     customerPhone={currentProject.phone}
   />
+)}
+
+{/* Activity Log Dialog */}
+{currentProject && (
+  <Dialog open={isActivityLogOpen} onOpenChange={setIsActivityLogOpen}>
+    <DialogContent className="max-w-4xl h-[80vh] flex flex-col">
+      <DialogHeader>
+        <DialogTitle>Activity Log</DialogTitle>
+      </DialogHeader>
+      <div className="flex-1 overflow-hidden">
+        <ActivityLog 
+          projectId={currentProject._id} 
+          onClose={() => setIsActivityLogOpen(false)}
+          embedded={true}
+        />
+      </div>
+    </DialogContent>
+  </Dialog>
 )}
 
 {/* Delete Confirmation Dialog */}

@@ -6,6 +6,7 @@ import Image from '@/models/Image';
 import Project from '@/models/Project';
 import { uploadFileToS3 } from '@/lib/s3Upload';
 import { sendImageProcessingMessage } from '@/lib/sqsUtils';
+import { logUploadActivity } from '@/lib/activity-logger';
 
 export async function POST(
   request: NextRequest,
@@ -115,6 +116,19 @@ export async function POST(
     });
     
     console.log('✅ Customer image metadata saved:', imageDoc._id);
+    
+    // Log the upload activity
+    await logUploadActivity(
+      projectId,
+      fileName,
+      'image',
+      'customer',
+      {
+        userName: customerName || 'anonymous customer',
+        sourceId: imageDoc._id.toString(),
+        fileCount: 1
+      }
+    );
     
     // Update project timestamp
     await Project.findByIdAndUpdate(projectId, { 

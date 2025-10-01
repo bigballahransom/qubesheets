@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { replaceSMSVariables, DEFAULT_SMS_UPLOAD_TEMPLATE } from '@/lib/sms-template-helpers';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import Branding from '@/models/Branding';
+import { logUploadLinkSent } from '@/lib/activity-logger';
 
 export async function POST(
   request: NextRequest,
@@ -112,6 +113,15 @@ export async function POST(
         from: twilioPhoneNumber,
         to: customerPhone,
       });
+
+      // Log the upload link activity
+      await logUploadLinkSent(
+        projectId,
+        customerName,
+        customerPhone,
+        uploadToken,
+        expiresAt
+      );
 
       // Update project with upload link tracking info
       await Project.findByIdAndUpdate(projectId, {

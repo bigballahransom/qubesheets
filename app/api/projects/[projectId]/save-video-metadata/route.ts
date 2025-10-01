@@ -6,6 +6,7 @@ import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { sendVideoProcessingMessage } from '@/lib/sqsUtils';
 import mongoose from 'mongoose';
+import { logUploadActivity } from '@/lib/activity-logger';
 
 export async function POST(
   request: NextRequest,
@@ -130,6 +131,21 @@ export async function POST(
       });
     } finally {
       await session.endSession();
+    }
+    
+    // Log the upload activity
+    if (videoDoc) {
+      await logUploadActivity(
+        projectId,
+        fileName,
+        'video',
+        s3RawFile ? 'inventory_upload' : 'admin',
+        {
+          userName,
+          sourceId: videoDoc._id.toString(),
+          fileCount: 1
+        }
+      );
     }
     
     // Queue video for analysis AFTER transaction commits with small delay

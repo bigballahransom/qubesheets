@@ -6,6 +6,7 @@ import Image from '@/models/Image';
 import Project from '@/models/Project';
 import { sendImageProcessingMessage } from '@/lib/sqsUtils';
 import mongoose from 'mongoose';
+import { logUploadActivity } from '@/lib/activity-logger';
 
 export async function POST(
   request: NextRequest,
@@ -148,6 +149,21 @@ export async function POST(
       });
     } finally {
       await session.endSession();
+    }
+    
+    // Log the upload activity
+    if (imageDoc) {
+      await logUploadActivity(
+        projectId,
+        fileName,
+        'image',
+        'admin',
+        {
+          userName,
+          sourceId: imageDoc._id.toString(),
+          fileCount: 1
+        }
+      );
     }
     
     // Queue image for analysis AFTER transaction commits

@@ -6,6 +6,7 @@ import { useAuth } from '@clerk/nextjs';
 import { useEffect, useState } from 'react';
 import VideoCallInventory from '@/components/video/VideoCallInventory';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { logVideoCall } from '@/lib/activity-logger';
 
 export default function VideoCallPage() {
   const params = useParams();
@@ -19,6 +20,7 @@ export default function VideoCallPage() {
   
   const [isValidating, setIsValidating] = useState(true);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [callStartTime] = useState(new Date());
 
   useEffect(() => {
     // For customers (non-authenticated users), we need different validation
@@ -83,8 +85,28 @@ export default function VideoCallPage() {
     validateAccess();
   }, [isLoaded, userId, projectId, roomId, participantName, router]);
 
-  const handleCallEnd = () => {
+  const handleCallEnd = async () => {
     const isAgent = participantName.toLowerCase().includes('agent');
+    
+    // Log the video call activity
+    try {
+      const callEndTime = new Date();
+      const duration = Math.round((callEndTime.getTime() - callStartTime.getTime()) / 1000); // Duration in seconds
+      
+      await logVideoCall(
+        projectId!,
+        roomId,
+        {
+          duration,
+          participantCount: isAgent ? 2 : 1, // Assume agent + customer, or just customer
+          userName: participantName
+        }
+      );
+      console.log('✅ Video call activity logged');
+    } catch (logError) {
+      console.warn('⚠️ Failed to log video call activity:', logError);
+      // Don't fail the navigation if logging fails
+    }
     
     if (isAgent && userId) {
       // Agents go back to their project

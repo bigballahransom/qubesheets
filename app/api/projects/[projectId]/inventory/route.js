@@ -7,6 +7,7 @@ import Project from '@/models/Project';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
+import { logInventoryUpdate } from '@/lib/activity-logger';
 
 // GET /api/projects/:projectId/inventory - Get all inventory items for a project
 export async function GET(request, { params }) {
@@ -140,6 +141,19 @@ export async function POST(request, { params }) {
     console.log('💾 Creating inventory items in database...');
     const createdItems = await InventoryItem.insertMany(items);
     console.log(`✅ Successfully created ${createdItems.length} inventory items`);
+    
+    // Log the inventory update activity
+    if (createdItems.length === 1) {
+      await logInventoryUpdate(projectId, 'added', {
+        itemName: createdItems[0].name,
+        itemId: createdItems[0]._id,
+        itemType: createdItems[0].itemType || 'regular_item'
+      });
+    } else if (createdItems.length > 1) {
+      await logInventoryUpdate(projectId, 'bulk_added', {
+        itemsCount: createdItems.length
+      });
+    }
     
     // Update project's updatedAt timestamp
     await Project.findByIdAndUpdate(projectId, { 

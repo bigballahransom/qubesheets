@@ -5,6 +5,8 @@ import CustomerUpload from '@/models/CustomerUpload';
 import Project from '@/models/Project';
 import Branding from '@/models/Branding';
 import Template from '@/models/Template';
+import ActivityLog from '@/models/ActivityLog';
+import { logUploadLinkVisited } from '@/lib/activity-logger';
 
 export async function GET(
   request: NextRequest,
@@ -128,6 +130,33 @@ export async function GET(
     } catch (templateError) {
       console.warn('Error fetching custom instructions:', templateError);
       // Continue without custom instructions - will use default
+    }
+
+    // Log the upload link visit (only if no recent visit logged to avoid spam)
+    try {
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const recentVisit = await ActivityLog.findOne({
+        projectId: customerUpload.projectId._id,
+        activityType: 'upload_link_visited',
+        'details.linkToken': token,
+        createdAt: { $gte: thirtyMinutesAgo }
+      });
+
+      if (!recentVisit) {
+        await logUploadLinkVisited(
+          customerUpload.projectId._id.toString(),
+          customerUpload.customerName,
+          token,
+          customerUpload.userId,
+          customerUpload.organizationId
+        );
+        console.log('✅ Upload link visit logged for customer:', customerUpload.customerName);
+      } else {
+        console.log('🔄 Recent visit already logged, skipping duplicate');
+      }
+    } catch (logError) {
+      console.warn('⚠️ Failed to log upload link visit:', logError);
+      // Don't fail the request if logging fails
     }
 
     // Return customer upload info with branding data and instructions

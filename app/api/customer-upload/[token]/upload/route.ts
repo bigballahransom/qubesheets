@@ -18,6 +18,7 @@ import Project from '@/models/Project';
 import { uploadFileToS3 } from '@/lib/s3Upload';
 import { sendImageProcessingMessage, sendVideoProcessingMessage } from '@/lib/sqsUtils';
 import { convertMovToMp4, needsMovConversion } from '@/lib/videoConversion';
+import { logUploadActivity } from '@/lib/activity-logger';
 import sharp from 'sharp';
 
 // Helper function to detect video files server-side - Updated for Gemini API compatibility
@@ -395,6 +396,26 @@ export async function POST(
         
         console.log('Video saved successfully');
         
+        // Log the upload activity
+        try {
+          await logUploadActivity(
+            projectId?.toString() || 'unknown',
+            image.name,
+            'video',
+            'customer',
+            {
+              userName: customerName,
+              sourceId: videoDoc._id.toString()
+            },
+            userId || 'customer-upload',
+            organizationId
+          );
+          console.log('✅ Upload activity logged for video:', image.name);
+        } catch (logError) {
+          console.warn('⚠️ Failed to log upload activity:', logError);
+          // Don't fail the request if logging fails
+        }
+        
         // Update project timestamp
         await Project.findByIdAndUpdate(projectId, { 
           updatedAt: new Date() 
@@ -604,6 +625,26 @@ export async function POST(
       });
 
       console.log(`✅ Image saved to MongoDB: ${imageDoc._id}`);
+
+      // Log the upload activity
+      try {
+        await logUploadActivity(
+          projectId?.toString() || 'unknown',
+          image.name,
+          'image',
+          'customer',
+          {
+            userName: customerName,
+            sourceId: imageDoc._id.toString()
+          },
+          userId || 'customer-upload',
+          organizationId
+        );
+        console.log('✅ Upload activity logged for image:', image.name);
+      } catch (logError) {
+        console.warn('⚠️ Failed to log upload activity:', logError);
+        // Don't fail the request if logging fails
+      }
 
       // Update project timestamp
       await Project.findByIdAndUpdate(projectId, { 
