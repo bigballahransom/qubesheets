@@ -6,7 +6,6 @@ import { useAuth } from '@clerk/nextjs';
 import { useEffect, useState } from 'react';
 import VideoCallInventory from '@/components/video/VideoCallInventory';
 import { Loader2, AlertCircle } from 'lucide-react';
-import { logVideoCall } from '@/lib/activity-logger';
 
 export default function VideoCallPage() {
   const params = useParams();
@@ -93,16 +92,24 @@ export default function VideoCallPage() {
       const callEndTime = new Date();
       const duration = Math.round((callEndTime.getTime() - callStartTime.getTime()) / 1000); // Duration in seconds
       
-      await logVideoCall(
-        projectId!,
-        roomId,
-        {
+      const response = await fetch(`/api/projects/${projectId}/log-video-call`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          roomId,
           duration,
           participantCount: isAgent ? 2 : 1, // Assume agent + customer, or just customer
           userName: participantName
-        }
-      );
-      console.log('✅ Video call activity logged');
+        })
+      });
+      
+      if (response.ok) {
+        console.log('✅ Video call activity logged');
+      } else {
+        console.warn('⚠️ Failed to log video call activity:', await response.text());
+      }
     } catch (logError) {
       console.warn('⚠️ Failed to log video call activity:', logError);
       // Don't fail the navigation if logging fails
