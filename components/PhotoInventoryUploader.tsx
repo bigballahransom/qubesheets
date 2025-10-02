@@ -741,24 +741,17 @@ export default function PhotoInventoryUploader({
           continue;
         }
 
-        // Smart HEIC conversion: Mobile-first strategy
+        // Smart HEIC conversion: Universal client-side strategy
         if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
-          const isMobile = isMobileDevice();
-          
-          if (isMobile) {
-            // Mobile Strategy: Skip client conversion, use server-side
-            console.log('📱 Mobile device detected - skipping client conversion for', file.name);
-            finalFile = file; // Send HEIC directly to server
-          } else {
-            // Desktop Strategy: Try client conversion first
-            try {
-              console.log('💻 Converting HEIC file:', file.name);
-              finalFile = await convertHeicToJpeg(file);
-              console.log('✅ Client-side HEIC conversion successful for', file.name);
-            } catch (conversionError) {
-              console.log('⚠️ Client-side HEIC conversion failed for', file.name, '- server will handle');
-              finalFile = file; // Keep original HEIC file for server processing
-            }
+          // Universal Strategy: Always try client conversion first (mobile and desktop)
+          try {
+            console.log('🔄 Converting HEIC file on client:', file.name);
+            finalFile = await convertHeicToJpeg(file);
+            console.log('✅ Client-side HEIC conversion successful for', file.name);
+          } catch (conversionError) {
+            console.log('⚠️ Client-side HEIC conversion failed for', file.name, '- keeping original file');
+            console.error('Conversion error:', conversionError);
+            finalFile = file; // Keep original HEIC file as fallback
           }
         }
 
@@ -1177,10 +1170,9 @@ export default function PhotoInventoryUploader({
           userAgent: navigator.userAgent.substring(0, 50)
         });
         
-        // Smart HEIC handling: Production requires client-side conversion, dev allows server fallback
-        const isProduction = process.env.NODE_ENV === 'production';
+        // Smart HEIC handling: Try client-side first, fallback to server-side for large files
         const isLargeFile = processedFile.size > 10 * 1024 * 1024; // 10MB threshold
-        const shouldSkipClientSide = (isHeicFile || isPotentialIPhoneHeif) && isMobile && isLargeFile && !isProduction;
+        const shouldSkipClientSide = (isHeicFile || isPotentialIPhoneHeif) && isMobile && isLargeFile;
         
         if (shouldSkipClientSide) {
           console.log('📱 Skipping canvas generation for large HEIC file on mobile - server will handle conversion');
