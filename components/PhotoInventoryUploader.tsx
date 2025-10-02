@@ -284,19 +284,12 @@ function isHeicFile(file: File): boolean {
   const isPotentialIPhoneHeic = (mimeType === '' || mimeType === 'application/octet-stream') && 
                                 isHeicByExtension;
   
-  // iPhone photos might be HEIF format even with .jpeg extension - detect disguised HEIC files
-  const isIPhone = typeof navigator !== 'undefined' && /iPhone/i.test(navigator.userAgent);
-  const isPotentialIPhoneHeif = isIPhone && 
-                               fileName.startsWith('img_') &&
-                               (mimeType === 'image/jpeg' || mimeType === '');
-  
-  const result = isHeicByExtension || isHeicByMimeType || isPotentialIPhoneHeic || isPotentialIPhoneHeif;
+  const result = isHeicByExtension || isHeicByMimeType || isPotentialIPhoneHeic;
   
   console.log('📱 HEIC detection result:', {
     isHeicByExtension,
     isHeicByMimeType,
     isPotentialIPhoneHeic,
-    isPotentialIPhoneHeif,
     finalResult: result
   });
   
