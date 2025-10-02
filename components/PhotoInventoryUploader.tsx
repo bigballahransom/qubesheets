@@ -1151,26 +1151,37 @@ export default function PhotoInventoryUploader({
       // All images use S3 → MongoDB → SQS processing
       console.log(`💾 Image ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
       if (s3Result) {
-        // Convert image to base64 for analysis
+        // Convert image to base64 for analysis (skip for HEIC on mobile)
         let imageBuffer = null;
-        try {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const img = new Image();
-          
-          await new Promise((resolve, reject) => {
-            img.onload = () => {
-              canvas.width = img.width;
-              canvas.height = img.height;
-              ctx?.drawImage(img, 0, 0);
-              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-              resolve(null);
-            };
-            img.onerror = reject;
-            img.src = URL.createObjectURL(processedFile);
-          });
-        } catch (error) {
-          console.warn('Could not generate base64 for analysis:', error);
+        const isHeicFile = processedFile.name.toLowerCase().endsWith('.heic') || 
+                          processedFile.name.toLowerCase().endsWith('.heif') ||
+                          processedFile.type === 'image/heic' || 
+                          processedFile.type === 'image/heif';
+        const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+        
+        if (isHeicFile && isMobile) {
+          console.log('📱 Skipping canvas generation for HEIC file on mobile - server will handle conversion');
+          imageBuffer = null;
+        } else {
+          try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            await new Promise((resolve, reject) => {
+              img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx?.drawImage(img, 0, 0);
+                imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+                resolve(null);
+              };
+              img.onerror = reject;
+              img.src = URL.createObjectURL(processedFile);
+            });
+          } catch (error) {
+            console.warn('Could not generate base64 for analysis:', error);
+          }
         }
 
         const imageMetadata = {

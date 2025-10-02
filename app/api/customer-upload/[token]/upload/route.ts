@@ -90,15 +90,10 @@ function isHeicFile(file: File): boolean {
 async function convertHeicToJpeg(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string; originalName: string; convertedName: string }> {
   console.log('🔧 Attempting server-side HEIC conversion...');
   
-  // In production (Vercel), prioritize stability over server-side conversion
-  const isProduction = process.env.NODE_ENV === 'production';
+  // Enable HEIC conversion in production for mobile compatibility
+  console.log('🏭 Environment detected - attempting HEIC conversion for mobile compatibility');
   
-  if (isProduction) {
-    console.log('🏭 Vercel production environment detected - skipping complex HEIC conversion');
-    throw new Error('HEIC files require client-side conversion in production. Please ensure your browser converted this file before upload, or try converting to JPEG using your device\'s photo app.');
-  }
-  
-  // Development environment - try full conversion
+  // Try HEIC conversion with multiple methods
   try {
     console.log('📦 Attempting conversion with heic-convert...');
     const convert = require('heic-convert');
