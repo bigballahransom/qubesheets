@@ -1149,7 +1149,7 @@ export default function PhotoInventoryUploader({
       // All images use S3 → MongoDB → SQS processing
       console.log(`💾 Image ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
       if (s3Result) {
-        // Convert image to base64 for analysis (skip for HEIC on mobile)
+        // Initialize imageBuffer - will be set only for desktop uploads
         let imageBuffer = null;
         const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
         const isIPhone = /iPhone/i.test(navigator.userAgent);
@@ -1182,30 +1182,33 @@ export default function PhotoInventoryUploader({
           userAgent: navigator.userAgent.substring(0, 50)
         });
         
-        // Always generate canvas for processed images (like CustomerPhotoUploader does)
-        // By this point, the file has been:
-        // 1. Converted from HEIC if needed
-        // 2. Processed through processImageForMobile
-        // So we should always be able to generate the canvas
-        try {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const img = new Image();
-          
-          await new Promise((resolve, reject) => {
-            img.onload = () => {
-              canvas.width = img.width;
-              canvas.height = img.height;
-              ctx?.drawImage(img, 0, 0);
-              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-              resolve(null);
-            };
-            img.onerror = reject;
-            img.src = URL.createObjectURL(processedFile);
-          });
-        } catch (error) {
-          console.warn('Could not generate base64 for analysis:', error);
-          // Continue anyway - server might handle raw file
+        // Skip canvas generation for mobile uploads - let server handle like CustomerPhotoUploader
+        // Use existing isMobile and imageBuffer variables declared above
+        
+        if (!isMobile) {
+          // Only generate canvas on desktop for better performance
+          try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            await new Promise((resolve, reject) => {
+              img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx?.drawImage(img, 0, 0);
+                imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+                resolve(null);
+              };
+              img.onerror = reject;
+              img.src = URL.createObjectURL(processedFile);
+            });
+            console.log('✅ Desktop canvas generation successful');
+          } catch (error) {
+            console.warn('⚠️ Desktop canvas generation failed:', error);
+          }
+        } else {
+          console.log('📱 Mobile detected - skipping canvas, letting server handle analysis');
         }
 
         const imageMetadata = {
