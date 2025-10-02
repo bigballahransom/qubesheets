@@ -1157,17 +1157,24 @@ export default function PhotoInventoryUploader({
       if (s3Result) {
         // Convert image to base64 for analysis (skip for HEIC on mobile)
         let imageBuffer = null;
-        const isHeicFile = processedFile.name.toLowerCase().endsWith('.heic') || 
-                          processedFile.name.toLowerCase().endsWith('.heif') ||
-                          processedFile.type === 'image/heic' || 
-                          processedFile.type === 'image/heif';
         const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
         const isIPhone = /iPhone/i.test(navigator.userAgent);
         
-        // iPhone photos might be HEIF format even with .jpeg extension
-        const isPotentialIPhoneHeif = isIPhone && 
-                                     processedFile.name.toLowerCase().startsWith('img_') &&
-                                     (processedFile.type === 'image/jpeg' || processedFile.type === '');
+        // Check if this is an actual HEIC file that needs conversion
+        // IMPORTANT: If the file has already been converted client-side, it will have:
+        // - .jpg extension (not .jpeg)
+        // - image/jpeg MIME type
+        // So we should NOT treat converted files as HEIC
+        const fileName = processedFile.name.toLowerCase();
+        const mimeType = processedFile.type.toLowerCase();
+        
+        // Only detect actual HEIC files, not already-converted JPEGs
+        const isHeicByExtension = fileName.endsWith('.heic') || fileName.endsWith('.heif');
+        const isHeicByMimeType = mimeType === 'image/heic' || mimeType === 'image/heif';
+        const isPotentialIPhoneHeic = (mimeType === '' || mimeType === 'application/octet-stream') && isHeicByExtension;
+        
+        // Don't detect converted files as HEIC - they'll have .jpg extension after conversion
+        const isHeicFile = isHeicByExtension || isHeicByMimeType || isPotentialIPhoneHeic;
         
         // Enhanced logging for debugging iPhone photo issues
         console.log('🔍 iPhone photo debug info:', {
@@ -1175,7 +1182,7 @@ export default function PhotoInventoryUploader({
           fileType: processedFile.type,
           fileSize: processedFile.size,
           isHeicFile,
-          isPotentialIPhoneHeif,
+          wasConverted: fileName.endsWith('.jpg') && fileName.startsWith('img_'),
           isMobile,
           isIPhone,
           userAgent: navigator.userAgent.substring(0, 50)
@@ -1183,7 +1190,7 @@ export default function PhotoInventoryUploader({
         
         // Smart HEIC handling: Try client-side first, fallback to server-side for large files
         const isLargeFile = processedFile.size > 10 * 1024 * 1024; // 10MB threshold
-        const shouldSkipClientSide = (isHeicFile || isPotentialIPhoneHeif) && isMobile && isLargeFile;
+        const shouldSkipClientSide = isHeicFile && isMobile && isLargeFile;
         
         if (shouldSkipClientSide) {
           console.log('📱 Skipping canvas generation for large HEIC file on mobile - server will handle conversion');

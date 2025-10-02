@@ -30,6 +30,8 @@ function isHeicFile(fileName: string, mimeType?: string): boolean {
                         mimeTypeLower === 'image/heif';
   
   // iPhone photos might be HEIF format even with .jpeg extension
+  // BUT: If we have a buffer (meaning client already converted it), don't treat as HEIC
+  // This prevents double-conversion attempts on already-converted files
   const isPotentialIPhoneHeif = fileNameLower.startsWith('img_') &&
                                fileNameLower.endsWith('.jpeg') &&
                                (mimeTypeLower === 'image/jpeg' || mimeTypeLower === '');
