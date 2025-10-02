@@ -23,12 +23,26 @@ function isHeicFile(fileName: string, mimeType?: string): boolean {
   const fileNameLower = fileName.toLowerCase();
   const mimeTypeLower = mimeType?.toLowerCase() || '';
   
-  return (
-    fileNameLower.endsWith('.heic') || 
-    fileNameLower.endsWith('.heif') ||
-    mimeTypeLower === 'image/heic' ||
-    mimeTypeLower === 'image/heif'
-  );
+  // Standard HEIC detection
+  const isStandardHeic = fileNameLower.endsWith('.heic') || 
+                        fileNameLower.endsWith('.heif') ||
+                        mimeTypeLower === 'image/heic' ||
+                        mimeTypeLower === 'image/heif';
+  
+  // iPhone photos might be HEIF format even with .jpeg extension
+  const isPotentialIPhoneHeif = fileNameLower.startsWith('img_') &&
+                               fileNameLower.endsWith('.jpeg') &&
+                               (mimeTypeLower === 'image/jpeg' || mimeTypeLower === '');
+  
+  console.log('🔍 Server HEIC detection:', {
+    fileName,
+    mimeType,
+    isStandardHeic,
+    isPotentialIPhoneHeif,
+    finalResult: isStandardHeic || isPotentialIPhoneHeif
+  });
+  
+  return isStandardHeic || isPotentialIPhoneHeif;
 }
 
 // Production-safe server-side HEIC handling (copied from customer-upload)
@@ -147,12 +161,14 @@ export async function POST(
     console.log('💾 Received admin image metadata:', {
       fileName,
       fileSize,
+      fileType,
       projectId,
       cloudinaryPublicId: cloudinaryResult?.publicId,
       userId,
       orgId,
       hasImageBuffer: !!imageBuffer,
-      hasS3RawFile: !!s3RawFile
+      hasS3RawFile: !!s3RawFile,
+      isHeicDetected: s3RawFile ? isHeicFile(fileName, fileType) : false
     });
     
     // Verify project exists and user has access

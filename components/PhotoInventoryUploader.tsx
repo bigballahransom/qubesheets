@@ -1158,9 +1158,27 @@ export default function PhotoInventoryUploader({
                           processedFile.type === 'image/heic' || 
                           processedFile.type === 'image/heif';
         const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent);
+        const isIPhone = /iPhone/i.test(navigator.userAgent);
         
-        if (isHeicFile && isMobile) {
-          console.log('📱 Skipping canvas generation for HEIC file on mobile - server will handle conversion');
+        // iPhone photos might be HEIF format even with .jpeg extension
+        const isPotentialIPhoneHeif = isIPhone && 
+                                     processedFile.name.toLowerCase().startsWith('img_') &&
+                                     (processedFile.type === 'image/jpeg' || processedFile.type === '');
+        
+        // Enhanced logging for debugging iPhone photo issues
+        console.log('🔍 iPhone photo debug info:', {
+          fileName: processedFile.name,
+          fileType: processedFile.type,
+          fileSize: processedFile.size,
+          isHeicFile,
+          isPotentialIPhoneHeif,
+          isMobile,
+          isIPhone,
+          userAgent: navigator.userAgent.substring(0, 50)
+        });
+        
+        if ((isHeicFile || isPotentialIPhoneHeif) && isMobile) {
+          console.log('📱 Skipping canvas generation for HEIC/iPhone photo on mobile - server will handle conversion');
           imageBuffer = null;
         } else {
           try {
