@@ -56,7 +56,16 @@ export async function POST(
     });
 
     // Upload to S3 (same as customer upload)
-    const s3Result = await uploadFileToS3(file, userId);
+    const s3Result = await uploadFileToS3(file, {
+      folder: 'Media/Images',
+      metadata: {
+        projectId: projectId.toString(),
+        uploadSource: 'admin-simple-upload',
+        uploadedBy: userId,
+        uploadedAt: new Date().toISOString()
+      },
+      contentType: file.type
+    });
     console.log('✅ File uploaded to S3:', s3Result.key);
 
     // Convert to buffer for MongoDB (same as customer upload)
@@ -129,7 +138,7 @@ export async function POST(
         mimeType: file.type,
         fileSize: file.size,
         uploadedAt: new Date().toISOString(),
-        source: 'admin-simple-upload'
+        source: 'admin-upload'
       });
       console.log(`✅ SQS Analysis job queued: ${jobId}`);
     } catch (queueError) {
