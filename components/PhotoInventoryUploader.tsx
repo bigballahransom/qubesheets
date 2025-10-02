@@ -284,12 +284,19 @@ function isHeicFile(file: File): boolean {
   const isPotentialIPhoneHeic = (mimeType === '' || mimeType === 'application/octet-stream') && 
                                 isHeicByExtension;
   
-  const result = isHeicByExtension || isHeicByMimeType || isPotentialIPhoneHeic;
+  // iPhone photos might be HEIF format even with .jpeg extension - detect disguised HEIC files
+  const isIPhone = typeof navigator !== 'undefined' && /iPhone/i.test(navigator.userAgent);
+  const isPotentialIPhoneHeif = isIPhone && 
+                               fileName.startsWith('img_') &&
+                               (mimeType === 'image/jpeg' || mimeType === '');
+  
+  const result = isHeicByExtension || isHeicByMimeType || isPotentialIPhoneHeic || isPotentialIPhoneHeif;
   
   console.log('📱 HEIC detection result:', {
     isHeicByExtension,
     isHeicByMimeType,
     isPotentialIPhoneHeic,
+    isPotentialIPhoneHeif,
     finalResult: result
   });
   
@@ -742,8 +749,18 @@ export default function PhotoInventoryUploader({
           continue;
         }
 
-        // Skip HEIC conversion during file selection - do it during upload like CustomerPhotoUploader
-        // This matches the working CustomerPhotoUploader pattern
+        // HEIC conversion during file selection (like desktop) - now works for ALL devices
+        if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
+          try {
+            console.log('🔄 Converting HEIC file during selection:', file.name);
+            finalFile = await convertHeicToJpeg(file);
+            console.log('✅ HEIC conversion successful during selection:', finalFile.name, finalFile.type);
+          } catch (conversionError) {
+            console.error('❌ HEIC conversion failed during selection:', conversionError);
+            // Keep original file - server will handle or show error
+            finalFile = file;
+          }
+        }
 
         console.log(`✅ Final file ${i + 1}: ${finalFile.name} (${finalFile.type}, ${finalFile.size} bytes)`);
         validFiles.push(finalFile);
@@ -837,22 +854,8 @@ export default function PhotoInventoryUploader({
     const retryDelays = [1000, 2000, 4000]; // Exponential backoff: 1s, 2s, 4s
     const isVideo = isVideoFile(file);
     
-    // HEIC conversion before upload (like CustomerPhotoUploader)
+    // Files should already be converted during selection if they were HEIC
     let finalFile = file;
-    const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || 
-                   file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
-    
-    if (!isVideo && isHeic) {
-      try {
-        console.log('🔍 Converting HEIC file before upload:', file.name);
-        finalFile = await convertHeicToJpeg(file);
-        console.log('✅ HEIC conversion successful for upload:', finalFile.name, finalFile.type);
-      } catch (conversionError) {
-        console.error('❌ HEIC conversion failed before upload:', conversionError);
-        // Keep original file as fallback
-        finalFile = file;
-      }
-    }
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
