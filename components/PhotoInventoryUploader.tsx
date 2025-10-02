@@ -686,9 +686,10 @@ export default function PhotoInventoryUploader({
       
       setIsConverting(true);
       
-      // Process each file
+      // Process each file with detailed logging
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        console.log(`🔍 Processing file ${i + 1}/${files.length}: ${file.name} (${file.type}, ${file.size} bytes)`);
         
         // Check if file is a supported image, video type, or HEIC
         const isRegularImage = file.type.startsWith('image/');
@@ -760,6 +761,7 @@ export default function PhotoInventoryUploader({
           }
         }
 
+        console.log(`✅ Final file ${i + 1}: ${finalFile.name} (${finalFile.type}, ${finalFile.size} bytes)`);
         validFiles.push(finalFile);
       }
       
