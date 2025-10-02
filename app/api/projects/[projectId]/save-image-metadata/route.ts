@@ -107,7 +107,7 @@ async function convertHeicToJpeg(buffer: Buffer): Promise<{ buffer: Buffer; mime
 
 // Download file from S3
 async function downloadFromS3(key: string, bucket: string): Promise<Buffer> {
-  console.log(`📥 Downloading HEIC file from S3: ${key}`);
+  console.log(`📥 Downloading HEIC file from S3: ${key} from bucket: ${bucket}`);
   
   try {
     const params = {
@@ -115,14 +115,37 @@ async function downloadFromS3(key: string, bucket: string): Promise<Buffer> {
       Key: key
     };
     
+    console.log('🔗 S3 download params:', params);
+    
     const result = await s3.getObject(params).promise();
+    
+    if (!result.Body) {
+      throw new Error('S3 response body is empty');
+    }
+    
     const buffer = result.Body as Buffer;
+    
+    if (!buffer || buffer.length === 0) {
+      throw new Error('Downloaded buffer is empty or invalid');
+    }
     
     console.log(`✅ Downloaded ${buffer.length} bytes from S3`);
     return buffer;
   } catch (error) {
-    console.error('❌ Failed to download from S3:', error);
-    throw new Error(`Failed to download HEIC file from S3: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('❌ Failed to download from S3:', {
+      key,
+      bucket,
+      error: error instanceof Error ? error.message : error,
+      errorDetails: error
+    });
+    
+    if (error instanceof Error && error.message.includes('NoSuchKey')) {
+      throw new Error(`HEIC file not found in storage. The file may have been deleted or the upload didn't complete properly.`);
+    } else if (error instanceof Error && error.message.includes('AccessDenied')) {
+      throw new Error(`Access denied when downloading HEIC file. Please contact support.`);
+    } else {
+      throw new Error(`Failed to download HEIC file from S3: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 }
 
@@ -237,11 +260,32 @@ export async function POST(
         }
         
       } catch (heicError) {
-        console.error('❌ Failed to process HEIC file:', heicError);
-        return NextResponse.json(
-          { error: `Failed to process HEIC file: ${heicError instanceof Error ? heicError.message : 'Unknown error'}` },
-          { status: 400 }
-        );
+        console.error('❌ Failed to process HEIC file:', {
+          error: heicError,
+          fileName,
+          fileType,
+          s3RawFile,
+          errorMessage: heicError instanceof Error ? heicError.message : 'Unknown error'
+        });
+        
+        // For mobile HEIC uploads, provide helpful error message
+        const errorMessage = heicError instanceof Error ? heicError.message : 'Unknown error';
+        if (errorMessage.includes('Failed to download')) {
+          return NextResponse.json(
+            { error: 'Failed to download HEIC file from storage. Please try uploading again.' },
+            { status: 400 }
+          );
+        } else if (errorMessage.includes('conversion failed')) {
+          return NextResponse.json(
+            { error: 'HEIC file conversion failed. Please convert to JPG/PNG before uploading or try again.' },
+            { status: 400 }
+          );
+        } else {
+          return NextResponse.json(
+            { error: `Failed to process HEIC file: ${errorMessage}` },
+            { status: 400 }
+          );
+        }
       }
     }
     
@@ -257,13 +301,26 @@ export async function POST(
     
     try {
       await session.withTransaction(async () => {
+        // Check if we have either buffer or s3RawFile for fallback
+        if (!buffer && !s3RawFile) {
+          throw new Error('No image data or S3 file information available for processing.');
+        }
+        
+        // Log what we're storing
+        console.log('💾 Storing image with:', {
+          hasBuffer: !!buffer,
+          bufferSize: buffer?.length,
+          hasS3RawFile: !!s3RawFile,
+          s3Key: s3RawFile?.key
+        });
+        
         // Save image metadata to database
         [imageDoc] = await Image.create([{
           name,
           originalName: fileName,
           mimeType: fileType,
           size: fileSize,
-          data: buffer, // Store image data for analysis
+          ...(buffer && { data: buffer }), // Store image data for analysis only if available
           // Cloudinary fields - optional for backward compatibility
           cloudinaryPublicId: cloudinaryResult?.publicId || undefined,
           cloudinaryUrl: cloudinaryResult?.url || undefined,
@@ -336,46 +393,75 @@ export async function POST(
     }
     
     // Queue image for analysis AFTER transaction commits
-    if (buffer && imageDoc) {
-      try {
-        jobId = await sendImageProcessingMessage({
-          imageId: imageDoc._id.toString(),
-          projectId: projectId.toString(),
-          userId,
-          organizationId: orgId,
-          s3ObjectKey: s3RawFile?.key || 'unknown',
-          s3Bucket: s3RawFile?.bucket || 'unknown',  
-          s3Url: s3RawFile?.url || 'unknown',
-          originalFileName: fileName,
-          mimeType: fileType,
-          fileSize: buffer.length,
-          uploadedAt: new Date().toISOString(),
-          source: 'admin-upload'
-        });
-        console.log(`✅ SQS Analysis job queued: ${jobId}`);
-      } catch (queueError) {
-        console.warn('⚠️ SQS queue failed, but image was saved:', queueError);
-        jobId = 'queue-failed-manual-required';
+    if (imageDoc) {
+      if (buffer) {
+        // Small delay to ensure MongoDB replication for bulk uploads
+        await new Promise(resolve => setTimeout(resolve, 100));
         
-        // Update processing status to failed
-        if (imageDoc) {
+        // We have processed image data, queue for analysis
+        try {
+          jobId = await sendImageProcessingMessage({
+            imageId: imageDoc._id.toString(),
+            projectId: projectId.toString(),
+            userId,
+            organizationId: orgId,
+            s3ObjectKey: s3RawFile?.key || 'unknown',
+            s3Bucket: s3RawFile?.bucket || 'unknown',  
+            s3Url: s3RawFile?.url || 'unknown',
+            originalFileName: fileName,
+            mimeType: fileType,
+            fileSize: buffer.length,
+            uploadedAt: new Date().toISOString(),
+            source: 'admin-upload'
+          });
+          console.log(`✅ SQS Analysis job queued: ${jobId}`);
+        } catch (queueError) {
+          console.warn('⚠️ SQS queue failed, but image was saved:', queueError);
+          jobId = 'queue-failed-manual-required';
+          
+          // Update processing status to failed
           await Image.findByIdAndUpdate(imageDoc._id, { 
             processingStatus: 'failed',
             'analysisResult.status': 'failed',
             'analysisResult.error': queueError instanceof Error ? queueError.message : 'Queue failed'
           });
         }
+      } else if (s3RawFile) {
+        // Only S3 raw file available (HEIC conversion failed), mark for manual processing
+        console.log('⚠️ No processed image data available, marking for manual processing');
+        jobId = 'manual-processing-required';
+        
+        await Image.findByIdAndUpdate(imageDoc._id, { 
+          processingStatus: 'failed',
+          'analysisResult.status': 'failed',
+          'analysisResult.error': 'HEIC conversion failed - raw file stored for manual processing'
+        });
       }
+    }
+    
+    // Determine appropriate message based on what was processed
+    let message: string;
+    let analysisStatus: string;
+    
+    if (buffer) {
+      message = 'Image uploaded successfully! AI analysis is processing in the background.';
+      analysisStatus = 'queued';
+    } else if (s3RawFile) {
+      message = 'Image uploaded successfully! HEIC conversion failed, but raw file stored for manual processing.';
+      analysisStatus = 'manual-required';
+    } else {
+      message = 'Image uploaded successfully! Analysis requires image data.';
+      analysisStatus = 'skipped';
     }
     
     return NextResponse.json({
       success: true,
       imageId: imageDoc?._id.toString(),
       jobId: jobId,
-      message: buffer 
-        ? 'Image uploaded successfully! AI analysis is processing in the background.'
-        : 'Image uploaded successfully! Analysis requires image data.',
-      analysisStatus: buffer ? 'queued' : 'skipped'
+      message: message,
+      analysisStatus: analysisStatus,
+      hasImageData: !!buffer,
+      hasRawFile: !!s3RawFile
     });
     
   } catch (error) {

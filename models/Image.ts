@@ -42,7 +42,7 @@ const ImageSchema: Schema = new Schema(
     originalName: { type: String, required: true },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
-    data: { type: Buffer, required: true },
+    data: { type: Buffer, required: false },
     projectId: { 
       type: mongoose.Schema.Types.ObjectId, 
       ref: 'Project',
@@ -76,5 +76,14 @@ const ImageSchema: Schema = new Schema(
   },
   { timestamps: true }
 );
+
+// Custom validation to ensure either data or s3RawFile exists
+ImageSchema.pre('save', function(next) {
+  if (!this.data && !this.s3RawFile) {
+    const error = new Error('Either image data or S3 raw file information must be provided');
+    return next(error);
+  }
+  next();
+});
 
 export default mongoose.models.Image || mongoose.model<IImage>('Image', ImageSchema);

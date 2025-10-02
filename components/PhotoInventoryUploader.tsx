@@ -1177,8 +1177,12 @@ export default function PhotoInventoryUploader({
           userAgent: navigator.userAgent.substring(0, 50)
         });
         
-        if ((isHeicFile || isPotentialIPhoneHeif) && isMobile) {
-          console.log('📱 Skipping canvas generation for HEIC/iPhone photo on mobile - server will handle conversion');
+        // Smart HEIC handling: Try client-side first, fallback to server-side for large files
+        const isLargeFile = processedFile.size > 10 * 1024 * 1024; // 10MB threshold
+        const shouldSkipClientSide = (isHeicFile || isPotentialIPhoneHeif) && isMobile && isLargeFile;
+        
+        if (shouldSkipClientSide) {
+          console.log('📱 Skipping canvas generation for large HEIC file on mobile - server will handle conversion');
           imageBuffer = null;
         } else {
           try {
