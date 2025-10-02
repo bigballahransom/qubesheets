@@ -1177,9 +1177,10 @@ export default function PhotoInventoryUploader({
           userAgent: navigator.userAgent.substring(0, 50)
         });
         
-        // Smart HEIC handling: Try client-side first, fallback to server-side for large files
+        // Smart HEIC handling: Production requires client-side conversion, dev allows server fallback
+        const isProduction = process.env.NODE_ENV === 'production';
         const isLargeFile = processedFile.size > 10 * 1024 * 1024; // 10MB threshold
-        const shouldSkipClientSide = (isHeicFile || isPotentialIPhoneHeif) && isMobile && isLargeFile;
+        const shouldSkipClientSide = (isHeicFile || isPotentialIPhoneHeif) && isMobile && isLargeFile && !isProduction;
         
         if (shouldSkipClientSide) {
           console.log('📱 Skipping canvas generation for large HEIC file on mobile - server will handle conversion');

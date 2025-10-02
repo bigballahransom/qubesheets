@@ -49,8 +49,13 @@ function isHeicFile(fileName: string, mimeType?: string): boolean {
 async function convertHeicToJpeg(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string; originalName: string; convertedName: string }> {
   console.log('🔧 Attempting server-side HEIC conversion...');
   
-  // Enable HEIC conversion in production for mobile uploads
-  console.log('🏭 Environment detected - attempting HEIC conversion for mobile compatibility');
+  // Check if we're in production (Vercel doesn't support HEIC libraries)
+  if (process.env.NODE_ENV === 'production') {
+    console.log('🏭 Vercel production environment detected - HEIC libraries not available');
+    throw new Error('HEIC files must be converted client-side in production. Please ensure your browser supports HEIC conversion or convert to JPEG first.');
+  }
+  
+  console.log('🛠️ Development environment - attempting HEIC conversion for mobile compatibility');
   
   // Try HEIC conversion with multiple methods
   try {
