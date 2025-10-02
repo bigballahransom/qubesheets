@@ -104,12 +104,12 @@ export async function POST(
       organizationId,
       description: `Video uploaded by ${customerName || 'anonymous customer'}`,
       source: 'customer_upload',
-      // Initialize with pending analysis status
+      // Initialize with processing analysis status
       analysisResult: {
-        summary: 'Analysis pending...',
+        summary: 'AI video analysis in progress...',
         itemsCount: 0,
         totalBoxes: 0,
-        status: 'pending'
+        status: 'processing'
       },
       metadata: {
         uploadToken: token,

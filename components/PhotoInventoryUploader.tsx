@@ -4,7 +4,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Upload, Camera, Loader2, X, Package, Box, BoxesIcon, Video, Play, Clock } from 'lucide-react';
 import RealTimeUploadStatus from './RealTimeUploadStatus';
-import { uploadImageDirectly, uploadVideoDirectly } from '@/lib/directCloudinaryUpload';
 
 // S3UploadResult type for client-side usage
 interface S3UploadResult {
@@ -638,12 +637,19 @@ export default function PhotoInventoryUploader({
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [imageDescription, setImageDescription] = useState('');
-  const [processingStatus, setProcessingStatus] = useState<{[key: string]: 'processing' | 'completed' | 'failed'}>({});
+  const [processingStatus, setProcessingStatus] = useState<{[key: string]: 'processing' | 'completed' | 'failed' | string}>({});
   const [uploadMode, setUploadMode] = useState<'image' | 'video'>('image');
   const [hasVideoFiles, setHasVideoFiles] = useState(false);
   // Job tracking removed - using simple S3 upload with SQS instead
   const [s3UploadStatus, setS3UploadStatus] = useState<{[fileName: string]: 'uploading' | 'completed' | 'failed'}>({});
   const [s3UploadResults, setS3UploadResults] = useState<{[fileName: string]: S3UploadResult}>({});
+  
+  // Circuit breaker state for handling cascading failures
+  const [circuitBreakerState, setCircuitBreakerState] = useState({
+    consecutiveFailures: 0,
+    isOpen: false,
+    lastFailureTime: null as Date | null
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -841,10 +847,10 @@ export default function PhotoInventoryUploader({
     }
   };
 
-  // Upload raw file to S3 via server-side API with automatic retry
+  // Enhanced S3 upload with exponential backoff and timeout
   const uploadRawFileToS3 = async (file: File, fileNum: number): Promise<S3UploadResult | null> => {
     const maxRetries = 3;
-    const retryDelays = [1000, 2000]; // 1s, 2s delays between retries
+    const retryDelays = [1000, 2000, 4000]; // Exponential backoff: 1s, 2s, 4s
     const isVideo = isVideoFile(file);
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -868,34 +874,52 @@ export default function PhotoInventoryUploader({
 
         console.log(`📤 Using server-side upload for ${isVideo ? 'video' : 'image'}: ${file.name}`);
 
-        // Call server-side API to upload to S3
-        const response = await fetch('/api/upload-to-s3', {
-          method: 'POST',
-          body: formData,
-        });
+        // Enhanced fetch with timeout and better error handling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
 
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'S3 upload failed');
+        try {
+          const response = await fetch('/api/upload-to-s3', {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal
+          });
+
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            let errorMessage = 'S3 upload failed';
+            try {
+              const errorData = await response.json();
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+            }
+            throw new Error(errorMessage);
+          }
+
+          const result = await response.json();
+          s3Result = result.s3Result as S3UploadResult;
+
+          console.log(`✅ S3 upload successful on attempt ${attempt} for file ${fileNum}:`, s3Result.key);
+
+          // Update status and store result
+          setS3UploadStatus(prev => ({
+            ...prev,
+            [file.name]: 'completed'
+          }));
+          
+          setS3UploadResults(prev => ({
+            ...prev,
+            [file.name]: s3Result
+          }));
+
+          return s3Result;
+
+        } catch (fetchError) {
+          clearTimeout(timeoutId);
+          throw fetchError;
         }
-
-        const result = await response.json();
-        s3Result = result.s3Result as S3UploadResult;
-
-        console.log(`✅ S3 upload successful on attempt ${attempt} for file ${fileNum}:`, s3Result.key);
-
-        // Update status and store result
-        setS3UploadStatus(prev => ({
-          ...prev,
-          [file.name]: 'completed'
-        }));
-        
-        setS3UploadResults(prev => ({
-          ...prev,
-          [file.name]: s3Result
-        }));
-
-        return s3Result;
 
       } catch (error) {
         console.error(`❌ S3 upload attempt ${attempt}/${maxRetries} failed for file ${fileNum}:`, error);
@@ -910,103 +934,293 @@ export default function PhotoInventoryUploader({
           return null;
         }
         
-        // Wait before retrying (exponential backoff)
-        const delay = retryDelays[attempt - 1];
-        console.log(`⏳ Waiting ${delay}ms before retry attempt ${attempt + 1} for file ${fileNum}`);
+        // Wait before retrying with exponential backoff + jitter
+        const baseDelay = retryDelays[attempt - 1];
+        const jitter = Math.random() * 500; // Add up to 500ms jitter
+        const delay = baseDelay + jitter;
+        
+        console.log(`⏳ Waiting ${Math.round(delay)}ms before retry attempt ${attempt + 1} for file ${fileNum}`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
     
-    // This should never be reached due to the logic above, but TypeScript needs it
     return null;
   };
 
-  // Handle direct Cloudinary upload for large files (images only)
-  const handleDirectUpload = async (file: File, fileNum: number, s3Result?: S3UploadResult | null) => {
-    try {
-      console.log('📤 Starting direct Cloudinary upload for admin');
-      
-      // Only allow images
-      if (file.type.startsWith('video/')) {
-        throw new Error('Video uploads are not supported at this time.');
-      }
-      
-      // Upload directly to Cloudinary
-      const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET!;
-      
-      const cloudinaryResult = await uploadImageDirectly(file, uploadPreset, {
-        folder: `qubesheets/processed-images/${projectId}`,
-        context: 'admin_upload=true'
-      });
-      
-      console.log('✅ Direct Cloudinary upload successful:', cloudinaryResult);
-      
-      // Get base64 for analysis (images only)
-      let imageBuffer = null;
-      try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        const img = new Image();
+
+  // Circuit breaker utility functions
+  const checkCircuitBreaker = (): boolean => {
+    const FAILURE_THRESHOLD = 3;
+    const RESET_TIMEOUT = 30000; // 30 seconds
+    
+    if (circuitBreakerState.isOpen) {
+      const timeSinceLastFailure = circuitBreakerState.lastFailureTime 
+        ? Date.now() - circuitBreakerState.lastFailureTime.getTime()
+        : 0;
         
-        await new Promise((resolve, reject) => {
-          img.onload = () => {
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx?.drawImage(img, 0, 0);
-            imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-            resolve(null);
-          };
-          img.onerror = reject;
-          img.src = URL.createObjectURL(file);
+      if (timeSinceLastFailure > RESET_TIMEOUT) {
+        console.log('🔧 Circuit breaker reset - attempting to resume uploads');
+        setCircuitBreakerState({
+          consecutiveFailures: 0,
+          isOpen: false,
+          lastFailureTime: null
         });
-      } catch (error) {
-        console.warn('Could not generate base64:', error);
+        return false;
       }
-      
-      // Save metadata to database
-      const metadataUrl = `/api/projects/${projectId}/save-image-metadata`;
-      const metadataPayload = {
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type,
-        cloudinaryResult,
-        imageBuffer,
-        description: imageDescription,
-        // Include S3 information if available
-        s3RawFile: s3Result ? {
-          key: s3Result.key,
-          bucket: s3Result.bucket,
-          url: s3Result.url,
-          etag: s3Result.etag,
-          uploadedAt: s3Result.uploadedAt,
-          contentType: s3Result.contentType
-        } : undefined
-      };
-      
-      console.log('💾 Saving admin metadata to:', metadataUrl);
-      
-      const metadataResponse = await fetch(metadataUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(metadataPayload)
-      });
-      
-      if (!metadataResponse.ok) {
-        const errorData = await metadataResponse.text();
-        throw new Error(`Metadata save failed: ${metadataResponse.status} - ${errorData}`);
-      }
-      
-      const result = await metadataResponse.json();
-      console.log('✅ Admin metadata saved successfully:', result);
-      
-      return result;
-      
-    } catch (error) {
-      console.error('❌ Direct admin upload failed:', error);
-      throw error;
+      return true;
     }
+    
+    return circuitBreakerState.consecutiveFailures >= FAILURE_THRESHOLD;
+  };
+
+  const recordSuccess = () => {
+    if (circuitBreakerState.consecutiveFailures > 0) {
+      setCircuitBreakerState({
+        consecutiveFailures: 0,
+        isOpen: false,
+        lastFailureTime: null
+      });
+    }
+  };
+
+  const recordFailure = () => {
+    const newFailureCount = circuitBreakerState.consecutiveFailures + 1;
+    const shouldOpen = newFailureCount >= 3;
+    
+    setCircuitBreakerState({
+      consecutiveFailures: newFailureCount,
+      isOpen: shouldOpen,
+      lastFailureTime: new Date()
+    });
+    
+    if (shouldOpen) {
+      console.error('🚨 Circuit breaker opened - too many consecutive failures. Pausing uploads.');
+    }
+  };
+
+  // Enhanced concurrent upload with smart batching and retry logic
+  const processFilesBatch = async (files: File[], batchStart: number) => {
+    // Check circuit breaker before processing batch
+    if (checkCircuitBreaker()) {
+      console.warn('⚠️ Circuit breaker is open - skipping batch due to previous failures');
+      return files.map(() => ({ 
+        status: 'rejected' as const, 
+        reason: new Error('Circuit breaker open - uploads paused due to consecutive failures') 
+      }));
+    }
+
+    const results = await Promise.allSettled(
+      files.map(async (file, index) => {
+        const fileNum = batchStart + index + 1;
+        console.log(`📸 Processing file ${fileNum}/${selectedFiles.length}: ${file.name}`);
+        
+        // Update processing status for this file
+        setProcessingStatus(prev => ({
+          ...prev,
+          [file.name]: 'processing'
+        }));
+
+        return await processIndividualFile(file, fileNum);
+      })
+    );
+    
+    // Update circuit breaker based on batch results
+    const failures = results.filter(result => result.status === 'rejected');
+    const successes = results.filter(result => result.status === 'fulfilled');
+    
+    if (successes.length > 0) {
+      recordSuccess();
+    }
+    if (failures.length > 0) {
+      recordFailure();
+    }
+    
+    return results;
+  };
+
+  // Process individual file with retry logic
+  const processIndividualFile = async (file: File, fileNum: number, retryCount = 0): Promise<any> => {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff
+    
+    try {
+      return await uploadAndProcessFile(file, fileNum);
+    } catch (error) {
+      console.error(`❌ Error processing file ${fileNum} (attempt ${retryCount + 1}/${MAX_RETRIES + 1}):`, error);
+      
+      if (retryCount < MAX_RETRIES) {
+        const delay = RETRY_DELAYS[retryCount];
+        console.log(`⏳ Retrying file ${fileNum} in ${delay}ms...`);
+        
+        // Update status to show retry
+        setProcessingStatus(prev => ({
+          ...prev,
+          [file.name]: `retrying (${retryCount + 1}/${MAX_RETRIES})`
+        }));
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return await processIndividualFile(file, fileNum, retryCount + 1);
+      } else {
+        // Mark as failed after all retries
+        setProcessingStatus(prev => ({
+          ...prev,
+          [file.name]: 'failed'
+        }));
+        throw error;
+      }
+    }
+  };
+
+  // Core upload and processing logic (extracted from the for-loop)
+  const uploadAndProcessFile = async (file: File, fileNum: number) => {
+    // Detect if this is a video file
+    const isVideo = file.type.startsWith('video/');
+    let processedFile: File = file;
+    
+    // Step 0: Upload raw file to S3 BEFORE any processing
+    console.log(`📤 Step 0: Uploading raw file ${fileNum} to S3...`);
+    let s3Result: S3UploadResult | null = null;
+    try {
+      s3Result = await uploadRawFileToS3(file, fileNum);
+      if (s3Result) {
+        console.log(`✅ Raw file ${fileNum} uploaded to S3:`, s3Result.key);
+      } else {
+        console.log(`⚠️ S3 upload failed for file ${fileNum}, continuing with existing flow`);
+      }
+    } catch (s3Error) {
+      console.warn(`⚠️ S3 upload failed for file ${fileNum}:`, s3Error);
+      // Continue with existing functionality even if S3 fails
+    }
+
+    if (!isVideo) {
+      try {
+        processedFile = await processImageForMobile(file);
+      } catch (processingError) {
+        console.warn('⚠️ Image processing failed, using original file:', processingError);
+        processedFile = file;
+      }
+    } else {
+      console.log(`🎬 Skipping image processing for video file: ${file.name}`);
+    }
+
+    // Handle both images and videos
+    console.log(`📹 Processing ${isVideo ? 'video' : 'image'} file ${fileNum}: ${processedFile.name}`);
+    
+    let savedImage;
+    
+    if (isVideo) {
+      // Videos: Save metadata to MongoDB and trigger SQS processing
+      console.log(`🎬 Video ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
+      if (s3Result) {
+        const videoMetadata = {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          s3RawFile: {
+            key: s3Result.key,
+            bucket: s3Result.bucket,
+            url: s3Result.url,
+            etag: s3Result.etag,
+            uploadedAt: s3Result.uploadedAt,
+            contentType: s3Result.contentType
+          }
+        };
+
+        const metadataResponse = await fetch(`/api/projects/${projectId}/save-video-metadata`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(videoMetadata),
+          signal: AbortSignal.timeout(120000) // 2 minute timeout
+        });
+
+        if (!metadataResponse.ok) {
+          const errorText = await metadataResponse.text();
+          console.error(`❌ Failed to save video metadata for ${file.name}:`, errorText);
+          throw new Error(`Failed to save video metadata: ${errorText}`);
+        }
+
+        savedImage = await metadataResponse.json();
+        console.log(`✅ Video metadata saved for ${file.name}:`, savedImage);
+      } else {
+        console.error(`❌ No S3 result available for video ${file.name}`);
+        throw new Error('S3 upload failed');
+      }
+    } else {
+      // All images use S3 → MongoDB → SQS processing
+      console.log(`💾 Image ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
+      if (s3Result) {
+        // Convert image to base64 for analysis
+        let imageBuffer = null;
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          
+          await new Promise((resolve, reject) => {
+            img.onload = () => {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              ctx?.drawImage(img, 0, 0);
+              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+              resolve(null);
+            };
+            img.onerror = reject;
+            img.src = URL.createObjectURL(processedFile);
+          });
+        } catch (error) {
+          console.warn('Could not generate base64 for analysis:', error);
+        }
+
+        const imageMetadata = {
+          fileName: processedFile.name,
+          fileSize: processedFile.size,
+          fileType: processedFile.type,
+          imageBuffer,
+          s3RawFile: {
+            key: s3Result.key,
+            bucket: s3Result.bucket,
+            url: s3Result.url,
+            etag: s3Result.etag,
+            uploadedAt: s3Result.uploadedAt,
+            contentType: s3Result.contentType,
+            size: s3Result.size
+          }
+        };
+
+        const saveResponse = await fetch(`/api/projects/${projectId}/save-image-metadata`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(imageMetadata),
+          signal: AbortSignal.timeout(120000) // 2 minute timeout
+        });
+
+        if (!saveResponse.ok) {
+          const errorText = await saveResponse.text();
+          console.error(`❌ Failed to save image metadata for ${file.name}:`, errorText);
+          throw new Error(`Failed to save image metadata: ${errorText}`);
+        }
+
+        savedImage = await saveResponse.json();
+        console.log(`✅ Image metadata saved for ${file.name}:`, savedImage);
+      } else {
+        console.error(`❌ No S3 result available for image ${file.name}`);
+        throw new Error('S3 upload failed');
+      }
+    }
+
+    console.log(`✅ ${isVideo ? 'Video' : 'Image'} ${fileNum} saved and queued for processing:`, savedImage.imageId || savedImage.videoId);
+
+    // Mark as completed
+    setProcessingStatus(prev => ({
+      ...prev,
+      [file.name]: 'completed'
+    }));
+
+    return savedImage;
   };
 
   const handleAnalyze = async () => {
@@ -1016,248 +1230,72 @@ export default function PhotoInventoryUploader({
     setError(null);
 
     try {
-      console.log(`🚀 Starting async processing for ${selectedFiles.length} images...`);
+      console.log(`🚀 Starting concurrent processing for ${selectedFiles.length} files...`);
       
       let modalClosed = false;
+      let successfulUploads = 0;
+      let failedUploads = 0;
 
-      // Mobile-optimized sequential processing
-      const isMobile = isMobileDevice();
-      if (isMobile) {
-        console.log('📱 Mobile device detected - using optimized upload strategy');
+      const BATCH_SIZE = 5; // Process files in batches of 5
+      const batches: File[][] = [];
+      
+      // Split files into batches
+      for (let i = 0; i < selectedFiles.length; i += BATCH_SIZE) {
+        batches.push(selectedFiles.slice(i, i + BATCH_SIZE));
       }
       
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        const fileNum = i + 1;
+      // Process batches sequentially, but files within each batch concurrently
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const batchStart = batchIndex * BATCH_SIZE;
         
-        console.log(`📸 Processing image ${fileNum}/${selectedFiles.length}: ${file.name}`);
+        console.log(`📦 Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} files)`);
         
-        // Mobile: Add delay between uploads to prevent overwhelming the device
-        if (isMobile && i > 0) {
-          console.log('📱 Mobile: Adding delay between uploads...');
-          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
-        }
+        const results = await processFilesBatch(batch, batchStart);
         
-        // Update processing status for this file
-        setProcessingStatus(prev => ({
-          ...prev,
-          [file.name]: 'processing'
-        }));
-
-        try {
-          // Step 0: Upload raw file to S3 BEFORE any processing
-          console.log(`📤 Step 0: Uploading raw file ${fileNum} to S3...`);
-          let s3Result: S3UploadResult | null = null;
-          try {
-            s3Result = await uploadRawFileToS3(file, fileNum);
-            if (s3Result) {
-              console.log(`✅ Raw file ${fileNum} uploaded to S3:`, s3Result.key);
-            } else {
-              console.log(`⚠️ S3 upload failed for file ${fileNum}, continuing with existing flow`);
-            }
-          } catch (s3Error) {
-            console.warn(`⚠️ S3 upload failed for file ${fileNum}:`, s3Error);
-            // Continue with existing functionality even if S3 fails
-          }
-
-          // Step 1: Process mobile images to prevent upload failures (skip for videos)
-          let processedFile = file;
-          const isVideo = file.type.startsWith('video/');
-          
-          if (!isVideo) {
-            try {
-              processedFile = await processImageForMobile(file);
-            } catch (processingError) {
-              console.warn('⚠️ Image processing failed, using original file:', processingError);
-              processedFile = file;
-            }
+        // Count results
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            successfulUploads++;
           } else {
-            console.log(`🎬 Skipping image processing for video file: ${file.name}`);
+            failedUploads++;
+            console.error(`❌ Batch ${batchIndex + 1}, file ${index + 1} failed:`, result.reason);
           }
-
-          // Handle both images and videos
-          console.log(`📹 Processing ${isVideo ? 'video' : 'image'} file ${fileNum}: ${processedFile.name}`);
-          
-          // Step 1: Check if file is too large for regular upload
-          const PAYLOAD_LIMIT = 2 * 1024 * 1024; // 2MB
-          const shouldUseDirectUpload = processedFile.size > PAYLOAD_LIMIT;
-          let savedImage;
-          
-          console.log(`📊 Upload decision for file ${fileNum}:`, {
-            fileName: processedFile.name,
-            fileSize: processedFile.size,
-            fileSizeMB: (processedFile.size / (1024 * 1024)).toFixed(2),
-            payloadLimit: PAYLOAD_LIMIT,
-            shouldUseDirectUpload
+        });
+        
+        // Show notification after first successful batch
+        if (!modalClosed && successfulUploads > 0) {
+          const { toast } = await import('sonner');
+          toast.success(`Processing ${selectedFiles.length} file${selectedFiles.length > 1 ? 's' : ''}...`, {
+            description: 'Files will be processed automatically...',
+            duration: 4000,
           });
-          
-          if (isVideo) {
-            // Videos: Save metadata to MongoDB and trigger SQS processing
-            console.log(`🎬 Video ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
-            if (s3Result) {
-              try {
-                const videoMetadata = {
-                  fileName: file.name,
-                  fileSize: file.size,
-                  fileType: file.type,
-                  s3RawFile: {
-                    key: s3Result.key,
-                    bucket: s3Result.bucket,
-                    url: s3Result.url,
-                    etag: s3Result.etag,
-                    uploadedAt: s3Result.uploadedAt,
-                    contentType: s3Result.contentType
-                  }
-                };
+          modalClosed = true;
+        }
 
-                const metadataResponse = await fetch(`/api/projects/${projectId}/save-video-metadata`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify(videoMetadata),
-                });
+        // Immediate UI feedback - trigger gallery refresh
+        if (onImageSaved && successfulUploads > 0) {
+          console.log('🔄 Triggering gallery refresh...');
+          onImageSaved();
+        }
+      }
 
-                if (!metadataResponse.ok) {
-                  const errorText = await metadataResponse.text();
-                  console.error(`❌ Failed to save video metadata for ${file.name}:`, errorText);
-                  throw new Error(`Failed to save video metadata: ${errorText}`);
-                }
-
-                savedImage = await metadataResponse.json();
-                console.log(`✅ Video metadata saved for ${file.name}:`, savedImage);
-              } catch (metadataError) {
-                console.error(`❌ Error saving video metadata for ${file.name}:`, metadataError);
-                setProcessingStatus(prev => ({
-                  ...prev,
-                  [file.name]: 'failed'
-                }));
-                continue; // Skip to next file
-              }
-            } else {
-              console.error(`❌ No S3 result available for video ${file.name}`);
-              savedImage = { success: false, message: 'S3 upload failed' };
-            }
-          } else if (shouldUseDirectUpload) {
-            console.log(`📤 File ${fileNum} using direct Cloudinary upload (size > 2MB)`);
-            savedImage = await handleDirectUpload(processedFile, fileNum, s3Result);
-          } else {
-            // Regular upload for smaller files - use save-image-metadata endpoint to trigger SQS processing
-            console.log(`💾 Image ${fileNum} uploaded to S3, now saving metadata to MongoDB...`);
-            if (s3Result) {
-              try {
-                // Convert image to base64 for analysis
-                let imageBuffer = null;
-                try {
-                  const canvas = document.createElement('canvas');
-                  const ctx = canvas.getContext('2d');
-                  const img = new Image();
-                  
-                  await new Promise((resolve, reject) => {
-                    img.onload = () => {
-                      canvas.width = img.width;
-                      canvas.height = img.height;
-                      ctx?.drawImage(img, 0, 0);
-                      imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-                      resolve(null);
-                    };
-                    img.onerror = reject;
-                    img.src = URL.createObjectURL(processedFile);
-                  });
-                } catch (error) {
-                  console.warn('Could not generate base64 for analysis:', error);
-                }
-
-                const imageMetadata = {
-                  fileName: processedFile.name,
-                  fileSize: processedFile.size,
-                  fileType: processedFile.type,
-                  imageBuffer,
-                  s3RawFile: {
-                    key: s3Result.key,
-                    bucket: s3Result.bucket,
-                    url: s3Result.url,
-                    etag: s3Result.etag,
-                    uploadedAt: s3Result.uploadedAt,
-                    contentType: s3Result.contentType,
-                    size: s3Result.size
-                  }
-                };
-
-                console.log(`📱 Mobile upload debug - File details:`, {
-                  originalName: file.name,
-                  originalSize: file.size,
-                  originalType: file.type,
-                  processedName: processedFile.name,
-                  processedSize: processedFile.size,
-                  processedType: processedFile.type,
-                  compressionRatio: processedFile.size !== file.size ? `${((1 - processedFile.size / file.size) * 100).toFixed(1)}% reduced` : 'no compression',
-                  isMobile: isMobileDevice(),
-                  isIPhone: /iPhone/i.test(navigator.userAgent),
-                  userAgent: navigator.userAgent.substring(0, 100)
-                });
-
-                const saveResponse = await fetch(`/api/projects/${projectId}/save-image-metadata`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify(imageMetadata),
-                  // Add timeout for mobile networks
-                  signal: AbortSignal.timeout(120000) // 2 minute timeout for mobile
-                });
-
-                if (!saveResponse.ok) {
-                  const errorText = await saveResponse.text();
-                  console.error(`❌ Failed to save image metadata for ${file.name}:`, errorText);
-                  throw new Error(`Failed to save image metadata: ${errorText}`);
-                }
-
-                savedImage = await saveResponse.json();
-                console.log(`✅ Image metadata saved for ${file.name}:`, savedImage);
-              } catch (metadataError) {
-                console.error(`❌ Error saving image metadata for ${file.name}:`, metadataError);
-                setProcessingStatus(prev => ({
-                  ...prev,
-                  [file.name]: 'failed'
-                }));
-                continue; // Skip to next file
-              }
-            } else {
-              console.error(`❌ No S3 result available for image ${file.name}`);
-              savedImage = { success: false, message: 'S3 upload failed' };
-            }
-          }
-          console.log(`✅ ${isVideo ? 'Video' : 'Image'} ${fileNum} saved and queued for processing:`, savedImage.imageId || savedImage.videoId);
-
-          // Immediate UI feedback - trigger gallery refresh right away
-          if (onImageSaved) {
-            console.log('🔄 Triggering immediate gallery refresh...');
-            onImageSaved();
-          }
-
-          // SQS processing is automatically triggered by metadata save endpoints
-          setProcessingStatus(prev => ({
-            ...prev,
-            [file.name]: 'completed'
-          }));
-          
-          // Show notification after first successful save
-          if (!modalClosed) {
-            const { toast } = await import('sonner');
-            toast.success(`Saving ${selectedFiles.length} image${selectedFiles.length > 1 ? 's' : ''}...`, {
-              description: 'Images will be processed automatically...',
-              duration: 4000,
-            });
-            modalClosed = true;
-          }
-
-        } catch (fileError) {
-          console.error(`❌ Error processing file ${fileNum}:`, fileError);
-          setProcessingStatus(prev => ({
-            ...prev,
-            [file.name]: 'failed'
-          }));
+      // Final summary
+      console.log(`📊 Upload summary: ${successfulUploads} successful, ${failedUploads} failed`);
+      
+      if (failedUploads > 0) {
+        const { toast } = await import('sonner');
+        
+        if (circuitBreakerState.isOpen) {
+          toast.error(`Upload paused due to repeated failures`, {
+            description: `${successfulUploads} files uploaded before system protection activated. Will retry automatically in 30 seconds.`,
+            duration: 8000,
+          });
+        } else {
+          toast.warning(`${successfulUploads} files uploaded successfully, ${failedUploads} failed`, {
+            description: 'Check the status above for failed files. You can try uploading failed files again.',
+            duration: 6000,
+          });
         }
       }
 
@@ -1266,7 +1304,7 @@ export default function PhotoInventoryUploader({
       setError(null);
 
       // Simple completion - no job tracking needed with SQS
-      console.log('📋 [PhotoUploader] All images processed - closing');
+      console.log('📋 [PhotoUploader] All files processed - closing');
       handleReset();
       if (onClose) {
         onClose();
@@ -1280,7 +1318,7 @@ export default function PhotoInventoryUploader({
       return; // Exit here - no blocking analysis
 
     } catch (err) {
-      console.error('❌ Error in async image processing:', err);
+      console.error('❌ Error in concurrent file processing:', err);
       
       // Enhanced error logging for debugging
       if (err instanceof Error) {

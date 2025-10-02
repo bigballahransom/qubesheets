@@ -107,11 +107,12 @@ export async function POST(
         uploadSource: 'customer-upload-metadata',
         customerName: customerName || 'anonymous'
       },
-      // Initialize with pending analysis status
+      // Initialize with processing analysis status
       analysisResult: {
-        summary: 'Analysis pending...',
+        summary: 'AI analysis in progress...',
         itemsCount: 0,
-        totalBoxes: 0
+        totalBoxes: 0,
+        status: 'processing'
       }
     });
     

@@ -18,7 +18,8 @@ import {
   Eye,
   Loader2,
   Package,
-  X
+  X,
+  Copy
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,6 +57,18 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
   const [lastInventoryHash, setLastInventoryHash] = useState(null); // Hash of last inventory data to detect changes
   const [ongoingRequests, setOngoingRequests] = useState(new Set()); // Track ongoing requests to prevent duplication
   const inventoryAbortControllerRef = useRef(null); // AbortController for inventory polling
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    pageSize: 20,
+    totalItems: 0,
+    totalPages: 0,
+    hasNextPage: false,
+    hasPrevPage: false
+  });
+  const [deletingAll, setDeletingAll] = useState(false);
   
   // Operation states to prevent polling interference
   const [operationStates, setOperationStates] = useState({
@@ -218,7 +231,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     try {
       console.log('🔍 Fetching inventory items for project:', projectId);
       const inventoryResponse = await fetch(`/api/projects/${projectId}/inventory`, {
-        signal: abortSignal
+        signal: abortSignal || AbortSignal.timeout(20000) // 20 second timeout if no abort signal provided
       });
       if (!inventoryResponse.ok) {
         throw new Error('Failed to fetch inventory items');
@@ -278,32 +291,50 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     }
   };
 
-  // Fetch videos for the project
-  const fetchVideos = async () => {
+  // Fetch videos for the project with pagination
+  const fetchVideos = async (page = 1) => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/projects/${projectId}/videos`);
+      const response = await fetch(`/api/projects/${projectId}/videos/all?page=${page}&limit=20`, {
+        signal: AbortSignal.timeout(30000) // Increased to 30 second timeout
+      });
       
       if (!response.ok) {
         throw new Error('Failed to fetch videos');
       }
       
       const data = await response.json();
-      console.log('🎬 VideoGallery received videos:', data);
-      // Log individual video data to debug URL issues
-      data.forEach((video, index) => {
-        console.log(`🎬 Video ${index}:`, {
-          _id: video._id,
-          originalName: video.originalName,
-          s3RawFile: video.s3RawFile
-        });
+      console.log('🎬 VideoGallery received response:', data);
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // Update videos and pagination state
+      setVideos(data.videos || []);
+      setPagination(data.pagination || {
+        currentPage: 1,
+        pageSize: 20,
+        totalItems: 0,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPrevPage: false
       });
-      setVideos(data);
-      // Fetch inventory items after videos
-      await fetchInventoryItems();
+      setCurrentPage(page);
+      
+      // Fetch inventory items separately (not blocking video display)
+      if ((data.videos || []).length > 0) {
+        setTimeout(() => fetchInventoryItems(), 100);
+      }
     } catch (err) {
       console.error('Error fetching videos:', err);
-      setError(err.message);
+      
+      // Handle timeout errors specifically
+      if (err.name === 'AbortError' || err.message.includes('timeout')) {
+        setError('Video loading timed out. Please refresh the page or check your connection.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -311,7 +342,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
 
   useEffect(() => {
     if (!projectId) return;
-    fetchVideos();
+    fetchVideos(1);
   }, [projectId]);
 
   // Handle refresh trigger without interrupting playback
@@ -321,7 +352,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     // Only refresh if no video is playing
     if (!playingVideoId && !selectedVideo) {
       console.log('🔄 Refresh triggered, fetching videos...');
-      fetchVideos();
+      fetchVideos(currentPage);
     } else {
       console.log('⏸️ Skipping refresh - video is playing');
     }
@@ -448,7 +479,9 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
         throw new Error(`Invalid projectId: ${projectId}`);
       }
       
-      const response = await fetch(`/api/projects/${projectId}/videos/${videoId}/stream`);
+      const response = await fetch(`/api/projects/${projectId}/videos/${videoId}/stream`, {
+        signal: AbortSignal.timeout(8000) // 8 second timeout for stream URLs
+      });
       if (!response.ok) {
         throw new Error(`Failed to get stream URL: ${response.status} ${response.statusText}`);
       }
@@ -470,6 +503,12 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
       return url;
     } catch (error) {
       console.error('🎬 Failed to get stream URL for video:', videoId, 'Error:', error.message);
+      
+      // Handle timeout errors specifically
+      if (error.name === 'AbortError' || error.message.includes('timeout')) {
+        console.warn('🎬 Stream URL generation timed out for video:', videoId);
+      }
+      
       return null;
     } finally {
       removeOngoingRequest(requestId);
@@ -603,11 +642,13 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     try {
       const response = await fetch(`/api/projects/${projectId}/videos/${video._id}`, {
         method: 'DELETE',
-        signal: deleteAbortController.signal
+        signal: AbortSignal.timeout(30000) // 30 second timeout
       });
 
       if (!response.ok) {
-        throw new Error('Delete failed');
+        const errorData = await response.text();
+        console.error('Delete failed with status:', response.status, 'Error:', errorData);
+        throw new Error(`Delete failed: ${response.status} ${errorData}`);
       }
 
       // Remove from local state
@@ -625,14 +666,75 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
       
     } catch (error) {
       if (error.name === 'AbortError') {
-        console.log('⏸️ Delete was cancelled');
+        console.log('⏸️ Delete was cancelled or timed out');
+        if (error.message && error.message.includes('timeout')) {
+          alert('Delete timed out. Please check your connection and try again.');
+        }
         return;
       }
       console.error('Delete failed:', error);
-      alert('Delete failed. Please try again.');
+      alert(`Delete failed: ${error.message || 'Unknown error'}. Please try again.`);
     } finally {
       // Remove operation state when delete completes or fails
       removeOperation('isDeleting', video._id);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    const confirmMessage = `Are you sure you want to delete ALL ${pagination.totalItems} videos? This will delete videos from all pages, not just the current page. This action cannot be undone.`;
+    
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+    
+    // Double confirmation for safety
+    if (!confirm(`This will permanently delete ${pagination.totalItems} videos and all associated inventory items. Are you absolutely sure?`)) {
+      return;
+    }
+    
+    setDeletingAll(true);
+    
+    try {
+      const response = await fetch(`/api/projects/${projectId}/videos/all`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(60000) // 60 second timeout for bulk delete
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Delete failed: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Bulk delete successful:', result);
+      
+      // Clear local state
+      setVideos([]);
+      setPagination({
+        currentPage: 1,
+        pageSize: 20,
+        totalItems: 0,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPrevPage: false
+      });
+      setCurrentPage(1);
+      
+      // Refresh spreadsheet if provided
+      if (refreshSpreadsheet) {
+        try {
+          await refreshSpreadsheet();
+        } catch (error) {
+          console.error('Error refreshing after bulk delete:', error);
+        }
+      }
+      
+      alert(`Successfully deleted ${result.deletedVideos} videos and ${result.deletedInventoryItems} associated inventory items.`);
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      alert(`Failed to delete all videos: ${error.message}. Please try again.`);
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -651,6 +753,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: AbortSignal.timeout(10000), // 10 second timeout
         body: JSON.stringify({
           description: editDescription.trim(),
         }),
@@ -942,10 +1045,35 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
   return (
     <div>
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-          <VideoIcon className="w-5 h-5" />
-          Videos ({videos.length})
-        </h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Project Media</h3>
+            <p className="text-sm text-gray-500">
+              {pagination.totalItems} {pagination.totalItems === 1 ? 'video' : 'videos'} uploaded
+            </p>
+          </div>
+          {pagination.totalItems > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDeleteAll}
+              disabled={deletingAll}
+              className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+            >
+              {deletingAll ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Deleting All...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  Delete All Videos
+                </>
+              )}
+            </Button>
+          )}
+        </div>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -953,6 +1081,35 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
           <VideoCard key={video._id} video={video} />
         ))}
       </div>
+      
+      {/* Pagination Controls */}
+      {pagination.totalPages > 1 && (
+        <div className="mt-6 flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchVideos(currentPage - 1)}
+            disabled={!pagination.hasPrevPage || loading}
+          >
+            Previous
+          </Button>
+          
+          <div className="flex items-center gap-1 text-sm text-gray-600">
+            <span>Page {pagination.currentPage} of {pagination.totalPages}</span>
+            <span className="text-gray-400">•</span>
+            <span>{pagination.totalItems} total videos</span>
+          </div>
+          
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchVideos(currentPage + 1)}
+            disabled={!pagination.hasNextPage || loading}
+          >
+            Next
+          </Button>
+        </div>
+      )}
 
       {/* Video Detail Modal */}
       <Dialog open={selectedVideo !== null} onOpenChange={async (open) => {

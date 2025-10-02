@@ -113,12 +113,12 @@ export async function POST(
               uploadedAt: s3RawFile.uploadedAt
             } : null
           },
-          // Initialize with pending analysis status
+          // Initialize with processing analysis status
           analysisResult: {
-            summary: 'Analysis pending...',
+            summary: 'AI video analysis in progress...',
             itemsCount: 0,
             totalBoxes: 0,
-            status: 'pending'
+            status: 'processing'
           }
         }], { session });
         

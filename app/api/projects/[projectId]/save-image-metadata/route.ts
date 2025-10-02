@@ -34,7 +34,7 @@ export async function POST(
       fileName,
       fileSize,
       fileType,
-      cloudinaryResult,
+      cloudinaryResult, // Optional for backward compatibility
       userName = 'Admin User',
       imageBuffer, // Base64 encoded image data for analysis
       s3RawFile // S3 raw file information
@@ -96,9 +96,10 @@ export async function POST(
           mimeType: fileType,
           size: fileSize,
           data: buffer, // Store image data for analysis
-          cloudinaryPublicId: cloudinaryResult?.publicId,
-          cloudinaryUrl: cloudinaryResult?.url,
-          cloudinarySecureUrl: cloudinaryResult?.secureUrl,
+          // Cloudinary fields - optional for backward compatibility
+          cloudinaryPublicId: cloudinaryResult?.publicId || undefined,
+          cloudinaryUrl: cloudinaryResult?.url || undefined,
+          cloudinarySecureUrl: cloudinaryResult?.secureUrl || undefined,
           projectId,
           userId,
           organizationId: orgId,
@@ -131,12 +132,12 @@ export async function POST(
               uploadedAt: s3RawFile.uploadedAt
             } : null
           },
-          // Initialize with pending analysis status
+          // Initialize with processing analysis status
           analysisResult: {
-            summary: 'Analysis pending...',
+            summary: 'AI analysis in progress...',
             itemsCount: 0,
             totalBoxes: 0,
-            status: 'pending'
+            status: 'processing'
           }
         }], { session });
         

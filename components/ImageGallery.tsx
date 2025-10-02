@@ -16,7 +16,8 @@ import {
   Save,
   Loader2,
   Video,
-  Play
+  Play,
+  Copy
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -57,7 +58,7 @@ interface ImageData {
     summary: string;
     itemsCount: number;
     totalBoxes?: number;
-    status?: 'pending' | 'processing' | 'completed' | 'failed';
+    status?: 'pending' | 'processing' | 'completed' | 'failed' | 'duplicate';
     error?: string;
   };
   dataUrl?: string; // Base64 data URL for direct display
@@ -77,7 +78,7 @@ interface VideoData {
     summary: string;
     itemsCount: number;
     totalBoxes?: number;
-    status?: 'pending' | 'processing' | 'completed' | 'failed';
+    status?: 'pending' | 'processing' | 'completed' | 'failed' | 'duplicate';
     error?: string;
   };
   s3RawFile?: {
@@ -111,20 +112,45 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
   const [editDescription, setEditDescription] = useState('');
   const [updating, setUpdating] = useState(false);
   const [streamingVideo, setStreamingVideo] = useState<string | null>(null);
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    pageSize: 20,
+    totalItems: 0,
+    totalPages: 0,
+    hasNextPage: false,
+    hasPrevPage: false
+  });
+  const [deletingAll, setDeletingAll] = useState(false);
 
   // Fetch only images (videos are handled by VideoGallery in separate tab)
-  const fetchMedia = async () => {
+  const fetchMedia = async (page = 1) => {
     setLoading(true);
     try {
-      const imagesResponse = await fetch(`/api/projects/${projectId}/images`);
+      const imagesResponse = await fetch(`/api/projects/${projectId}/images/all?page=${page}&limit=20`);
       
       if (!imagesResponse.ok) {
         throw new Error('Failed to fetch images');
       }
       
-      const imagesData = await imagesResponse.json();
+      const data = await imagesResponse.json();
       
-      setImages(imagesData);
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      setImages(data.images || []);
+      setPagination(data.pagination || {
+        currentPage: 1,
+        pageSize: 20,
+        totalItems: 0,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPrevPage: false
+      });
+      setCurrentPage(page);
       // Clear videos since this gallery only shows images now
       setVideos([]);
     } catch (error) {
@@ -136,7 +162,7 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
   };
 
   useEffect(() => {
-    fetchMedia();
+    fetchMedia(1);
   }, [projectId]);
 
 
@@ -147,6 +173,10 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
 
   // Delete media item
   const handleDeleteItem = async (item: MediaItem) => {
+    if (!confirm(`Are you sure you want to delete "${item.originalName}"? This action cannot be undone.`)) {
+      return;
+    }
+
     try {
       const endpoint = isVideo(item) 
         ? `/api/projects/${projectId}/videos/${item._id}`
@@ -154,6 +184,7 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
       
       const response = await fetch(endpoint, {
         method: 'DELETE',
+        signal: AbortSignal.timeout(30000) // 30 second timeout
       });
       
       if (!response.ok) {
@@ -178,7 +209,71 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
       toast.success(`${isVideo(item) ? 'Video' : 'Image'} deleted successfully`);
     } catch (error) {
       console.error('Error deleting item:', error);
-      toast.error(`Failed to delete ${isVideo(item) ? 'video' : 'image'}`);
+      
+      // Handle timeout errors specifically
+      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('timeout'))) {
+        toast.error(`Delete timed out. Please check your connection and try again.`);
+      } else {
+        toast.error(`Failed to delete ${isVideo(item) ? 'video' : 'image'}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    const confirmMessage = `Are you sure you want to delete ALL ${pagination.totalItems} images? This will delete images from all pages, not just the current page. This action cannot be undone.`;
+    
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+    
+    // Double confirmation for safety
+    if (!confirm(`This will permanently delete ${pagination.totalItems} images and all associated inventory items. Are you absolutely sure?`)) {
+      return;
+    }
+    
+    setDeletingAll(true);
+    
+    try {
+      const response = await fetch(`/api/projects/${projectId}/images/all`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(60000) // 60 second timeout for bulk delete
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Delete failed: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ Bulk delete successful:', result);
+      
+      // Clear local state
+      setImages([]);
+      setPagination({
+        currentPage: 1,
+        pageSize: 20,
+        totalItems: 0,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPrevPage: false
+      });
+      setCurrentPage(1);
+      
+      // Refresh spreadsheet if provided
+      if (refreshSpreadsheet) {
+        try {
+          await refreshSpreadsheet();
+        } catch (error) {
+          console.error('Error refreshing after bulk delete:', error);
+        }
+      }
+      
+      toast.success(`Successfully deleted ${result.deletedImages} images and ${result.deletedInventoryItems} associated inventory items.`);
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+      toast.error(`Failed to delete all images: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -334,13 +429,36 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
         <div>
           <h3 className="text-lg font-semibold text-gray-900">Project Media</h3>
           <p className="text-sm text-gray-500">
-            {images.length} {images.length === 1 ? 'image' : 'images'}, {videos.length} {videos.length === 1 ? 'video' : 'videos'} uploaded
+            {pagination.totalItems} {pagination.totalItems === 1 ? 'image' : 'images'} uploaded
           </p>
         </div>
-        {/* <Button onClick={onUploadClick} className="flex items-center gap-2">
-          <Camera size={16} />
-          Upload Photo
-        </Button> */}
+        <div className="flex items-center gap-2">
+          {pagination.totalItems > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDeleteAll}
+              disabled={deletingAll}
+              className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+            >
+              {deletingAll ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Deleting All...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  Delete All Images
+                </>
+              )}
+            </Button>
+          )}
+          {/* <Button onClick={onUploadClick} className="flex items-center gap-2">
+            <Camera size={16} />
+            Upload Photo
+          </Button> */}
+        </div>
       </div>
 
       {/* Empty state */}
@@ -596,6 +714,35 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+      
+      {/* Pagination Controls */}
+      {pagination.totalPages > 1 && (
+        <div className="mt-6 flex items-center justify-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchMedia(currentPage - 1)}
+            disabled={!pagination.hasPrevPage || loading}
+          >
+            Previous
+          </Button>
+          
+          <div className="flex items-center gap-1 text-sm text-gray-600">
+            <span>Page {pagination.currentPage} of {pagination.totalPages}</span>
+            <span className="text-gray-400">•</span>
+            <span>{pagination.totalItems} total images</span>
+          </div>
+          
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchMedia(currentPage + 1)}
+            disabled={!pagination.hasNextPage || loading}
+          >
+            Next
+          </Button>
         </div>
       )}
 

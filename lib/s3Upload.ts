@@ -108,14 +108,27 @@ export async function uploadFileToS3(
     key,
     bucket: bucketName,
     size: file.size,
+    sizeInMB: (file.size / 1024 / 1024).toFixed(2) + 'MB',
     type: file.type,
     bufferSize: fileBuffer.length
   });
 
+  // Log warning for large files
+  if (file.size > 50 * 1024 * 1024) { // 50MB
+    console.warn(`⚠️ Large file upload: ${(file.size / 1024 / 1024).toFixed(2)}MB - this may take several minutes`);
+  }
+
   try {
     // Skip bucket tests and upload directly (matching AWS CLI behavior)
     console.log('📤 Uploading directly to S3...');
-    const putResult = await s3.putObject(uploadParams).promise();
+    
+    // Add timeout protection to S3 upload (5 minutes for large videos)
+    const putResult = await Promise.race([
+      s3.putObject(uploadParams).promise(),
+      new Promise<any>((_, reject) => 
+        setTimeout(() => reject(new Error('S3 upload timeout - file too large or network issue')), 300000)
+      )
+    ]) as AWS.S3.PutObjectOutput;
     
     // Construct result object manually since putObject doesn't return Location
     const result = {

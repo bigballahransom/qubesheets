@@ -117,6 +117,10 @@ export default function Spreadsheet({
   const [selectedMedia, setSelectedMedia] = useState(null); // Full media data with details
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [selectedRows, setSelectedRows] = useState([]);
+  
+  // Media caching to prevent duplicate requests
+  const [mediaCache, setMediaCache] = useState(new Map());
+  const [ongoingRequests, setOngoingRequests] = useState(new Set());
 
   
   const cellInputRef = useRef(null);
@@ -124,63 +128,151 @@ export default function Spreadsheet({
   const columnRefs = useRef({});
   
 
-  // Fetch media data on-demand when user clicks
+  // Fetch media data on-demand when user clicks with caching and deduplication
   const fetchMediaData = async (type, id) => {
+    // Global timeout for the entire media loading operation
+    return Promise.race([
+      fetchMediaDataInternal(type, id),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Media loading timed out')), 15000)
+      )
+    ]);
+  };
+
+  const fetchMediaDataInternal = async (type, id) => {
+    console.log(`📡 Fetching ${type} data for:`, id);
+    
+    // Check cache first
+    const cacheKey = `${type}-${id}`;
+    if (mediaCache.has(cacheKey)) {
+      console.log(`📋 Using cached ${type} data for:`, id);
+      return mediaCache.get(cacheKey);
+    }
+
+    // Check if request is already ongoing
+    if (ongoingRequests.has(cacheKey)) {
+      console.log(`⏸️ Request for ${type} ${id} already in progress, waiting...`);
+      // Wait for ongoing request to complete
+      while (ongoingRequests.has(cacheKey)) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      // Check cache again
+      if (mediaCache.has(cacheKey)) {
+        return mediaCache.get(cacheKey);
+      }
+    }
+
+    // Mark request as ongoing
+    setOngoingRequests(prev => new Set(prev).add(cacheKey));
+    
     try {
-      console.log(`📡 Fetching ${type} data for:`, id);
+      let mediaData;
       
       if (type === 'image') {
-        // Fetch from bulk images endpoint to get dataUrl
-        const response = await fetch(`/api/projects/${projectId}/images`);
+        // Use optimized thumbnail endpoint for better performance
+        const response = await fetch(`/api/projects/${projectId}/images/${id}/thumbnail?width=800&height=600&quality=85`, {
+          signal: AbortSignal.timeout(30000) // 30 second timeout
+        });
         if (!response.ok) {
           const errorText = await response.text();
-          console.error('❌ Images API error:', {
+          console.error('❌ Image thumbnail API error:', {
             status: response.status,
             statusText: response.statusText,
             errorText
           });
-          throw new Error(`Failed to fetch images: ${response.status} ${response.statusText}`);
-        }
-        const images = await response.json();
-        const imageData = images.find(img => img._id === id);
-        
-        if (!imageData) {
-          throw new Error(`Image not found: ${id}`);
+          throw new Error(`Failed to fetch image thumbnail: ${response.status} ${response.statusText}`);
         }
         
-        return imageData;
+        // Get the optimized thumbnail blob and convert to data URL
+        const blob = await response.blob();
+        const dataUrl = URL.createObjectURL(blob);
         
+        // Log compression info from headers
+        const originalSize = response.headers.get('X-Original-Size');
+        const compressionRatio = response.headers.get('X-Compression-Ratio');
+        const thumbnailSize = response.headers.get('X-Thumbnail-Size');
+        
+        console.log(`📊 Thumbnail optimized: ${thumbnailSize}, ${compressionRatio} reduction`);
+        
+        // Create image data object
+        mediaData = {
+          _id: id,
+          dataUrl: dataUrl,
+          mimeType: response.headers.get('content-type') || 'image/jpeg',
+          type: 'image',
+          isThumbnail: true,
+          originalSize: originalSize ? parseInt(originalSize) : null,
+          compressionRatio: compressionRatio
+        };
       } else if (type === 'video') {
-        // Fetch from bulk videos endpoint to get metadata
-        const response = await fetch(`/api/projects/${projectId}/videos`);
-        if (!response.ok) {
-          throw new Error('Failed to fetch videos');
-        }
-        const videos = await response.json();
-        const videoData = videos.find(video => video._id === id);
-        
-        if (!videoData) {
-          throw new Error(`Video not found: ${id}`);
+        // First fetch video metadata without streaming URL for better performance
+        const metadataResponse = await fetch(`/api/projects/${projectId}/videos/${id}/metadata`, {
+          signal: AbortSignal.timeout(60000) // 60 second timeout for videos
+        });
+        if (!metadataResponse.ok) {
+          throw new Error(`Failed to fetch video metadata: ${metadataResponse.status} ${metadataResponse.statusText}`);
         }
         
-        // Get stream URL if it's an S3 video
-        if (videoData.s3RawFile?.key) {
-          const streamResponse = await fetch(`/api/projects/${projectId}/videos/${id}/stream`);
-          if (streamResponse.ok) {
-            const streamData = await streamResponse.json();
-            videoData.streamUrl = streamData.streamUrl;
+        const metadataData = await metadataResponse.json();
+        mediaData = {
+          ...metadataData.video,
+          type: 'video'
+        };
+        
+        // Fetch streaming URL from dedicated endpoint with retry logic
+        let streamSuccess = false;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            console.log(`🎬 Fetching stream URL (attempt ${attempt}/2)`);
+            const streamResponse = await fetch(`/api/projects/${projectId}/videos/${id}/stream`, {
+              signal: AbortSignal.timeout(5000) // 5 second timeout per attempt
+            });
+            
+            if (streamResponse.ok) {
+              const streamData = await streamResponse.json();
+              mediaData.streamUrl = streamData.streamUrl;
+              console.log(`🎬 Auto-loaded streaming URL from endpoint: ${streamData.streamUrl}`);
+              streamSuccess = true;
+              break;
+            } else {
+              console.warn(`🎬 Stream endpoint failed (attempt ${attempt}): ${streamResponse.status}`);
+              if (attempt === 2) {
+                mediaData.streamUrl = `/api/projects/${projectId}/videos/${id}`;
+              }
+            }
+          } catch (streamError) {
+            console.warn(`🎬 Stream endpoint error (attempt ${attempt}):`, streamError.message);
+            if (attempt === 2) {
+              // If both attempts fail, provide a basic fallback
+              console.warn('🎬 All stream attempts failed, using direct video endpoint');
+              mediaData.streamUrl = `/api/projects/${projectId}/videos/${id}`;
+              mediaData.streamError = true; // Flag for UI to handle gracefully
+            }
+            // Small delay before retry
+            if (attempt === 1) await new Promise(resolve => setTimeout(resolve, 500));
           }
         }
-        
-        return videoData;
+      } else {
+        throw new Error(`Unknown media type: ${type}`);
       }
+
+      // Cache the result
+      setMediaCache(prev => new Map(prev).set(cacheKey, mediaData));
       
-      throw new Error(`Unknown media type: ${type}`);
-    } catch (error) {
-      console.error(`Error fetching ${type} data:`, error);
-      throw error;
-    }
+      return mediaData;
+      } catch (error) {
+        console.error(`Error fetching ${type} data:`, error);
+        throw error;
+      } finally {
+        // Remove from ongoing requests
+        setOngoingRequests(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(cacheKey);
+          return newSet;
+        });
+      }
   };
+
 
   // Handle media preview with on-demand loading
   const handleMediaPreview = async (type, id, name) => {
@@ -194,7 +286,28 @@ export default function Spreadsheet({
       
     } catch (error) {
       console.error(`Error loading ${type} preview:`, error);
-      setSelectedMedia(null);
+      
+      // Handle timeout errors specifically
+      if (error.name === 'AbortError' || error.message.includes('timeout') || error.message.includes('timed out')) {
+        const { toast } = await import('sonner');
+        toast.error(`${type === 'video' ? 'Video' : 'Image'} loading timed out`, {
+          description: 'The file is taking too long to load. Please try again or check your connection.',
+          duration: 5000,
+        });
+      } else {
+        const { toast } = await import('sonner');
+        toast.error(`Failed to load ${type}`, {
+          description: error.message || 'An unexpected error occurred',
+          duration: 5000,
+        });
+      }
+      
+      // Show error state in modal
+      setSelectedMedia({
+        type,
+        error: true,
+        errorMessage: error.message || 'Failed to load media'
+      });
     } finally {
       setLoadingMedia(false);
     }
@@ -1701,9 +1814,31 @@ useEffect(() => {
           </DialogHeader>
           
           {loadingMedia ? (
-            <div className="flex items-center justify-center py-8">
+            <div className="flex flex-col items-center justify-center py-8 space-y-3">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-              <span className="ml-2 text-gray-600">Loading media...</span>
+              <div className="text-center">
+                <p className="text-gray-600">Loading {previewMedia?.type || 'media'}...</p>
+                {previewMedia?.type === 'video' && (
+                  <p className="text-sm text-gray-500 mt-1">This may take a moment for large videos</p>
+                )}
+              </div>
+            </div>
+          ) : selectedMedia?.error ? (
+            // Error state
+            <div className="flex flex-col items-center justify-center py-12 space-y-4">
+              <div className="p-4 bg-red-50 rounded-full">
+                <X className="w-8 h-8 text-red-500" />
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-medium text-gray-900">Unable to load {selectedMedia.type}</p>
+                <p className="text-sm text-gray-500 mt-1">{selectedMedia.errorMessage}</p>
+              </div>
+              <button
+                onClick={() => handleMediaPreview(previewMedia.type, previewMedia.id, previewMedia.name)}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+              >
+                Try Again
+              </button>
             </div>
           ) : selectedMedia ? (
             <div className="space-y-4">
@@ -1733,15 +1868,55 @@ useEffect(() => {
                       className="w-full h-auto max-h-96 object-contain"
                       style={{ maxHeight: '400px' }}
                       onLoadedMetadata={(e) => {
+                        console.log('Video metadata loaded successfully');
                         e.target.currentTime = 0;
                       }}
                       onError={(e) => {
-                        console.error('Video stream error:', e);
+                        const videoElement = e.target;
+                        const error = videoElement.error;
+                        console.error('Video stream error details:', {
+                          error: error,
+                          code: error?.code,
+                          message: error?.message,
+                          MEDIA_ERR_ABORTED: error?.code === 1 ? 'MEDIA_ERR_ABORTED' : null,
+                          MEDIA_ERR_NETWORK: error?.code === 2 ? 'MEDIA_ERR_NETWORK' : null,
+                          MEDIA_ERR_DECODE: error?.code === 3 ? 'MEDIA_ERR_DECODE' : null,
+                          MEDIA_ERR_SRC_NOT_SUPPORTED: error?.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' : null,
+                          streamUrl: selectedMedia.streamUrl,
+                          videoId: selectedMedia._id,
+                          readyState: videoElement.readyState,
+                          networkState: videoElement.networkState,
+                          currentSrc: videoElement.currentSrc
+                        });
+                        
+                        // Test the URL directly
+                        fetch(selectedMedia.streamUrl, { method: 'HEAD' })
+                          .then(response => {
+                            console.log('Direct URL test:', {
+                              url: selectedMedia.streamUrl,
+                              status: response.status,
+                              statusText: response.statusText,
+                              headers: Object.fromEntries(response.headers.entries())
+                            });
+                          })
+                          .catch(fetchError => {
+                            console.error('Direct URL test failed:', {
+                              url: selectedMedia.streamUrl,
+                              error: fetchError.message
+                            });
+                          });
+                      }}
+                      onCanPlay={() => {
+                        console.log('Video can start playing');
                       }}
                     />
                   ) : (
-                    <div className="w-full h-96 flex items-center justify-center">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                    // Video streaming URL not available
+                    <div className="w-full h-96 flex flex-col items-center justify-center gap-4 bg-gray-100">
+                      <Video className="w-12 h-12 text-gray-400" />
+                      <p className="text-sm text-gray-600 text-center">
+                        Video not available
+                      </p>
                     </div>
                   )
                 )}

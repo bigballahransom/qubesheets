@@ -5,6 +5,7 @@ import { uploadFileToS3 } from '@/lib/s3Upload';
 import { sendImageProcessingMessage, sendVideoProcessingMessage } from '@/lib/sqsUtils';
 
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
   try {
     // Check authentication
     const authContext = await getAuthContext();
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`📤 S3 Upload API - Processing file: ${file.name} for project: ${projectId}`);
+    console.log(`📤 S3 Upload API - Processing file: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB) for project: ${projectId}`);
 
     // Detect if this is a video file
     const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|avi|webm|mkv)$/i.test(file.name);
@@ -50,7 +51,8 @@ export async function POST(request: NextRequest) {
         contentType: file.type
       });
 
-      console.log(`✅ S3 Upload API - Success: ${s3Result.key}`);
+      const uploadTime = Date.now() - startTime;
+      console.log(`✅ S3 Upload API - Success: ${s3Result.key} (${uploadTime}ms)`);
 
       // Note: SQS message will be sent later by save-image-metadata/save-video-metadata 
       // with the actual imageId/videoId after the record is created in MongoDB
@@ -68,16 +70,18 @@ export async function POST(request: NextRequest) {
           contentType: s3Result.contentType,
           size: s3Result.size
         },
-        sqsMessageId
+        sqsMessageId,
+        uploadTimeMs: uploadTime
       });
 
     } catch (s3Error) {
-      console.error('❌ S3 Upload API - Failed:', s3Error);
+      const uploadTime = Date.now() - startTime;
+      console.error(`❌ S3 Upload API - Failed after ${uploadTime}ms:`, s3Error);
       
       const errorMessage = s3Error instanceof Error ? s3Error.message : 'Unknown S3 upload error';
       
       return NextResponse.json(
-        { error: `S3 upload failed: ${errorMessage}` },
+        { error: `S3 upload failed: ${errorMessage}`, uploadTimeMs: uploadTime },
         { status: 500 }
       );
     }

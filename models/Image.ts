@@ -19,6 +19,10 @@ export interface IImage extends Document {
     status?: 'pending' | 'processing' | 'completed' | 'failed';
     error?: string;
   };
+  // Cloudinary storage - optional for backward compatibility
+  cloudinaryPublicId?: string;
+  cloudinaryUrl?: string;
+  cloudinarySecureUrl?: string;
   // S3 raw file storage information
   s3RawFile?: {
     key: string;
@@ -56,6 +60,10 @@ const ImageSchema: Schema = new Schema(
       status: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
       error: { type: String }
     },
+    // Cloudinary storage - optional for backward compatibility
+    cloudinaryPublicId: { type: String, required: false },
+    cloudinaryUrl: { type: String, required: false },
+    cloudinarySecureUrl: { type: String, required: false },
     // S3 raw file storage
     s3RawFile: {
       key: { type: String, index: true }, // Index for fast SQS correlation

@@ -686,10 +686,34 @@ useEffect(() => {
   }, [currentProject, spreadsheetColumns]);
 
   // Handle image saved callback
-  const handleImageSaved = useCallback(() => {
+  const handleImageSaved = useCallback(async () => {
     // Force re-render of image gallery to show new image
     setImageGalleryKey(prev => prev + 1);
-  }, []);
+    
+    // Trigger processing status refresh to show new uploads in the notification
+    if (currentProject?._id) {
+      try {
+        const statusResponse = await fetch(`/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`);
+        if (statusResponse.ok) {
+          const syncData = await statusResponse.json();
+          console.log('📊 Processing status refresh after upload:', {
+            processingImages: syncData.processingImages,
+            processingVideos: syncData.processingVideos,
+            processingStatus: syncData.processingStatus
+          });
+          
+          // Update processing status and notification
+          setProcessingStatus(syncData.processingStatus || []);
+          setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
+          
+          // Update last check time
+          setLastUpdateCheck(syncData.lastChecked);
+        }
+      } catch (error) {
+        console.error('Error refreshing processing status after upload:', error);
+      }
+    }
+  }, [currentProject?._id, lastUpdateCheck]);
   
   // Function to convert inventory items to spreadsheet rows
   const convertItemsToRows = useCallback((items) => {
