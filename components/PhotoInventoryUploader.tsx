@@ -1227,12 +1227,14 @@ export default function PhotoInventoryUploader({
           }
         };
 
-        const saveResponse = await fetch(`/api/projects/${projectId}/save-image-metadata`, {
+        // Use simple FormData upload like CustomerPhotoUploader for reliability
+        const formData = new FormData();
+        formData.append('image', processedFile);
+        formData.append('description', imageDescription || 'Admin upload via PhotoInventoryUploader');
+
+        const saveResponse = await fetch(`/api/projects/${projectId}/upload-simple`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(imageMetadata),
+          body: formData,
           signal: AbortSignal.timeout(120000) // 2 minute timeout
         });
 
