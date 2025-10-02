@@ -19,7 +19,7 @@ const s3 = new AWS.S3({
 });
 
 // Helper function to detect HEIC files server-side
-function isHeicFile(fileName: string, mimeType?: string): boolean {
+function isHeicFile(fileName: string, mimeType?: string, hasClientBuffer = false): boolean {
   const fileNameLower = fileName.toLowerCase();
   const mimeTypeLower = mimeType?.toLowerCase() || '';
   
@@ -30,15 +30,17 @@ function isHeicFile(fileName: string, mimeType?: string): boolean {
                         mimeTypeLower === 'image/heif';
   
   // iPhone photos might be HEIF format even with .jpeg extension
-  // BUT: If we have a buffer (meaning client already converted it), don't treat as HEIC
-  // This prevents double-conversion attempts on already-converted files
-  const isPotentialIPhoneHeif = fileNameLower.startsWith('img_') &&
+  // BUT: Only detect if this is for server-side processing (no client buffer provided)
+  // If client provided imageBuffer, it means the file was already processed client-side
+  const isPotentialIPhoneHeif = !hasClientBuffer && 
+                               fileNameLower.startsWith('img_') &&
                                fileNameLower.endsWith('.jpeg') &&
                                (mimeTypeLower === 'image/jpeg' || mimeTypeLower === '');
   
   console.log('🔍 Server HEIC detection:', {
     fileName,
     mimeType,
+    hasClientBuffer,
     isStandardHeic,
     isPotentialIPhoneHeif,
     finalResult: isStandardHeic || isPotentialIPhoneHeif
@@ -198,7 +200,7 @@ export async function POST(
       orgId,
       hasImageBuffer: !!imageBuffer,
       hasS3RawFile: !!s3RawFile,
-      isHeicDetected: s3RawFile ? isHeicFile(fileName, fileType) : false
+      isHeicDetected: s3RawFile ? isHeicFile(fileName, fileType, !!imageBuffer) : false
     });
     
     // Verify project exists and user has access
@@ -225,7 +227,7 @@ export async function POST(
           { status: 400 }
         );
       }
-    } else if (s3RawFile && isHeicFile(fileName, fileType)) {
+    } else if (s3RawFile && isHeicFile(fileName, fileType, false)) {
       // Handle HEIC files from mobile: download from S3 and convert
       console.log('📱 No imageBuffer provided but S3 raw file is HEIC - attempting server-side conversion');
       
