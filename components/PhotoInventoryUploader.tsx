@@ -747,11 +747,16 @@ export default function PhotoInventoryUploader({
           try {
             console.log('🔄 Converting HEIC file on client:', file.name);
             finalFile = await convertHeicToJpeg(file);
-            console.log('✅ Client-side HEIC conversion successful for', file.name);
+            console.log('✅ Client-side HEIC conversion successful for', file.name, 'New type:', finalFile.type);
           } catch (conversionError) {
-            console.log('⚠️ Client-side HEIC conversion failed for', file.name, '- keeping original file');
-            console.error('Conversion error:', conversionError);
-            finalFile = file; // Keep original HEIC file as fallback
+            console.error('❌ Client-side HEIC conversion failed for', file.name, ':', conversionError);
+            
+            // In production, HEIC files that fail conversion should be rejected
+            if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+              throw new Error(`HEIC conversion failed for ${file.name}. Please convert to JPEG using your device's Photos app and try again.`);
+            }
+            
+            finalFile = file; // Keep original HEIC file as fallback for development
           }
         }
 
