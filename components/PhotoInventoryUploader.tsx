@@ -742,24 +742,8 @@ export default function PhotoInventoryUploader({
           continue;
         }
 
-        // Smart HEIC conversion: Universal client-side strategy
-        if (isHeic || (isPotentialImage && hasImageExtension && file.name.toLowerCase().includes('.heic'))) {
-          // Universal Strategy: Always try client conversion first (mobile and desktop)
-          try {
-            console.log('🔄 Converting HEIC file on client:', file.name);
-            finalFile = await convertHeicToJpeg(file);
-            console.log('✅ Client-side HEIC conversion successful for', file.name, 'New type:', finalFile.type);
-          } catch (conversionError) {
-            console.error('❌ Client-side HEIC conversion failed for', file.name, ':', conversionError);
-            
-            // In production, HEIC files that fail conversion should be rejected
-            if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-              throw new Error(`HEIC conversion failed for ${file.name}. Please convert to JPEG using your device's Photos app and try again.`);
-            }
-            
-            finalFile = file; // Keep original HEIC file as fallback for development
-          }
-        }
+        // Skip HEIC conversion during file selection - do it during upload like CustomerPhotoUploader
+        // This matches the working CustomerPhotoUploader pattern
 
         console.log(`✅ Final file ${i + 1}: ${finalFile.name} (${finalFile.type}, ${finalFile.size} bytes)`);
         validFiles.push(finalFile);
@@ -853,26 +837,43 @@ export default function PhotoInventoryUploader({
     const retryDelays = [1000, 2000, 4000]; // Exponential backoff: 1s, 2s, 4s
     const isVideo = isVideoFile(file);
     
+    // HEIC conversion before upload (like CustomerPhotoUploader)
+    let finalFile = file;
+    const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || 
+                   file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
+    
+    if (!isVideo && isHeic) {
+      try {
+        console.log('🔍 Converting HEIC file before upload:', file.name);
+        finalFile = await convertHeicToJpeg(file);
+        console.log('✅ HEIC conversion successful for upload:', finalFile.name, finalFile.type);
+      } catch (conversionError) {
+        console.error('❌ HEIC conversion failed before upload:', conversionError);
+        // Keep original file as fallback
+        finalFile = file;
+      }
+    }
+    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(`📤 S3 upload attempt ${attempt}/${maxRetries} for file ${fileNum}: ${file.name}`);
+        console.log(`📤 S3 upload attempt ${attempt}/${maxRetries} for file ${fileNum}: ${finalFile.name}`);
         
         // Update S3 upload status with retry info
         const statusText = attempt === 1 ? 'uploading' : `retrying (${attempt}/${maxRetries})`;
         setS3UploadStatus(prev => ({
           ...prev,
-          [file.name]: statusText as any
+          [finalFile.name]: statusText as any
         }));
 
         let s3Result: S3UploadResult;
 
         // Use server-side upload for both images and videos
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', finalFile);
         formData.append('projectId', projectId || 'unknown');
         formData.append('fileIndex', fileNum.toString());
 
-        console.log(`📤 Using server-side upload for ${isVideo ? 'video' : 'image'}: ${file.name}`);
+        console.log(`📤 Using server-side upload for ${isVideo ? 'video' : 'image'}: ${finalFile.name}`);
 
         // Enhanced fetch with timeout and better error handling
         const controller = new AbortController();
