@@ -7,6 +7,115 @@ import Project from '@/models/Project';
 import { sendImageProcessingMessage } from '@/lib/sqsUtils';
 import mongoose from 'mongoose';
 import { logUploadActivity } from '@/lib/activity-logger';
+import sharp from 'sharp';
+import AWS from 'aws-sdk';
+
+// Configure AWS S3 for downloading HEIC files
+const s3 = new AWS.S3({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || process.env.SECRET_AWS_ACCESS_KEY,
+  region: process.env.AWS_REGION || 'us-east-1',
+  signatureVersion: 'v4'
+});
+
+// Helper function to detect HEIC files server-side
+function isHeicFile(fileName: string, mimeType?: string): boolean {
+  const fileNameLower = fileName.toLowerCase();
+  const mimeTypeLower = mimeType?.toLowerCase() || '';
+  
+  return (
+    fileNameLower.endsWith('.heic') || 
+    fileNameLower.endsWith('.heif') ||
+    mimeTypeLower === 'image/heic' ||
+    mimeTypeLower === 'image/heif'
+  );
+}
+
+// Production-safe server-side HEIC handling (copied from customer-upload)
+async function convertHeicToJpeg(buffer: Buffer): Promise<{ buffer: Buffer; mimeType: string; originalName: string; convertedName: string }> {
+  console.log('🔧 Attempting server-side HEIC conversion...');
+  
+  // In production (Vercel), prioritize stability over server-side conversion
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (isProduction) {
+    console.log('🏭 Vercel production environment detected - skipping complex HEIC conversion');
+    throw new Error('HEIC files require client-side conversion in production. Please ensure your browser converted this file before upload, or try converting to JPEG using your device\'s photo app.');
+  }
+  
+  // Development environment - try full conversion
+  try {
+    console.log('📦 Attempting conversion with heic-convert...');
+    const convert = require('heic-convert');
+    
+    const convertedBuffer = await convert({
+      buffer: buffer,
+      format: 'JPEG',
+      quality: 0.8
+    });
+    
+    console.log('✅ Server-side heic-convert conversion successful');
+    return {
+      buffer: Buffer.from(convertedBuffer),
+      mimeType: 'image/jpeg',
+      originalName: 'original.heic',
+      convertedName: 'converted.jpg'
+    };
+    
+  } catch (heicConvertError) {
+    console.log('⚠️ heic-convert failed, trying Sharp...', heicConvertError);
+    
+    // Fallback to Sharp (may work if libheif is compiled)
+    try {
+      const convertedBuffer = await sharp(buffer)
+        .jpeg({ quality: 80 })
+        .toBuffer();
+      
+      console.log('✅ Server-side Sharp HEIC conversion successful');
+      return {
+        buffer: convertedBuffer,
+        mimeType: 'image/jpeg',
+        originalName: 'original.heic',
+        convertedName: 'converted.jpg'
+      };
+      
+    } catch (sharpError) {
+      console.log('❌ Both heic-convert and Sharp failed:', { heicConvertError, sharpError });
+      
+      // If both fail, provide comprehensive guidance
+      const errorDetails: string[] = [];
+      if (heicConvertError && typeof heicConvertError === 'object' && 'message' in heicConvertError && heicConvertError.message) {
+        errorDetails.push(`heic-convert: ${heicConvertError.message}`);
+      }
+      if (sharpError && typeof sharpError === 'object' && 'message' in sharpError && sharpError.message) {
+        errorDetails.push(`sharp: ${sharpError.message}`);
+      }
+      
+      throw new Error(`Server-side HEIC conversion failed. ${errorDetails.join('; ')}. Client-side conversion should handle this automatically.`);
+    }
+  }
+}
+
+// Download file from S3
+async function downloadFromS3(key: string, bucket: string): Promise<Buffer> {
+  console.log(`📥 Downloading HEIC file from S3: ${key}`);
+  
+  try {
+    const params = {
+      Bucket: bucket,
+      Key: key
+    };
+    
+    const result = await s3.getObject(params).promise();
+    const buffer = result.Body as Buffer;
+    
+    console.log(`✅ Downloaded ${buffer.length} bytes from S3`);
+    return buffer;
+  } catch (error) {
+    console.error('❌ Failed to download from S3:', error);
+    throw new Error(`Failed to download HEIC file from S3: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
 
 export async function POST(
   request: NextRequest,
@@ -72,6 +181,54 @@ export async function POST(
         console.error('❌ Failed to convert image buffer:', bufferError);
         return NextResponse.json(
           { error: 'Invalid image data provided' },
+          { status: 400 }
+        );
+      }
+    } else if (s3RawFile && isHeicFile(fileName, fileType)) {
+      // Handle HEIC files from mobile: download from S3 and convert
+      console.log('📱 No imageBuffer provided but S3 raw file is HEIC - attempting server-side conversion');
+      
+      try {
+        // Download the HEIC file from S3
+        const heicBuffer = await downloadFromS3(s3RawFile.key, s3RawFile.bucket);
+        console.log(`📥 Downloaded HEIC file: ${heicBuffer.length} bytes`);
+        
+        // Convert HEIC to JPEG
+        const converted = await convertHeicToJpeg(heicBuffer);
+        buffer = converted.buffer;
+        console.log(`🔄 HEIC converted to JPEG: ${buffer.length} bytes`);
+        
+        // Compress if too large for MongoDB (14MB limit)
+        const mongoDBSafeSize = 14 * 1024 * 1024;
+        if (buffer.length > mongoDBSafeSize) {
+          console.log('📋 Converted image too large, compressing...');
+          
+          let quality = 80;
+          let compressed = await sharp(buffer)
+            .jpeg({ quality, mozjpeg: true })
+            .toBuffer();
+          
+          // Reduce quality until it fits
+          while (compressed.length > mongoDBSafeSize && quality > 30) {
+            quality -= 10;
+            compressed = await sharp(buffer)
+              .jpeg({ quality, mozjpeg: true })
+              .toBuffer();
+            console.log(`📋 Trying quality ${quality}, size: ${(compressed.length / (1024 * 1024)).toFixed(2)}MB`);
+          }
+          
+          if (compressed.length <= mongoDBSafeSize) {
+            buffer = compressed;
+            console.log(`✅ Image compressed: ${(buffer.length / (1024 * 1024)).toFixed(2)}MB`);
+          } else {
+            throw new Error('Image too large even after compression');
+          }
+        }
+        
+      } catch (heicError) {
+        console.error('❌ Failed to process HEIC file:', heicError);
+        return NextResponse.json(
+          { error: `Failed to process HEIC file: ${heicError instanceof Error ? heicError.message : 'Unknown error'}` },
           { status: 400 }
         );
       }
