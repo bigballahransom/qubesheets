@@ -1091,7 +1091,8 @@ export default function PhotoInventoryUploader({
 
     if (!isVideo) {
       try {
-        processedFile = await processImageForMobile(file);
+        // IMPORTANT: Process the file that was passed in (which might already be converted)
+        processedFile = await processImageForMobile(processedFile);
       } catch (processingError) {
         console.warn('⚠️ Image processing failed, using original file:', processingError);
         processedFile = file;
@@ -1181,33 +1182,30 @@ export default function PhotoInventoryUploader({
           userAgent: navigator.userAgent.substring(0, 50)
         });
         
-        // Smart HEIC handling: Try client-side first, fallback to server-side for large files
-        const isLargeFile = processedFile.size > 10 * 1024 * 1024; // 10MB threshold
-        const shouldSkipClientSide = isHeicFile && isMobile && isLargeFile;
-        
-        if (shouldSkipClientSide) {
-          console.log('📱 Skipping canvas generation for large HEIC file on mobile - server will handle conversion');
-          imageBuffer = null;
-        } else {
-          try {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const img = new Image();
-            
-            await new Promise((resolve, reject) => {
-              img.onload = () => {
-                canvas.width = img.width;
-                canvas.height = img.height;
-                ctx?.drawImage(img, 0, 0);
-                imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
-                resolve(null);
-              };
-              img.onerror = reject;
-              img.src = URL.createObjectURL(processedFile);
-            });
-          } catch (error) {
-            console.warn('Could not generate base64 for analysis:', error);
-          }
+        // Always generate canvas for processed images (like CustomerPhotoUploader does)
+        // By this point, the file has been:
+        // 1. Converted from HEIC if needed
+        // 2. Processed through processImageForMobile
+        // So we should always be able to generate the canvas
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          
+          await new Promise((resolve, reject) => {
+            img.onload = () => {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              ctx?.drawImage(img, 0, 0);
+              imageBuffer = canvas.toDataURL('image/jpeg', 0.8);
+              resolve(null);
+            };
+            img.onerror = reject;
+            img.src = URL.createObjectURL(processedFile);
+          });
+        } catch (error) {
+          console.warn('Could not generate base64 for analysis:', error);
+          // Continue anyway - server might handle raw file
         }
 
         const imageMetadata = {
