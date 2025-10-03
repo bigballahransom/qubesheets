@@ -10,7 +10,7 @@ import {
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import EditableProjectName from './EditableProjectName';
-import PhotoInventoryUploader from './PhotoInventoryUploader';
+import AdminPhotoUploader from './AdminPhotoUploader';
 import ImageGallery from './ImageGallery';
 import VideoGallery from './VideoGallery';
 import VideoProcessingStatus from './VideoProcessingStatus';
@@ -87,6 +87,9 @@ export default function InventoryManager() {
   
   const [inventoryItems, setInventoryItems] = useState([]);
   const [isUploaderOpen, setIsUploaderOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedImages, setUploadedImages] = useState([]);
+  const [pendingJobIds, setPendingJobIds] = useState([]);
   const [currentProject, setCurrentProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -229,6 +232,15 @@ useEffect(() => {
             // Only refresh video gallery if no video is playing
             if (!isVideoPlayingRef.current) {
               setVideoGalleryKey(prev => prev + 1);
+            }
+            
+            // Remove completed job from pending list
+            if (data.success) {
+              setPendingJobIds(prev => {
+                const updated = prev.slice(1); // Remove one job when any job completes
+                console.log('📋 Processing completed, pending jobs remaining:', updated.length);
+                return updated;
+              });
             }
             
             // Show appropriate notification
@@ -654,66 +666,121 @@ useEffect(() => {
     }
   };
   
-  // Handle analyzed items from photo uploader
-  const handleItemsAnalyzed = useCallback((result) => {
+  // Handle file upload for AdminPhotoUploader
+  const handleFileUpload = useCallback(async (file) => {
     if (!currentProject) return;
     
-    // Add new items to state
-    setInventoryItems(prev => [...prev, ...result.items]);
+    setUploading(true);
     
-    // Convert to spreadsheet rows
-    const newRows = convertItemsToRows(result.items);
+    // Optimistic UI update
+    const tempImage = {
+      id: `temp-${Date.now()}`,
+      name: file.name,
+      uploadedAt: new Date().toISOString()
+    };
+    setUploadedImages(prev => [...prev, tempImage]);
     
-    // Update spreadsheet rows - merge with existing
-    setSpreadsheetRows(prev => {
-      const combined = [...prev, ...newRows];
+    try {
+      console.log('🚀 Starting admin file upload:', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        projectId: currentProject._id,
+        sizeMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
+      });
       
-      // Save combined data
-      saveSpreadsheetData(
-        currentProject._id,
-        spreadsheetColumns,
-        combined
-      );
-      
-      return combined;
-    });
-    
-    // Close the uploader
-    setIsUploaderOpen(false);
-    
-    // Switch to inventory tab to show the new items
-    setActiveTab('inventory');
-  }, [currentProject, spreadsheetColumns]);
+      const formData = new FormData();
+      formData.append('image', file);
 
-  // Handle image saved callback
-  const handleImageSaved = useCallback(async () => {
-    // Force re-render of image gallery to show new image
-    setImageGalleryKey(prev => prev + 1);
-    
-    // Trigger processing status refresh to show new uploads in the notification
-    if (currentProject?._id) {
-      try {
-        const statusResponse = await fetch(`/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`);
-        if (statusResponse.ok) {
-          const syncData = await statusResponse.json();
-          console.log('📊 Processing status refresh after upload:', {
-            processingImages: syncData.processingImages,
-            processingVideos: syncData.processingVideos,
-            processingStatus: syncData.processingStatus
-          });
-          
-          // Update processing status and notification
-          setProcessingStatus(syncData.processingStatus || []);
-          setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
-          
-          // Update last check time
-          setLastUpdateCheck(syncData.lastChecked);
+      const response = await fetch(`/api/projects/${currentProject._id}/admin-upload`, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(120000) // 2 minute timeout
+      });
+      
+      console.log('📡 Admin upload response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Admin upload API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText
+        });
+        
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText || `HTTP ${response.status}: ${response.statusText}` };
         }
-      } catch (error) {
-        console.error('Error refreshing processing status after upload:', error);
+        
+        const errorMessage = errorData.error || `Upload failed: ${response.status} ${response.statusText}`;
+        throw new Error(errorMessage);
       }
+
+      const result = await response.json();
+      
+      const uploadId = result.imageId || result.videoId;
+      
+      // Track job ID for background processing
+      if (result.sqsMessageId && result.sqsMessageId !== 'no-analysis-data') {
+        console.log('📋 SQS Job ID tracked:', result.sqsMessageId);
+        setPendingJobIds(prev => [...prev, result.sqsMessageId]);
+        console.log('⏳ Upload complete, AI analysis processing in background...');
+      } else {
+        console.log('✅ Upload complete');
+      }
+      
+      // Replace temp image with real data
+      setUploadedImages(prev => prev.map(img => 
+        img.id === tempImage.id 
+          ? {
+              id: uploadId,
+              name: file.name,
+              uploadedAt: new Date().toISOString()
+            }
+          : img
+      ));
+      
+      // Refresh galleries
+      setImageGalleryKey(prev => prev + 1);
+      setVideoGalleryKey(prev => prev + 1);
+      
+      console.log('📄 File uploaded successfully, refreshing galleries...');
+      
+    } catch (err) {
+      console.error('Admin upload error:', err);
+      
+      // Remove temp image on error
+      setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
+      
+      let errorMessage = 'Upload failed';
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          errorMessage = 'Upload timed out. Please check your connection and try again.';
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      // Show error toast if available
+      if (typeof window !== 'undefined' && window.sonner) {
+        window.sonner.toast.error(errorMessage, {
+          duration: 6000
+        });
+      }
+      
+      throw err;
+    } finally {
+      setUploading(false);
     }
-  }, [currentProject?._id, lastUpdateCheck]);
+  }, [currentProject]);
+
   
   // Function to convert inventory items to spreadsheet rows
   const convertItemsToRows = useCallback((items) => {
@@ -2572,9 +2639,9 @@ const ProcessingNotification = () => {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto scroll-smooth p-3 sm:p-6 overscroll-contain" style={{ maxHeight: 'calc(95vh - 4rem)', WebkitOverflowScrolling: 'touch' }}>
-              <PhotoInventoryUploader 
-                onItemsAnalyzed={handleItemsAnalyzed}
-                onImageSaved={handleImageSaved}
+              <AdminPhotoUploader 
+                onUpload={handleFileUpload}
+                uploading={uploading}
                 onClose={() => setIsUploaderOpen(false)}
                 projectId={currentProject._id}
               />
