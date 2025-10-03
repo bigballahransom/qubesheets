@@ -2630,7 +2630,7 @@ const ProcessingNotification = () => {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
           <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex-shrink-0 p-3 sm:p-4 flex justify-between items-center border-b bg-white">
-              <h2 className="text-base sm:text-lg font-semibold text-slate-800">Add Items from Photos</h2>
+              <h2 className="text-base sm:text-lg font-semibold text-slate-800">Add Items from Photos or Videos</h2>
               <button 
                 onClick={() => setIsUploaderOpen(false)}
                 className="p-2 rounded-full hover:bg-slate-100 transition-colors cursor-pointer focus:ring-2 focus:ring-slate-500 focus:outline-none"
