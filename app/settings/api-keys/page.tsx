@@ -341,12 +341,12 @@ export default function ApiKeysPage() {
               <div className="bg-gray-50 rounded-lg p-6">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-medium text-gray-900">Using Your API Keys</h3>
-                  <ApiDocumentationModal>
+                  {/* <ApiDocumentationModal>
                     <Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-700">
                       <BookOpen className="h-4 w-4 mr-1" />
                       View Full Documentation
                     </Button>
-                  </ApiDocumentationModal>
+                  </ApiDocumentationModal> */}
                 </div>
                 <div className="space-y-3 text-sm text-gray-600">
                   <p>
