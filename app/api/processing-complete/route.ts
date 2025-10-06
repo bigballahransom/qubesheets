@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
               sseConnections.delete(connectionId);
               console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
             } catch (error) {
-              console.warn(`⚠️ Error closing SSE controller ${connectionId}:`, error.message);
+              console.warn(`⚠️ Error closing SSE controller ${connectionId}:`, error instanceof Error ? error.message : 'Unknown error');
             }
           }
         };
@@ -125,7 +125,7 @@ export async function GET(request: NextRequest) {
             sseConnections.delete(connectionId);
             console.log(`🧹 Cleaned up SSE connection on cancel: ${connectionId}`);
           } catch (error) {
-            console.warn(`⚠️ Error during SSE cancel cleanup ${connectionId}:`, error.message);
+            console.warn(`⚠️ Error during SSE cancel cleanup ${connectionId}:`, error instanceof Error ? error.message : 'Unknown error');
           }
         }
       }
