@@ -10,7 +10,7 @@ import {
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import EditableProjectName from './EditableProjectName';
-import PhotoInventoryUploader from './PhotoInventoryUploader';
+import AdminPhotoUploader from './AdminPhotoUploader';
 import ImageGallery from './ImageGallery';
 import VideoGallery from './VideoGallery';
 import VideoProcessingStatus from './VideoProcessingStatus';
@@ -21,6 +21,8 @@ import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import simpleRealTime from '@/lib/simple-realtime';
+import { toast } from 'sonner';
 
 import {
   Menubar,
@@ -87,6 +89,9 @@ export default function InventoryManager() {
   
   const [inventoryItems, setInventoryItems] = useState([]);
   const [isUploaderOpen, setIsUploaderOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadedImages, setUploadedImages] = useState([]);
+  const [pendingJobIds, setPendingJobIds] = useState([]);
   const [currentProject, setCurrentProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -134,168 +139,193 @@ useEffect(() => {
   // Reference to track if data has been loaded
   const dataLoadedRef = useRef(false);
 
-  // Setup Server-Sent Events for real-time updates with mobile optimization
+  // SIMPLE REAL-TIME: Setup in-memory processing listener
   useEffect(() => {
     if (!currentProject) return;
 
-    console.log('🔌 Setting up SSE connection for project:', currentProject._id);
+    console.log('🔌 Setting up simple real-time for project:', currentProject._id);
     
-    const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
-    
-    // Mobile-optimized EventSource setup with retry logic
-    const setupSSE = () => {
-      const eventSource = new EventSource(`/api/processing-complete?projectId=${currentProject._id}`);
-      sseRef.current = eventSource;
-
-      eventSource.onopen = () => {
-        console.log('📡 SSE connection established');
-        if (sseRetryTimeoutRef.current) {
-          clearTimeout(sseRetryTimeoutRef.current);
-          sseRetryTimeoutRef.current = null;
-        }
-      };
-
-      eventSource.onmessage = async (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('📨 Received SSE message:', data);
+    // Real-time listener for immediate UI updates
+    const handleRealTimeUpdate = (event) => {
+      console.log('📨 Real-time update:', event);
+      
+      switch (event.type) {
+        case 'processing-added':
+          setProcessingStatus(event.processingItems);
+          setShowProcessingNotification(event.processingItems.length > 0);
+          toast.info(`Started processing: ${event.data.name}`);
+          break;
           
-          // Skip processing if video is playing
-          if (isVideoPlayingRef.current) {
-            console.log('⏸️ Skipping SSE update - video is playing');
-            return;
+        case 'processing-completed':
+          setProcessingStatus(event.processingItems);
+          setShowProcessingNotification(event.processingItems.length > 0);
+          toast.success(`✅ Completed: ${event.data.name}`);
+          
+          // Trigger inventory refresh (but only occasionally, not per item)
+          if (event.processingItems.length === 0) {
+            console.log('🔄 All processing complete, refreshing data...');
+            setTimeout(() => {
+              // Refresh inventory data when all processing is done
+              fetchInventoryItems();
+            }, 1000);
           }
-
-          if (data.type === 'processing-complete') {
-            console.log(`${data.success ? '✅' : '❌'} Processing ${data.success ? 'completed' : 'failed'} via SSE (source: ${data.source || 'unknown'}), refreshing data...`);
-            
-            // Add a small delay to ensure database operations have completed
-            // This is especially important for video processing which might have transaction timing
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // Refresh processing status from server (like polling does)
-            try {
-              const statusResponse = await fetch(`/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`);
-              if (statusResponse.ok) {
-                const syncData = await statusResponse.json();
-                console.log('📊 SSE Status refresh:', {
-                  processingImages: syncData.processingImages,
-                  processingVideos: syncData.processingVideos,
-                  recentItems: syncData.recentItems,
-                  recentImages: syncData.recentImages,
-                  recentVideos: syncData.recentVideos,
-                  hasUpdates: syncData.hasUpdates
-                });
-                
-                // Update processing status and notification
-                setProcessingStatus(syncData.processingStatus || []);
-                setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
-                
-                // Update last check time
-                setLastUpdateCheck(syncData.lastChecked);
-              }
-            } catch (error) {
-              console.error('Error refreshing processing status after SSE:', error);
-              // Fallback - clear processing status
-              setProcessingStatus([]);
-              setShowProcessingNotification(false);
-            }
-            
-            // Refresh inventory items and spreadsheet (like polling does)
-            try {
-              console.log('📦 SSE: Refreshing inventory and spreadsheet data...');
-              const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
-              if (itemsResponse.ok) {
-                const items = await itemsResponse.json();
-                console.log(`📦 SSE: Got ${items.length} inventory items`);
-                setInventoryItems(items);
-                
-                // Regenerate spreadsheet rows from updated inventory items to preserve source tracking
-                const updatedRows = convertItemsToRows(items);
-                setSpreadsheetRows(updatedRows);
-                console.log(`📊 SSE: Regenerated ${updatedRows.length} spreadsheet rows with source tracking`);
-                
-                // Save the updated spreadsheet data to ensure persistence
-                await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
-              }
-            } catch (error) {
-              console.error('Error refreshing data after SSE completion:', error);
-              // Fallback to full reload if there's an error
-              loadProjectData(currentProject._id);
-            }
-            
-            // Refresh image and video galleries
-            setImageGalleryKey(prev => prev + 1);
-            // Only refresh video gallery if no video is playing
-            if (!isVideoPlayingRef.current) {
-              setVideoGalleryKey(prev => prev + 1);
-            }
-            
-            // Show appropriate notification
-            if (typeof window !== 'undefined' && window.sonner) {
-              if (data.success) {
-                window.sonner.toast.success(
-                  `Analysis complete! Added ${data.itemsProcessed} items ${data.totalBoxes > 0 ? `(${data.totalBoxes} boxes recommended)` : ''}`
-                );
-              } else {
-                window.sonner.toast.error(
-                  `Analysis failed: ${data.error || 'Unknown error'}. Please try again.`
-                );
-              }
-            }
-          }
-        } catch (error) {
-          console.error('❌ Error parsing SSE message:', error);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        console.error('❌ SSE connection error:', error);
-        
-        // Mobile-friendly reconnection with exponential backoff
-        if (isMobile && eventSource.readyState === EventSource.CLOSED) {
-          console.log('📱 Mobile SSE connection lost, attempting reconnect...');
-          sseRetryTimeoutRef.current = setTimeout(() => {
-            if (currentProject && sseRef.current?.readyState === EventSource.CLOSED) {
-              console.log('🔄 Reconnecting SSE...');
-              setupSSE();
-            }
-          }, 5000); // 5 second retry for mobile
-        }
-      };
-
-      return eventSource;
+          break;
+      }
     };
-
-    const eventSource = setupSSE();
-
-    // Cleanup on unmount
+    
+    // Get initial state and add listener
+    const initialProcessing = simpleRealTime.addListener(currentProject._id, handleRealTimeUpdate);
+    setProcessingStatus(initialProcessing);
+    setShowProcessingNotification(initialProcessing.length > 0);
+    
     return () => {
-      if (sseRef.current) {
-        sseRef.current.close();
-        console.log('🔌 SSE connection closed');
-      }
-      if (sseRetryTimeoutRef.current) {
-        clearTimeout(sseRetryTimeoutRef.current);
-      }
+      simpleRealTime.removeListener(currentProject._id, handleRealTimeUpdate);
     };
-  }, [currentProject]);
+  }, [currentProject?._id]);
+
+  // FALLBACK: Simple polling every 30 seconds for safety
+  useEffect(() => {
+    if (!currentProject) return;
+    
+    const fallbackPolling = setInterval(async () => {
+      try {
+        // Only poll if no processing items (to avoid conflicts)
+        const processing = simpleRealTime.getProcessing(currentProject._id);
+        if (processing.length === 0) {
+          console.log('📊 Fallback polling check...');
+          // Simple status check without heavy data loading
+          const response = await fetch(`/api/projects/${currentProject._id}/sync-status?light=true`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.hasUpdates) {
+              fetchInventoryItems();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Fallback polling error:', error);
+      }
+    }, 30000); // 30 seconds
+    
+    return () => clearInterval(fallbackPolling);
+  }, [currentProject?._id]);
+
+  // Function to convert inventory items to spreadsheet rows
+  const convertItemsToRows = useCallback((items) => {
+    // PERFORMANCE: Only log summary, not individual items
+    console.log(`🔄 Converting ${items.length} items to rows`);
+    return items.map(item => {
+      const quantity = item.quantity || 1;
+      const row = {
+        id: generateId(),
+        inventoryItemId: item._id, // Preserve inventory item ID for deletion
+        sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
+        sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
+        quantity: quantity, // Add quantity at the top level for spreadsheet logic
+        itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
+        ai_generated: item.ai_generated, // Preserve AI generated flag
+        cells: {
+          col1: item.location || '',
+          col2: item.name || '',
+          col3: item.quantity?.toString() || '1',
+          col4: (() => {
+            // For all box types, cuft is already total (quantity × unit cuft)
+            // For regular items, we need to multiply by quantity
+            if (isBoxItem(item)) {
+              return (item.cuft || 0).toString();
+            } else {
+              return ((item.cuft || 0) * (item.quantity || 1)).toString();
+            }
+          })(),
+          col5: (() => {
+            // Similarly for weight - all box types store total values
+            if (isBoxItem(item)) {
+              return (item.weight || 0).toString();
+            } else {
+              return ((item.weight || 0) * (item.quantity || 1)).toString();
+            }
+          })(),
+          col6: (() => {
+            // Defensive checks for missing or invalid data
+            let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
+            let safeGoingQuantity = item.goingQuantity;
+            
+            // Handle missing or undefined goingQuantity
+            if (safeGoingQuantity === undefined || safeGoingQuantity === null) {
+              if (item.going === 'not going') {
+                safeGoingQuantity = 0;
+              } else if (item.going === 'partial') {
+                // If marked as partial but no goingQuantity, default to half (rounded down)
+                safeGoingQuantity = Math.floor(safeQuantity / 2);
+              } else {
+                // Default to all going
+                safeGoingQuantity = safeQuantity;
+              }
+            }
+            
+            // Validate goingQuantity bounds
+            safeGoingQuantity = Math.max(0, Math.min(safeQuantity, safeGoingQuantity));
+            
+            if (safeQuantity === 1) {
+              return safeGoingQuantity === 1 ? 'going' : 'not going';
+            } else {
+              if (safeGoingQuantity === 0) {
+                return 'not going';
+              } else {
+                return `going (${safeGoingQuantity}/${safeQuantity})`;
+              }
+            }
+          })(),
+          col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
+        }
+      };
+      return row;
+    });
+  }, []);
+
+  // Helper to refresh inventory items
+  const fetchInventoryItems = useCallback(async () => {
+    if (!currentProject) return;
+    
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory`);
+      if (response.ok) {
+        const items = await response.json();
+        setInventoryItems(items);
+        
+        // Update spreadsheet
+        const updatedRows = convertItemsToRows(items);
+        setSpreadsheetRows(updatedRows);
+        
+        console.log(`📦 Refreshed: ${items.length} items, ${updatedRows.length} rows`);
+      }
+    } catch (error) {
+      console.error('Error fetching inventory:', error);
+    }
+  }, [currentProject?._id, convertItemsToRows]);
+
 
   useEffect(() => {
     if (!currentProject) return;
   
     const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
-    const pollInterval = isMobile ? 5000 : 3000; // 5s mobile, 3s desktop for better responsiveness
+    const pollInterval = isMobile ? 5000 : 3000; // Restored from emergency 15s/10s back to 5s/3s for responsive loading
     
     const pollForUpdates = async () => {
       // Skip polling if page is hidden or video is playing
       if (document.hidden || isVideoPlaying) return;
       
+      // EMERGENCY: Create AbortController for each request
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), 5000); // 5s timeout
+      
       try {
         const response = await fetch(
           `/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`,
-          { signal: AbortSignal.timeout(10000) } // 10s timeout to prevent hanging
+          { signal: abortController.signal }
         );
+        
+        clearTimeout(timeoutId);
         
         if (response.ok) {
           const syncData = await response.json();
@@ -330,9 +360,14 @@ useEffect(() => {
             
             // Reload inventory items with error handling
             try {
+              const itemsAbortController = new AbortController();
+              const itemsTimeoutId = setTimeout(() => itemsAbortController.abort(), 10000); // 10s timeout
+              
               const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`, {
-                signal: AbortSignal.timeout(15000)
+                signal: itemsAbortController.signal
               });
+              
+              clearTimeout(itemsTimeoutId);
               
               if (itemsResponse.ok) {
                 const items = await itemsResponse.json();
@@ -361,8 +396,9 @@ useEffect(() => {
           }
         }
       } catch (error) {
+        clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
-          console.log('⏱️ Polling request timed out');
+          console.log('⏱️ EMERGENCY: Polling request aborted/timed out');
         } else {
           console.error('Error polling for updates:', error);
         }
@@ -375,11 +411,22 @@ useEffect(() => {
     // Poll immediately on mount
     pollForUpdates();
   
-    // Cleanup interval on unmount
-    return () => {
+    // EMERGENCY: Aggressive polling cleanup with timeout
+    const emergencyPollCleanup = () => {
+      console.log('🚨 EMERGENCY: Force clearing InventoryManager polling interval');
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
+    };
+
+    // Auto-cleanup polling after 10 minutes to prevent accumulation
+    const pollAutoCleanup = setTimeout(emergencyPollCleanup, 10 * 60 * 1000);
+
+    // Cleanup interval on unmount
+    return () => {
+      emergencyPollCleanup();
+      if (pollAutoCleanup) clearTimeout(pollAutoCleanup);
     };
   }, [currentProject, lastUpdateCheck, isVideoPlaying]);
 
@@ -428,6 +475,49 @@ useEffect(() => {
     window.addEventListener('organizationDataRefresh', handleDataRefresh);
     return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
   }, [projectId]);
+
+  // IMMEDIATE: Listen for customer upload processing events
+  useEffect(() => {
+    const handleCustomerUploadProcessing = (event) => {
+      const { detail } = event;
+      
+      // Only handle events for this project
+      if (detail.projectId === currentProject?._id) {
+        console.log('📡 Customer upload processing event received:', detail);
+        
+        // Add to processing status immediately
+        setProcessingStatus(prev => [...prev, {
+          id: detail.uploadId,
+          name: detail.fileName,
+          status: detail.status,
+          source: detail.source,
+          type: detail.type,
+          isCustomerUpload: true
+        }]);
+        
+        // Show processing notification immediately
+        setShowProcessingNotification(true);
+        
+        // Show immediate toast notification for customer upload
+        if (typeof window !== 'undefined' && window.sonner) {
+          window.sonner.toast.success(`Customer uploaded ${detail.fileName}!`, {
+            description: detail.type === 'video' ? 'Video analysis in progress...' : 'Image analysis in progress...',
+            duration: 4000
+          });
+        }
+        
+        // Track pending job
+        if (detail.sqsMessageId) {
+          setPendingJobIds(prev => [...prev, detail.sqsMessageId]);
+        }
+        
+        console.log('✅ Customer upload processing status added immediately');
+      }
+    };
+    
+    window.addEventListener('customerUploadProcessing', handleCustomerUploadProcessing);
+    return () => window.removeEventListener('customerUploadProcessing', handleCustomerUploadProcessing);
+  }, [currentProject]);
   
   // Function to fetch project details
   const fetchProject = async (id) => {
@@ -456,18 +546,24 @@ useEffect(() => {
   // Function to load project data
   const loadProjectData = async (id) => {
     try {
-      // Load inventory items
-      const itemsResponse = await fetch(`/api/projects/${id}/inventory`);
+      let items = []; // Declare items at function scope
       
-      if (!itemsResponse.ok) {
+      // IMMEDIATE: Load inventory items and spreadsheet data in parallel for faster loading
+      const [itemsResponse, spreadsheetResponse] = await Promise.all([
+        fetch(`/api/projects/${id}/inventory`),
+        fetch(`/api/projects/${id}/spreadsheet`)
+      ]);
+      
+      // Set inventory items immediately when available
+      if (itemsResponse.ok) {
+        items = await itemsResponse.json(); // Assign to existing variable
+        setInventoryItems(items);
+        // Don't clear loading yet - wait until spreadsheet is fully processed
+      } else {
         throw new Error('Failed to fetch inventory items');
       }
       
-      const items = await itemsResponse.json();
-      setInventoryItems(items);
-      
-      // Load spreadsheet data
-      const spreadsheetResponse = await fetch(`/api/projects/${id}/spreadsheet`);
+      // Process spreadsheet data (this can be slower due to migration logic)
       
       if (spreadsheetResponse.ok) {
         const spreadsheetData = await spreadsheetResponse.json();
@@ -566,12 +662,13 @@ useEffect(() => {
             
             setSpreadsheetColumns(migratedColumns);
             setSpreadsheetRows(migratedRows);
-            previousRowsRef.current = JSON.parse(JSON.stringify(migratedRows));
+            // PERFORMANCE: Skip expensive deep cloning during initial load - not needed for first render
+            previousRowsRef.current = migratedRows;
             rowsAlreadyMigrated = true;
             dataLoadedRef.current = true;
             
-            // Save migrated data to database
-            await saveSpreadsheetData(id, migratedColumns, migratedRows);
+            // Save migrated data to database (async in background)
+            saveSpreadsheetData(id, migratedColumns, migratedRows).catch(console.error);
             
             console.log('✅ Migrated spreadsheet to include Count column');
           } else {
@@ -595,17 +692,19 @@ useEffect(() => {
           const manualRows = spreadsheetData.rows.filter(r => !r.inventoryItemId);
           console.log(`📊 Breakdown: ${rowsWithInventoryIds.length} rows with inventory IDs, ${manualRows.length} manual rows`);
           setSpreadsheetRows(spreadsheetData.rows);
-          previousRowsRef.current = JSON.parse(JSON.stringify(spreadsheetData.rows));
+          // PERFORMANCE: Skip expensive deep cloning during initial load
+          previousRowsRef.current = spreadsheetData.rows;
           dataLoadedRef.current = true;
         } else if (items.length > 0) {
           // Convert inventory items to rows if no existing rows but we have items
           const newRows = convertItemsToRows(items);
           setSpreadsheetRows(newRows);
-          previousRowsRef.current = JSON.parse(JSON.stringify(newRows));
+          // PERFORMANCE: Skip expensive deep cloning during initial load
+          previousRowsRef.current = newRows;
           dataLoadedRef.current = true;
           
-          // Save these rows to the database
-          await saveSpreadsheetData(id, spreadsheetColumns, newRows);
+          // Save these rows to the database (async in background)
+          saveSpreadsheetData(id, spreadsheetColumns, newRows).catch(console.error);
         }
         
         // IMPORTANT: If we have inventory items but spreadsheet rows don't have inventory IDs,
@@ -639,13 +738,14 @@ useEffect(() => {
           // Start with empty spreadsheet
           setSpreadsheetRows([]);
           
-          // Initialize the spreadsheet with default columns
-          await saveSpreadsheetData(id, defaultColumns, []);
+          // Initialize the spreadsheet with default columns (async in background)
+          saveSpreadsheetData(id, defaultColumns, []).catch(console.error);
         }
         
         dataLoadedRef.current = true;
       }
       
+      // Clear loading state only after ALL data is processed and ready to display
       setLoading(false);
     } catch (err) {
       console.error('Error loading project data:', err);
@@ -654,166 +754,132 @@ useEffect(() => {
     }
   };
   
-  // Handle analyzed items from photo uploader
-  const handleItemsAnalyzed = useCallback((result) => {
+  // Handle file upload for AdminPhotoUploader
+  const handleFileUpload = useCallback(async (file) => {
     if (!currentProject) return;
     
-    // Add new items to state
-    setInventoryItems(prev => [...prev, ...result.items]);
+    setUploading(true);
     
-    // Convert to spreadsheet rows
-    const newRows = convertItemsToRows(result.items);
+    // IMMEDIATE: Add to processing status for instant UI feedback
+    const uploadId = `upload-${Date.now()}`;
+    const isVideo = file.type.startsWith('video/');
     
-    // Update spreadsheet rows - merge with existing
-    setSpreadsheetRows(prev => {
-      const combined = [...prev, ...newRows];
-      
-      // Save combined data
-      saveSpreadsheetData(
-        currentProject._id,
-        spreadsheetColumns,
-        combined
-      );
-      
-      return combined;
+    simpleRealTime.addProcessing(currentProject._id, {
+      id: uploadId,
+      name: file.name,
+      type: isVideo ? 'video' : 'image',
+      status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...'
     });
     
-    // Close the uploader
-    setIsUploaderOpen(false);
+    // Optimistic UI update for uploaded images list
+    const tempImage = {
+      id: uploadId,
+      name: file.name,
+      uploadedAt: new Date().toISOString()
+    };
+    setUploadedImages(prev => [...prev, tempImage]);
     
-    // Switch to inventory tab to show the new items
-    setActiveTab('inventory');
-  }, [currentProject, spreadsheetColumns]);
+    try {
+      console.log('🚀 Starting admin file upload:', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        projectId: currentProject._id,
+        sizeMB: (file.size / (1024 * 1024)).toFixed(2) + 'MB'
+      });
+      
+      const formData = new FormData();
+      formData.append('image', file);
 
-  // Handle image saved callback
-  const handleImageSaved = useCallback(async () => {
-    // Force re-render of image gallery to show new image
-    setImageGalleryKey(prev => prev + 1);
-    
-    // Trigger processing status refresh to show new uploads in the notification
-    if (currentProject?._id) {
-      try {
-        const statusResponse = await fetch(`/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`);
-        if (statusResponse.ok) {
-          const syncData = await statusResponse.json();
-          console.log('📊 Processing status refresh after upload:', {
-            processingImages: syncData.processingImages,
-            processingVideos: syncData.processingVideos,
-            processingStatus: syncData.processingStatus
-          });
-          
-          // Update processing status and notification
-          setProcessingStatus(syncData.processingStatus || []);
-          setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
-          
-          // Update last check time
-          setLastUpdateCheck(syncData.lastChecked);
+      const response = await fetch(`/api/projects/${currentProject._id}/admin-upload`, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(120000) // 2 minute timeout
+      });
+      
+      console.log('📡 Admin upload response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Admin upload API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText
+        });
+        
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText || `HTTP ${response.status}: ${response.statusText}` };
         }
-      } catch (error) {
-        console.error('Error refreshing processing status after upload:', error);
+        
+        const errorMessage = errorData.error || `Upload failed: ${response.status} ${response.statusText}`;
+        throw new Error(errorMessage);
       }
-    }
-  }, [currentProject?._id, lastUpdateCheck]);
-  
-  // Function to convert inventory items to spreadsheet rows
-  const convertItemsToRows = useCallback((items) => {
-    console.log('🔄 Converting items to rows:', items);
-    return items.map(item => {
-      console.log('📝 Converting item:', {
-        name: item.name,
-        itemType: getItemType(item),
-        ai_generated: item.ai_generated,
-        quantity: item.quantity,
-        cuft: item.cuft,
-        weight: item.weight,
-        inventoryItemId: item._id,
-        sourceImageId: item.sourceImageId,
-        sourceImageIdType: typeof item.sourceImageId,
-        sourceImageIdValue: item.sourceImageId?._id || item.sourceImageId,
-        sourceVideoId: item.sourceVideoId,
-        sourceVideoIdType: typeof item.sourceVideoId,
-        sourceVideoIdValue: item.sourceVideoId?._id || item.sourceVideoId,
-        hasSourceImage: !!item.sourceImageId,
-        hasSourceVideo: !!item.sourceVideoId
-      });
-      const quantity = item.quantity || 1;
-      const row = {
-        id: generateId(),
-        inventoryItemId: item._id, // Preserve inventory item ID for deletion
-        sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
-        sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
-        quantity: quantity, // Add quantity at the top level for spreadsheet logic
-        itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
-        ai_generated: item.ai_generated, // Preserve AI generated flag
-        cells: {
-          col1: item.location || '',
-          col2: item.name || '',
-          col3: item.quantity?.toString() || '1',
-          col4: (() => {
-            // For all box types, cuft is already total (quantity × unit cuft)
-            // For regular items, we need to multiply by quantity
-            if (isBoxItem(item)) {
-              return (item.cuft || 0).toString();
-            } else {
-              return ((item.cuft || 0) * (item.quantity || 1)).toString();
+
+      const result = await response.json();
+      
+      const uploadId = result.imageId || result.videoId;
+      
+      // Track job ID for background processing
+      if (result.sqsMessageId && result.sqsMessageId !== 'no-analysis-data') {
+        console.log('📋 SQS Job ID tracked:', result.sqsMessageId);
+        setPendingJobIds(prev => [...prev, result.sqsMessageId]);
+        console.log('⏳ Upload complete, AI analysis processing in background...');
+      } else {
+        console.log('✅ Upload complete');
+      }
+      
+      // Replace temp image with real data
+      setUploadedImages(prev => prev.map(img => 
+        img.id === tempImage.id 
+          ? {
+              id: uploadId,
+              name: file.name,
+              uploadedAt: new Date().toISOString()
             }
-          })(),
-          col5: (() => {
-            // Similarly for weight - all box types store total values
-            if (isBoxItem(item)) {
-              return (item.weight || 0).toString();
-            } else {
-              return ((item.weight || 0) * (item.quantity || 1)).toString();
-            }
-          })(),
-          col6: (() => {
-            // Defensive checks for missing or invalid data
-            let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
-            let safeGoingQuantity = item.goingQuantity;
-            
-            // Handle missing or undefined goingQuantity
-            if (safeGoingQuantity === undefined || safeGoingQuantity === null) {
-              if (item.going === 'not going') {
-                safeGoingQuantity = 0;
-              } else if (item.going === 'partial') {
-                // If marked as partial but no goingQuantity, default to half (rounded down)
-                safeGoingQuantity = Math.floor(safeQuantity / 2);
-              } else {
-                // Default to all going
-                safeGoingQuantity = safeQuantity;
-              }
-            }
-            
-            // Validate goingQuantity bounds
-            safeGoingQuantity = Math.max(0, Math.min(safeQuantity, safeGoingQuantity));
-            
-            if (safeQuantity === 1) {
-              return safeGoingQuantity === 1 ? 'going' : 'not going';
-            } else {
-              if (safeGoingQuantity === 0) {
-                return 'not going';
-              } else {
-                return `going (${safeGoingQuantity}/${safeQuantity})`;
-              }
-            }
-          })(),
-          col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
+          : img
+      ));
+      
+      // Refresh galleries
+      setImageGalleryKey(prev => prev + 1);
+      setVideoGalleryKey(prev => prev + 1);
+      
+      console.log('✅ File uploaded successfully - real-time processing already added');
+      
+    } catch (err) {
+      console.error('Admin upload error:', err);
+      
+      // Remove temp image on error
+      setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
+      
+      let errorMessage = 'Upload failed';
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          errorMessage = 'Upload timed out. Please check your connection and try again.';
+        } else {
+          errorMessage = err.message;
         }
-      };
+      }
       
-      console.log('🔄 Final row object created:', {
-        name: row.cells.col2,
-        itemType: row.itemType,
-        ai_generated: row.ai_generated,
-        sourceImageId: row.sourceImageId,
-        sourceVideoId: row.sourceVideoId,
-        hasSourceImage: !!row.sourceImageId,
-        hasSourceVideo: !!row.sourceVideoId
-      });
+      // Show error toast if available
+      if (typeof window !== 'undefined' && window.sonner) {
+        window.sonner.toast.error(errorMessage, {
+          duration: 6000
+        });
+      }
       
-      return row;
-    });
-  }, []);
+      throw err;
+    } finally {
+      setUploading(false);
+    }
+  }, [currentProject]);
+
   
   // Create a stable debounced save function
   const debouncedSave = useCallback(
@@ -2563,7 +2629,7 @@ const ProcessingNotification = () => {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
           <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
             <div className="flex-shrink-0 p-3 sm:p-4 flex justify-between items-center border-b bg-white">
-              <h2 className="text-base sm:text-lg font-semibold text-slate-800">Add Items from Photos</h2>
+              <h2 className="text-base sm:text-lg font-semibold text-slate-800">Add Items from Photos or Videos</h2>
               <button 
                 onClick={() => setIsUploaderOpen(false)}
                 className="p-2 rounded-full hover:bg-slate-100 transition-colors cursor-pointer focus:ring-2 focus:ring-slate-500 focus:outline-none"
@@ -2572,9 +2638,9 @@ const ProcessingNotification = () => {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto scroll-smooth p-3 sm:p-6 overscroll-contain" style={{ maxHeight: 'calc(95vh - 4rem)', WebkitOverflowScrolling: 'touch' }}>
-              <PhotoInventoryUploader 
-                onItemsAnalyzed={handleItemsAnalyzed}
-                onImageSaved={handleImageSaved}
+              <AdminPhotoUploader 
+                onUpload={handleFileUpload}
+                uploading={uploading}
                 onClose={() => setIsUploaderOpen(false)}
                 projectId={currentProject._id}
               />

@@ -33,11 +33,20 @@ export default async function handler(req, res) {
 
   let intervalId;
   let isConnected = true;
+  let hasProcessingVideos = false; // Track if we have processing videos
+  let connectionStartTime = Date.now();
 
   // Function to check and send video processing updates
   const checkVideoUpdates = async () => {
     try {
       if (!isConnected) return;
+
+      // EMERGENCY: Auto-close connection after 5 minutes
+      if (Date.now() - connectionStartTime > 5 * 60 * 1000) {
+        console.log('📡 SSE auto-closing after 5 minutes to prevent leaks');
+        res.end();
+        return;
+      }
 
       await connectMongoDB();
 
@@ -68,7 +77,11 @@ export default async function handler(req, res) {
         ]
       }).select('name originalName metadata extractedFrames processingStatus analysisResult createdAt').sort({ createdAt: -1 });
 
-      if (processingVideos.length > 0) {
+      // EMERGENCY: Track processing state and reduce queries when nothing is processing
+      const currentlyHasProcessing = processingVideos.length > 0;
+      
+      if (currentlyHasProcessing) {
+        hasProcessingVideos = true;
         const updates = processingVideos.map(video => {
           // Determine which system this video uses
           const isNewSystem = video.processingStatus || video.analysisResult?.status;
@@ -105,6 +118,23 @@ export default async function handler(req, res) {
           videos: updates,
           timestamp: new Date().toISOString()
         })}\n\n`);
+      } else if (hasProcessingVideos) {
+        // EMERGENCY: If we had processing videos but now don't, notify and reduce frequency
+        hasProcessingVideos = false;
+        console.log('📡 No more processing videos, reducing query frequency');
+        
+        res.write(`data: ${JSON.stringify({
+          type: 'processing_complete',
+          projectId,
+          message: 'All video processing complete',
+          timestamp: new Date().toISOString()
+        })}\n\n`);
+        
+        // Increase interval to 60 seconds when nothing is processing
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = setInterval(checkVideoUpdates, 60000);
+        }
       }
 
       // Also check for newly completed videos that might need UI refresh
@@ -154,8 +184,8 @@ export default async function handler(req, res) {
     }
   };
 
-  // Check for updates every 2 seconds
-  intervalId = setInterval(checkVideoUpdates, 2000);
+  // EMERGENCY: Increased to 15s to prevent connection leaks during bulk uploads (balanced performance vs connections)
+  intervalId = setInterval(checkVideoUpdates, 15000);
 
   // Send initial check
   checkVideoUpdates();

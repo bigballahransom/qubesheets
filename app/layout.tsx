@@ -7,6 +7,7 @@ import './globals.css'
 import '@livekit/components-styles'
 import { OrganizationDataProvider } from '@/components/providers/OrganizationDataProvider'
 import { Toaster } from 'sonner';
+import EmergencyCleanup from '@/components/EmergencyCleanup';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -33,6 +34,7 @@ export default function RootLayout({
     <ClerkProvider>
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+          <EmergencyCleanup />
           <OrganizationDataProvider>
             <main>
               {children}

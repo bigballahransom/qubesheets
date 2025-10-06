@@ -18,6 +18,8 @@ export default function VideoProcessingStatus({ projectId, onProcessingComplete 
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
   const eventSourceRef = useRef(null);
+  const cleanupTimeoutRef = useRef(null);
+  const isUnmountedRef = useRef(false);
 
   useEffect(() => {
     if (!projectId) return;
@@ -91,15 +93,62 @@ export default function VideoProcessingStatus({ projectId, onProcessingComplete 
       }, 3000);
     };
 
+    // EMERGENCY: Aggressive cleanup with timeout
+    const emergencyCleanup = () => {
+      console.log('🚨 EMERGENCY: Force closing VideoProcessingStatus SSE connection');
+      if (eventSourceRef.current) {
+        try {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        } catch (error) {
+          console.error('Error closing EventSource:', error);
+        }
+      }
+      if (cleanupTimeoutRef.current) {
+        clearTimeout(cleanupTimeoutRef.current);
+        cleanupTimeoutRef.current = null;
+      }
+      isUnmountedRef.current = true;
+    };
+
+    // Auto-cleanup after 5 minutes to prevent persistent connections
+    cleanupTimeoutRef.current = setTimeout(emergencyCleanup, 5 * 60 * 1000);
+
     // Cleanup function
     return () => {
+      emergencyCleanup();
+    };
+  }, [projectId, onProcessingComplete]);
+
+  // EMERGENCY: Cleanup on page visibility change
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && eventSourceRef.current) {
+        console.log('📡 Page hidden, closing VideoProcessingStatus SSE connection');
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  // EMERGENCY: Cleanup on window beforeunload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
       if (eventSourceRef.current) {
-        console.log('📡 Closing SSE connection');
+        console.log('📡 Page unloading, closing VideoProcessingStatus SSE connection');
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
     };
-  }, [projectId, onProcessingComplete]);
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // Don't render if no processing videos
   if (!processingVideos || processingVideos.length === 0) {

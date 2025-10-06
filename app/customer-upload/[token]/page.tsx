@@ -447,6 +447,39 @@ export default function CustomerUploadPage() {
         setPendingJobIds(prev => [...prev, result.sqsMessageId]);
         setShowProcessingStatus(true);
         console.log('⏳ Upload complete, AI analysis processing in background...');
+        
+        // IMMEDIATE: Add to simple real-time system for instant updates
+        const isVideo = result.videoId;
+        
+        if (result.projectId) {
+          // Dynamically import to avoid SSR issues
+          import('@/lib/simple-realtime').then(({ default: simpleRealTime }) => {
+            simpleRealTime.addProcessing(result.projectId, {
+              id: uploadId,
+              name: file.name,
+              type: isVideo ? 'video' : 'image',
+              status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
+              source: 'customer_upload'
+            });
+          }).catch(console.error);
+        }
+        
+        // Legacy event for backward compatibility
+        const processingEvent = new CustomEvent('customerUploadProcessing', {
+          detail: {
+            projectId: result.projectId || projectId,
+            uploadId,
+            fileName: file.name,
+            type: isVideo ? 'video' : 'image',
+            status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
+            source: 'customer_upload',
+            sqsMessageId: result.sqsMessageId
+          }
+        });
+        
+        window.dispatchEvent(processingEvent);
+        console.log('📡 Customer upload added to simple real-time system');
+        
       } else {
         console.log('✅ Upload complete');
       }
