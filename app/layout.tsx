@@ -6,6 +6,7 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import '@livekit/components-styles'
 import { OrganizationDataProvider } from '@/components/providers/OrganizationDataProvider'
+import { SearchProvider } from '@/components/providers/SearchProvider'
 import { Toaster } from 'sonner';
 import EmergencyCleanup from '@/components/EmergencyCleanup';
 
@@ -36,10 +37,12 @@ export default function RootLayout({
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
           <EmergencyCleanup />
           <OrganizationDataProvider>
-            <main>
-              {children}
-            </main>
-            <Toaster />
+            <SearchProvider>
+              <main>
+                {children}
+              </main>
+              <Toaster />
+            </SearchProvider>
           </OrganizationDataProvider>
         </body>
       </html>

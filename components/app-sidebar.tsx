@@ -2,21 +2,17 @@
 
 import {
   ClerkProvider,
-  SignInButton,
-  SignUpButton,
   SignedIn,
-  SignedOut,
   UserButton,
-  OrganizationSwitcher,
-  useOrganization,
-  useUser
+  OrganizationSwitcher
 } from '@clerk/nextjs'
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Folder, Plus, Settings, Inbox, Check, X, ArrowRight, Loader2 } from 'lucide-react';
+import { Folder, Plus, ArrowRight, Loader2 } from 'lucide-react';
 import { Sidebar } from '@/components/ui/sidebar';
+import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@clerk/nextjs';
-import { useOrganizationData } from '@/components/providers/OrganizationDataProvider';
+import { SearchDropdown } from '@/components/SearchDropdown';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import SettingsSection from '@/components/SettingsSection';
 
@@ -24,6 +20,8 @@ interface Project {
   _id: string;
   name: string;
   description?: string;
+  customerName?: string;
+  phone?: string;
   updatedAt: string;
 }
 
@@ -36,8 +34,6 @@ export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const { isLoaded, userId } = useAuth();
-  const { organization } = useOrganization();
-  const { user } = useUser();
   
   // Fetch projects when auth state loads initially
   useEffect(() => {
@@ -114,14 +110,18 @@ export function AppSidebar() {
   return (
     <Sidebar>
       <div className="flex flex-col h-full">
-        {/* Add new project button */}
-        <div className="p-4 border-b flex-shrink-0">
+        {/* Add new project button and mobile search - only visible on mobile */}
+        <div className="p-4 border-b flex-shrink-0 lg:hidden">
           <CreateProjectModal onProjectCreated={handleProjectCreated}>
             <button className="flex items-center gap-2 w-full p-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors cursor-pointer">
               <Plus size={16} />
               <span>New Project</span>
             </button>
           </CreateProjectModal>
+          
+          {/* Mobile search bar */}
+          <Separator className="my-3" />
+          <SearchDropdown isMobile />
         </div>
         
         {/* Project list - scrollable area */}
@@ -171,7 +171,7 @@ export function AppSidebar() {
         {/* Settings Section */}
         <SettingsSection />
         
-        <div className="p-3 pb-2 lg:pb-3">
+        <div className="p-3 pb-2 lg:pb-3 lg:hidden">
           <SignedIn>
             <div className="flex items-center gap-2 sm:gap-3">
               {/* User Button - Left */}

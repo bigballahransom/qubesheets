@@ -2354,11 +2354,11 @@ const ProcessingNotification = () => {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Main content wrapper */}
-      <div className="lg:pl-64"> {/* Add left padding for sidebar on large screens */}
+      <div className="lg:pl-64 lg:pt-16"> {/* Add left padding for sidebar and top padding for header bar on large screens */}
         {/* Sleek top header bar */}
 
 {/* Sleek top header bar */}
-<header className="sticky top-10 z-30 bg-white border-b shadow-sm">
+<header className="sticky top-10 lg:top-16 z-30 bg-white border-b shadow-sm">
   <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
     {/* Project Name and Save Status */}
     <div className="flex items-center">
