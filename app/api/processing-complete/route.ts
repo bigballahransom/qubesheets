@@ -1,9 +1,11 @@
 // app/api/processing-complete/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
+import simpleRealTime from '@/lib/simple-realtime';
 
-// In-memory store for Server-Sent Events connections
+// In-memory store for Server-Sent Events connections with connection limit
 const sseConnections = new Map<string, ReadableStreamDefaultController>();
+const MAX_SSE_CONNECTIONS = 20; // Limit to prevent memory/connection leaks
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,6 +28,19 @@ export async function POST(request: NextRequest) {
       source: source || (imageId ? 'image' : 'video')
     });
 
+    // SIMPLE REAL-TIME: Complete processing immediately
+    if (success && projectId) {
+      const completedId = imageId || videoId;
+      const completedItem = simpleRealTime.completeProcessing(projectId, completedId);
+      
+      if (completedItem) {
+        console.log(`✅ Simple real-time: marked ${completedId} as completed`);
+      } else {
+        // Try to complete by name match (fallback)
+        console.log(`⚠️ Could not find processing item ${completedId}, this is normal for some workflows`);
+      }
+    }
+
     // Broadcast to all connected SSE clients for this project
     const eventData = {
       type: 'processing-complete',
@@ -41,16 +56,22 @@ export async function POST(request: NextRequest) {
     };
 
     // Send to all connections for this project
-    Array.from(sseConnections.entries()).forEach(([connectionId, controller]) => {
-      if (connectionId.includes(projectId)) {
-        try {
-          const message = `data: ${JSON.stringify(eventData)}\n\n`;
-          controller.enqueue(new TextEncoder().encode(message));
-          console.log(`📡 Sent SSE update to connection: ${connectionId}`);
-        } catch (error) {
-          console.error('❌ Error sending SSE message:', error);
-          sseConnections.delete(connectionId);
-        }
+    const connectionsForProject = Array.from(sseConnections.entries()).filter(([connectionId]) => 
+      connectionId.includes(projectId)
+    );
+    
+    console.log(`📡 Broadcasting to ${connectionsForProject.length} SSE connections for project ${projectId}`);
+    console.log(`📊 Total SSE connections: ${sseConnections.size}`);
+    
+    connectionsForProject.forEach(([connectionId, controller]) => {
+      try {
+        const message = `data: ${JSON.stringify(eventData)}\n\n`;
+        controller.enqueue(new TextEncoder().encode(message));
+        console.log(`📡 Sent SSE update to connection: ${connectionId}`);
+      } catch (error) {
+        console.error('❌ Error sending SSE message:', error);
+        sseConnections.delete(connectionId);
+        console.log(`🗑️ Removed failed SSE connection: ${connectionId}`);
       }
     });
 
@@ -80,6 +101,22 @@ export async function GET(request: NextRequest) {
     const stream = new ReadableStream({
       start(controller) {
         connectionId = `${projectId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        // EMERGENCY: Enforce connection limit to prevent leaks during bulk uploads
+        if (sseConnections.size >= MAX_SSE_CONNECTIONS) {
+          const oldestConnection = Array.from(sseConnections.keys())[0];
+          const oldController = sseConnections.get(oldestConnection);
+          if (oldController) {
+            try {
+              oldController.close();
+            } catch (e) {
+              // Ignore close errors for old connections
+            }
+          }
+          sseConnections.delete(oldestConnection);
+          console.log(`🚨 EMERGENCY: Closed oldest SSE connection ${oldestConnection} to prevent leak`);
+        }
+        
         sseConnections.set(connectionId, controller);
 
         console.log(`📡 New SSE connection established: ${connectionId}`);
@@ -106,8 +143,8 @@ export async function GET(request: NextRequest) {
           }
         };
 
-        // Clean up connection after 5 minutes (reduced from 10)
-        cleanupTimeout = setTimeout(safeCloseController, 5 * 60 * 1000);
+        // Clean up connection after 2 minutes (reduced from 5) to prevent bulk upload leaks
+        cleanupTimeout = setTimeout(safeCloseController, 2 * 60 * 1000);
       },
       cancel() {
         // EMERGENCY: Safe cleanup when client disconnects

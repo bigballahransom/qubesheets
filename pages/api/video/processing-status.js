@@ -184,8 +184,8 @@ export default async function handler(req, res) {
     }
   };
 
-  // Restored from emergency 30s back to 5s for responsive updates (balanced between 2s and 30s)
-  intervalId = setInterval(checkVideoUpdates, 5000);
+  // EMERGENCY: Increased to 15s to prevent connection leaks during bulk uploads (balanced performance vs connections)
+  intervalId = setInterval(checkVideoUpdates, 15000);
 
   // Send initial check
   checkVideoUpdates();

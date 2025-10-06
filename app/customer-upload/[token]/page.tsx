@@ -448,8 +448,23 @@ export default function CustomerUploadPage() {
         setShowProcessingStatus(true);
         console.log('⏳ Upload complete, AI analysis processing in background...');
         
-        // IMMEDIATE: Notify any listening project pages about new processing item
+        // IMMEDIATE: Add to simple real-time system for instant updates
         const isVideo = result.videoId;
+        
+        if (result.projectId) {
+          // Dynamically import to avoid SSR issues
+          import('@/lib/simple-realtime').then(({ default: simpleRealTime }) => {
+            simpleRealTime.addProcessing(result.projectId, {
+              id: uploadId,
+              name: file.name,
+              type: isVideo ? 'video' : 'image',
+              status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
+              source: 'customer_upload'
+            });
+          }).catch(console.error);
+        }
+        
+        // Legacy event for backward compatibility
         const processingEvent = new CustomEvent('customerUploadProcessing', {
           detail: {
             projectId: result.projectId || projectId,
@@ -462,9 +477,8 @@ export default function CustomerUploadPage() {
           }
         });
         
-        // Emit to any listening windows (if project page is open in another tab)
         window.dispatchEvent(processingEvent);
-        console.log('📡 Customer upload processing event emitted for project page notification');
+        console.log('📡 Customer upload added to simple real-time system');
         
       } else {
         console.log('✅ Upload complete');

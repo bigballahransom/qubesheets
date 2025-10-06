@@ -460,7 +460,7 @@ const CustomerView = React.memo(({ onCallEnd }) => {
     if (!localParticipant) return;
 
     const checkAndSyncVideo = async () => {
-      const videoTrack = localParticipant.getTrack(Track.Source.Camera);
+      const videoTrack = localParticipant.getTrackPublication(Track.Source.Camera);
       if (videoTrack && videoTrack.isEnabled && !videoTrack.isMuted) {
         console.log('📹 Video track is active and unmuted, syncing with ControlBar');
       } else if (localParticipant.isCameraEnabled && (!videoTrack || videoTrack.isMuted)) {
@@ -617,7 +617,6 @@ const CustomerView = React.memo(({ onCallEnd }) => {
               screenShare: false,
               leave: true,
             }}
-            onLeave={onCallEnd}
           />
         </div>
       </div>

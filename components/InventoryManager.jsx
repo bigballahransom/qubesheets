@@ -21,6 +21,8 @@ import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import simpleRealTime from '@/lib/simple-realtime';
+import { toast } from 'sonner';
 
 import {
   Menubar,
@@ -137,176 +139,171 @@ useEffect(() => {
   // Reference to track if data has been loaded
   const dataLoadedRef = useRef(false);
 
-  // Setup Server-Sent Events for real-time updates with mobile optimization
+  // SIMPLE REAL-TIME: Setup in-memory processing listener
   useEffect(() => {
     if (!currentProject) return;
 
-    console.log('🔌 Setting up SSE connection for project:', currentProject._id);
+    console.log('🔌 Setting up simple real-time for project:', currentProject._id);
     
-    const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
-    
-    // Mobile-optimized EventSource setup with retry logic
-    const setupSSE = () => {
-      const eventSource = new EventSource(`/api/processing-complete?projectId=${currentProject._id}`);
-      sseRef.current = eventSource;
-
-      eventSource.onopen = () => {
-        console.log('📡 SSE connection established');
-        if (sseRetryTimeoutRef.current) {
-          clearTimeout(sseRetryTimeoutRef.current);
-          sseRetryTimeoutRef.current = null;
-        }
-      };
-
-      eventSource.onmessage = async (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('📨 Received SSE message:', data);
+    // Real-time listener for immediate UI updates
+    const handleRealTimeUpdate = (event) => {
+      console.log('📨 Real-time update:', event);
+      
+      switch (event.type) {
+        case 'processing-added':
+          setProcessingStatus(event.processingItems);
+          setShowProcessingNotification(event.processingItems.length > 0);
+          toast.info(`Started processing: ${event.data.name}`);
+          break;
           
-          // Skip processing if video is playing
-          if (isVideoPlayingRef.current) {
-            console.log('⏸️ Skipping SSE update - video is playing');
-            return;
+        case 'processing-completed':
+          setProcessingStatus(event.processingItems);
+          setShowProcessingNotification(event.processingItems.length > 0);
+          toast.success(`✅ Completed: ${event.data.name}`);
+          
+          // Trigger inventory refresh (but only occasionally, not per item)
+          if (event.processingItems.length === 0) {
+            console.log('🔄 All processing complete, refreshing data...');
+            setTimeout(() => {
+              // Refresh inventory data when all processing is done
+              fetchInventoryItems();
+            }, 1000);
           }
-
-          if (data.type === 'processing-complete') {
-            console.log(`${data.success ? '✅' : '❌'} Processing ${data.success ? 'completed' : 'failed'} via SSE (source: ${data.source || 'unknown'}), refreshing data...`);
-            
-            // Add a small delay to ensure database operations have completed
-            // This is especially important for video processing which might have transaction timing
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // Refresh processing status from server (like polling does)
-            try {
-              const statusResponse = await fetch(`/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`);
-              if (statusResponse.ok) {
-                const syncData = await statusResponse.json();
-                console.log('📊 SSE Status refresh:', {
-                  processingImages: syncData.processingImages,
-                  processingVideos: syncData.processingVideos,
-                  recentItems: syncData.recentItems,
-                  recentImages: syncData.recentImages,
-                  recentVideos: syncData.recentVideos,
-                  hasUpdates: syncData.hasUpdates
-                });
-                
-                // Update processing status and notification
-                setProcessingStatus(syncData.processingStatus || []);
-                setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
-                
-                // Update last check time
-                setLastUpdateCheck(syncData.lastChecked);
-              }
-            } catch (error) {
-              console.error('Error refreshing processing status after SSE:', error);
-              // Fallback - clear processing status
-              setProcessingStatus([]);
-              setShowProcessingNotification(false);
-            }
-            
-            // Refresh inventory items and spreadsheet (like polling does)
-            try {
-              console.log('📦 SSE: Refreshing inventory and spreadsheet data...');
-              const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
-              if (itemsResponse.ok) {
-                const items = await itemsResponse.json();
-                console.log(`📦 SSE: Got ${items.length} inventory items`);
-                setInventoryItems(items);
-                
-                // Regenerate spreadsheet rows from updated inventory items to preserve source tracking
-                const updatedRows = convertItemsToRows(items);
-                setSpreadsheetRows(updatedRows);
-                console.log(`📊 SSE: Regenerated ${updatedRows.length} spreadsheet rows with source tracking`);
-                
-                // Save the updated spreadsheet data to ensure persistence
-                await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
-              }
-            } catch (error) {
-              console.error('Error refreshing data after SSE completion:', error);
-              // Fallback to full reload if there's an error
-              loadProjectData(currentProject._id);
-            }
-            
-            // Refresh image and video galleries
-            setImageGalleryKey(prev => prev + 1);
-            // Only refresh video gallery if no video is playing
-            if (!isVideoPlayingRef.current) {
-              setVideoGalleryKey(prev => prev + 1);
-            }
-            
-            // Remove completed job from pending list
-            if (data.success) {
-              setPendingJobIds(prev => {
-                const updated = prev.slice(1); // Remove one job when any job completes
-                console.log('📋 Processing completed, pending jobs remaining:', updated.length);
-                return updated;
-              });
-            }
-            
-            // Show appropriate notification
-            if (typeof window !== 'undefined' && window.sonner) {
-              if (data.success) {
-                window.sonner.toast.success(
-                  `Analysis complete! Added ${data.itemsProcessed} items ${data.totalBoxes > 0 ? `(${data.totalBoxes} boxes recommended)` : ''}`
-                );
-              } else {
-                window.sonner.toast.error(
-                  `Analysis failed: ${data.error || 'Unknown error'}. Please try again.`
-                );
-              }
-            }
-          }
-        } catch (error) {
-          console.error('❌ Error parsing SSE message:', error);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        console.error('❌ SSE connection error:', error);
-        
-        // Mobile-friendly reconnection with exponential backoff
-        if (isMobile && eventSource.readyState === EventSource.CLOSED) {
-          console.log('📱 Mobile SSE connection lost, attempting reconnect...');
-          sseRetryTimeoutRef.current = setTimeout(() => {
-            if (currentProject && sseRef.current?.readyState === EventSource.CLOSED) {
-              console.log('🔄 Reconnecting SSE...');
-              setupSSE();
-            }
-          }, 5000); // 5 second retry for mobile
-        }
-      };
-
-      return eventSource;
-    };
-
-    const eventSource = setupSSE();
-
-    // EMERGENCY: Aggressive cleanup with multiple safety nets
-    const emergencySSECleanup = () => {
-      console.log('🚨 EMERGENCY: Force closing InventoryManager SSE connection');
-      if (sseRef.current) {
-        try {
-          sseRef.current.close();
-          sseRef.current = null;
-        } catch (error) {
-          console.error('Error closing SSE:', error);
-        }
-      }
-      if (sseRetryTimeoutRef.current) {
-        clearTimeout(sseRetryTimeoutRef.current);
-        sseRetryTimeoutRef.current = null;
+          break;
       }
     };
-
-    // Auto-cleanup SSE after 3 minutes to prevent persistent connections
-    const sseAutoCleanup = setTimeout(emergencySSECleanup, 3 * 60 * 1000);
-
-    // Cleanup on unmount
+    
+    // Get initial state and add listener
+    const initialProcessing = simpleRealTime.addListener(currentProject._id, handleRealTimeUpdate);
+    setProcessingStatus(initialProcessing);
+    setShowProcessingNotification(initialProcessing.length > 0);
+    
     return () => {
-      emergencySSECleanup();
-      if (sseAutoCleanup) clearTimeout(sseAutoCleanup);
+      simpleRealTime.removeListener(currentProject._id, handleRealTimeUpdate);
     };
-  }, [currentProject]);
+  }, [currentProject?._id]);
+
+  // FALLBACK: Simple polling every 30 seconds for safety
+  useEffect(() => {
+    if (!currentProject) return;
+    
+    const fallbackPolling = setInterval(async () => {
+      try {
+        // Only poll if no processing items (to avoid conflicts)
+        const processing = simpleRealTime.getProcessing(currentProject._id);
+        if (processing.length === 0) {
+          console.log('📊 Fallback polling check...');
+          // Simple status check without heavy data loading
+          const response = await fetch(`/api/projects/${currentProject._id}/sync-status?light=true`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.hasUpdates) {
+              fetchInventoryItems();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Fallback polling error:', error);
+      }
+    }, 30000); // 30 seconds
+    
+    return () => clearInterval(fallbackPolling);
+  }, [currentProject?._id]);
+
+  // Function to convert inventory items to spreadsheet rows
+  const convertItemsToRows = useCallback((items) => {
+    // PERFORMANCE: Only log summary, not individual items
+    console.log(`🔄 Converting ${items.length} items to rows`);
+    return items.map(item => {
+      const quantity = item.quantity || 1;
+      const row = {
+        id: generateId(),
+        inventoryItemId: item._id, // Preserve inventory item ID for deletion
+        sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
+        sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
+        quantity: quantity, // Add quantity at the top level for spreadsheet logic
+        itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
+        ai_generated: item.ai_generated, // Preserve AI generated flag
+        cells: {
+          col1: item.location || '',
+          col2: item.name || '',
+          col3: item.quantity?.toString() || '1',
+          col4: (() => {
+            // For all box types, cuft is already total (quantity × unit cuft)
+            // For regular items, we need to multiply by quantity
+            if (isBoxItem(item)) {
+              return (item.cuft || 0).toString();
+            } else {
+              return ((item.cuft || 0) * (item.quantity || 1)).toString();
+            }
+          })(),
+          col5: (() => {
+            // Similarly for weight - all box types store total values
+            if (isBoxItem(item)) {
+              return (item.weight || 0).toString();
+            } else {
+              return ((item.weight || 0) * (item.quantity || 1)).toString();
+            }
+          })(),
+          col6: (() => {
+            // Defensive checks for missing or invalid data
+            let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
+            let safeGoingQuantity = item.goingQuantity;
+            
+            // Handle missing or undefined goingQuantity
+            if (safeGoingQuantity === undefined || safeGoingQuantity === null) {
+              if (item.going === 'not going') {
+                safeGoingQuantity = 0;
+              } else if (item.going === 'partial') {
+                // If marked as partial but no goingQuantity, default to half (rounded down)
+                safeGoingQuantity = Math.floor(safeQuantity / 2);
+              } else {
+                // Default to all going
+                safeGoingQuantity = safeQuantity;
+              }
+            }
+            
+            // Validate goingQuantity bounds
+            safeGoingQuantity = Math.max(0, Math.min(safeQuantity, safeGoingQuantity));
+            
+            if (safeQuantity === 1) {
+              return safeGoingQuantity === 1 ? 'going' : 'not going';
+            } else {
+              if (safeGoingQuantity === 0) {
+                return 'not going';
+              } else {
+                return `going (${safeGoingQuantity}/${safeQuantity})`;
+              }
+            }
+          })(),
+          col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
+        }
+      };
+      return row;
+    });
+  }, []);
+
+  // Helper to refresh inventory items
+  const fetchInventoryItems = useCallback(async () => {
+    if (!currentProject) return;
+    
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory`);
+      if (response.ok) {
+        const items = await response.json();
+        setInventoryItems(items);
+        
+        // Update spreadsheet
+        const updatedRows = convertItemsToRows(items);
+        setSpreadsheetRows(updatedRows);
+        
+        console.log(`📦 Refreshed: ${items.length} items, ${updatedRows.length} rows`);
+      }
+    } catch (error) {
+      console.error('Error fetching inventory:', error);
+    }
+  }, [currentProject?._id, convertItemsToRows]);
+
 
   useEffect(() => {
     if (!currentProject) return;
@@ -763,9 +760,20 @@ useEffect(() => {
     
     setUploading(true);
     
-    // Optimistic UI update
+    // IMMEDIATE: Add to processing status for instant UI feedback
+    const uploadId = `upload-${Date.now()}`;
+    const isVideo = file.type.startsWith('video/');
+    
+    simpleRealTime.addProcessing(currentProject._id, {
+      id: uploadId,
+      name: file.name,
+      type: isVideo ? 'video' : 'image',
+      status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...'
+    });
+    
+    // Optimistic UI update for uploaded images list
     const tempImage = {
-      id: `temp-${Date.now()}`,
+      id: uploadId,
       name: file.name,
       uploadedAt: new Date().toISOString()
     };
@@ -842,32 +850,7 @@ useEffect(() => {
       setImageGalleryKey(prev => prev + 1);
       setVideoGalleryKey(prev => prev + 1);
       
-      // IMMEDIATE: Update processing status display right after upload
-      console.log('📄 File uploaded successfully, immediately updating processing status...');
-      
-      // Add to processing status immediately (before polling catches it)
-      const isVideo = result.videoId;
-      setProcessingStatus(prev => [...prev, {
-        id: uploadId,
-        name: file.name,
-        status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
-        source: 'project_upload',
-        type: isVideo ? 'video' : 'image',
-        isCustomerUpload: false
-      }]);
-      
-      // Show processing notification immediately
-      setShowProcessingNotification(true);
-      
-      // Show immediate toast notification for user feedback
-      if (typeof window !== 'undefined' && window.sonner) {
-        window.sonner.toast.success(`Started processing ${file.name}!`, {
-          description: isVideo ? 'Video analysis in progress...' : 'Image analysis in progress...',
-          duration: 3000
-        });
-      }
-      
-      console.log('✅ Processing status updated immediately for instant user feedback');
+      console.log('✅ File uploaded successfully - real-time processing already added');
       
     } catch (err) {
       console.error('Admin upload error:', err);
@@ -897,79 +880,6 @@ useEffect(() => {
     }
   }, [currentProject]);
 
-  
-  // Function to convert inventory items to spreadsheet rows
-  const convertItemsToRows = useCallback((items) => {
-    // PERFORMANCE: Only log summary, not individual items
-    console.log(`🔄 Converting ${items.length} items to rows`);
-    return items.map(item => {
-      const quantity = item.quantity || 1;
-      const row = {
-        id: generateId(),
-        inventoryItemId: item._id, // Preserve inventory item ID for deletion
-        sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
-        sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
-        quantity: quantity, // Add quantity at the top level for spreadsheet logic
-        itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
-        ai_generated: item.ai_generated, // Preserve AI generated flag
-        cells: {
-          col1: item.location || '',
-          col2: item.name || '',
-          col3: item.quantity?.toString() || '1',
-          col4: (() => {
-            // For all box types, cuft is already total (quantity × unit cuft)
-            // For regular items, we need to multiply by quantity
-            if (isBoxItem(item)) {
-              return (item.cuft || 0).toString();
-            } else {
-              return ((item.cuft || 0) * (item.quantity || 1)).toString();
-            }
-          })(),
-          col5: (() => {
-            // Similarly for weight - all box types store total values
-            if (isBoxItem(item)) {
-              return (item.weight || 0).toString();
-            } else {
-              return ((item.weight || 0) * (item.quantity || 1)).toString();
-            }
-          })(),
-          col6: (() => {
-            // Defensive checks for missing or invalid data
-            let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
-            let safeGoingQuantity = item.goingQuantity;
-            
-            // Handle missing or undefined goingQuantity
-            if (safeGoingQuantity === undefined || safeGoingQuantity === null) {
-              if (item.going === 'not going') {
-                safeGoingQuantity = 0;
-              } else if (item.going === 'partial') {
-                // If marked as partial but no goingQuantity, default to half (rounded down)
-                safeGoingQuantity = Math.floor(safeQuantity / 2);
-              } else {
-                // Default to all going
-                safeGoingQuantity = safeQuantity;
-              }
-            }
-            
-            // Validate goingQuantity bounds
-            safeGoingQuantity = Math.max(0, Math.min(safeQuantity, safeGoingQuantity));
-            
-            if (safeQuantity === 1) {
-              return safeGoingQuantity === 1 ? 'going' : 'not going';
-            } else {
-              if (safeGoingQuantity === 0) {
-                return 'not going';
-              } else {
-                return `going (${safeGoingQuantity}/${safeQuantity})`;
-              }
-            }
-          })(),
-          col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
-        }
-      };
-      return row;
-    });
-  }, []);
   
   // Create a stable debounced save function
   const debouncedSave = useCallback(
