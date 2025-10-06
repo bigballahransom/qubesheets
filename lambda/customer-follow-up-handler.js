@@ -58,11 +58,17 @@ const ImageSchema = new mongoose.Schema({
   createdAt: Date
 });
 
+const VideoSchema = new mongoose.Schema({
+  projectId: mongoose.Schema.Types.ObjectId,
+  createdAt: Date
+});
+
 // Models
 const Project = mongoose.models.Project || mongoose.model('Project', ProjectSchema);
 const OrganizationSettings = mongoose.models.OrganizationSettings || mongoose.model('OrganizationSettings', OrganizationSettingsSchema);
 const CustomerUpload = mongoose.models.CustomerUpload || mongoose.model('CustomerUpload', CustomerUploadSchema);
 const Image = mongoose.models.Image || mongoose.model('Image', ImageSchema);
+const Video = mongoose.models.Video || mongoose.model('Video', VideoSchema);
 
 // Lambda handler
 exports.handler = async (event, context) => {
@@ -116,15 +122,25 @@ exports.handler = async (event, context) => {
         // Calculate hours since link was sent
         const hoursSinceSent = (now - new Date(project.uploadLinkTracking.lastSentAt)) / (1000 * 60 * 60);
         
-        // Check if customer has uploaded any images
-        const hasUploads = await Image.exists({
-          projectId: project._id,
-          createdAt: { $gt: project.uploadLinkTracking.lastSentAt }
-        });
+        console.log(`Processing project ${project._id}: ${hoursSinceSent.toFixed(1)} hours since link sent`);
+        
+        // Check if customer has uploaded any images OR videos (any source)
+        const [hasImageUploads, hasVideoUploads] = await Promise.all([
+          Image.exists({
+            projectId: project._id,
+            createdAt: { $gt: project.uploadLinkTracking.lastSentAt }
+          }),
+          Video.exists({
+            projectId: project._id,
+            createdAt: { $gt: project.uploadLinkTracking.lastSentAt }
+          })
+        ]);
+
+        const hasUploads = hasImageUploads || hasVideoUploads;
 
         // Skip if customer has already uploaded
         if (hasUploads) {
-          console.log(`Project ${project._id} already has uploads, skipping`);
+          console.log(`Project ${project._id} already has uploads (images: ${!!hasImageUploads}, videos: ${!!hasVideoUploads}), skipping`);
           continue;
         }
 

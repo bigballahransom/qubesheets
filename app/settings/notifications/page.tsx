@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
 import { toast } from 'sonner';
 import IntercomChat from '@/components/IntercomChat';
 
@@ -186,8 +187,9 @@ export default function NotificationsPage() {
     <>
       <SidebarProvider>
       <AppSidebar />
+      <DesktopHeaderBar />
       <div className="h-16"></div>
-      <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
+      <div className="container mx-auto p-4 max-w-4xl lg:pl-64 lg:pt-16">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">

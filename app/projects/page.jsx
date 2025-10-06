@@ -6,6 +6,7 @@ import { Folder, Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import IntercomChat from '@/components/IntercomChat';
 // Define Project type (optional in JSX but helpful for documentation)
@@ -84,8 +85,9 @@ export default function ProjectsPage() {
     <>
         <SidebarProvider>
           <AppSidebar />
+          <DesktopHeaderBar />
           <div className="h-16"></div>
-    <div className="container mx-auto p-4 max-w-4xl lg:pl-64">
+    <div className="container mx-auto p-4 max-w-4xl lg:pl-64 lg:pt-16">
       {/* Header with create button */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold">Projects</h1>
