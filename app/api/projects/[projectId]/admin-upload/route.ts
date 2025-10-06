@@ -7,7 +7,7 @@ import Video from '@/models/Video';
 import Project from '@/models/Project';
 import { uploadFileToS3 } from '@/lib/s3Upload';
 import { sendImageProcessingMessage, sendVideoProcessingMessage } from '@/lib/sqsUtils';
-// import { convertMovToMp4, needsMovConversion } from '@/lib/videoConversion';
+import { convertMovToMp4, needsMovConversion } from '@/lib/videoConversion';
 import { logUploadActivity } from '@/lib/activity-logger';
 import sharp from 'sharp';
 
@@ -249,26 +249,26 @@ export async function POST(
       let finalMimeType = file.type;
       
       // Check if MOV conversion is needed
-      // if (needsMovConversion(file)) {
-      //   console.log('🔄 Converting video...');
-      //   try {
-      //     const conversionResult = await convertMovToMp4(file, {
-      //       quality: 'medium',
-      //       maxFileSize: videoMaxSize,
-      //       timeoutMs: 120000
-      //     });
-      //     
-      //     if (conversionResult.success && conversionResult.outputFile) {
-      //       processedVideoFile = conversionResult.outputFile;
-      //       videoBuffer = Buffer.from(await processedVideoFile.arrayBuffer());
-      //       finalFileName = conversionResult.outputFile.name;
-      //       finalMimeType = conversionResult.outputFile.type;
-      //       console.log('✅ Video conversion complete');
-      //     }
-      //   } catch (conversionError) {
-      //     console.log('⚠️ Video conversion failed, continuing with original');
-      //   }
-      // }
+      if (needsMovConversion(file)) {
+        console.log('🔄 Converting video...');
+        try {
+          const conversionResult = await convertMovToMp4(file, {
+            quality: 'medium',
+            maxFileSize: videoMaxSize,
+            timeoutMs: 120000
+          });
+          
+          if (conversionResult.success && conversionResult.outputFile) {
+            processedVideoFile = conversionResult.outputFile;
+            videoBuffer = Buffer.from(await processedVideoFile.arrayBuffer());
+            finalFileName = conversionResult.outputFile.name;
+            finalMimeType = conversionResult.outputFile.type;
+            console.log('✅ Video conversion complete');
+          }
+        } catch (conversionError) {
+          console.log('⚠️ Video conversion failed, continuing with original');
+        }
+      }
       
       const timestamp = Date.now();
       const name = `admin-video-${timestamp}-${finalFileName}`;

@@ -72,10 +72,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Project ID required' }, { status: 400 });
     }
 
-    // Create SSE stream
+    // Create SSE stream with properly scoped variables
+    let connectionId: string;
+    let isControllerClosed = false;
+    let cleanupTimeout: NodeJS.Timeout;
+    
     const stream = new ReadableStream({
       start(controller) {
-        const connectionId = `${projectId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        connectionId = `${projectId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         sseConnections.set(connectionId, controller);
 
         console.log(`📡 New SSE connection established: ${connectionId}`);
@@ -88,25 +92,42 @@ export async function GET(request: NextRequest) {
         })}\n\n`;
         controller.enqueue(new TextEncoder().encode(initMessage));
 
-        // Clean up connection after 10 minutes
-        setTimeout(() => {
-          if (sseConnections.has(connectionId)) {
-            controller.close();
-            sseConnections.delete(connectionId);
-            console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+        // EMERGENCY: Safe close method to prevent double-close errors
+        const safeCloseController = () => {
+          if (!isControllerClosed && sseConnections.has(connectionId)) {
+            try {
+              controller.close();
+              isControllerClosed = true;
+              sseConnections.delete(connectionId);
+              console.log(`🧹 Cleaned up SSE connection: ${connectionId}`);
+            } catch (error) {
+              console.warn(`⚠️ Error closing SSE controller ${connectionId}:`, error.message);
+            }
           }
-        }, 10 * 60 * 1000); // 10 minutes
+        };
+
+        // Clean up connection after 5 minutes (reduced from 10)
+        cleanupTimeout = setTimeout(safeCloseController, 5 * 60 * 1000);
       },
       cancel() {
-        // Clean up when client disconnects - find and remove this controller
-        const entriesToDelete: string[] = [];
-        Array.from(sseConnections.entries()).forEach(([id, ctrl]) => {
-          // The controller reference is not available here, so we'll have to cleanup differently
-          entriesToDelete.push(id);
-        });
-        entriesToDelete.forEach(id => {
-          console.log(`🔌 SSE connection closed: ${id}`);
-        });
+        // EMERGENCY: Safe cleanup when client disconnects
+        console.log(`🔌 SSE connection cancelling: ${connectionId}`);
+        
+        // Clear the timeout to prevent double cleanup
+        if (cleanupTimeout) {
+          clearTimeout(cleanupTimeout);
+        }
+        
+        // Safe close with state check
+        if (!isControllerClosed && sseConnections.has(connectionId)) {
+          try {
+            isControllerClosed = true;
+            sseConnections.delete(connectionId);
+            console.log(`🧹 Cleaned up SSE connection on cancel: ${connectionId}`);
+          } catch (error) {
+            console.warn(`⚠️ Error during SSE cancel cleanup ${connectionId}:`, error.message);
+          }
+        }
       }
     });
 

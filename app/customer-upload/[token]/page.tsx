@@ -447,6 +447,25 @@ export default function CustomerUploadPage() {
         setPendingJobIds(prev => [...prev, result.sqsMessageId]);
         setShowProcessingStatus(true);
         console.log('⏳ Upload complete, AI analysis processing in background...');
+        
+        // IMMEDIATE: Notify any listening project pages about new processing item
+        const isVideo = result.videoId;
+        const processingEvent = new CustomEvent('customerUploadProcessing', {
+          detail: {
+            projectId: result.projectId || projectId,
+            uploadId,
+            fileName: file.name,
+            type: isVideo ? 'video' : 'image',
+            status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
+            source: 'customer_upload',
+            sqsMessageId: result.sqsMessageId
+          }
+        });
+        
+        // Emit to any listening windows (if project page is open in another tab)
+        window.dispatchEvent(processingEvent);
+        console.log('📡 Customer upload processing event emitted for project page notification');
+        
       } else {
         console.log('✅ Upload complete');
       }

@@ -281,15 +281,30 @@ useEffect(() => {
 
     const eventSource = setupSSE();
 
-    // Cleanup on unmount
-    return () => {
+    // EMERGENCY: Aggressive cleanup with multiple safety nets
+    const emergencySSECleanup = () => {
+      console.log('🚨 EMERGENCY: Force closing InventoryManager SSE connection');
       if (sseRef.current) {
-        sseRef.current.close();
-        console.log('🔌 SSE connection closed');
+        try {
+          sseRef.current.close();
+          sseRef.current = null;
+        } catch (error) {
+          console.error('Error closing SSE:', error);
+        }
       }
       if (sseRetryTimeoutRef.current) {
         clearTimeout(sseRetryTimeoutRef.current);
+        sseRetryTimeoutRef.current = null;
       }
+    };
+
+    // Auto-cleanup SSE after 3 minutes to prevent persistent connections
+    const sseAutoCleanup = setTimeout(emergencySSECleanup, 3 * 60 * 1000);
+
+    // Cleanup on unmount
+    return () => {
+      emergencySSECleanup();
+      if (sseAutoCleanup) clearTimeout(sseAutoCleanup);
     };
   }, [currentProject]);
 
@@ -297,17 +312,23 @@ useEffect(() => {
     if (!currentProject) return;
   
     const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
-    const pollInterval = isMobile ? 5000 : 3000; // 5s mobile, 3s desktop for better responsiveness
+    const pollInterval = isMobile ? 5000 : 3000; // Restored from emergency 15s/10s back to 5s/3s for responsive loading
     
     const pollForUpdates = async () => {
       // Skip polling if page is hidden or video is playing
       if (document.hidden || isVideoPlaying) return;
       
+      // EMERGENCY: Create AbortController for each request
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), 5000); // 5s timeout
+      
       try {
         const response = await fetch(
           `/api/projects/${currentProject._id}/sync-status?lastUpdate=${encodeURIComponent(lastUpdateCheck)}`,
-          { signal: AbortSignal.timeout(10000) } // 10s timeout to prevent hanging
+          { signal: abortController.signal }
         );
+        
+        clearTimeout(timeoutId);
         
         if (response.ok) {
           const syncData = await response.json();
@@ -342,9 +363,14 @@ useEffect(() => {
             
             // Reload inventory items with error handling
             try {
+              const itemsAbortController = new AbortController();
+              const itemsTimeoutId = setTimeout(() => itemsAbortController.abort(), 10000); // 10s timeout
+              
               const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`, {
-                signal: AbortSignal.timeout(15000)
+                signal: itemsAbortController.signal
               });
+              
+              clearTimeout(itemsTimeoutId);
               
               if (itemsResponse.ok) {
                 const items = await itemsResponse.json();
@@ -373,8 +399,9 @@ useEffect(() => {
           }
         }
       } catch (error) {
+        clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
-          console.log('⏱️ Polling request timed out');
+          console.log('⏱️ EMERGENCY: Polling request aborted/timed out');
         } else {
           console.error('Error polling for updates:', error);
         }
@@ -387,11 +414,22 @@ useEffect(() => {
     // Poll immediately on mount
     pollForUpdates();
   
-    // Cleanup interval on unmount
-    return () => {
+    // EMERGENCY: Aggressive polling cleanup with timeout
+    const emergencyPollCleanup = () => {
+      console.log('🚨 EMERGENCY: Force clearing InventoryManager polling interval');
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
+    };
+
+    // Auto-cleanup polling after 10 minutes to prevent accumulation
+    const pollAutoCleanup = setTimeout(emergencyPollCleanup, 10 * 60 * 1000);
+
+    // Cleanup interval on unmount
+    return () => {
+      emergencyPollCleanup();
+      if (pollAutoCleanup) clearTimeout(pollAutoCleanup);
     };
   }, [currentProject, lastUpdateCheck, isVideoPlaying]);
 
@@ -440,6 +478,49 @@ useEffect(() => {
     window.addEventListener('organizationDataRefresh', handleDataRefresh);
     return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
   }, [projectId]);
+
+  // IMMEDIATE: Listen for customer upload processing events
+  useEffect(() => {
+    const handleCustomerUploadProcessing = (event) => {
+      const { detail } = event;
+      
+      // Only handle events for this project
+      if (detail.projectId === currentProject?._id) {
+        console.log('📡 Customer upload processing event received:', detail);
+        
+        // Add to processing status immediately
+        setProcessingStatus(prev => [...prev, {
+          id: detail.uploadId,
+          name: detail.fileName,
+          status: detail.status,
+          source: detail.source,
+          type: detail.type,
+          isCustomerUpload: true
+        }]);
+        
+        // Show processing notification immediately
+        setShowProcessingNotification(true);
+        
+        // Show immediate toast notification for customer upload
+        if (typeof window !== 'undefined' && window.sonner) {
+          window.sonner.toast.success(`Customer uploaded ${detail.fileName}!`, {
+            description: detail.type === 'video' ? 'Video analysis in progress...' : 'Image analysis in progress...',
+            duration: 4000
+          });
+        }
+        
+        // Track pending job
+        if (detail.sqsMessageId) {
+          setPendingJobIds(prev => [...prev, detail.sqsMessageId]);
+        }
+        
+        console.log('✅ Customer upload processing status added immediately');
+      }
+    };
+    
+    window.addEventListener('customerUploadProcessing', handleCustomerUploadProcessing);
+    return () => window.removeEventListener('customerUploadProcessing', handleCustomerUploadProcessing);
+  }, [currentProject]);
   
   // Function to fetch project details
   const fetchProject = async (id) => {
@@ -468,18 +549,24 @@ useEffect(() => {
   // Function to load project data
   const loadProjectData = async (id) => {
     try {
-      // Load inventory items
-      const itemsResponse = await fetch(`/api/projects/${id}/inventory`);
+      let items = []; // Declare items at function scope
       
-      if (!itemsResponse.ok) {
+      // IMMEDIATE: Load inventory items and spreadsheet data in parallel for faster loading
+      const [itemsResponse, spreadsheetResponse] = await Promise.all([
+        fetch(`/api/projects/${id}/inventory`),
+        fetch(`/api/projects/${id}/spreadsheet`)
+      ]);
+      
+      // Set inventory items immediately when available
+      if (itemsResponse.ok) {
+        items = await itemsResponse.json(); // Assign to existing variable
+        setInventoryItems(items);
+        // Don't clear loading yet - wait until spreadsheet is fully processed
+      } else {
         throw new Error('Failed to fetch inventory items');
       }
       
-      const items = await itemsResponse.json();
-      setInventoryItems(items);
-      
-      // Load spreadsheet data
-      const spreadsheetResponse = await fetch(`/api/projects/${id}/spreadsheet`);
+      // Process spreadsheet data (this can be slower due to migration logic)
       
       if (spreadsheetResponse.ok) {
         const spreadsheetData = await spreadsheetResponse.json();
@@ -578,12 +665,13 @@ useEffect(() => {
             
             setSpreadsheetColumns(migratedColumns);
             setSpreadsheetRows(migratedRows);
-            previousRowsRef.current = JSON.parse(JSON.stringify(migratedRows));
+            // PERFORMANCE: Skip expensive deep cloning during initial load - not needed for first render
+            previousRowsRef.current = migratedRows;
             rowsAlreadyMigrated = true;
             dataLoadedRef.current = true;
             
-            // Save migrated data to database
-            await saveSpreadsheetData(id, migratedColumns, migratedRows);
+            // Save migrated data to database (async in background)
+            saveSpreadsheetData(id, migratedColumns, migratedRows).catch(console.error);
             
             console.log('✅ Migrated spreadsheet to include Count column');
           } else {
@@ -607,17 +695,19 @@ useEffect(() => {
           const manualRows = spreadsheetData.rows.filter(r => !r.inventoryItemId);
           console.log(`📊 Breakdown: ${rowsWithInventoryIds.length} rows with inventory IDs, ${manualRows.length} manual rows`);
           setSpreadsheetRows(spreadsheetData.rows);
-          previousRowsRef.current = JSON.parse(JSON.stringify(spreadsheetData.rows));
+          // PERFORMANCE: Skip expensive deep cloning during initial load
+          previousRowsRef.current = spreadsheetData.rows;
           dataLoadedRef.current = true;
         } else if (items.length > 0) {
           // Convert inventory items to rows if no existing rows but we have items
           const newRows = convertItemsToRows(items);
           setSpreadsheetRows(newRows);
-          previousRowsRef.current = JSON.parse(JSON.stringify(newRows));
+          // PERFORMANCE: Skip expensive deep cloning during initial load
+          previousRowsRef.current = newRows;
           dataLoadedRef.current = true;
           
-          // Save these rows to the database
-          await saveSpreadsheetData(id, spreadsheetColumns, newRows);
+          // Save these rows to the database (async in background)
+          saveSpreadsheetData(id, spreadsheetColumns, newRows).catch(console.error);
         }
         
         // IMPORTANT: If we have inventory items but spreadsheet rows don't have inventory IDs,
@@ -651,13 +741,14 @@ useEffect(() => {
           // Start with empty spreadsheet
           setSpreadsheetRows([]);
           
-          // Initialize the spreadsheet with default columns
-          await saveSpreadsheetData(id, defaultColumns, []);
+          // Initialize the spreadsheet with default columns (async in background)
+          saveSpreadsheetData(id, defaultColumns, []).catch(console.error);
         }
         
         dataLoadedRef.current = true;
       }
       
+      // Clear loading state only after ALL data is processed and ready to display
       setLoading(false);
     } catch (err) {
       console.error('Error loading project data:', err);
@@ -751,7 +842,32 @@ useEffect(() => {
       setImageGalleryKey(prev => prev + 1);
       setVideoGalleryKey(prev => prev + 1);
       
-      console.log('📄 File uploaded successfully, refreshing galleries...');
+      // IMMEDIATE: Update processing status display right after upload
+      console.log('📄 File uploaded successfully, immediately updating processing status...');
+      
+      // Add to processing status immediately (before polling catches it)
+      const isVideo = result.videoId;
+      setProcessingStatus(prev => [...prev, {
+        id: uploadId,
+        name: file.name,
+        status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
+        source: 'project_upload',
+        type: isVideo ? 'video' : 'image',
+        isCustomerUpload: false
+      }]);
+      
+      // Show processing notification immediately
+      setShowProcessingNotification(true);
+      
+      // Show immediate toast notification for user feedback
+      if (typeof window !== 'undefined' && window.sonner) {
+        window.sonner.toast.success(`Started processing ${file.name}!`, {
+          description: isVideo ? 'Video analysis in progress...' : 'Image analysis in progress...',
+          duration: 3000
+        });
+      }
+      
+      console.log('✅ Processing status updated immediately for instant user feedback');
       
     } catch (err) {
       console.error('Admin upload error:', err);
@@ -784,25 +900,9 @@ useEffect(() => {
   
   // Function to convert inventory items to spreadsheet rows
   const convertItemsToRows = useCallback((items) => {
-    console.log('🔄 Converting items to rows:', items);
+    // PERFORMANCE: Only log summary, not individual items
+    console.log(`🔄 Converting ${items.length} items to rows`);
     return items.map(item => {
-      console.log('📝 Converting item:', {
-        name: item.name,
-        itemType: getItemType(item),
-        ai_generated: item.ai_generated,
-        quantity: item.quantity,
-        cuft: item.cuft,
-        weight: item.weight,
-        inventoryItemId: item._id,
-        sourceImageId: item.sourceImageId,
-        sourceImageIdType: typeof item.sourceImageId,
-        sourceImageIdValue: item.sourceImageId?._id || item.sourceImageId,
-        sourceVideoId: item.sourceVideoId,
-        sourceVideoIdType: typeof item.sourceVideoId,
-        sourceVideoIdValue: item.sourceVideoId?._id || item.sourceVideoId,
-        hasSourceImage: !!item.sourceImageId,
-        hasSourceVideo: !!item.sourceVideoId
-      });
       const quantity = item.quantity || 1;
       const row = {
         id: generateId(),
@@ -867,17 +967,6 @@ useEffect(() => {
           col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
         }
       };
-      
-      console.log('🔄 Final row object created:', {
-        name: row.cells.col2,
-        itemType: row.itemType,
-        ai_generated: row.ai_generated,
-        sourceImageId: row.sourceImageId,
-        sourceVideoId: row.sourceVideoId,
-        hasSourceImage: !!row.sourceImageId,
-        hasSourceVideo: !!row.sourceVideoId
-      });
-      
       return row;
     });
   }, []);
