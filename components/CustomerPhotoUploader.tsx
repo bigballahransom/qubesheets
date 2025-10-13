@@ -320,23 +320,6 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Convert video to Gemini-compatible MP4 format
-  const convertVideoToMP4 = async (file: File): Promise<File> => {
-    // ALWAYS convert .MOV files - they are never compatible with Gemini
-    const isMovFile = file.name.toLowerCase().endsWith('.mov');
-    
-    if (!isMovFile && file.type === 'video/mp4') {
-      console.log('🎬 Customer video is already compatible MP4');
-      return file;
-    }
-
-    console.log(`🔄 Customer: Converting ${file.name} (${file.type}) for compatibility...`);
-    setConversionStage(`Uploading...`);
-    setConversionProgress(0);
-
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.muted = true;
       video.playsInline = true;
       video.crossOrigin = 'anonymous';
 
@@ -517,20 +500,19 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         const errorMsg = isMobile 
           ? 'Please select a photo or video from your device.'
           : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM).';
-        alert(errorMsg);
-        return;
+        setError(errorMsg);
+        return; // Just return, don't throw
       }
       
-      // Check video duration (max 1 minute) before other validations
+      // Check video duration (max 2 minutes) before other validations
       if (isVideo) {
         try {
           const duration = await checkVideoDuration(file);
           console.log(`🎬 Video duration check: ${file.name} = ${duration.toFixed(2)} seconds`);
           
-          if (duration > 60) { // 60 seconds = 1 minute
-            const durationMinutes = (duration / 60).toFixed(1);
-            setError(`Video is too long: ${durationMinutes} minutes. Please upload videos shorter than 1 minute for optimal processing.`);
-            return;
+          if (duration > 120) { // 120 seconds = 2 minutes
+            setError(`Video too long. For best results please upload short videos room by room and keep video length under 2 minutes.`);
+            return; // Just return, don't throw
           }
         } catch (durationError) {
           console.warn('⚠️ Could not check video duration:', durationError);
@@ -538,17 +520,18 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       }
       
-      // Client-side file size validation (different limits for images vs videos)
-      const maxSize = isVideo ? 100 * 1024 * 1024 : 15 * 1024 * 1024; // 100MB for videos, 15MB for images
-      
-      if (file.size > maxSize) {
-        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
-        const fileType = isVideo ? 'video' : 'image';
+      // Client-side file size validation (only for images, no limit for videos)
+      if (!isVideo) {
+        const maxSize = 15 * 1024 * 1024; // 15MB for images only
         
-        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
-        setError(errorMsg);
-        return;
+        if (file.size > maxSize) {
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
+          
+          const errorMsg = `File too large: ${fileSizeMB}MB. Please select an image smaller than ${maxSizeMB}MB.`;
+          setError(errorMsg);
+          return; // Just return, don't throw
+        }
       }
       
       console.log('📷 Customer uploader file validation passed:', {
@@ -584,42 +567,14 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       }
 
-      // ALWAYS convert .MOV files regardless of device/browser/MIME type
+      // Skip video conversion - server will handle all video processing
       if (isVideo) {
-        const isMovFile = file.name.toLowerCase().endsWith('.mov');
-        const needsConversion = isMovFile || file.type !== 'video/mp4';
-        
-        console.log(`🎬 Customer video analysis:`, {
+        console.log(`🎬 Customer video upload:`, {
           fileName: file.name,
           mimeType: file.type,
-          isMovFile,
-          needsConversion,
-          reason: isMovFile ? '.MOV file detected - MUST convert for Gemini compatibility' :
-                  file.type !== 'video/mp4' ? 'Non-MP4 MIME type' : 'None'
+          size: `${(file.size / (1024 * 1024)).toFixed(2)}MB`
         });
-        
-        if (needsConversion) {
-          setIsConverting(true);
-          try {
-            if (isMovFile) {
-              console.log('🚨 .MOV file detected - Converting to MP4 for Gemini compatibility...');
-            } else {
-              console.log('🔍 Converting video to MP4 for Gemini compatibility...');
-            }
-            finalFile = await convertVideoToMP4(file);
-            console.log(`✅ Customer video converted: ${file.name} → ${finalFile.name}`);
-          } catch (conversionError) {
-            console.log('⚠️ Video conversion failed, server will handle it:', conversionError);
-            // Don't show alert - let server handle the conversion
-            finalFile = file; // Keep original video file for server processing
-          } finally {
-            setIsConverting(false);
-            setConversionProgress(0);
-            setConversionStage('');
-          }
-        } else {
-          console.log('🎬 Customer video is already MP4, no conversion needed');
-        }
+        // Upload video as-is, server will handle any necessary conversion
       }
 
       // Process images for mobile devices to prevent upload failures (skip for videos)
@@ -792,7 +747,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       </div>
 
       <p className="text-xs text-gray-500 text-center">
-        Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 100MB, 1 minute)
+        Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 2 minutes)
       </p>
     </div>
   );

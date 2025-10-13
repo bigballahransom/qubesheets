@@ -23,15 +23,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file size limits
-    const maxSize = parseInt(process.env.MAX_VIDEO_SIZE || '104857600'); // 100MB default
-    if (fileSize > maxSize) {
-      const maxSizeMB = Math.round(maxSize / (1024 * 1024));
-      return NextResponse.json(
-        { error: `File size too large. Please upload a video smaller than ${maxSizeMB}MB` },
-        { status: 400 }
-      );
-    }
+    // No size limit for videos - server will handle processing
+    console.log(`📹 Video upload request: ${fileName} (${(fileSize / (1024 * 1024)).toFixed(2)}MB)`);
 
     // Validate video file type
     const allowedVideoTypes = [

@@ -12,6 +12,26 @@ interface AdminPhotoUploaderProps {
   projectId: string;
 }
 
+// Check video duration
+async function checkVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(video.duration);
+    };
+    
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load video metadata'));
+    };
+    
+    video.src = url;
+  });
+}
+
 // Video file detection
 function isVideoFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
@@ -268,176 +288,21 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
   const [conversionStage, setConversionStage] = useState<string | null>(null);
   const [conversionProgress, setConversionProgress] = useState(0);
 
-  // Convert video to Gemini-compatible MP4 format
-  const convertVideoToMP4 = async (file: File): Promise<File> => {
-    // ALWAYS convert .MOV files - they are never compatible with Gemini
-    const isMovFile = file.name.toLowerCase().endsWith('.mov');
-    
-    if (!isMovFile && file.type === 'video/mp4') {
-      console.log('🎬 Admin video is already compatible MP4');
-      return file;
-    }
-
-    console.log(`🔄 Admin: Converting ${file.name} (${file.type}) for compatibility...`);
-    setConversionStage(`Converting video...`);
-    setConversionProgress(0);
-
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
-      video.crossOrigin = 'anonymous';
-
-      const timeout = setTimeout(() => {
-        reject(new Error('Video conversion timeout'));
-      }, 120000);
-
-      video.onloadedmetadata = () => {
-        try {
-          clearTimeout(timeout);
-
-          // Find supported codec
-          const mimeTypes = [
-            'video/mp4; codecs="avc1.42E01E"', // H.264 baseline
-            'video/mp4',
-            'video/webm; codecs="vp8"'
-          ];
-
-          let supportedMimeType = null;
-          for (const mimeType of mimeTypes) {
-            if (MediaRecorder.isTypeSupported(mimeType)) {
-              supportedMimeType = mimeType;
-              break;
-            }
-          }
-
-          if (!supportedMimeType) {
-            throw new Error('Browser does not support video conversion');
-          }
-
-          console.log(`🎬 Admin: Using codec: ${supportedMimeType}`);
-
-          // Set up canvas with mobile-optimized dimensions
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          
-          const maxDimension = 1280; // Good for mobile
-          const aspectRatio = video.videoWidth / video.videoHeight;
-          
-          if (video.videoWidth > video.videoHeight) {
-            canvas.width = Math.min(video.videoWidth, maxDimension);
-            canvas.height = Math.round(canvas.width / aspectRatio);
-          } else {
-            canvas.height = Math.min(video.videoHeight, maxDimension);
-            canvas.width = Math.round(canvas.height * aspectRatio);
-          }
-
-          const stream = canvas.captureStream(15); // 15 FPS
-
-          // Add audio if available
-          try {
-            if ((video as any).captureStream) {
-              const videoStream = (video as any).captureStream();
-              const audioTracks = videoStream.getAudioTracks();
-              audioTracks.forEach((track: MediaStreamTrack) => stream.addTrack(track));
-            }
-          } catch (audioError) {
-            console.warn('🎬 Audio not available:', audioError);
-          }
-
-          const recorder = new MediaRecorder(stream, {
-            mimeType: supportedMimeType,
-            videoBitsPerSecond: 800000, // Lower bitrate for mobile uploads
-            audioBitsPerSecond: 64000
-          });
-
-          const chunks: BlobPart[] = [];
-          
-          recorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              chunks.push(event.data);
-            }
-          };
-
-          recorder.onstop = () => {
-            const outputType = supportedMimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
-            const blob = new Blob(chunks, { type: outputType });
-            
-            const fileName = file.name.replace(/\.[^/.]+$/, '.mp4');
-            const convertedFile = new File([blob], fileName, {
-              type: 'video/mp4',
-              lastModified: Date.now()
-            });
-            
-            const sizeMB = (convertedFile.size / 1024 / 1024).toFixed(2);
-            const originalSizeMB = (file.size / 1024 / 1024).toFixed(2);
-            console.log(`✅ Admin video converted: ${originalSizeMB}MB → ${sizeMB}MB`);
-            
-            resolve(convertedFile);
-          };
-
-          recorder.onerror = (event) => {
-            console.error('🎬 Admin conversion error:', event.error);
-            reject(new Error(`Conversion failed: ${event.error?.message || 'Unknown error'}`));
-          };
-
-          recorder.start(1000);
-
-          // Video playback and canvas drawing
-          const startTime = Date.now();
-          const maxDuration = 60000; // 60 second limit
-
-          const drawFrame = () => {
-            if (video.paused || video.ended || Date.now() - startTime > maxDuration) {
-              recorder.stop();
-              return;
-            }
-
-            ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const progress = Math.min((Date.now() - startTime) / maxDuration * 100, 99);
-            setConversionProgress(Math.round(progress));
-            
-            requestAnimationFrame(drawFrame);
-          };
-
-          video.onplay = drawFrame;
-          video.onended = () => setTimeout(() => recorder.stop(), 500);
-          
-          video.play().catch(error => {
-            reject(new Error(`Playback failed: ${error.message}`));
-          });
-
-        } catch (error) {
-          clearTimeout(timeout);
-          console.error('🎬 Admin setup error:', error);
-          reject(new Error(`Setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`));
-        }
-      };
-
-      video.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error('Failed to load video'));
-      };
-
-      video.src = URL.createObjectURL(file);
-    });
-  };
 
   const handleFileWithResult = async (file: File): Promise<boolean> => {
     if (!file) return false;
 
     try {
-      await handleFile(file);
-      return true;
+      const result = await handleFile(file);
+      return result; // Return the result directly
     } catch (error) {
       console.error('Error processing file:', error);
       return false;
     }
   };
 
-  const handleFile = async (file: File) => {
-    if (!file) return;
+  const handleFile = async (file: File): Promise<boolean> => {
+    if (!file) return false;
 
     try {
       const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
@@ -474,22 +339,39 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
           ? 'Please select a photo or video from your device.'
           : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM).';
         setError(errorMsg);
-        return;
+        return false;
       }
       
-      // File size validation
-      const maxSize = isVideo ? 100 * 1024 * 1024 : 15 * 1024 * 1024; // 100MB for videos, 15MB for images
-      
-      if (file.size > maxSize) {
-        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
-        const fileType = isVideo ? 'video' : 'image';
+      // File size validation (only for images, no limit for videos)
+      if (!isVideo) {
+        const maxSize = 15 * 1024 * 1024; // 15MB for images
         
-        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
-        setError(errorMsg);
-        return;
+        if (file.size > maxSize) {
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
+          
+          const errorMsg = `Image file too large: ${fileSizeMB}MB. Please select an image smaller than ${maxSizeMB}MB.`;
+          setError(errorMsg);
+          return false; // Return false to indicate validation failure
+        }
       }
       
+      // Check video duration (max 2 minutes) before other processing
+      if (isVideo) {
+        try {
+          const duration = await checkVideoDuration(file);
+          console.log(`🎬 Video duration check: ${file.name} = ${duration.toFixed(2)} seconds`);
+          
+          if (duration > 120) { // 120 seconds = 2 minutes
+            setError(`Video too long. For best results please upload short videos room by room and keep video length under 2 minutes.`);
+            return false; // Return false to indicate validation failure
+          }
+        } catch (durationError) {
+          console.warn('⚠️ Could not check video duration:', durationError);
+          // Continue with upload - server can handle duration check as fallback
+        }
+      }
+
       console.log('📷 Admin uploader file validation passed:', {
         isRegularImage,
         isHeic,
@@ -501,21 +383,14 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
 
       let finalFile = file;
 
-      // Try client-side video conversion for MOV files
+      // Skip video conversion - server will handle all video processing
       if (isVideo) {
-        setIsConverting(true);
-        try {
-          console.log('🎬 Attempting client-side video conversion...');
-          finalFile = await convertVideoToMP4(file);
-          console.log('✅ Client-side video conversion successful');
-        } catch (conversionError) {
-          console.log('⚠️ Client-side video conversion failed, server will handle it:', conversionError);
-          finalFile = file; // Keep original video file for server processing
-        } finally {
-          setIsConverting(false);
-          setConversionStage(null);
-          setConversionProgress(0);
-        }
+        console.log(`🎬 Admin video upload:`, {
+          fileName: file.name,
+          mimeType: file.type,
+          size: `${(file.size / (1024 * 1024)).toFixed(2)}MB`
+        });
+        // Upload video as-is, server will handle any necessary conversion
       }
 
       // Try client-side HEIC conversion (only for images, skip for videos)
@@ -586,9 +461,13 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
           }
         }
       }
+      
+      // Return true to indicate successful upload
+      return true;
     } catch (error) {
       console.error('Error processing file:', error);
       setIsConverting(false);
+      return false; // Return false on error
     }
   };
 
@@ -794,7 +673,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         </div>
 
         <p className="text-xs text-gray-500 text-center">
-          Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 100MB)
+          Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 2 minutes)
         </p>
     </div>
   );
