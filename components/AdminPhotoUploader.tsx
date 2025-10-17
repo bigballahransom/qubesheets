@@ -30,6 +30,26 @@ function isVideoFile(file: File): boolean {
   return hasVideoExtension || hasVideoMimeType;
 }
 
+// Check video duration (max 1 minute)
+async function getVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(video.duration);
+    };
+    
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to load video metadata'));
+    };
+    
+    video.src = url;
+  });
+}
+
 // Enhanced HEIC file detection for iPhone compatibility
 function isHeicFile(file: File): boolean {
   const fileName = file.name.toLowerCase();
@@ -320,17 +340,30 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         return;
       }
       
-      // File size validation
-      const maxSize = isVideo ? 100 * 1024 * 1024 : 15 * 1024 * 1024; // 100MB for videos, 15MB for images
+      // File size validation (only for images)
+      if (!isVideo) {
+        const maxImageSize = 15 * 1024 * 1024; // 15MB for images
+        if (file.size > maxImageSize) {
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          const errorMsg = `Image too large: ${fileSizeMB}MB. Please select an image smaller than 15MB.`;
+          setError(errorMsg);
+          return;
+        }
+      }
       
-      if (file.size > maxSize) {
-        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
-        const fileType = isVideo ? 'video' : 'image';
-        
-        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
-        setError(errorMsg);
-        return;
+      // Video duration validation (1 minute max)
+      if (isVideo) {
+        try {
+          const duration = await getVideoDuration(file);
+          if (duration > 60) { // 60 seconds = 1 minute
+            const durationMinutes = (duration / 60).toFixed(1);
+            setError(`Video too long: ${durationMinutes} minutes. Please select a video shorter than 1 minute.`);
+            return;
+          }
+        } catch (error) {
+          console.warn('Could not validate video duration:', error);
+          // Continue with upload if duration check fails
+        }
       }
       
       console.log('📷 Admin uploader file validation passed:', {
@@ -609,7 +642,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         </div>
 
         <p className="text-xs text-gray-500 text-center">
-          Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 100MB)
+          Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 1 minute)
         </p>
     </div>
   );

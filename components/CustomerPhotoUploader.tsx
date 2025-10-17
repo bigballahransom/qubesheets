@@ -378,17 +378,18 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       }
       
-      // Client-side file size validation (different limits for images vs videos)
-      const maxSize = isVideo ? 100 * 1024 * 1024 : 15 * 1024 * 1024; // 100MB for videos, 15MB for images
-      
-      if (file.size > maxSize) {
-        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const maxSizeMB = (maxSize / (1024 * 1024)).toFixed(0);
-        const fileType = isVideo ? 'video' : 'image';
+      // Client-side file size validation (only for images, no video size limit)
+      if (!isVideo) {
+        const maxImageSize = 15 * 1024 * 1024; // 15MB for images
         
-        const errorMsg = `File too large: ${fileSizeMB}MB. Please select a ${fileType} smaller than ${maxSizeMB}MB.`;
-        setError(errorMsg);
-        return;
+        if (file.size > maxImageSize) {
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          const maxSizeMB = (maxImageSize / (1024 * 1024)).toFixed(0);
+          
+          const errorMsg = `Image too large: ${fileSizeMB}MB. Please select an image smaller than ${maxSizeMB}MB.`;
+          setError(errorMsg);
+          return;
+        }
       }
       
       console.log('📷 Customer uploader file validation passed:', {
@@ -594,7 +595,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
       </div>
 
       <p className="text-xs text-gray-500 text-center">
-        Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 100MB, 1 minute)
+        Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 1 minute)
       </p>
     </div>
   );

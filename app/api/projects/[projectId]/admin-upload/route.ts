@@ -202,8 +202,8 @@ export async function POST(
     // File size limits
     const mongoDBLimit = 16 * 1024 * 1024; // 16MB MongoDB limit
     const imageMaxSize = 15 * 1024 * 1024; // 15MB for images
-    const videoMaxSize = parseInt(process.env.MAX_VIDEO_UPLOAD_SIZE || '104857600'); // 100MB for videos
-    const maxSize = isVideo ? videoMaxSize : imageMaxSize;
+    // No video size limit - videos are uploaded to S3 directly
+    const maxSize = isVideo ? Number.MAX_SAFE_INTEGER : imageMaxSize;
     
     console.log('📄 File size validation:', {
       fileName: file.name,

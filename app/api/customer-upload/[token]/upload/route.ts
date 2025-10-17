@@ -243,9 +243,8 @@ export async function POST(
     // MongoDB document size limit is 16MB, so we need stricter limits
     const mongoDBLimit = 16 * 1024 * 1024; // 16MB MongoDB limit
     const imageMaxSize = 15 * 1024 * 1024; // 15MB for images (leaving buffer for metadata)
-    const videoMaxSize = parseInt(process.env.MAX_VIDEO_UPLOAD_SIZE || '104857600'); // 100MB for videos (stored separately)
-    const maxVideoDurationHours = parseInt(process.env.MAX_VIDEO_DURATION_HOURS || '2'); // 2 hours default for Gemini compatibility
-    const maxSize = isVideo ? videoMaxSize : imageMaxSize;
+    // No video size limit - videos are uploaded to S3 directly, duration limit enforced server-side (1 minute)
+    const maxSize = isVideo ? Number.MAX_SAFE_INTEGER : imageMaxSize;
     
     console.log('📄 File size validation:', {
       fileName: image.name,
@@ -297,7 +296,7 @@ export async function POST(
         try {
           const conversionResult = await convertMovToMp4(image, {
             quality: 'medium',
-            maxFileSize: videoMaxSize,
+            maxFileSize: Number.MAX_SAFE_INTEGER, // No size limit
             timeoutMs: 120000 // 2 minutes
           });
           
