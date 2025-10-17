@@ -369,11 +369,15 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
           
           if (duration > 60) { // 60 seconds = 1 minute
             setError(`This video is too long. Please select a video shorter than 1 minute for optimal processing. Pro tip: Take 1 short video for each room!`);
-            return;
+            throw new Error('Video duration exceeds limit');
           }
         } catch (durationError) {
+          // If it's our validation error, re-throw it
+          if (durationError instanceof Error && durationError.message === 'Video duration exceeds limit') {
+            throw durationError;
+          }
+          // Otherwise, it's a metadata reading error - continue with upload
           console.warn('⚠️ Could not check video duration:', durationError);
-          // Continue with upload - server can handle duration check as fallback
         }
       }
       

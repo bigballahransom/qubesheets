@@ -360,8 +360,12 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
             throw new Error('Video duration exceeds limit');
           }
         } catch (error) {
+          // If it's our validation error, re-throw it
+          if (error instanceof Error && error.message === 'Video duration exceeds limit') {
+            throw error;
+          }
+          // Otherwise, it's a metadata reading error - continue with upload
           console.warn('Could not validate video duration:', error);
-          // Continue with upload if duration check fails
         }
       }
       
