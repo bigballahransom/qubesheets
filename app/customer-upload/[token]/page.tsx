@@ -629,6 +629,7 @@ export default function CustomerUploadPage() {
             <CustomerPhotoUploader
               onUpload={handleFileUpload}
               uploading={uploading}
+              customerToken={token}
             />
           </div>
         </div>

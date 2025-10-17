@@ -3,10 +3,12 @@
 
 import { useState, useRef } from 'react';
 import { Camera, Upload, Loader2, Video } from 'lucide-react';
+import { uploadVideoFile } from '@/lib/videoUploadHelper';
 
 interface CustomerPhotoUploaderProps {
   onUpload: (file: File) => Promise<void>;
   uploading: boolean;
+  customerToken?: string; // Add optional token for video uploads
 }
 
 // Video file detection (now enabled with S3 support)
@@ -312,7 +314,7 @@ async function convertHeicToJpeg(file: File): Promise<File> {
   throw new Error('HEIC conversion failed after all retry attempts');
 }
 
-export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerPhotoUploaderProps) {
+export default function CustomerPhotoUploader({ onUpload, uploading, customerToken }: CustomerPhotoUploaderProps) {
   const [dragActive, setDragActive] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -444,36 +446,63 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
         }
       }
 
-      // Mobile-optimized upload with retry logic
-      let uploadSuccess = false;
-      let retryCount = 0;
-      const maxRetries = isMobile ? 3 : 1; // More retries on mobile
-      
-      while (!uploadSuccess && retryCount < maxRetries) {
+      // Handle video uploads with consistent helper
+      if (isVideo && customerToken) {
         try {
-          if (retryCount > 0) {
-            console.log(`📱 Retry attempt ${retryCount} for ${finalFile.name}`);
-            // Add exponential backoff delay for retries
-            await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+          const result = await uploadVideoFile(finalFile, {
+            projectId: 'customer-upload', // Will be resolved by token
+            isCustomerUpload: true,
+            customerToken: customerToken,
+            userId: 'customer', // Will be handled by auth in API
+            organizationId: undefined
+          });
+
+          if (result.success) {
+            console.log('✅ Video upload successful:', result);
+            
+            if (fileInputRef.current) {
+              fileInputRef.current.value = '';
+            }
+          } else {
+            throw new Error(result.error || 'Video upload failed');
           }
-          
-          await onUpload(finalFile);
-          uploadSuccess = true;
-          
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
-          }
-          
-        } catch (uploadError) {
-          console.error(`❌ Upload attempt ${retryCount + 1} failed:`, uploadError);
-          retryCount++;
-          
-          if (retryCount >= maxRetries) {
-            const errorMsg = isMobile
-              ? 'Upload failed after multiple attempts. Please check your internet connection and try again.'
-              : 'Failed to process the selected file. Please try again.';
-            alert(errorMsg);
-            throw uploadError;
+        } catch (videoError) {
+          console.error('❌ Video upload failed:', videoError);
+          setError(videoError instanceof Error ? videoError.message : 'Video upload failed');
+          throw videoError;
+        }
+      } else {
+        // Handle image uploads and videos without token with existing logic
+        let uploadSuccess = false;
+        let retryCount = 0;
+        const maxRetries = isMobile ? 3 : 1; // More retries on mobile
+        
+        while (!uploadSuccess && retryCount < maxRetries) {
+          try {
+            if (retryCount > 0) {
+              console.log(`📱 Retry attempt ${retryCount} for ${finalFile.name}`);
+              // Add exponential backoff delay for retries
+              await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+            }
+            
+            await onUpload(finalFile);
+            uploadSuccess = true;
+            
+            if (fileInputRef.current) {
+              fileInputRef.current.value = '';
+            }
+            
+          } catch (uploadError) {
+            console.error(`❌ Upload attempt ${retryCount + 1} failed:`, uploadError);
+            retryCount++;
+            
+            if (retryCount >= maxRetries) {
+              const errorMsg = isMobile
+                ? 'Upload failed after multiple attempts. Please check your internet connection and try again.'
+                : 'Failed to process the selected file. Please try again.';
+              alert(errorMsg);
+              throw uploadError;
+            }
           }
         }
       }

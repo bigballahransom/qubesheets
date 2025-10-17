@@ -4,6 +4,7 @@
 import { useState, useRef } from 'react';
 import { Camera, Upload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { uploadVideoFile } from '@/lib/videoUploadHelper';
 
 interface AdminPhotoUploaderProps {
   onUpload: (file: File) => Promise<void>;
@@ -418,38 +419,65 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
       // Clear any previous errors
       setError(null);
 
-      // Upload with retry logic
-      let uploadSuccess = false;
-      let retryCount = 0;
-      const maxRetries = isMobile ? 3 : 1;
-      
-      while (!uploadSuccess && retryCount < maxRetries) {
+      // Handle video uploads with consistent helper
+      if (isVideo) {
         try {
-          if (retryCount > 0) {
-            console.log(`📱 Retry attempt ${retryCount} for ${finalFile.name}`);
-            await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+          const result = await uploadVideoFile(finalFile, {
+            projectId: projectId,
+            isCustomerUpload: false,
+            userId: 'admin-user', // This will be handled by auth in the API
+            organizationId: undefined // This will be handled by auth in the API
+          });
+
+          if (result.success) {
+            console.log('✅ Video upload successful:', result);
+            setUploadedCount(prev => prev + 1);
+            
+            if (fileInputRef.current) {
+              fileInputRef.current.value = '';
+            }
+          } else {
+            throw new Error(result.error || 'Video upload failed');
           }
-          
-          await onUpload(finalFile);
-          uploadSuccess = true;
-          
-          if (fileInputRef.current) {
-            fileInputRef.current.value = '';
-          }
-          
-          // Increment successful upload counter
-          setUploadedCount(prev => prev + 1);
-          
-        } catch (uploadError) {
-          console.error(`❌ Upload attempt ${retryCount + 1} failed:`, uploadError);
-          retryCount++;
-          
-          if (retryCount >= maxRetries) {
-            const errorMsg = isMobile
-              ? 'Upload failed after multiple attempts. Please check your internet connection and try again.'
-              : 'Failed to process the selected file. Please try again.';
-            setError(errorMsg);
-            throw uploadError;
+        } catch (videoError) {
+          console.error('❌ Video upload failed:', videoError);
+          setError(videoError instanceof Error ? videoError.message : 'Video upload failed');
+          throw videoError;
+        }
+      } else {
+        // Handle image uploads with existing logic
+        let uploadSuccess = false;
+        let retryCount = 0;
+        const maxRetries = isMobile ? 3 : 1;
+        
+        while (!uploadSuccess && retryCount < maxRetries) {
+          try {
+            if (retryCount > 0) {
+              console.log(`📱 Retry attempt ${retryCount} for ${finalFile.name}`);
+              await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+            }
+            
+            await onUpload(finalFile);
+            uploadSuccess = true;
+            
+            if (fileInputRef.current) {
+              fileInputRef.current.value = '';
+            }
+            
+            // Increment successful upload counter
+            setUploadedCount(prev => prev + 1);
+            
+          } catch (uploadError) {
+            console.error(`❌ Upload attempt ${retryCount + 1} failed:`, uploadError);
+            retryCount++;
+            
+            if (retryCount >= maxRetries) {
+              const errorMsg = isMobile
+                ? 'Upload failed after multiple attempts. Please check your internet connection and try again.'
+                : 'Failed to process the selected file. Please try again.';
+              setError(errorMsg);
+              throw uploadError;
+            }
           }
         }
       }
