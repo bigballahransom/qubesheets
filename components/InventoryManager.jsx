@@ -858,6 +858,7 @@ useEffect(() => {
       // Remove temp image on error
       setUploadedImages(prev => prev.filter(img => img.id !== tempImage.id));
       
+      
       let errorMessage = 'Upload failed';
       if (err instanceof Error) {
         if (err.name === 'AbortError') {

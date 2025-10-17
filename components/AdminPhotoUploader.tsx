@@ -265,164 +265,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
   const [uploadedCount, setUploadedCount] = useState(0);
   const [isProcessingQueue, setIsProcessingQueue] = useState(false);
   const fileQueueRef = useRef<File[]>([]);
-  const [conversionStage, setConversionStage] = useState<string | null>(null);
-  const [conversionProgress, setConversionProgress] = useState(0);
 
-  // Convert video to Gemini-compatible MP4 format
-  const convertVideoToMP4 = async (file: File): Promise<File> => {
-    // ALWAYS convert .MOV files - they are never compatible with Gemini
-    const isMovFile = file.name.toLowerCase().endsWith('.mov');
-    
-    if (!isMovFile && file.type === 'video/mp4') {
-      console.log('🎬 Admin video is already compatible MP4');
-      return file;
-    }
-
-    console.log(`🔄 Admin: Converting ${file.name} (${file.type}) for compatibility...`);
-    setConversionStage(`Converting video...`);
-    setConversionProgress(0);
-
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
-      video.crossOrigin = 'anonymous';
-
-      const timeout = setTimeout(() => {
-        reject(new Error('Video conversion timeout'));
-      }, 120000);
-
-      video.onloadedmetadata = () => {
-        try {
-          clearTimeout(timeout);
-
-          // Find supported codec
-          const mimeTypes = [
-            'video/mp4; codecs="avc1.42E01E"', // H.264 baseline
-            'video/mp4',
-            'video/webm; codecs="vp8"'
-          ];
-
-          let supportedMimeType = null;
-          for (const mimeType of mimeTypes) {
-            if (MediaRecorder.isTypeSupported(mimeType)) {
-              supportedMimeType = mimeType;
-              break;
-            }
-          }
-
-          if (!supportedMimeType) {
-            throw new Error('Browser does not support video conversion');
-          }
-
-          console.log(`🎬 Admin: Using codec: ${supportedMimeType}`);
-
-          // Set up canvas with mobile-optimized dimensions
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          
-          const maxDimension = 1280; // Good for mobile
-          const aspectRatio = video.videoWidth / video.videoHeight;
-          
-          if (video.videoWidth > video.videoHeight) {
-            canvas.width = Math.min(video.videoWidth, maxDimension);
-            canvas.height = Math.round(canvas.width / aspectRatio);
-          } else {
-            canvas.height = Math.min(video.videoHeight, maxDimension);
-            canvas.width = Math.round(canvas.height * aspectRatio);
-          }
-
-          const stream = canvas.captureStream(15); // 15 FPS
-
-          // Add audio if available
-          try {
-            if ((video as any).captureStream) {
-              const videoStream = (video as any).captureStream();
-              const audioTracks = videoStream.getAudioTracks();
-              audioTracks.forEach((track: MediaStreamTrack) => stream.addTrack(track));
-            }
-          } catch (audioError) {
-            console.warn('🎬 Audio not available:', audioError);
-          }
-
-          const recorder = new MediaRecorder(stream, {
-            mimeType: supportedMimeType,
-            videoBitsPerSecond: 800000, // Lower bitrate for mobile uploads
-            audioBitsPerSecond: 64000
-          });
-
-          const chunks: BlobPart[] = [];
-          
-          recorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              chunks.push(event.data);
-            }
-          };
-
-          recorder.onstop = () => {
-            const outputType = supportedMimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
-            const blob = new Blob(chunks, { type: outputType });
-            
-            const fileName = file.name.replace(/\.[^/.]+$/, '.mp4');
-            const convertedFile = new File([blob], fileName, {
-              type: 'video/mp4',
-              lastModified: Date.now()
-            });
-            
-            const sizeMB = (convertedFile.size / 1024 / 1024).toFixed(2);
-            const originalSizeMB = (file.size / 1024 / 1024).toFixed(2);
-            console.log(`✅ Admin video converted: ${originalSizeMB}MB → ${sizeMB}MB`);
-            
-            resolve(convertedFile);
-          };
-
-          recorder.onerror = (event) => {
-            console.error('🎬 Admin conversion error:', event.error);
-            reject(new Error(`Conversion failed: ${event.error?.message || 'Unknown error'}`));
-          };
-
-          recorder.start(1000);
-
-          // Video playback and canvas drawing
-          const startTime = Date.now();
-          const maxDuration = 60000; // 60 second limit
-
-          const drawFrame = () => {
-            if (video.paused || video.ended || Date.now() - startTime > maxDuration) {
-              recorder.stop();
-              return;
-            }
-
-            ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const progress = Math.min((Date.now() - startTime) / maxDuration * 100, 99);
-            setConversionProgress(Math.round(progress));
-            
-            requestAnimationFrame(drawFrame);
-          };
-
-          video.onplay = drawFrame;
-          video.onended = () => setTimeout(() => recorder.stop(), 500);
-          
-          video.play().catch(error => {
-            reject(new Error(`Playback failed: ${error.message}`));
-          });
-
-        } catch (error) {
-          clearTimeout(timeout);
-          console.error('🎬 Admin setup error:', error);
-          reject(new Error(`Setup failed: ${error instanceof Error ? error.message : 'Unknown error'}`));
-        }
-      };
-
-      video.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error('Failed to load video'));
-      };
-
-      video.src = URL.createObjectURL(file);
-    });
-  };
 
   const handleFileWithResult = async (file: File): Promise<boolean> => {
     if (!file) return false;
@@ -501,21 +344,10 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
 
       let finalFile = file;
 
-      // Try client-side video conversion for MOV files
+      // Upload videos directly without client-side conversion
       if (isVideo) {
-        setIsConverting(true);
-        try {
-          console.log('🎬 Attempting client-side video conversion...');
-          finalFile = await convertVideoToMP4(file);
-          console.log('✅ Client-side video conversion successful');
-        } catch (conversionError) {
-          console.log('⚠️ Client-side video conversion failed, server will handle it:', conversionError);
-          finalFile = file; // Keep original video file for server processing
-        } finally {
-          setIsConverting(false);
-          setConversionStage(null);
-          setConversionProgress(0);
-        }
+        console.log('🎬 Video detected - uploading directly to server for processing');
+        finalFile = file; // Keep original video file for server processing
       }
 
       // Try client-side HEIC conversion (only for images, skip for videos)
@@ -581,14 +413,13 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
               ? 'Upload failed after multiple attempts. Please check your internet connection and try again.'
               : 'Failed to process the selected file. Please try again.';
             setError(errorMsg);
-            setIsConverting(false);
             throw uploadError;
           }
         }
       }
     } catch (error) {
       console.error('Error processing file:', error);
-      setIsConverting(false);
+      setIsConverting(false); // Reset conversion state for any ongoing HEIC conversion
     }
   };
 
@@ -751,22 +582,6 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
                 <p className="text-sm text-gray-500">
                   {uploadedCount} {uploadedCount === 1 ? 'file' : 'files'} uploaded
                 </p>
-              )}
-            </div>
-          ) : isConverting ? (
-            <div className="space-y-4">
-              <Loader2 className="w-12 h-12 animate-spin mx-auto text-blue-500" />
-              <p className="text-gray-600">{conversionStage || 'Converting file...'}</p>
-              {conversionProgress > 0 && (
-                <div className="w-full max-w-xs mx-auto">
-                  <div className="bg-gray-200 rounded-full h-2 overflow-hidden">
-                    <div 
-                      className="bg-blue-500 h-full transition-all duration-300"
-                      style={{ width: `${conversionProgress}%` }}
-                    />
-                  </div>
-                  <p className="text-sm text-gray-500 mt-1">{conversionProgress}%</p>
-                </div>
               )}
             </div>
           ) : (

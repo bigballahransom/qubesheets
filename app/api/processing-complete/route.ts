@@ -31,13 +31,27 @@ export async function POST(request: NextRequest) {
     // SIMPLE REAL-TIME: Complete processing immediately
     if (success && projectId) {
       const completedId = imageId || videoId;
-      const completedItem = simpleRealTime.completeProcessing(projectId, completedId);
+      let completedItem = simpleRealTime.completeProcessing(projectId, completedId);
       
       if (completedItem) {
         console.log(`✅ Simple real-time: marked ${completedId} as completed`);
       } else {
-        // Try to complete by name match (fallback)
-        console.log(`⚠️ Could not find processing item ${completedId}, this is normal for some workflows`);
+        // Fallback: Try to find by name and type for videos (handles ID mismatch)
+        console.log(`⚠️ Could not find processing item ${completedId}, trying fallback by name/type`);
+        const processingItems = simpleRealTime.getProcessing(projectId);
+        const videoItem = processingItems.find((item: any) => 
+          item.type === 'video' && 
+          item.id.startsWith('upload-') // temp upload ID pattern
+        );
+        
+        if (videoItem && videoId) {
+          console.log(`🔄 Found temp video item ${videoItem.id}, completing with actual ID ${completedId}`);
+          completedItem = simpleRealTime.completeProcessing(projectId, videoItem.id);
+        }
+        
+        if (!completedItem) {
+          console.log(`⚠️ No matching processing item found - this is normal for some workflows`);
+        }
       }
     }
 

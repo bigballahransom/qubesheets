@@ -35,7 +35,6 @@ export default function VideoUpload({
   const [analysisResults, setAnalysisResults] = useState([]);
   const [extractionProgress, setExtractionProgress] = useState(0);
   const [currentStage, setCurrentStage] = useState('');
-  const [conversionProgress, setConversionProgress] = useState(0);
   const [extractedFrames, setExtractedFrames] = useState([]);
   const [selectedFrames, setSelectedFrames] = useState([]);
   
@@ -266,174 +265,6 @@ export default function VideoUpload({
     }
   }, [projectId, onAnalysisComplete, uploadLinkId]);
 
-  // Convert video to Gemini-compatible format using MediaRecorder API
-  const convertVideoToMP4 = useCallback(async (file) => {
-    // ALWAYS convert .MOV files - they are never compatible with Gemini
-    const isMovFile = file.name.toLowerCase().endsWith('.mov');
-    
-    if (!isMovFile && file.type === 'video/mp4') {
-      console.log('🎬 File is already compatible MP4, skipping conversion');
-      return file;
-    }
-
-    console.log(`🔄 Converting ${file.name} (${file.type}) to Gemini-compatible MP4...`);
-    setCurrentStage(`Converting video for compatibility...`);
-    setConversionProgress(10);
-
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.muted = true;
-      video.playsInline = true;
-      video.crossOrigin = 'anonymous';
-
-      const timeout = setTimeout(() => {
-        reject(new Error('Video conversion timeout after 2 minutes'));
-      }, 120000);
-
-      video.onloadedmetadata = () => {
-        try {
-          clearTimeout(timeout);
-          setConversionProgress(30);
-
-          // Check if MediaRecorder supports H.264 MP4
-          const mimeTypes = [
-            'video/mp4; codecs="avc1.42E01E"', // H.264 baseline profile
-            'video/mp4; codecs="avc1.4D4028"', // H.264 main profile  
-            'video/mp4',
-            'video/webm; codecs="vp8"'
-          ];
-
-          let supportedMimeType = null;
-          for (const mimeType of mimeTypes) {
-            if (MediaRecorder.isTypeSupported(mimeType)) {
-              supportedMimeType = mimeType;
-              break;
-            }
-          }
-
-          if (!supportedMimeType) {
-            throw new Error('Browser does not support video recording');
-          }
-
-          console.log(`🎬 Using codec: ${supportedMimeType}`);
-          setConversionProgress(50);
-
-          // Create canvas and stream
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          
-          // Optimize dimensions for mobile and file size
-          const maxDimension = 1280;
-          const aspectRatio = video.videoWidth / video.videoHeight;
-          
-          if (video.videoWidth > video.videoHeight) {
-            canvas.width = Math.min(video.videoWidth, maxDimension);
-            canvas.height = Math.round(canvas.width / aspectRatio);
-          } else {
-            canvas.height = Math.min(video.videoHeight, maxDimension);
-            canvas.width = Math.round(canvas.height * aspectRatio);
-          }
-
-          const stream = canvas.captureStream(15); // 15 FPS for good quality/size balance
-          
-          // Add audio track if available
-          try {
-            if (video.captureStream) {
-              const videoStream = video.captureStream();
-              const audioTracks = videoStream.getAudioTracks();
-              audioTracks.forEach(track => stream.addTrack(track));
-            }
-          } catch (audioError) {
-            console.warn('🎬 Audio capture not available:', audioError);
-          }
-
-          const recorder = new MediaRecorder(stream, {
-            mimeType: supportedMimeType,
-            videoBitsPerSecond: 1000000, // 1 Mbps for smaller files
-            audioBitsPerSecond: 128000   // 128 kbps audio
-          });
-
-          const chunks = [];
-          
-          recorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              chunks.push(event.data);
-            }
-          };
-
-          recorder.onstop = () => {
-            setConversionProgress(95);
-            
-            const outputMimeType = supportedMimeType.includes('mp4') ? 'video/mp4' : 'video/webm';
-            const blob = new Blob(chunks, { type: outputMimeType });
-            
-            // Create file with proper MP4 extension
-            const fileName = file.name.replace(/\.[^/.]+$/, '.mp4');
-            const convertedFile = new File([blob], fileName, {
-              type: 'video/mp4',
-              lastModified: Date.now()
-            });
-
-            setConversionProgress(100);
-            setCurrentStage('Conversion complete!');
-            
-            const sizeMB = (convertedFile.size / 1024 / 1024).toFixed(2);
-            const originalSizeMB = (file.size / 1024 / 1024).toFixed(2);
-            console.log(`✅ Video converted: ${originalSizeMB}MB → ${sizeMB}MB (${fileName})`);
-            
-            resolve(convertedFile);
-          };
-
-          recorder.onerror = (event) => {
-            console.error('🎬 MediaRecorder error:', event.error);
-            reject(new Error(`Video conversion failed: ${event.error?.message || 'Unknown error'}`));
-          };
-
-          setCurrentStage('Recording converted video...');
-          recorder.start(1000);
-
-          // Play video and draw frames to canvas
-          const startTime = Date.now();
-          const maxDuration = 60000; // 60 seconds max
-
-          const drawFrame = () => {
-            if (video.paused || video.ended || Date.now() - startTime > maxDuration) {
-              recorder.stop();
-              return;
-            }
-
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const progress = Math.min(video.currentTime / video.duration, 1);
-            setConversionProgress(50 + progress * 40);
-            
-            requestAnimationFrame(drawFrame);
-          };
-
-          video.onplay = drawFrame;
-          video.onended = () => setTimeout(() => recorder.stop(), 500);
-          
-          // Start playback
-          video.play().catch(error => {
-            reject(new Error(`Failed to play video: ${error.message}`));
-          });
-
-        } catch (error) {
-          clearTimeout(timeout);
-          console.error('🎬 Conversion setup error:', error);
-          reject(new Error(`Setup failed: ${error.message}`));
-        }
-      };
-
-      video.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error('Failed to load video for conversion'));
-      };
-
-      video.src = URL.createObjectURL(file);
-      video.load();
-    });
-  }, []);
 
   // Handle file selection and upload to server with Railway processing
   const handleFileSelect = useCallback(async (event) => {
@@ -458,58 +289,14 @@ export default function VideoUpload({
       return;
     }
     
-    let processedFile = file;
+    // Upload video directly without conversion
+    console.log('🎬 Video detected - uploading directly to server for processing');
     
-    try {
-      // ALWAYS convert .MOV files regardless of device/browser/MIME type
-      const isMovFile = file.name.toLowerCase().endsWith('.mov');
-      const needsConversion = isMovFile || file.type !== 'video/mp4';
-      
-      console.log(`🎬 Video file analysis:`, {
-        fileName: file.name,
-        mimeType: file.type,
-        isMovFile,
-        needsConversion,
-        reason: isMovFile ? '.MOV file detected - MUST convert for Gemini compatibility' :
-                file.type !== 'video/mp4' ? 'Non-MP4 MIME type' : 'None'
-      });
-      
-      if (needsConversion) {
-        if (isMovFile) {
-          console.log('🚨 .MOV file detected - Converting to MP4 for Gemini compatibility...');
-          toast.info('Converting .MOV to MP4 for compatibility...', { duration: 3000 });
-        } else {
-          console.log('🎬 Converting video to MP4 for Gemini compatibility...');
-          toast.info('Converting video to MP4 for better compatibility...', { duration: 3000 });
-        }
-        
-        processedFile = await convertVideoToMP4(file);
-        console.log(`✅ Video conversion completed: ${file.name} → ${processedFile.name}`);
-        toast.success('Video converted successfully!');
-      } else {
-        console.log('🎬 Video is already MP4, no conversion needed');
-      }
-      
-      console.log('🎬 Starting video upload to server for Railway processing');
-      setVideoFile(processedFile);
-      setVideoUrl(URL.createObjectURL(processedFile));
-      setUploadState('uploading');
-      setCurrentStage('Uploading video to server...');
-      
-    } catch (conversionError) {
-      console.error('🎬 Video conversion failed:', conversionError);
-      toast.error(`Video conversion failed: ${conversionError.message}`, {
-        description: 'The video will be uploaded as-is. Some processing issues may occur.',
-        duration: 8000,
-      });
-      
-      // Continue with original file if conversion fails
-      processedFile = file;
-      setVideoFile(file);
-      setVideoUrl(URL.createObjectURL(file));
-      setUploadState('uploading');
-      setCurrentStage('Uploading video to server...');
-    }
+    const processedFile = file;
+    setVideoFile(processedFile);
+    setVideoUrl(URL.createObjectURL(processedFile));
+    setUploadState('uploading');
+    setCurrentStage('Uploading video to server...');
     
     try {
       // Step 1: Get pre-signed upload URL
@@ -717,7 +504,6 @@ export default function VideoUpload({
     setUploadProgress(0);
     setAnalysisProgress(0);
     setExtractionProgress(0);
-    setConversionProgress(0);
     setCurrentStage('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -794,30 +580,6 @@ export default function VideoUpload({
         </div>
       )}
 
-      {/* Conversion Progress */}
-      {uploadState === 'converting' && (
-        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg">
-          <div className="flex items-center gap-4 mb-4">
-            <Loader2 className="w-6 h-6 text-orange-500 animate-spin" />
-            <div>
-              <h3 className="font-medium text-gray-900">Converting video to MP4...</h3>
-              <p className="text-sm text-gray-500">{currentStage}</p>
-            </div>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-3">
-            <div
-              className="bg-orange-500 h-3 rounded-full transition-all duration-300"
-              style={{ width: `${conversionProgress}%` }}
-            />
-          </div>
-          <p className="text-sm text-gray-500 mt-2">{conversionProgress}% complete</p>
-          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mt-4">
-            <p className="text-orange-800 text-sm">
-              🔄 Converting video for better compatibility with our analysis system. This ensures reliable processing on all devices.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Upload Progress */}
       {uploadState === 'uploading' && (

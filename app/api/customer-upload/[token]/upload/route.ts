@@ -342,7 +342,7 @@ export async function POST(
             uploadToken: token || 'no-token',
             originalMimeType: image.type,
             normalizedMimeType: normalizedMimeType,
-            convertedFromMov: needsMovConversion(image).toString(),
+            convertedFromMov: 'false', // No longer converting on server
             uploadedAt: new Date().toISOString()
           },
           contentType: normalizedMimeType
@@ -384,7 +384,7 @@ export async function POST(
             customerName: customerName,
             originalMimeType: image.type, // Keep original for reference
             normalizedMimeType: normalizedMimeType,
-            convertedFromMov: needsMovConversion(image).toString(),
+            convertedFromMov: 'false', // No longer converting on server
             finalFileName: finalFileName
           }
         });
