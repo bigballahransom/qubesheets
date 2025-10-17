@@ -337,7 +337,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
           ? 'Please select a photo or video from your device.'
           : 'Please select a valid image (JPEG, PNG, GIF, HEIC, HEIF) or video (MP4, MOV, AVI, WebM).';
         setError(errorMsg);
-        return;
+        throw new Error(errorMsg);
       }
       
       // File size validation (only for images)
@@ -347,7 +347,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
           const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
           const errorMsg = `Image too large: ${fileSizeMB}MB. Please select an image smaller than 15MB.`;
           setError(errorMsg);
-          return;
+          throw new Error(errorMsg);
         }
       }
       
@@ -356,9 +356,8 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         try {
           const duration = await getVideoDuration(file);
           if (duration > 60) { // 60 seconds = 1 minute
-            const durationMinutes = (duration / 60).toFixed(1);
-            setError(`Video too long: ${durationMinutes} minutes. Please select a video shorter than 1 minute.`);
-            return;
+            setError(`This video is too long. Please select a video shorter than 1 minute for optimal processing. Pro tip: Take 1 short video for each room!`);
+            throw new Error('Video duration exceeds limit');
           }
         } catch (error) {
           console.warn('Could not validate video duration:', error);

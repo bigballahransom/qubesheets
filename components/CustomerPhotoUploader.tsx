@@ -368,8 +368,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading }: CustomerP
           console.log(`🎬 Video duration check: ${file.name} = ${duration.toFixed(2)} seconds`);
           
           if (duration > 60) { // 60 seconds = 1 minute
-            const durationMinutes = (duration / 60).toFixed(1);
-            setError(`Video is too long: ${durationMinutes} minutes. Please upload videos shorter than 1 minute for optimal processing.`);
+            setError(`This video is too long. Please select a video shorter than 1 minute for optimal processing. Pro tip: Take 1 short video for each room!`);
             return;
           }
         } catch (durationError) {
