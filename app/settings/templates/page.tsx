@@ -18,7 +18,9 @@ const DEFAULT_INSTRUCTIONS = `📸 Upload Tips from {companyName}
 • Include multiple angles for large furniture  
 • Group similar items together when possible
 • Add descriptions to help with identification
-• Upload as many photos as needed`;
+• Upload as many photos as needed
+• For videos: Keep under 1 minute for optimal processing
+• Pro tip: Take 1 short video for each room!`;
 
 export default function TemplatesPage() {
   const { user } = useUser();
