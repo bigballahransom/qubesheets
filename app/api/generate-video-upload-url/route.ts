@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { generatePresignedUploadUrl } from '@/lib/s3Upload';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId, orgId } = await auth();
-    
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const body = await request.json();
     const { fileName, fileSize, mimeType, projectId, isCustomerUpload = false, customerToken } = body;
 
@@ -40,7 +33,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let organizationId = orgId;
+    let organizationId = null;
 
     // If this is a customer upload, validate the token and get project context
     if (isCustomerUpload && customerToken) {
@@ -68,12 +61,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
 
-      // Check if user has access to this project
-      if (project.userId !== userId && project.organizationId !== orgId) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
-      }
-      
-      organizationId = project.organizationId || orgId;
+      // Skip access check since no authentication required
+      organizationId = project.organizationId;
     }
 
     // Generate unique S3 key
@@ -99,7 +88,7 @@ export async function POST(request: NextRequest) {
       bucket: process.env.AWS_BUCKET_NAME,
       metadata: {
         projectId,
-        userId,
+        userId: 'anonymous',
         organizationId,
         originalFileName: fileName,
         mimeType,

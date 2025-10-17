@@ -452,9 +452,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
           const result = await uploadVideoFile(finalFile, {
             projectId: 'customer-upload', // Will be resolved by token
             isCustomerUpload: true,
-            customerToken: customerToken,
-            userId: 'customer', // Will be handled by auth in API
-            organizationId: undefined
+            customerToken: customerToken
           });
 
           if (result.success) {

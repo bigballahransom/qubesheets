@@ -25,7 +25,7 @@ export async function uploadVideoFile(
     organizationId?: string;
   }
 ): Promise<VideoUploadResult> {
-  const { projectId, isCustomerUpload = false, customerToken, userId, organizationId } = options;
+  const { projectId, isCustomerUpload = false, customerToken } = options;
   
   console.log('🎬 Starting video upload:', {
     fileName: file.name,

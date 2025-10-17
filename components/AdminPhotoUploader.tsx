@@ -424,9 +424,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         try {
           const result = await uploadVideoFile(finalFile, {
             projectId: projectId,
-            isCustomerUpload: false,
-            userId: 'admin-user', // This will be handled by auth in the API
-            organizationId: undefined // This will be handled by auth in the API
+            isCustomerUpload: false
           });
 
           if (result.success) {

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
@@ -16,12 +15,6 @@ const s3 = new AWS.S3({
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId, orgId } = await auth();
-    
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     const body = await request.json();
     const { 
       s3Key, 
@@ -48,10 +41,7 @@ export async function POST(request: NextRequest) {
       customerToken
     } = metadata;
 
-    // Verify the user matches the upload metadata
-    if (uploadUserId !== userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
-    }
+    // Skip user validation since no authentication required
 
     await connectMongoDB();
 
@@ -92,10 +82,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Project not found' }, { status: 404 });
       }
 
-      // Check if user has access to this project
-      if (project.userId !== userId && project.organizationId !== orgId) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
-      }
+      // Skip access check since no authentication required
     } else {
       return NextResponse.json({ error: 'Project information required' }, { status: 400 });
     }
@@ -118,7 +105,7 @@ export async function POST(request: NextRequest) {
       name: videoName,
       originalName: originalFileName,
       projectId: project._id,
-      userId,
+      userId: uploadUserId || 'anonymous',
       organizationId,
       mimeType: normalizedMimeType,
       originalMimeType: mimeType,
@@ -144,7 +131,7 @@ export async function POST(request: NextRequest) {
     const sqsMessage = {
       videoId: savedVideo._id.toString(),
       projectId: project._id.toString(),
-      userId,
+      userId: uploadUserId || 'anonymous',
       organizationId,
       s3ObjectKey: s3Key,
       s3Bucket: process.env.AWS_BUCKET_NAME!,

@@ -2355,7 +2355,7 @@ const ProcessingNotification = () => {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Main content wrapper */}
-      <div className="lg:pl-64 lg:pt-16"> {/* Add left padding for sidebar and top padding for header bar on large screens */}
+      <div className="pt-16 lg:pl-64 lg:pt-16"> {/* Add top padding for mobile header and left padding for sidebar on large screens */}
         {/* Sleek top header bar */}
 
 {/* Sleek top header bar */}
