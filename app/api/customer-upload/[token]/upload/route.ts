@@ -160,46 +160,35 @@ export async function POST(
     const { token } = await params;
     console.log('🎫 Token received (optional):', token);
     
-    // Try to find customer upload for project association, but don't require it
+    // Validate token using CustomerUpload model (where tokens are actually stored)
     const customerUpload = await CustomerUpload.findOne({
       uploadToken: token,
+      expiresAt: { $gt: new Date() },
       isActive: true
     });
 
     console.log('📋 Customer upload found:', !!customerUpload);
     
-    // If no valid customer upload, we'll create a default project association
-    let projectId = null;
-    let userId = null;
-    let organizationId = null;
-    
-    if (customerUpload) {
-      projectId = customerUpload.projectId;
-      userId = customerUpload.userId;
-      organizationId = customerUpload.organizationId;
-    } else {
-      // Fallback: Create/use a default "Customer Uploads" project
-      console.log('🔄 No valid token, using fallback project creation');
-      
-      // Find or create a default project for anonymous uploads
-      let defaultProject = await Project.findOne({ 
-        name: 'Anonymous Customer Uploads',
-        isDefault: true 
-      });
-      
-      if (!defaultProject) {
-        defaultProject = await Project.create({
-          name: 'Anonymous Customer Uploads',
-          description: 'Photos uploaded without specific project tokens',
-          isDefault: true,
-          createdAt: new Date()
-        });
-        console.log('📁 Created default project for anonymous uploads:', defaultProject._id);
-      }
-      
-      projectId = defaultProject._id;
-      // Leave userId and organizationId as null for anonymous uploads
+    // If no valid customer upload, return error
+    if (!customerUpload) {
+      return NextResponse.json(
+        { error: 'Invalid or expired upload link' },
+        { status: 401 }
+      );
     }
+    
+    // Get the associated project
+    const project = await Project.findById(customerUpload.projectId);
+    if (!project) {
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      );
+    }
+    
+    const projectId = project._id;
+    const userId = customerUpload.userId;
+    const organizationId = customerUpload.organizationId;
 
     // Parse the form data
     const formData = await request.formData();
@@ -318,7 +307,7 @@ export async function POST(
       }
       
       const timestamp = Date.now();
-      const customerName = customerUpload?.customerName || 'anonymous';
+      const customerName = project.customerName || 'customer'; // Use actual customer name from project
       const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
       const name = `customer-video-${cleanCustomerName}-${timestamp}-${finalFileName}`;
       
@@ -557,7 +546,7 @@ export async function POST(
 
     // Generate unique name
     const timestamp = Date.now();
-    const customerName = customerUpload?.customerName || 'anonymous';
+    const customerName = project.customerName || 'customer'; // Use actual customer name from project
     const cleanCustomerName = customerName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const name = `customer-${cleanCustomerName}-${timestamp}-${processedImage.name}`;
 

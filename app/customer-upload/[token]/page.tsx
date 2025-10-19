@@ -38,6 +38,7 @@ export default function CustomerUploadPage() {
   const [loading, setLoading] = useState(true);
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [totalUploadedFiles, setTotalUploadedFiles] = useState(0);
   const [pendingJobIds, setPendingJobIds] = useState<string[]>([]);
   const [showProcessingStatus, setShowProcessingStatus] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -495,6 +496,9 @@ export default function CustomerUploadPage() {
           : img
       ));
       
+      // Update total uploaded files counter for photos
+      setTotalUploadedFiles(prev => prev + 1);
+      
       // Don't show success toast yet - let Railway transfer overlay handle it
       console.log('📄 Photo uploaded to database, waiting for Railway transfer...');
       
@@ -630,6 +634,10 @@ export default function CustomerUploadPage() {
               onUpload={handleFileUpload}
               uploading={uploading}
               customerToken={token}
+              onFileUploaded={(fileName) => {
+                setTotalUploadedFiles(prev => prev + 1);
+                console.log('📊 File uploaded counter updated:', fileName);
+              }}
             />
           </div>
         </div>
@@ -664,7 +672,7 @@ export default function CustomerUploadPage() {
         )} */}
 
         {/* Upload Success Section */}
-        {uploadedImages.length > 0 && (
+        {totalUploadedFiles > 0 && (
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
             <div className="bg-gradient-to-r from-green-50 to-emerald-50 px-6 py-4 border-b border-green-100">
               <div className="flex items-center gap-3">
@@ -673,7 +681,7 @@ export default function CustomerUploadPage() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold text-green-800">
-                    {uploadedImages.length} Photo{uploadedImages.length !== 1 ? 's' : ''} Uploaded
+                    {totalUploadedFiles} File{totalUploadedFiles !== 1 ? 's' : ''} Uploaded
                   </h3>
                   <p className="text-sm text-green-700">Successfully uploaded to cloud storage{showProcessingStatus ? ' - AI analysis in progress' : ' and ready for analysis'}</p>
                 </div>
@@ -732,7 +740,7 @@ export default function CustomerUploadPage() {
         )}
 
         {/* Instructions Section - Only show if no uploads yet */}
-        {uploadedImages.length === 0 && (
+        {totalUploadedFiles === 0 && (
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-blue-100">
               <h3 className="text-lg font-semibold text-blue-800">Best Practices</h3>

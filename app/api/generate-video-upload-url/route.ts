@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generatePresignedUploadUrl } from '@/lib/s3Upload';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
+import CustomerUpload from '@/models/CustomerUpload';
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('🎬 Video upload URL generation request received');
     const body = await request.json();
-    const { fileName, fileSize, mimeType, projectId, isCustomerUpload = false, customerToken } = body;
+    console.log('📝 Request body:', { fileName: body.fileName, fileSize: body.fileSize, mimeType: body.mimeType, projectId: body.projectId, isCustomerUpload: body.isCustomerUpload });
+    const { fileName, fileSize, mimeType, projectId: requestProjectId, isCustomerUpload = false, customerToken } = body;
+    let projectId = requestProjectId;
 
     // Validate required fields
     if (!fileName || !fileSize || !mimeType) {
@@ -39,19 +43,32 @@ export async function POST(request: NextRequest) {
     if (isCustomerUpload && customerToken) {
       await connectMongoDB();
       
-      const project = await Project.findOne({ 
-        customerUploadToken: customerToken,
-        tokenExpiresAt: { $gt: new Date() }
+      // Use CustomerUpload model where tokens are actually stored
+      const customerUpload = await CustomerUpload.findOne({
+        uploadToken: customerToken,
+        expiresAt: { $gt: new Date() },
+        isActive: true
       });
       
-      if (!project) {
+      if (!customerUpload) {
         return NextResponse.json(
           { error: 'Invalid or expired upload link' },
           { status: 401 }
         );
       }
       
+      // Get the associated project
+      const project = await Project.findById(customerUpload.projectId);
+      if (!project) {
+        return NextResponse.json(
+          { error: 'Project not found' },
+          { status: 404 }
+        );
+      }
+      
       organizationId = project.organizationId;
+      // Override projectId with the actual project ID from the customer upload
+      projectId = project._id.toString();
     } else if (projectId) {
       // For admin uploads, verify project ownership
       await connectMongoDB();
@@ -73,11 +90,14 @@ export async function POST(request: NextRequest) {
       : `projects/${projectId}/videos/${timestamp}_${sanitizedFileName}`;
 
     // Generate pre-signed URL
-    const uploadUrl = await generatePresignedUploadUrl(s3Key, mimeType, fileSize);
-    
-    if (!uploadUrl) {
+    let uploadUrl: string;
+    try {
+      uploadUrl = await generatePresignedUploadUrl(s3Key, mimeType, fileSize);
+    } catch (urlError) {
+      console.error('❌ Pre-signed URL generation failed:', urlError);
+      const errorMessage = urlError instanceof Error ? urlError.message : 'Failed to generate upload URL';
       return NextResponse.json(
-        { error: 'Failed to generate upload URL' },
+        { error: errorMessage },
         { status: 500 }
       );
     }
@@ -99,9 +119,15 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error generating pre-signed URL:', error);
+    console.error('❌ Error generating pre-signed URL:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('❌ Full error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: errorMessage,
+      stack: error instanceof Error ? error.stack : 'No stack trace'
+    });
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal server error', details: errorMessage },
       { status: 500 }
     );
   }

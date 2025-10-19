@@ -2,6 +2,7 @@
 export interface VideoUploadResult {
   success: boolean;
   videoId?: string;
+  projectId?: string;
   sqsMessageId?: string;
   s3Info?: {
     key: string;
@@ -31,17 +32,14 @@ export async function uploadVideoFile(
     fileName: file.name,
     size: file.size,
     sizeMB: (file.size / (1024 * 1024)).toFixed(2),
-    usePresignedUrl: file.size > PRESIGNED_URL_THRESHOLD
+    uploadMethod: 'pre-signed URL (direct to S3)'
   });
 
   try {
-    if (file.size > PRESIGNED_URL_THRESHOLD) {
-      // Use pre-signed URL for large files
-      return await uploadLargeVideo(file, options);
-    } else {
-      // Use direct API upload for small files
-      return await uploadSmallVideo(file, options);
-    }
+    // Always use pre-signed URL for videos to bypass Vercel serverless limits
+    // This allows direct upload to S3 without going through Vercel
+    console.log('🎬 Using pre-signed URL for direct S3 upload (bypassing Vercel limits)');
+    return await uploadLargeVideo(file, options);
   } catch (error) {
     console.error('❌ Video upload failed:', error);
     return {
@@ -66,6 +64,7 @@ async function uploadLargeVideo(
   console.log('📤 Using pre-signed URL for large video');
   
   // Step 1: Get pre-signed URL
+  console.log('🎯 Making API request to generate-video-upload-url...');
   const urlResponse = await fetch('/api/generate-video-upload-url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -78,6 +77,7 @@ async function uploadLargeVideo(
       customerToken
     })
   });
+  console.log('📡 API response status:', urlResponse.status);
 
   if (!urlResponse.ok) {
     const errorData = await urlResponse.text();
@@ -88,14 +88,48 @@ async function uploadLargeVideo(
   
   // Step 2: Upload directly to S3
   console.log('📤 Uploading to S3 via pre-signed URL');
-  
-  const uploadResponse = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': file.type,
-    },
-    body: file
+  console.log('🔗 Pre-signed URL:', uploadUrl);
+  console.log('📋 Upload details:', {
+    s3Key,
+    bucket,
+    fileSize: file.size,
+    fileType: file.type,
+    fileName: file.name
   });
+  
+  // Add timeout for large file uploads (10 minutes)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, 600000); // 10 minutes timeout for large files
+  
+  let uploadResponse;
+  try {
+    console.log('🚀 Starting fetch to S3...');
+    uploadResponse = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': file.type,
+      },
+      body: file,
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    console.log('✅ S3 fetch completed, status:', uploadResponse.status);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.error('❌ S3 fetch failed:', error);
+    console.error('❌ Error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : 'No stack'
+    });
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Upload timed out - file is too large or network is too slow');
+    }
+    throw error;
+  }
 
   if (!uploadResponse.ok) {
     throw new Error(`S3 upload failed: ${uploadResponse.statusText}`);
@@ -121,6 +155,7 @@ async function uploadLargeVideo(
   return {
     success: true,
     videoId: result.videoId,
+    projectId: result.projectId,
     sqsMessageId: result.sqsMessageId,
     s3Info: {
       key: s3Key,

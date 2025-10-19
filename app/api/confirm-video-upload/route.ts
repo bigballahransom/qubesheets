@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
+import CustomerUpload from '@/models/CustomerUpload';
 import { sendVideoProcessingMessage } from '@/lib/sqsUtils';
 import { getS3SignedUrl } from '@/lib/s3Upload';
 import AWS from 'aws-sdk';
@@ -63,15 +64,26 @@ export async function POST(request: NextRequest) {
     
     // Handle customer upload validation
     if (isCustomerUpload && customerToken) {
-      project = await Project.findOne({
-        customerUploadToken: customerToken,
-        tokenExpiresAt: { $gt: new Date() }
+      // Use CustomerUpload model where tokens are actually stored
+      const customerUpload = await CustomerUpload.findOne({
+        uploadToken: customerToken,
+        expiresAt: { $gt: new Date() },
+        isActive: true
       });
       
-      if (!project) {
+      if (!customerUpload) {
         return NextResponse.json(
           { error: 'Invalid or expired upload link' },
           { status: 401 }
+        );
+      }
+      
+      // Get the associated project
+      project = await Project.findById(customerUpload.projectId);
+      if (!project) {
+        return NextResponse.json(
+          { error: 'Project not found' },
+          { status: 404 }
         );
       }
     } else if (projectId) {
@@ -116,7 +128,7 @@ export async function POST(request: NextRequest) {
         url: signedUrl
       },
       uploadedAt: new Date(),
-      source: isCustomerUpload ? 'customer_upload' : 'video_upload',
+      source: isCustomerUpload ? 'customer_upload' : 'admin_upload',
       analysisResult: {
         status: 'pending',
         summary: null,
@@ -155,6 +167,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       videoId: savedVideo._id.toString(),
+      projectId: project._id.toString(),
       videoUrl: signedUrl,
       message: 'Video uploaded successfully and queued for processing'
     });

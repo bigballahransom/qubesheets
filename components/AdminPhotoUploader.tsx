@@ -37,12 +37,20 @@ async function getVideoDuration(file: File): Promise<number> {
     const video = document.createElement('video');
     const url = URL.createObjectURL(file);
     
+    // Add timeout for large files
+    const timeout = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Video duration check timed out - file may be too large or corrupted'));
+    }, 30000); // 30 second timeout
+    
     video.onloadedmetadata = () => {
+      clearTimeout(timeout);
       URL.revokeObjectURL(url);
       resolve(video.duration);
     };
     
     video.onerror = () => {
+      clearTimeout(timeout);
       URL.revokeObjectURL(url);
       reject(new Error('Failed to load video metadata'));
     };
@@ -285,6 +293,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedCount, setUploadedCount] = useState(0);
   const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+  const [hasValidationErrors, setHasValidationErrors] = useState(false);
   const fileQueueRef = useRef<File[]>([]);
 
 
@@ -358,6 +367,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
           const duration = await getVideoDuration(file);
           if (duration > 60) { // 60 seconds = 1 minute
             setError(`This video is too long. Please select a video shorter than 1 minute for optimal processing. Pro tip: Take 1 short video for each room!`);
+            setHasValidationErrors(true);
             throw new Error('Video duration exceeds limit');
           }
         } catch (error) {
@@ -416,7 +426,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         }
       }
 
-      // Clear any previous errors
+      // Clear any previous errors only if validation passed
       setError(null);
 
       // Handle video uploads with consistent helper
@@ -482,6 +492,13 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
     } catch (error) {
       console.error('Error processing file:', error);
       setIsConverting(false); // Reset conversion state for any ongoing HEIC conversion
+      
+      // Only re-throw validation errors that should prevent modal closure
+      // Upload errors should be handled normally without preventing modal closure
+      if (error instanceof Error && error.message === 'Video duration exceeds limit') {
+        throw error; // Re-throw validation errors
+      }
+      // For other errors (upload failures, etc.), don't re-throw so modal can close normally
     }
   };
 
@@ -532,6 +549,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
     if (isProcessingQueue || fileQueueRef.current.length === 0) return;
     
     setIsProcessingQueue(true);
+    setHasValidationErrors(false); // Reset validation errors flag
     let successCount = 0;
     
     while (fileQueueRef.current.length > 0) {
@@ -540,8 +558,12 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         try {
           // Process the file and if successful, increment counter
           const result = await handleFileWithResult(file);
+          console.log(`🔄 File processing result for ${file.name}:`, result);
           if (result) {
             successCount++;
+            console.log(`✅ Success count incremented to: ${successCount}`);
+          } else {
+            console.log(`❌ File failed processing: ${file.name}`);
           }
         } catch (error) {
           console.error('Failed to process file:', file.name, error);
@@ -551,7 +573,8 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
     
     setIsProcessingQueue(false);
     
-    // Show toast and close modal if uploads were successful
+    // Show toast and close modal if uploads were successful AND no errors are showing
+    console.log(`🏁 Queue processing complete. Success count: ${successCount}, hasValidationErrors: ${hasValidationErrors}, error: ${error}`);
     if (successCount > 0) {
       const message = successCount === 1 
         ? '1 file successfully uploaded' 
@@ -562,11 +585,15 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
       // Show toast notification
       toast.success(message);
       
-      // Close the modal
-      setTimeout(() => {
-        console.log('Closing modal after successful uploads');
-        onClose();
-      }, 500); // Small delay to ensure toast is visible
+      // Only close the modal if there are no validation errors showing
+      if (!error && !hasValidationErrors) {
+        setTimeout(() => {
+          console.log('Closing modal after successful uploads');
+          onClose();
+        }, 500); // Small delay to ensure toast is visible
+      } else {
+        console.log('Modal staying open due to validation errors');
+      }
     }
   };
 

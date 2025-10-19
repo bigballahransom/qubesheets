@@ -319,17 +319,20 @@ export async function generatePresignedUploadUrl(
   contentType: string,
   fileSizeBytes: number,
   expiresIn: number = 3600
-): Promise<string | null> {
+): Promise<string> {
   const bucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
   
   if (!bucketName) {
-    console.error('AWS bucket name not configured');
-    return null;
+    console.error('AWS bucket name not configured - available env vars:', {
+      AWS_BUCKET_NAME: !!process.env.AWS_BUCKET_NAME,
+      AWS_S3_BUCKET_NAME: !!process.env.AWS_S3_BUCKET_NAME
+    });
+    throw new Error('AWS bucket name not configured. Please set AWS_BUCKET_NAME or AWS_S3_BUCKET_NAME environment variable.');
   }
 
   if (!awsConfig.accessKeyId || !awsConfig.secretAccessKey) {
     console.error('AWS credentials not configured');
-    return null;
+    throw new Error('AWS credentials not configured. Please check AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.');
   }
 
   try {
@@ -352,7 +355,8 @@ export async function generatePresignedUploadUrl(
     return signedUrl;
   } catch (error) {
     console.error('❌ Failed to generate pre-signed URL:', error);
-    return null;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to generate pre-signed upload URL: ${errorMessage}`);
   }
 }
 

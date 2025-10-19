@@ -1,12 +1,14 @@
 // app/api/customer-upload/[token]/validate/route.ts - Enhanced with better error handling
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
-import CustomerUpload from '@/models/CustomerUpload';
+import { logUploadLinkVisited } from '@/lib/activity-logger';
+
+// Import models in order to ensure proper registration - Project must be first
 import Project from '@/models/Project';
+import CustomerUpload from '@/models/CustomerUpload';
 import Branding from '@/models/Branding';
 import Template from '@/models/Template';
 import ActivityLog from '@/models/ActivityLog';
-import { logUploadLinkVisited } from '@/lib/activity-logger';
 
 export async function GET(
   request: NextRequest,
@@ -29,12 +31,15 @@ export async function GET(
       );
     }
     
+    // Ensure models are registered by referencing them
+    console.log('Ensuring models are registered:', !!Project, !!CustomerUpload);
+    
     // First try to find active, non-expired token
     let customerUpload = await CustomerUpload.findOne({
       uploadToken: token,
       isActive: true,
       expiresAt: { $gt: new Date() }
-    }).populate('projectId');
+    });
 
     console.log('Customer upload found (active):', !!customerUpload);
 
@@ -43,7 +48,7 @@ export async function GET(
       const expiredUpload = await CustomerUpload.findOne({
         uploadToken: token,
         isActive: true // Must still be active, just potentially expired
-      }).populate('projectId');
+      });
       
       if (expiredUpload) {
         const now = new Date();
@@ -77,9 +82,12 @@ export async function GET(
       );
     }
 
+    // Manually fetch the project to avoid populate issues
+    const project = await Project.findById(customerUpload.projectId);
+    
     console.log('Customer upload details:', {
       customerName: customerUpload.customerName,
-      projectName: customerUpload.projectId?.name,
+      projectName: project?.name,
       expiresAt: customerUpload.expiresAt,
       userId: customerUpload.userId,
       organizationId: customerUpload.organizationId
@@ -136,7 +144,7 @@ export async function GET(
     try {
       const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
       const recentVisit = await ActivityLog.findOne({
-        projectId: customerUpload.projectId._id,
+        projectId: customerUpload.projectId,
         activityType: 'upload_link_visited',
         'details.linkToken': token,
         createdAt: { $gte: thirtyMinutesAgo }
@@ -144,7 +152,7 @@ export async function GET(
 
       if (!recentVisit) {
         await logUploadLinkVisited(
-          customerUpload.projectId._id.toString(),
+          customerUpload.projectId.toString(),
           customerUpload.customerName,
           token,
           customerUpload.userId,
@@ -162,8 +170,8 @@ export async function GET(
     // Return customer upload info with branding data and instructions
     return NextResponse.json({
       customerName: customerUpload.customerName,
-      projectName: customerUpload.projectId.name,
-      projectId: customerUpload.projectId._id.toString(),
+      projectName: project?.name || 'Project',
+      projectId: customerUpload.projectId.toString(),
       expiresAt: customerUpload.expiresAt,
       isValid: true,
       branding: branding ? {

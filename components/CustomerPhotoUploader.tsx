@@ -9,6 +9,7 @@ interface CustomerPhotoUploaderProps {
   onUpload: (file: File) => Promise<void>;
   uploading: boolean;
   customerToken?: string; // Add optional token for video uploads
+  onFileUploaded?: (fileName: string) => void; // Callback for when a file is successfully uploaded
 }
 
 // Video file detection (now enabled with S3 support)
@@ -314,15 +315,21 @@ async function convertHeicToJpeg(file: File): Promise<File> {
   throw new Error('HEIC conversion failed after all retry attempts');
 }
 
-export default function CustomerPhotoUploader({ onUpload, uploading, customerToken }: CustomerPhotoUploaderProps) {
+export default function CustomerPhotoUploader({ onUpload, uploading, customerToken, onFileUploaded }: CustomerPhotoUploaderProps) {
   const [dragActive, setDragActive] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadQueue, setUploadQueue] = useState<File[]>([]);
+  const [currentlyUploading, setCurrentlyUploading] = useState<string | null>(null);
+  const [uploadedCount, setUploadedCount] = useState(0);
+  const [totalToUpload, setTotalToUpload] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
 
   const handleFile = async (file: File) => {
     if (!file) return;
+
+    setCurrentlyUploading(file.name);
 
     try {
       const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
@@ -457,6 +464,43 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
 
           if (result.success) {
             console.log('✅ Video upload successful:', result);
+            setUploadedCount(prev => prev + 1);
+            
+            // Notify parent that file was uploaded
+            if (onFileUploaded) {
+              onFileUploaded(finalFile.name);
+            }
+            
+            // IMMEDIATE: Add to simple real-time system for instant processing badge
+            if (result.videoId && result.projectId) {
+              // Dynamically import to avoid SSR issues
+              import('@/lib/simple-realtime').then(({ default: simpleRealTime }) => {
+                simpleRealTime.addProcessing(result.projectId, {
+                  id: result.videoId,
+                  name: finalFile.name,
+                  type: 'video',
+                  status: 'AI video analysis in progress...',
+                  source: 'customer_upload'
+                });
+                console.log('📊 Added customer video to processing badge:', finalFile.name);
+              }).catch(console.error);
+              
+              // Legacy event for backward compatibility
+              const processingEvent = new CustomEvent('customerUploadProcessing', {
+                detail: {
+                  projectId: result.projectId,
+                  uploadId: result.videoId,
+                  fileName: finalFile.name,
+                  type: 'video',
+                  status: 'AI video analysis in progress...',
+                  source: 'customer_upload',
+                  sqsMessageId: result.sqsMessageId
+                }
+              });
+              
+              window.dispatchEvent(processingEvent);
+              console.log('📡 Customer video upload processing event dispatched');
+            }
             
             if (fileInputRef.current) {
               fileInputRef.current.value = '';
@@ -485,6 +529,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
             
             await onUpload(finalFile);
             uploadSuccess = true;
+            setUploadedCount(prev => prev + 1);
             
             if (fileInputRef.current) {
               fileInputRef.current.value = '';
@@ -507,6 +552,8 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
     } catch (error) {
       console.error('Error processing file:', error);
       setIsConverting(false); // Reset conversion state for any ongoing HEIC conversion
+    } finally {
+      setCurrentlyUploading(null);
     }
   };
 
@@ -527,6 +574,10 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
     
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length > 0) {
+      // Set total count and reset uploaded count
+      setTotalToUpload(prev => prev + files.length);
+      setUploadedCount(0);
+      
       // Process multiple files
       files.forEach((file) => {
         handleFile(file);
@@ -555,6 +606,10 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
     // Clear any previous errors
     setError(null);
 
+    // Set total count and reset uploaded count
+    setTotalToUpload(files.length);
+    setUploadedCount(0);
+
     // Process files
     files.forEach((file) => {
       handleFile(file);
@@ -563,6 +618,17 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
 
   return (
     <div className="space-y-4">
+      {/* Success Display */}
+      {uploadedCount > 0 && !currentlyUploading && !uploading && !isConverting && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <p className="font-medium text-green-800">Upload Complete!</p>
+          <p className="text-green-600">
+            Successfully uploaded {uploadedCount} file{uploadedCount !== 1 ? 's' : ''}. 
+            AI analysis is processing your photos in the background.
+          </p>
+        </div>
+      )}
+
       {/* Error Display */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -576,8 +642,8 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
           dragActive
             ? 'border-blue-500 bg-blue-50'
-            : uploading || isConverting
-            ? 'border-gray-200 bg-gray-50'
+            : uploading || isConverting || currentlyUploading
+            ? 'border-gray-300 bg-gray-100'
             : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
         }`}
         onDragEnter={handleDrag}
@@ -595,10 +661,23 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
           multiple
         />
 
-        {uploading ? (
+        {uploading || currentlyUploading || isConverting ? (
           <div className="space-y-4">
             <Loader2 className="w-12 h-12 animate-spin mx-auto text-blue-500" />
-            <p className="text-gray-600">Uploading file...</p>
+            {isConverting ? (
+              <p className="text-blue-600">Converting HEIC image...</p>
+            ) : currentlyUploading ? (
+              <div className="space-y-2">
+                <p className="text-blue-600">Uploading...</p>
+                {totalToUpload > 1 && (
+                  <p className="text-sm text-gray-500">
+                    {uploadedCount} of {totalToUpload} files uploaded
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-blue-600">Uploading...</p>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
