@@ -947,6 +947,38 @@ useEffect(() => {
       const nameB = b.cells?.col2 || '';
       return nameA.localeCompare(nameB);
     });
+  } else if (viewMode === 'Fragile Items') {
+    // Filter to show only fragile items
+    filteredRows = filteredRows.filter(row => {
+      const itemName = row.cells?.col2 || '';
+      return itemName && (
+        itemName.toLowerCase().includes('statue') ||
+        itemName.toLowerCase().includes('picture') ||
+        itemName.toLowerCase().includes('art') ||
+        itemName.toLowerCase().includes('mirror') ||
+        itemName.toLowerCase().includes('tv') ||
+        itemName.toLowerCase().includes('monitor') ||
+        itemName.toLowerCase().includes('glass')
+      );
+    });
+  } else if (viewMode === 'Heavy Items') {
+    // Filter to show only heavy items
+    filteredRows = filteredRows.filter(row => {
+      const itemName = row.cells?.col2 || '';
+      return itemName && (
+        itemName.toLowerCase().includes('piano') ||
+        itemName.toLowerCase().includes('hot tub') ||
+        itemName.toLowerCase().includes('safe')
+      );
+    });
+  } else if (viewMode === 'Hazardous Items') {
+    // Filter to show only hazardous items
+    filteredRows = filteredRows.filter(row => {
+      const itemName = row.cells?.col2 || '';
+      return itemName && (
+        itemName.toLowerCase().includes('plant')
+      );
+    });
   }
 
   // Calculate "not going" items count
@@ -1028,6 +1060,29 @@ useEffect(() => {
                             value.includes('Existing Box')) &&
                            !value.includes(' - '));
       
+      // Check if this is a heavy item (red highlighted)
+      const isHeavyItem = value && (
+        value.toLowerCase().includes('piano') || 
+        value.toLowerCase().includes('hot tub') || 
+        value.toLowerCase().includes('safe')
+      );
+      
+      // Check if this is a hazardous item (requires special handling)
+      const isHazardousItem = value && (
+        value.toLowerCase().includes('plant')
+      );
+      
+      // Check if this is a fragile item (requires careful handling)
+      const isFragileItem = value && (
+        value.toLowerCase().includes('statue') ||
+        value.toLowerCase().includes('picture') ||
+        value.toLowerCase().includes('art') ||
+        value.toLowerCase().includes('mirror') ||
+        value.toLowerCase().includes('tv') ||
+        value.toLowerCase().includes('monitor') ||
+        value.toLowerCase().includes('glass')
+      );
+      
       return (
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
@@ -1067,6 +1122,42 @@ useEffect(() => {
               </Tooltip>
             </TooltipProvider>
           )}
+          {isHeavyItem && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">💪</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Heavy Item</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {isHazardousItem && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">☢️</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Hazardous Item</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {isFragileItem && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">⚠️</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Fragile Item</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           {row.sourceImageId ? (
             <Camera size={14} className="text-blue-500 flex-shrink-0" />
           ) : (
@@ -1098,6 +1189,13 @@ useEffect(() => {
            !value.includes(' - '))
         );
         
+        // Check if this is a heavy item (red highlighted) for col2
+        const isHeavyItem = column && column.id === 'col2' && value && (
+          value.toLowerCase().includes('piano') || 
+          value.toLowerCase().includes('hot tub') || 
+          value.toLowerCase().includes('safe')
+        );
+        
         return (
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
@@ -1122,6 +1220,42 @@ useEffect(() => {
                   </TooltipTrigger>
                   <TooltipContent>
                     <p>Already Packed Boxes</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {isHeavyItem && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">💪</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Heavy Item</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {isHazardousItem && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">☢️</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Hazardous Item</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {isFragileItem && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">⚠️</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Fragile Item</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -1279,19 +1413,37 @@ useEffect(() => {
                   setViewMode('By Media');
                   setShowDropdown(null);
                 }}>
-                  By Media
+                  📷 By Media
                 </div>
                 <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
                   setViewMode('By Category');
                   setShowDropdown(null);
                 }}>
-                  By Category
+                  📋 By Category
                 </div>
                 <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
                   setViewMode('By Room');
                   setShowDropdown(null);
                 }}>
-                  By Room
+                  🏠 By Room
+                </div>
+                <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
+                  setViewMode('Fragile Items');
+                  setShowDropdown(null);
+                }}>
+                  ⚠️ Fragile Items
+                </div>
+                <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
+                  setViewMode('Heavy Items');
+                  setShowDropdown(null);
+                }}>
+                  💪 Heavy Items
+                </div>
+                <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
+                  setViewMode('Hazardous Items');
+                  setShowDropdown(null);
+                }}>
+                  ☢️ Hazardous Items
                 </div>
               </div>
             )}
