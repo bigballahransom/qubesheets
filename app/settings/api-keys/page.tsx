@@ -8,7 +8,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
 import { toast } from 'sonner';
-import ApiDocumentationModal from '@/components/modals/ApiDocumentationModal';
+// import ApiDocumentationModal from '@/components/modals/ApiDocumentationModal';
 import IntercomChat from '@/components/IntercomChat';
 
 interface ApiKey {
@@ -148,12 +148,6 @@ export default function ApiKeysPage() {
             <h1 className="text-2xl font-bold">API Keys</h1>
           </div>
           <div className="flex items-center gap-2">
-            <ApiDocumentationModal>
-              <Button variant="outline" className="flex items-center gap-2">
-                <BookOpen className="h-4 w-4" />
-                API Documentation
-              </Button>
-            </ApiDocumentationModal>
             <Button
               onClick={() => setShowCreateForm(true)}
               className="flex items-center gap-2"
@@ -355,7 +349,7 @@ export default function ApiKeysPage() {
                     Include your API key in the Authorization header to create projects:
                   </p>
                   <div className="bg-gray-800 text-gray-100 p-3 rounded font-mono text-xs overflow-x-auto">
-                    <pre>{`curl -X POST https://your-domain.com/api/external/projects \\
+                    <pre>{`POST https://your-domain.com/api/external/projects \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"customerName": "John Smith", "phone": "5551234567"}'`}</pre>
