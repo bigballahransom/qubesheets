@@ -46,14 +46,37 @@ export async function POST(request: NextRequest) {
 
     await connectMongoDB();
 
+    // Get bucket name with same fallback logic as URL generation
+    const bucketName = process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+    
+    if (!bucketName) {
+      console.error('❌ AWS bucket name not configured - available env vars:', {
+        AWS_BUCKET_NAME: !!process.env.AWS_BUCKET_NAME,
+        AWS_S3_BUCKET_NAME: !!process.env.AWS_S3_BUCKET_NAME
+      });
+      return NextResponse.json(
+        { error: 'Server configuration error' },
+        { status: 500 }
+      );
+    }
+
     // Verify S3 object exists
     try {
+      console.log('🔍 Verifying S3 object:', { bucket: bucketName, key: s3Key });
       await s3.headObject({
-        Bucket: process.env.AWS_BUCKET_NAME!,
+        Bucket: bucketName,
         Key: s3Key
       }).promise();
+      console.log('✅ S3 object verification successful');
     } catch (error) {
-      console.error('S3 object not found:', error);
+      console.error('❌ S3 object verification failed:', {
+        bucket: bucketName,
+        key: s3Key,
+        error: error,
+        errorCode: (error as any)?.code,
+        errorMessage: (error as any)?.message,
+        statusCode: (error as any)?.statusCode
+      });
       return NextResponse.json(
         { error: 'Upload verification failed. Please try again.' },
         { status: 400 }
@@ -123,7 +146,7 @@ export async function POST(request: NextRequest) {
       originalMimeType: mimeType,
       size: actualFileSize || fileSize,
       s3RawFile: {
-        bucket: process.env.AWS_BUCKET_NAME,
+        bucket: bucketName,
         key: s3Key,
         url: signedUrl
       },
@@ -146,7 +169,7 @@ export async function POST(request: NextRequest) {
       userId: uploadUserId || 'anonymous',
       organizationId,
       s3ObjectKey: s3Key,
-      s3Bucket: process.env.AWS_BUCKET_NAME!,
+      s3Bucket: bucketName,
       s3Url: signedUrl,
       originalFileName,
       mimeType: normalizedMimeType,
