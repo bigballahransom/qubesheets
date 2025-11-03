@@ -315,8 +315,12 @@ async function getDefaultRoomType(
       return { success: true, roomTypeId: fallbackGuid };
     }
     
-    const roomTypes = await response.json();
-    console.log(`🔍 [SMARTMOVING-ROOM-TYPES] Available room types:`, roomTypes);
+    const roomTypesResponse = await response.json();
+    console.log(`🔍 [SMARTMOVING-ROOM-TYPES] Room types API response:`, roomTypesResponse);
+    
+    // SmartMoving API returns { pageResults: [...] } format
+    const roomTypes = roomTypesResponse.pageResults || roomTypesResponse;
+    console.log(`🔍 [SMARTMOVING-ROOM-TYPES] Extracted room types array:`, roomTypes);
     
     if (Array.isArray(roomTypes) && roomTypes.length > 0) {
       const defaultType = roomTypes.find(type => 
@@ -370,9 +374,12 @@ async function createDefaultRoom(
       
       if (!roomTypeResult.success || !roomTypeResult.roomTypeId) {
         console.error(`❌ [SMARTMOVING-CREATE-ROOM] Could not get room type: ${roomTypeResult.error}`);
-        return { success: false, error: `Could not get room type: ${roomTypeResult.error}` };
+        // Use the "Bedroom #1" room type which we know exists in your system
+        roomTypeId = "ff6564a6-38d7-4d87-8f1a-acc601150721";
+        console.log(`🔄 [SMARTMOVING-CREATE-ROOM] Using known Bedroom #1 room type: ${roomTypeId}`);
+      } else {
+        roomTypeId = roomTypeResult.roomTypeId;
       }
-      roomTypeId = roomTypeResult.roomTypeId;
     }
     
     const roomData = [{
@@ -515,25 +522,39 @@ async function syncToSmartMovingAPI(
   console.log(`🚀 [SMARTMOVING-API] ===== STARTING SMARTMOVING API SYNC =====`);
   console.log(`📦 [SMARTMOVING-API] Syncing ${items.length} items for opportunity ${opportunityId}`);
   
-  // Create a room via API first, then use it
-  console.log(`🏗️ [SMARTMOVING-API] Creating room for inventory items`);
+  // First try to find an existing room, if not found then create one
+  console.log(`🏗️ [SMARTMOVING-API] Getting or creating room for inventory items`);
   console.log(`🔍 [SMARTMOVING-API] Opportunity ID: ${opportunityId}`);
   
-  const roomResult = await createDefaultRoom(opportunityId, apiKey, clientId);
+  // Try to get existing rooms first
+  const existingRoomsResult = await getExistingRooms(opportunityId, apiKey, clientId);
+  console.log(`🔍 [SMARTMOVING-API] Existing rooms result:`, existingRoomsResult);
   
-  console.log(`🔍 [SMARTMOVING-API] Room creation result:`, {
-    success: roomResult.success,
-    roomId: roomResult.roomId,
-    error: roomResult.error
-  });
+  let roomId;
   
-  if (!roomResult.success || !roomResult.roomId) {
-    console.error(`❌ [SMARTMOVING-API] Failed to create room: ${roomResult.error}`);
-    return { success: false, syncedCount: 0, error: roomResult.error || 'Failed to create room' };
+  if (existingRoomsResult.success && existingRoomsResult.rooms && existingRoomsResult.rooms.length > 0) {
+    // Use the first existing room
+    roomId = existingRoomsResult.rooms[0].id;
+    console.log(`✅ [SMARTMOVING-API] Using existing room: ${existingRoomsResult.rooms[0].name} (${roomId})`);
+  } else {
+    // Try to create a new room
+    console.log(`🏗️ [SMARTMOVING-API] No existing rooms found, creating new room...`);
+    const roomResult = await createDefaultRoom(opportunityId, apiKey, clientId);
+    
+    console.log(`🔍 [SMARTMOVING-API] Room creation result:`, {
+      success: roomResult.success,
+      roomId: roomResult.roomId,
+      error: roomResult.error
+    });
+    
+    if (!roomResult.success || !roomResult.roomId) {
+      console.error(`❌ [SMARTMOVING-API] Failed to create room: ${roomResult.error}`);
+      return { success: false, syncedCount: 0, error: roomResult.error || 'Failed to create room' };
+    }
+    
+    roomId = roomResult.roomId;
+    console.log(`✅ [SMARTMOVING-API] Created and using room ID: ${roomId}`);
   }
-  
-  const roomId = roomResult.roomId;
-  console.log(`✅ [SMARTMOVING-API] Created and using room ID: ${roomId}`);
   
   const requestBody: SmartMovingInventoryRequest = { items };
   const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory/rooms/${roomId}`;
