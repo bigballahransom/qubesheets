@@ -304,6 +304,60 @@ export default function IntegrationsPage() {
                           )}
                         </div>
                       )}
+
+                      {/* Webhook Configuration */}
+                      {hasExistingIntegration && (
+                        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                          <h3 className="font-medium text-blue-900 mb-3">Webhook Configuration</h3>
+                          <p className="text-sm text-blue-700 mb-3">
+                            Configure this webhook URL in SmartMoving to automatically create projects when opportunities are created.
+                          </p>
+                          
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-sm font-medium text-blue-900 mb-1">
+                                Webhook URL
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value="https://app.qubesheets.com/api/external/smartmoving"
+                                  readOnly
+                                  className="flex-1 px-3 py-2 text-sm bg-white border border-blue-300 rounded-lg text-gray-800"
+                                />
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText('https://app.qubesheets.com/api/external/smartmoving');
+                                    toast.success('Webhook URL copied to clipboard!');
+                                  }}
+                                  className="px-3 py-2 text-xs"
+                                >
+                                  Copy
+                                </Button>
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <label className="block text-sm font-medium text-blue-900 mb-1">
+                                Supported Events
+                              </label>
+                              <div className="text-sm text-blue-700">
+                                • Opportunity Created
+                              </div>
+                            </div>
+                            
+                            <div className="text-xs text-blue-600 space-y-1">
+                              <p><strong>Setup Instructions:</strong></p>
+                              <p>1. In SmartMoving, go to Settings → Integrations → Webhooks</p>
+                              <p>2. Add the webhook URL above</p>
+                              <p>3. Select "Opportunity Created" event</p>
+                              <p>4. Add your Qube Sheets API key as a custom header (Authorization: Bearer your_api_key)</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -24,6 +24,10 @@ export interface IProject extends Document {
   metadata?: {
     createdViaApi?: boolean;
     apiKeyId?: string;
+    smartMovingOpportunityId?: string;
+    smartMovingCustomerId?: string;
+    smartMovingQuoteNumber?: number;
+    source?: string;
     [key: string]: any;
   };
   createdAt: Date;
