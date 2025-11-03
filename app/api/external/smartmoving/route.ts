@@ -301,6 +301,7 @@ async function fetchSmartMovingOpportunity(
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
+        'Ocp-Apim-Subscription-Key': apiKey,
         'Content-Type': 'application/json'
       }
     });
