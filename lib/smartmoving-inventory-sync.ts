@@ -352,10 +352,16 @@ async function getOrCreateRoom(
   clientId: string
 ): Promise<{ success: boolean; roomId?: string; error?: string }> {
   try {
+    console.log(`🏠 [SMARTMOVING-ROOMS] ===== STARTING ROOM DETECTION/CREATION =====`);
     console.log(`🏠 [SMARTMOVING-ROOMS] Getting rooms for opportunity ${opportunityId}`);
     
     // First, try to get existing rooms
     const roomsUrl = `https://api-public.smartmoving.com/v1/api/opportunities/${opportunityId}?IncludeInventory=true`;
+    console.log(`🌐 [SMARTMOVING-ROOMS] Calling opportunity API: ${roomsUrl}`);
+    console.log(`🔍 [SMARTMOVING-ROOMS] Using headers:`, {
+      'x-api-key': `${apiKey.substring(0, 10)}...`,
+      'Ocp-Apim-Subscription-Key': `${clientId.substring(0, 10)}...`
+    });
     
     const response = await fetch(roomsUrl, {
       method: 'GET',
@@ -365,13 +371,23 @@ async function getOrCreateRoom(
       }
     });
     
+    console.log(`📡 [SMARTMOVING-ROOMS] Opportunity API response: ${response.status} ${response.statusText}`);
+    
     if (!response.ok) {
+      const errorText = await response.text();
       console.error(`❌ [SMARTMOVING-ROOMS] Failed to get opportunity details: ${response.status} ${response.statusText}`);
-      return { success: false, error: `Failed to get opportunity details: ${response.status}` };
+      console.error(`🔍 [SMARTMOVING-ROOMS] Error response:`, errorText);
+      return { success: false, error: `Failed to get opportunity details: ${response.status} - ${errorText}` };
     }
     
     const opportunityData = await response.json();
     console.log(`🔍 [SMARTMOVING-ROOMS] Opportunity data retrieved successfully`);
+    console.log(`🔍 [SMARTMOVING-ROOMS] Opportunity data structure:`, {
+      hasInventory: !!opportunityData.inventory,
+      inventoryKeys: opportunityData.inventory ? Object.keys(opportunityData.inventory) : [],
+      hasRooms: opportunityData.inventory?.rooms ? true : false,
+      roomsCount: opportunityData.inventory?.rooms?.length || 0
+    });
     
     // Check if opportunity has any inventory rooms
     if (opportunityData.inventory && opportunityData.inventory.rooms && opportunityData.inventory.rooms.length > 0) {
@@ -391,6 +407,7 @@ async function getOrCreateRoom(
     
     // If room creation failed, use hardcoded fallback as last resort
     console.log(`⚠️ [SMARTMOVING-ROOMS] Room creation failed, using hardcoded fallback room ID`);
+    console.log(`🔍 [SMARTMOVING-ROOMS] Fallback room ID: ${SMARTMOVING_BEDROOM_ROOM_ID}`);
     console.log(`🔍 [SMARTMOVING-ROOMS] Create error: ${createResult.error}`);
     return { success: true, roomId: SMARTMOVING_BEDROOM_ROOM_ID };
     
@@ -412,7 +429,16 @@ async function syncToSmartMovingAPI(
   
   // First, get or create a room for the inventory
   console.log(`🏠 [SMARTMOVING-API] Getting appropriate room for inventory`);
+  console.log(`🔍 [SMARTMOVING-API] Opportunity ID: ${opportunityId}`);
+  console.log(`🔍 [SMARTMOVING-API] About to call getOrCreateRoom...`);
+  
   const roomResult = await getOrCreateRoom(opportunityId, apiKey, clientId);
+  
+  console.log(`🔍 [SMARTMOVING-API] Room result received:`, {
+    success: roomResult.success,
+    roomId: roomResult.roomId,
+    error: roomResult.error
+  });
   
   if (!roomResult.success || !roomResult.roomId) {
     console.error(`❌ [SMARTMOVING-API] Failed to get room: ${roomResult.error}`);
@@ -421,6 +447,7 @@ async function syncToSmartMovingAPI(
   
   const roomId = roomResult.roomId;
   console.log(`✅ [SMARTMOVING-API] Using room ID: ${roomId}`);
+  console.log(`🔍 [SMARTMOVING-API] Room ID source: ${roomId === SMARTMOVING_BEDROOM_ROOM_ID ? 'HARDCODED_FALLBACK' : 'DYNAMIC_CREATION_OR_DETECTION'}`);
   
   const requestBody: SmartMovingInventoryRequest = { items };
   const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory/rooms/${roomId}`;
