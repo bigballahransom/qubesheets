@@ -367,19 +367,9 @@ async function createDefaultRoom(
       roomTypeId = existingRoomsResult.rooms[0].roomTypeId;
       console.log(`✅ [SMARTMOVING-CREATE-ROOM] Using existing room type: ${roomTypeId}`);
     } else {
-      // Fall back to API room types
-      console.log(`🔍 [SMARTMOVING-CREATE-ROOM] No existing rooms found, getting room type from API...`);
-      const roomTypeResult = await getDefaultRoomType(apiKey, clientId);
-      console.log(`🔍 [SMARTMOVING-CREATE-ROOM] Room type result:`, roomTypeResult);
-      
-      if (!roomTypeResult.success || !roomTypeResult.roomTypeId) {
-        console.error(`❌ [SMARTMOVING-CREATE-ROOM] Could not get room type: ${roomTypeResult.error}`);
-        // Use the "Bedroom #1" room type which we know exists in your system
-        roomTypeId = "ff6564a6-38d7-4d87-8f1a-acc601150721";
-        console.log(`🔄 [SMARTMOVING-CREATE-ROOM] Using known Bedroom #1 room type: ${roomTypeId}`);
-      } else {
-        roomTypeId = roomTypeResult.roomTypeId;
-      }
+      // Use the "Bedroom #1" room type which we know exists in your system
+      roomTypeId = "ff6564a6-38d7-4d87-8f1a-acc601150721";
+      console.log(`🔄 [SMARTMOVING-CREATE-ROOM] Using known Bedroom #1 room type: ${roomTypeId}`);
     }
     
     const roomData = [{
