@@ -16,9 +16,30 @@ const MAX_SSE_CONNECTIONS = 20; // Limit to prevent memory/connection leaks
  */
 async function triggerSmartMovingSync(projectId: string, mediaId: string, source: string) {
   try {
-    console.log(`🔄 Fetching newly processed inventory items for ${source} ${mediaId}`);
+    console.log(`🔄 [SMARTMOVING-TRIGGER] Checking if SmartMoving sync needed for ${source} ${mediaId}`);
     
     await connectMongoDB();
+    
+    // First, check if this project has SmartMoving integration
+    const Project = (await import('@/models/Project')).default;
+    const project = await Project.findById(projectId);
+    
+    if (!project) {
+      console.log(`⚠️ [SMARTMOVING-TRIGGER] Project ${projectId} not found - skipping sync`);
+      return;
+    }
+    
+    console.log(`🔍 [SMARTMOVING-TRIGGER] Project metadata:`, JSON.stringify(project.metadata, null, 2));
+    console.log(`🔍 [SMARTMOVING-TRIGGER] Checking for smartMovingOpportunityId:`, project.metadata?.smartMovingOpportunityId);
+    
+    if (!project.metadata?.smartMovingOpportunityId) {
+      console.log(`⚠️ [SMARTMOVING-TRIGGER] Project ${projectId} has no SmartMoving integration - skipping sync`);
+      console.log(`🔍 [SMARTMOVING-TRIGGER] Project created by userId: ${project.userId}`);
+      console.log(`🔍 [SMARTMOVING-TRIGGER] Project created at: ${project.createdAt}`);
+      return;
+    }
+    
+    console.log(`✅ [SMARTMOVING-TRIGGER] Project has SmartMoving integration, proceeding with sync`);
     
     // Get inventory items that were created from this media processing
     const inventoryItems = await InventoryItem.find({
@@ -27,18 +48,18 @@ async function triggerSmartMovingSync(projectId: string, mediaId: string, source
     });
     
     if (inventoryItems.length === 0) {
-      console.log(`⚠️ No inventory items found for ${source} ${mediaId} - skipping SmartMoving sync`);
+      console.log(`⚠️ [SMARTMOVING-TRIGGER] No inventory items found for ${source} ${mediaId} - skipping sync`);
       return;
     }
     
-    console.log(`📦 Found ${inventoryItems.length} inventory items to sync to SmartMoving`);
+    console.log(`📦 [SMARTMOVING-TRIGGER] Found ${inventoryItems.length} inventory items to sync to SmartMoving`);
     
     // Trigger background sync (fire-and-forget)
     syncInventoryToSmartMovingBackground(projectId, inventoryItems);
     
   } catch (error) {
     // Log error but don't let it affect the webhook response
-    console.error(`❌ Error triggering SmartMoving sync for project ${projectId}:`, error);
+    console.error(`❌ [SMARTMOVING-TRIGGER] Error triggering SmartMoving sync for project ${projectId}:`, error);
   }
 }
 
