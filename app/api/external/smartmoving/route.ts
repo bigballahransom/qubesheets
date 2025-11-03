@@ -167,7 +167,8 @@ export async function POST(request: NextRequest) {
     // Fetch opportunity details from SmartMoving API
     const opportunityDetails = await fetchSmartMovingOpportunity(
       payload['opportunity-id'],
-      smartMovingIntegration.smartMovingApiKey
+      smartMovingIntegration.smartMovingApiKey,
+      smartMovingIntegration.smartMovingClientId
     );
     
     if (!opportunityDetails) {
@@ -290,18 +291,20 @@ export async function POST(request: NextRequest) {
  */
 async function fetchSmartMovingOpportunity(
   opportunityId: string, 
-  apiKey: string
+  apiKey: string,
+  clientId: string
 ): Promise<SmartMovingOpportunity | null> {
   try {
     const url = `https://api-public.smartmoving.com/v1/api/opportunities/${opportunityId}`;
     console.log(`Fetching SmartMoving opportunity: ${url}`);
     console.log(`Using API key: ${apiKey.substring(0, 10)}...`);
+    console.log(`Using Client ID: ${clientId.substring(0, 10)}...`);
     
     const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        'Ocp-Apim-Subscription-Key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
         'Content-Type': 'application/json'
       }
     });
