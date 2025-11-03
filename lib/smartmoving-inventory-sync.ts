@@ -500,6 +500,54 @@ async function getOrCreateRoom(
 }
 
 /**
+ * Try to sync inventory directly to opportunity without specifying a room
+ */
+async function syncInventoryDirectlyToOpportunity(
+  opportunityId: string,
+  items: SmartMovingInventoryItem[],
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; syncedCount: number; error?: string }> {
+  try {
+    console.log(`🔄 [SMARTMOVING-DIRECT] Attempting direct inventory sync to opportunity`);
+    
+    const requestBody: SmartMovingInventoryRequest = { items };
+    const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory`;
+    
+    console.log(`🌐 [SMARTMOVING-DIRECT] Direct sync URL: ${url}`);
+    console.log(`📦 [SMARTMOVING-DIRECT] Syncing ${items.length} items directly to opportunity`);
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId
+      },
+      body: JSON.stringify(requestBody)
+    });
+    
+    console.log(`📡 [SMARTMOVING-DIRECT] Direct sync response: ${response.status} ${response.statusText}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-DIRECT] Direct sync failed: ${response.status} - ${errorText}`);
+      return { success: false, syncedCount: 0, error: `Direct sync failed: ${response.status} - ${errorText}` };
+    }
+    
+    const result = await response.json();
+    console.log(`✅ [SMARTMOVING-DIRECT] Direct sync successful:`, result);
+    
+    const syncedCount = Array.isArray(result) ? result.length : items.length;
+    return { success: true, syncedCount };
+    
+  } catch (error) {
+    console.error(`❌ [SMARTMOVING-DIRECT] Direct sync error:`, error);
+    return { success: false, syncedCount: 0, error: error instanceof Error ? error.message : 'Unknown direct sync error' };
+  }
+}
+
+/**
  * Makes the actual API call to SmartMoving with timeout protection
  */
 async function syncToSmartMovingAPI(
@@ -527,23 +575,14 @@ async function syncToSmartMovingAPI(
     roomId = existingRoomsResult.rooms[0].id;
     console.log(`✅ [SMARTMOVING-API] Using existing room: ${existingRoomsResult.rooms[0].name} (${roomId})`);
   } else {
-    // Try to create a new room
-    console.log(`🏗️ [SMARTMOVING-API] No existing rooms found, creating new room...`);
-    const roomResult = await createDefaultRoom(opportunityId, apiKey, clientId);
+    // If no existing rooms, try the default approach without room creation
+    // Many SmartMoving integrations allow posting to opportunities without pre-created rooms
+    console.log(`⚠️ [SMARTMOVING-API] No existing rooms found, attempting inventory sync without room creation...`);
+    console.log(`🔍 [SMARTMOVING-API] Will attempt to post inventory directly to opportunity`);
     
-    console.log(`🔍 [SMARTMOVING-API] Room creation result:`, {
-      success: roomResult.success,
-      roomId: roomResult.roomId,
-      error: roomResult.error
-    });
-    
-    if (!roomResult.success || !roomResult.roomId) {
-      console.error(`❌ [SMARTMOVING-API] Failed to create room: ${roomResult.error}`);
-      return { success: false, syncedCount: 0, error: roomResult.error || 'Failed to create room' };
-    }
-    
-    roomId = roomResult.roomId;
-    console.log(`✅ [SMARTMOVING-API] Created and using room ID: ${roomId}`);
+    // Try using the opportunity inventory endpoint without specifying a room
+    const directResult = await syncInventoryDirectlyToOpportunity(opportunityId, items, apiKey, clientId);
+    return directResult;
   }
   
   const requestBody: SmartMovingInventoryRequest = { items };
