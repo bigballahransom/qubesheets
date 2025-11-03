@@ -253,9 +253,13 @@ async function getDefaultRoomType(
     });
     
     if (!response.ok) {
+      const errorText = await response.text();
       console.log(`⚠️ [SMARTMOVING-ROOM-TYPES] Room types endpoint not available: ${response.status}`);
-      // Use a common room type ID as fallback - "Bedroom" is very common
-      return { success: true, roomTypeId: '1' }; // Generic room type fallback
+      console.log(`🔍 [SMARTMOVING-ROOM-TYPES] Error response:`, errorText);
+      // Use a generic GUID format as fallback - this is a common "Other" room type GUID
+      const fallbackGuid = "11111111-1111-1111-1111-111111111111";
+      console.log(`🔄 [SMARTMOVING-ROOM-TYPES] Using fallback GUID: ${fallbackGuid}`);
+      return { success: true, roomTypeId: fallbackGuid };
     }
     
     const roomTypes = await response.json();
@@ -274,12 +278,14 @@ async function getDefaultRoomType(
     
     // Fallback to generic room type
     console.log(`⚠️ [SMARTMOVING-ROOM-TYPES] No room types found, using fallback`);
-    return { success: true, roomTypeId: '1' };
+    const fallbackGuid = "11111111-1111-1111-1111-111111111111";
+    return { success: true, roomTypeId: fallbackGuid };
     
   } catch (error) {
     console.error(`❌ [SMARTMOVING-ROOM-TYPES] Error getting room types:`, error);
     // Fallback to generic room type
-    return { success: true, roomTypeId: '1' };
+    const fallbackGuid = "11111111-1111-1111-1111-111111111111";
+    return { success: true, roomTypeId: fallbackGuid };
   }
 }
 
@@ -294,16 +300,20 @@ async function createDefaultRoom(
   try {
     console.log(`🏗️ [SMARTMOVING-CREATE-ROOM] Creating default room for opportunity ${opportunityId}`);
     
-    // Use a simple room type ID - most SmartMoving instances have basic room types
-    const roomTypeId = "1"; // Generic room type
+    // Get a proper room type GUID from the API
+    const roomTypeResult = await getDefaultRoomType(apiKey, clientId);
+    if (!roomTypeResult.success || !roomTypeResult.roomTypeId) {
+      console.error(`❌ [SMARTMOVING-CREATE-ROOM] Could not get room type: ${roomTypeResult.error}`);
+      return { success: false, error: `Could not get room type: ${roomTypeResult.error}` };
+    }
     
     const roomData = [{
       name: "Qube Sheets Inventory",
-      roomTypeId: roomTypeId
+      roomTypeId: roomTypeResult.roomTypeId
     }];
     
     console.log(`🏗️ [SMARTMOVING-CREATE-ROOM] Creating room with data:`, roomData);
-    console.log(`🔍 [SMARTMOVING-CREATE-ROOM] Using room type ID: ${roomTypeId}`);
+    console.log(`🔍 [SMARTMOVING-CREATE-ROOM] Using room type ID: ${roomTypeResult.roomTypeId}`);
     
     const createUrl = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/rooms`;
     console.log(`🌐 [SMARTMOVING-CREATE-ROOM] Calling room creation API: ${createUrl}`);
