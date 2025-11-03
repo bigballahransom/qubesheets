@@ -41,13 +41,36 @@ interface SmartMovingOpportunity {
  */
 export async function POST(request: NextRequest) {
   try {
-    // Log incoming headers for debugging
+    // Log incoming request details for debugging
     const authHeader = request.headers.get('authorization');
     const apiKeyHeader = request.headers.get('api_key') || request.headers.get('api-key');
     const allHeaders = Object.fromEntries(request.headers.entries());
-    console.log('SmartMoving webhook headers:', JSON.stringify(allHeaders, null, 2));
+    const requestBody = await request.text();
+    
+    console.log('=== SmartMoving Webhook Request ===');
+    console.log('Method:', request.method);
+    console.log('URL:', request.url);
+    console.log('Headers:', JSON.stringify(allHeaders, null, 2));
     console.log('Authorization header:', authHeader);
     console.log('API Key header:', apiKeyHeader);
+    console.log('Raw body:', requestBody);
+    console.log('=== End Debug Info ===');
+    
+    // Parse the body back to JSON
+    let payload;
+    try {
+      payload = requestBody ? JSON.parse(requestBody) : {};
+    } catch (error) {
+      console.error('Failed to parse webhook body as JSON:', error);
+      return NextResponse.json(
+        { 
+          error: 'Invalid JSON payload',
+          message: 'Webhook body must be valid JSON',
+          receivedBody: requestBody
+        },
+        { status: 400 }
+      );
+    }
     
     // Try standard API key authentication first
     let authContext = await authenticateApiKey(request);
@@ -124,8 +147,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    
-    const payload: SmartMovingWebhookPayload = await request.json();
     
     // Only handle opportunity created events
     if (payload['event-type'] !== 'opportunity-created') {
