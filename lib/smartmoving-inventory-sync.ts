@@ -630,11 +630,19 @@ async function syncToSmartMovingAPI(
     roomId = existingRoomsResult.rooms[0].id;
     console.log(`✅ [SMARTMOVING-API] Using existing room: ${existingRoomsResult.rooms[0].name} (${roomId})`);
   } else {
-    // If no existing rooms, create one using "Dining Room" room type (different from Bedroom #1)
-    console.log(`🏗️ [SMARTMOVING-API] No existing rooms found, creating new room...`);
+    // If no existing rooms, get valid room types first, then create a room
+    console.log(`🏗️ [SMARTMOVING-API] No existing rooms found, getting valid room types...`);
     
-    // Try "Living Room" room type
-    const roomResult = await createRoomWithRoomType(opportunityId, "5279a187-dd2f-4f8c-ba19-acc601150721", "Living Room", apiKey, clientId);
+    const roomTypeResult = await getDefaultRoomType(apiKey, clientId);
+    console.log(`🔍 [SMARTMOVING-API] Room type result:`, roomTypeResult);
+    
+    if (!roomTypeResult.success || !roomTypeResult.roomTypeId) {
+      console.error(`❌ [SMARTMOVING-API] Could not get valid room type: ${roomTypeResult.error}`);
+      return { success: false, syncedCount: 0, error: `Could not get valid room type: ${roomTypeResult.error}` };
+    }
+    
+    console.log(`✅ [SMARTMOVING-API] Using room type from API: ${roomTypeResult.roomTypeId}`);
+    const roomResult = await createRoomWithRoomType(opportunityId, roomTypeResult.roomTypeId, "API-retrieved", apiKey, clientId);
     
     if (!roomResult.success || !roomResult.roomId) {
       console.error(`❌ [SMARTMOVING-API] Failed to create room: ${roomResult.error}`);
