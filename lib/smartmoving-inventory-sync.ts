@@ -500,6 +500,61 @@ async function getOrCreateRoom(
 }
 
 /**
+ * Creates a room with a specific room type ID
+ */
+async function createRoomWithRoomType(
+  opportunityId: string,
+  roomTypeId: string,
+  roomTypeName: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; roomId?: string; error?: string }> {
+  try {
+    console.log(`🏗️ [SMARTMOVING-SIMPLE-CREATE] Creating room with ${roomTypeName} type: ${roomTypeId}`);
+    
+    const roomData = [{
+      name: "Qube Sheets Items",
+      roomTypeId: roomTypeId
+    }];
+    
+    const createUrl = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/rooms`;
+    console.log(`🌐 [SMARTMOVING-SIMPLE-CREATE] Creating room at: ${createUrl}`);
+    
+    const response = await fetch(createUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId
+      },
+      body: JSON.stringify(roomData)
+    });
+    
+    console.log(`📡 [SMARTMOVING-SIMPLE-CREATE] Room creation response: ${response.status} ${response.statusText}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-SIMPLE-CREATE] Room creation failed: ${response.status} - ${errorText}`);
+      return { success: false, error: `Room creation failed: ${response.status} - ${errorText}` };
+    }
+    
+    const createdRooms = await response.json();
+    console.log(`✅ [SMARTMOVING-SIMPLE-CREATE] Room created successfully:`, createdRooms);
+    
+    if (Array.isArray(createdRooms) && createdRooms.length > 0) {
+      const newRoom = createdRooms[0];
+      return { success: true, roomId: newRoom.id };
+    }
+    
+    return { success: false, error: 'Room creation response was empty' };
+    
+  } catch (error) {
+    console.error(`❌ [SMARTMOVING-SIMPLE-CREATE] Room creation error:`, error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown room creation error' };
+  }
+}
+
+/**
  * Try to sync inventory directly to opportunity without specifying a room
  */
 async function syncInventoryDirectlyToOpportunity(
@@ -575,14 +630,19 @@ async function syncToSmartMovingAPI(
     roomId = existingRoomsResult.rooms[0].id;
     console.log(`✅ [SMARTMOVING-API] Using existing room: ${existingRoomsResult.rooms[0].name} (${roomId})`);
   } else {
-    // If no existing rooms, try the default approach without room creation
-    // Many SmartMoving integrations allow posting to opportunities without pre-created rooms
-    console.log(`⚠️ [SMARTMOVING-API] No existing rooms found, attempting inventory sync without room creation...`);
-    console.log(`🔍 [SMARTMOVING-API] Will attempt to post inventory directly to opportunity`);
+    // If no existing rooms, create one using "Dining Room" room type (different from Bedroom #1)
+    console.log(`🏗️ [SMARTMOVING-API] No existing rooms found, creating new room...`);
     
-    // Try using the opportunity inventory endpoint without specifying a room
-    const directResult = await syncInventoryDirectlyToOpportunity(opportunityId, items, apiKey, clientId);
-    return directResult;
+    // Try "Living Room" room type
+    const roomResult = await createRoomWithRoomType(opportunityId, "5279a187-dd2f-4f8c-ba19-acc601150721", "Living Room", apiKey, clientId);
+    
+    if (!roomResult.success || !roomResult.roomId) {
+      console.error(`❌ [SMARTMOVING-API] Failed to create room: ${roomResult.error}`);
+      return { success: false, syncedCount: 0, error: roomResult.error || 'Failed to create room' };
+    }
+    
+    roomId = roomResult.roomId;
+    console.log(`✅ [SMARTMOVING-API] Created and using room ID: ${roomId}`);
   }
   
   const requestBody: SmartMovingInventoryRequest = { items };

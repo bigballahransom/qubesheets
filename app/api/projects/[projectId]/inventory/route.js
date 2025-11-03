@@ -8,7 +8,6 @@ import Image from '@/models/Image';
 import Video from '@/models/Video';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 import { logInventoryUpdate } from '@/lib/activity-logger';
-import { syncInventoryToSmartMovingBackground } from '@/lib/smartmoving-inventory-sync';
 
 // GET /api/projects/:projectId/inventory - Get all inventory items for a project
 export async function GET(request, { params }) {
@@ -162,11 +161,9 @@ export async function POST(request, { params }) {
     });
     console.log('✅ Updated project timestamp');
     
-    // SMARTMOVING SYNC: Trigger inventory sync for manually created items
-    if (createdItems.length > 0) {
-      console.log(`🔄 Triggering SmartMoving sync for ${createdItems.length} manually created items`);
-      syncInventoryToSmartMovingBackground(projectId, createdItems);
-    }
+    // NOTE: SmartMoving sync is handled by the processing-complete webhook
+    // No need to sync here for manually created items as they will be synced
+    // when video/image analysis completes via the processing-complete route
     
     return NextResponse.json(createdItems, { status: 201 });
   } catch (error) {
