@@ -2,10 +2,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
 import simpleRealTime from '@/lib/simple-realtime';
+import { syncInventoryToSmartMovingBackground } from '@/lib/smartmoving-inventory-sync';
+import connectMongoDB from '@/lib/mongodb';
+import InventoryItem from '@/models/InventoryItem';
 
 // In-memory store for Server-Sent Events connections with connection limit
 const sseConnections = new Map<string, ReadableStreamDefaultController>();
 const MAX_SSE_CONNECTIONS = 20; // Limit to prevent memory/connection leaks
+
+/**
+ * Triggers SmartMoving inventory sync for newly processed items
+ * This runs in the background and never blocks the webhook response
+ */
+async function triggerSmartMovingSync(projectId: string, mediaId: string, source: string) {
+  try {
+    console.log(`🔄 Fetching newly processed inventory items for ${source} ${mediaId}`);
+    
+    await connectMongoDB();
+    
+    // Get inventory items that were created from this media processing
+    const inventoryItems = await InventoryItem.find({
+      projectId,
+      ...(source === 'image' ? { sourceImageId: mediaId } : { sourceVideoId: mediaId })
+    });
+    
+    if (inventoryItems.length === 0) {
+      console.log(`⚠️ No inventory items found for ${source} ${mediaId} - skipping SmartMoving sync`);
+      return;
+    }
+    
+    console.log(`📦 Found ${inventoryItems.length} inventory items to sync to SmartMoving`);
+    
+    // Trigger background sync (fire-and-forget)
+    syncInventoryToSmartMovingBackground(projectId, inventoryItems);
+    
+  } catch (error) {
+    // Log error but don't let it affect the webhook response
+    console.error(`❌ Error triggering SmartMoving sync for project ${projectId}:`, error);
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,6 +87,12 @@ export async function POST(request: NextRequest) {
         if (!completedItem) {
           console.log(`⚠️ No matching processing item found - this is normal for some workflows`);
         }
+      }
+      
+      // SMARTMOVING SYNC: Trigger inventory sync if items were processed
+      if (itemsProcessed && itemsProcessed > 0) {
+        console.log(`🔄 Triggering SmartMoving inventory sync for ${itemsProcessed} processed items`);
+        triggerSmartMovingSync(projectId, completedId, source || (imageId ? 'image' : 'video'));
       }
     }
 

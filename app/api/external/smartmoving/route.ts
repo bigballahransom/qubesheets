@@ -3,7 +3,6 @@ import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
 import { authenticateApiKey } from '@/lib/api-key-auth';
-import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
 import bcrypt from 'bcryptjs';
 import ApiKey from '@/models/ApiKey';
 
@@ -266,36 +265,10 @@ export async function POST(request: NextRequest) {
     
     const project = await Project.create(projectData);
     
-    // Auto-send upload link if phone number is provided
-    let uploadLinkResult = null;
-    if (formattedPhone) {
-      try {
-        const authContextForUpload = {
-          userId: 'smartmoving-webhook',
-          organizationId: authContext.organizationId,
-          isPersonalAccount: false,
-        };
-        
-        uploadLinkResult = await generateAndSendUploadLink({
-          projectId: project._id.toString(),
-          customerName: customerName,
-          customerPhone: formattedPhone,
-          authContext: authContextForUpload,
-        });
-        
-        if (uploadLinkResult.success) {
-          console.log(`Upload link sent successfully for SmartMoving project ${project._id}`);
-        } else {
-          console.error(`Failed to send upload link for SmartMoving project ${project._id}:`, uploadLinkResult.error);
-        }
-      } catch (uploadError) {
-        console.error('Error sending upload link:', uploadError);
-        // Don't fail the project creation if upload link sending fails
-      }
-    }
+    console.log(`SmartMoving project created successfully: ${project._id} for opportunity ${payload['opportunity-id']}`);
     
     // Return success response
-    const response: any = {
+    return NextResponse.json({
       success: true,
       message: 'Project created successfully from SmartMoving opportunity',
       project: {
@@ -307,26 +280,7 @@ export async function POST(request: NextRequest) {
         organizationId: project.organizationId,
         smartMovingOpportunityId: payload['opportunity-id']
       }
-    };
-    
-    // Add upload link information if it was attempted
-    if (formattedPhone) {
-      response.uploadLink = {
-        attempted: true,
-        sent: uploadLinkResult?.success || false,
-        smsDelivered: uploadLinkResult?.smsDelivered || false,
-        uploadUrl: uploadLinkResult?.uploadUrl,
-        expiresAt: uploadLinkResult?.expiresAt,
-        error: uploadLinkResult?.error
-      };
-    } else {
-      response.uploadLink = {
-        attempted: false,
-        reason: 'No phone number provided in SmartMoving opportunity'
-      };
-    }
-    
-    return NextResponse.json(response, { status: 201 });
+    }, { status: 201 });
     
   } catch (error) {
     console.error('Error processing SmartMoving webhook:', error);
