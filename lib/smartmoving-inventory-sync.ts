@@ -107,11 +107,17 @@ export async function syncInventoryToSmartMoving(
       console.log(`✅ Successfully synced ${syncedCount} items to SmartMoving for project ${projectId}`);
       
       // Log successful sync activity
-      await logActivity(projectId, 'smartmoving_inventory_sync', {
-        success: true,
-        itemsCount: syncedCount,
-        smartMovingOpportunityId,
-        duration: Date.now() - startTime
+      await logActivity({
+        projectId,
+        userId: 'system',
+        activityType: 'integration',
+        action: 'smartmoving_inventory_sync',
+        details: {
+          success: true,
+          itemsCount: syncedCount,
+          smartMovingOpportunityId,
+          duration: Date.now() - startTime
+        }
       });
       
       return { success: true, syncedCount };
@@ -119,12 +125,18 @@ export async function syncInventoryToSmartMoving(
       console.error(`❌ SmartMoving API sync failed for project ${projectId}:`, syncResult.error);
       
       // Log failed sync activity
-      await logActivity(projectId, 'smartmoving_inventory_sync', {
-        success: false,
-        error: syncResult.error,
-        itemsCount: itemsToSync.length,
-        smartMovingOpportunityId,
-        duration: Date.now() - startTime
+      await logActivity({
+        projectId,
+        userId: 'system',
+        activityType: 'integration',
+        action: 'smartmoving_inventory_sync',
+        details: {
+          success: false,
+          error: syncResult.error,
+          itemsCount: itemsToSync.length,
+          smartMovingOpportunityId,
+          duration: Date.now() - startTime
+        }
       });
       
       return { success: false, syncedCount: 0, error: syncResult.error };
@@ -136,11 +148,17 @@ export async function syncInventoryToSmartMoving(
     
     // Log error but don't throw - we never want to break core functionality
     try {
-      await logActivity(projectId, 'smartmoving_inventory_sync', {
-        success: false,
-        error: errorMessage,
-        itemsCount: inventoryItems.length,
-        duration: Date.now() - startTime
+      await logActivity({
+        projectId,
+        userId: 'system',
+        activityType: 'integration',
+        action: 'smartmoving_inventory_sync',
+        details: {
+          success: false,
+          error: errorMessage,
+          itemsCount: inventoryItems.length,
+          duration: Date.now() - startTime
+        }
       });
     } catch (logError) {
       console.error('❌ Failed to log SmartMoving sync error:', logError);
