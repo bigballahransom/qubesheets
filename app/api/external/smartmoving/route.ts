@@ -4,6 +4,8 @@ import Project from '@/models/Project';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
 import { authenticateApiKey } from '@/lib/api-key-auth';
 import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
+import bcrypt from 'bcryptjs';
+import ApiKey from '@/models/ApiKey';
 
 interface SmartMovingWebhookPayload {
   'event-type': string;
@@ -39,14 +41,68 @@ interface SmartMovingOpportunity {
  */
 export async function POST(request: NextRequest) {
   try {
-    // Authenticate using API key
-    const authContext = await authenticateApiKey(request);
+    // Log incoming headers for debugging
+    const authHeader = request.headers.get('authorization');
+    const apiKeyHeader = request.headers.get('api_key') || request.headers.get('api-key');
+    const allHeaders = Object.fromEntries(request.headers.entries());
+    console.log('SmartMoving webhook headers:', JSON.stringify(allHeaders, null, 2));
+    console.log('Authorization header:', authHeader);
+    console.log('API Key header:', apiKeyHeader);
+    
+    // Try standard API key authentication first
+    let authContext = await authenticateApiKey(request);
+    
+    // If that fails, try custom api_key header approach
+    if (!authContext && apiKeyHeader) {
+      console.log('Trying authentication with api_key header');
+      // Manually authenticate using the api_key header
+      const apiKey = apiKeyHeader.startsWith('qbs_') ? apiKeyHeader : `qbs_${apiKeyHeader}`;
+      
+      // Validate API key format and authenticate manually
+      if (apiKey.startsWith('qbs_')) {
+        const parts = apiKey.split('_');
+        if (parts.length === 3) {
+          // Use imported modules for manual authentication
+          
+          try {
+            await connectMongoDB();
+            const keyId = parts[1];
+            const apiKeyRecord = await ApiKey.findOne({ 
+              keyId,
+              isActive: true 
+            });
+            
+            if (apiKeyRecord) {
+              const isValidKey = await bcrypt.compare(apiKey, apiKeyRecord.keyHash);
+              if (isValidKey) {
+                apiKeyRecord.lastUsed = new Date();
+                await apiKeyRecord.save();
+                authContext = {
+                  organizationId: apiKeyRecord.organizationId,
+                  apiKeyId: apiKeyRecord._id.toString(),
+                };
+                console.log('Successfully authenticated with api_key header');
+              }
+            }
+          } catch (error) {
+            console.error('Error in manual API key authentication:', error);
+          }
+        }
+      }
+    }
     
     if (!authContext) {
+      console.log('Authentication failed for SmartMoving webhook');
       return NextResponse.json(
         { 
           error: 'Invalid or missing API key',
-          message: 'Please provide a valid API key in the Authorization header: Bearer qbs_keyId_secret'
+          message: 'Please provide API key either as "Authorization: Bearer qbs_keyId_secret" or "api_key: qbs_keyId_secret"',
+          debug: {
+            authHeaderPresent: !!authHeader,
+            apiKeyHeaderPresent: !!apiKeyHeader,
+            authHeaderValue: authHeader ? `${authHeader.substring(0, 20)}...` : null,
+            apiKeyHeaderValue: apiKeyHeader ? `${apiKeyHeader.substring(0, 20)}...` : null
+          }
         },
         { status: 401 }
       );
@@ -237,23 +293,29 @@ async function fetchSmartMovingOpportunity(
   apiKey: string
 ): Promise<SmartMovingOpportunity | null> {
   try {
-    const response = await fetch(
-      `https://api-public.smartmoving.com/v1/api/opportunities/${opportunityId}`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
+    const url = `https://api-public.smartmoving.com/v1/api/opportunities/${opportunityId}`;
+    console.log(`Fetching SmartMoving opportunity: ${url}`);
+    console.log(`Using API key: ${apiKey.substring(0, 10)}...`);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
       }
-    );
+    });
+    
+    console.log(`SmartMoving API response status: ${response.status} ${response.statusText}`);
     
     if (!response.ok) {
+      const errorText = await response.text();
       console.error(`SmartMoving API error: ${response.status} ${response.statusText}`);
+      console.error(`SmartMoving API error body:`, errorText);
       return null;
     }
     
     const opportunity: SmartMovingOpportunity = await response.json();
+    console.log(`Successfully fetched opportunity:`, JSON.stringify(opportunity, null, 2));
     return opportunity;
     
   } catch (error) {
