@@ -6,7 +6,7 @@ import { authenticateApiKey } from '@/lib/api-key-auth';
 import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
 
 interface SmartMovingWebhookPayload {
-  event_type: string;
+  'event-type': string;
   'opportunity-id'?: string;
   'customer-id'?: string;
   data?: any;
@@ -72,10 +72,10 @@ export async function POST(request: NextRequest) {
     const payload: SmartMovingWebhookPayload = await request.json();
     
     // Only handle opportunity created events
-    if (payload.event_type !== 'opportunity_created') {
+    if (payload['event-type'] !== 'opportunity-created') {
       return NextResponse.json({
         success: true,
-        message: `Event type '${payload.event_type}' ignored - only 'opportunity_created' events are processed`
+        message: `Event type '${payload['event-type']}' ignored - only 'opportunity-created' events are processed`
       });
     }
     
@@ -284,12 +284,12 @@ export async function GET() {
       }
     },
     supportedEvents: {
-      opportunity_created: 'Creates a new project when an opportunity is created in SmartMoving'
+      'opportunity-created': 'Creates a new project when an opportunity is created in SmartMoving'
     },
     requirements: [
       'SmartMoving integration must be configured in Settings > Integrations',
       'Valid API key required for authentication',
-      'Webhook must include opportunity_id in payload'
+      'Webhook must include opportunity-id in payload'
     ],
     responses: {
       201: {

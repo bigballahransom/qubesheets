@@ -3,14 +3,8 @@
 
 const testWebhook = async () => {
   const webhookPayload = {
-    event_type: 'opportunity_created',
-    'opportunity-id': 'test-opportunity-123',
-    data: {
-      customer: {
-        name: 'Test Customer',
-        phone: '5551234567'
-      }
-    }
+    'event-type': 'opportunity-created',
+    'opportunity-id': 'test-opportunity-123'
   };
 
   try {
