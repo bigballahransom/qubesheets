@@ -303,7 +303,7 @@ async function fetchSmartMovingOpportunity(
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
         'Ocp-Apim-Subscription-Key': clientId,
         'Content-Type': 'application/json'
       }
