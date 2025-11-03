@@ -110,7 +110,7 @@ export async function syncInventoryToSmartMoving(
       await logActivity({
         projectId,
         userId: 'system',
-        activityType: 'integration',
+        activityType: 'inventory_update',
         action: 'smartmoving_inventory_sync',
         details: {
           success: true,
@@ -128,7 +128,7 @@ export async function syncInventoryToSmartMoving(
       await logActivity({
         projectId,
         userId: 'system',
-        activityType: 'integration',
+        activityType: 'inventory_update',
         action: 'smartmoving_inventory_sync',
         details: {
           success: false,
@@ -151,7 +151,7 @@ export async function syncInventoryToSmartMoving(
       await logActivity({
         projectId,
         userId: 'system',
-        activityType: 'integration',
+        activityType: 'inventory_update',
         action: 'smartmoving_inventory_sync',
         details: {
           success: false,
