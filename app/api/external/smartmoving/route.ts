@@ -75,6 +75,42 @@ export async function POST(request: NextRequest) {
     // Try standard API key authentication first
     let authContext = await authenticateApiKey(request);
     
+    // If that fails, try the Authorization header without Bearer prefix (SmartMoving sends raw API key)
+    if (!authContext && authHeader && !authHeader.startsWith('Bearer ')) {
+      console.log('Trying authentication with Authorization header (no Bearer prefix)');
+      const apiKey = authHeader.trim();
+      
+      // Validate API key format and authenticate manually
+      if (apiKey.startsWith('qbs_')) {
+        const parts = apiKey.split('_');
+        if (parts.length === 3) {
+          try {
+            await connectMongoDB();
+            const keyId = parts[1];
+            const apiKeyRecord = await ApiKey.findOne({ 
+              keyId,
+              isActive: true 
+            });
+            
+            if (apiKeyRecord) {
+              const isValidKey = await bcrypt.compare(apiKey, apiKeyRecord.keyHash);
+              if (isValidKey) {
+                apiKeyRecord.lastUsed = new Date();
+                await apiKeyRecord.save();
+                authContext = {
+                  organizationId: apiKeyRecord.organizationId,
+                  apiKeyId: apiKeyRecord._id.toString(),
+                };
+                console.log('Successfully authenticated with Authorization header (no Bearer)');
+              }
+            }
+          } catch (error) {
+            console.error('Error in manual API key authentication:', error);
+          }
+        }
+      }
+    }
+    
     // If that fails, try custom api_key header approach
     if (!authContext && apiKeyHeader) {
       console.log('Trying authentication with api_key header');
@@ -85,8 +121,6 @@ export async function POST(request: NextRequest) {
       if (apiKey.startsWith('qbs_')) {
         const parts = apiKey.split('_');
         if (parts.length === 3) {
-          // Use imported modules for manual authentication
-          
           try {
             await connectMongoDB();
             const keyId = parts[1];
