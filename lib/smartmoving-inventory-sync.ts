@@ -294,20 +294,24 @@ async function createDefaultRoom(
   try {
     console.log(`🏗️ [SMARTMOVING-CREATE-ROOM] Creating default room for opportunity ${opportunityId}`);
     
-    // Get a room type to use
-    const roomTypeResult = await getDefaultRoomType(apiKey, clientId);
-    if (!roomTypeResult.success || !roomTypeResult.roomTypeId) {
-      return { success: false, error: 'Could not get room type for new room' };
-    }
+    // Use a simple room type ID - most SmartMoving instances have basic room types
+    const roomTypeId = "1"; // Generic room type
     
     const roomData = [{
-      name: "Qube Sheets",
-      roomTypeId: roomTypeResult.roomTypeId
+      name: "Qube Sheets Inventory",
+      roomTypeId: roomTypeId
     }];
     
     console.log(`🏗️ [SMARTMOVING-CREATE-ROOM] Creating room with data:`, roomData);
+    console.log(`🔍 [SMARTMOVING-CREATE-ROOM] Using room type ID: ${roomTypeId}`);
     
     const createUrl = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/rooms`;
+    console.log(`🌐 [SMARTMOVING-CREATE-ROOM] Calling room creation API: ${createUrl}`);
+    console.log(`🔍 [SMARTMOVING-CREATE-ROOM] Headers:`, {
+      'Content-Type': 'application/json',
+      'x-api-key': `${apiKey.substring(0, 10)}...`,
+      'Ocp-Apim-Subscription-Key': `${clientId.substring(0, 10)}...`
+    });
     
     const response = await fetch(createUrl, {
       method: 'POST',
@@ -319,10 +323,13 @@ async function createDefaultRoom(
       body: JSON.stringify(roomData)
     });
     
+    console.log(`📡 [SMARTMOVING-CREATE-ROOM] API response: ${response.status} ${response.statusText}`);
+    
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`❌ [SMARTMOVING-CREATE-ROOM] Failed to create room: ${response.status} ${response.statusText}`);
       console.error(`🔍 [SMARTMOVING-CREATE-ROOM] Error response:`, errorText);
+      console.error(`🔍 [SMARTMOVING-CREATE-ROOM] Request data was:`, JSON.stringify(roomData, null, 2));
       return { success: false, error: `Failed to create room: ${response.status} - ${errorText}` };
     }
     
@@ -427,27 +434,28 @@ async function syncToSmartMovingAPI(
   clientId: string
 ): Promise<{ success: boolean; syncedCount: number; error?: string }> {
   
-  // First, get or create a room for the inventory
-  console.log(`🏠 [SMARTMOVING-API] Getting appropriate room for inventory`);
+  console.log(`🚀 [SMARTMOVING-API] ===== STARTING SMARTMOVING API SYNC =====`);
+  console.log(`📦 [SMARTMOVING-API] Syncing ${items.length} items for opportunity ${opportunityId}`);
+  
+  // Create a room via API first, then use it
+  console.log(`🏗️ [SMARTMOVING-API] Creating room for inventory items`);
   console.log(`🔍 [SMARTMOVING-API] Opportunity ID: ${opportunityId}`);
-  console.log(`🔍 [SMARTMOVING-API] About to call getOrCreateRoom...`);
   
-  const roomResult = await getOrCreateRoom(opportunityId, apiKey, clientId);
+  const roomResult = await createDefaultRoom(opportunityId, apiKey, clientId);
   
-  console.log(`🔍 [SMARTMOVING-API] Room result received:`, {
+  console.log(`🔍 [SMARTMOVING-API] Room creation result:`, {
     success: roomResult.success,
     roomId: roomResult.roomId,
     error: roomResult.error
   });
   
   if (!roomResult.success || !roomResult.roomId) {
-    console.error(`❌ [SMARTMOVING-API] Failed to get room: ${roomResult.error}`);
-    return { success: false, syncedCount: 0, error: roomResult.error || 'Failed to get room' };
+    console.error(`❌ [SMARTMOVING-API] Failed to create room: ${roomResult.error}`);
+    return { success: false, syncedCount: 0, error: roomResult.error || 'Failed to create room' };
   }
   
   const roomId = roomResult.roomId;
-  console.log(`✅ [SMARTMOVING-API] Using room ID: ${roomId}`);
-  console.log(`🔍 [SMARTMOVING-API] Room ID source: ${roomId === SMARTMOVING_BEDROOM_ROOM_ID ? 'HARDCODED_FALLBACK' : 'DYNAMIC_CREATION_OR_DETECTION'}`);
+  console.log(`✅ [SMARTMOVING-API] Created and using room ID: ${roomId}`);
   
   const requestBody: SmartMovingInventoryRequest = { items };
   const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory/rooms/${roomId}`;
