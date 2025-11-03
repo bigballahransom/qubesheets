@@ -4,7 +4,7 @@
 const testWebhook = async () => {
   const webhookPayload = {
     event_type: 'opportunity_created',
-    opportunity_id: 'test-opportunity-123',
+    'opportunity-id': 'test-opportunity-123',
     data: {
       customer: {
         name: 'Test Customer',

@@ -7,8 +7,8 @@ import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
 
 interface SmartMovingWebhookPayload {
   event_type: string;
-  opportunity_id?: string;
-  customer_id?: string;
+  'opportunity-id'?: string;
+  'customer-id'?: string;
   data?: any;
 }
 
@@ -79,11 +79,11 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    if (!payload.opportunity_id) {
+    if (!payload['opportunity-id']) {
       return NextResponse.json(
         { 
           error: 'Missing opportunity ID',
-          message: 'Webhook payload must include opportunity_id'
+          message: 'Webhook payload must include opportunity-id'
         },
         { status: 400 }
       );
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
     // Check if project already exists for this opportunity
     const existingProject = await Project.findOne({
       organizationId: authContext.organizationId,
-      'metadata.smartMovingOpportunityId': payload.opportunity_id
+      'metadata.smartMovingOpportunityId': payload['opportunity-id']
     });
     
     if (existingProject) {
@@ -103,14 +103,14 @@ export async function POST(request: NextRequest) {
           id: existingProject._id,
           name: existingProject.name,
           customerName: existingProject.customerName,
-          smartMovingOpportunityId: payload.opportunity_id
+          smartMovingOpportunityId: payload['opportunity-id']
         }
       });
     }
     
     // Fetch opportunity details from SmartMoving API
     const opportunityDetails = await fetchSmartMovingOpportunity(
-      payload.opportunity_id,
+      payload['opportunity-id'],
       smartMovingIntegration.smartMovingApiKey
     );
     
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         createdViaApi: true,
         apiKeyId: authContext.apiKeyId,
-        smartMovingOpportunityId: payload.opportunity_id,
+        smartMovingOpportunityId: payload['opportunity-id'],
         smartMovingCustomerId: opportunityDetails.customer.id,
         smartMovingQuoteNumber: opportunityDetails.quoteNumber,
         source: 'smartmoving-webhook'
@@ -193,7 +193,7 @@ export async function POST(request: NextRequest) {
         phone: project.phone,
         createdAt: project.createdAt,
         organizationId: project.organizationId,
-        smartMovingOpportunityId: payload.opportunity_id
+        smartMovingOpportunityId: payload['opportunity-id']
       }
     };
     
