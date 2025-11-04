@@ -260,7 +260,7 @@ export default function IntegrationsPage() {
                       </div>
 
                       {/* Test Connection Button */}
-                      <Button 
+                      {/* <Button 
                         onClick={testConnection}
                         disabled={testing || !smartMovingClientId || (!smartMovingApiKey || smartMovingApiKey.includes('•'))}
                         variant="outline"
@@ -268,7 +268,7 @@ export default function IntegrationsPage() {
                       >
                         <TestTube className="mr-2 h-4 w-4" />
                         {testing ? 'Testing...' : 'Test Connection'}
-                      </Button>
+                      </Button> */}
 
                       {/* Test Results */}
                       {testResults && (
