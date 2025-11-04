@@ -14,25 +14,30 @@ const MAX_SSE_CONNECTIONS = 20; // Limit to prevent memory/connection leaks
  * Triggers SmartMoving inventory sync directly in the processing complete webhook
  * This runs in the background and never blocks the webhook response
  */
-async function triggerSmartMovingSync(projectId: string, itemsProcessed: number) {
+async function triggerSmartMovingSync(projectId: string, itemsProcessed: number, sourceMediaId: string, isVideo: boolean) {
   try {
-    console.log(`🔄 [SMARTMOVING-SYNC] Starting SmartMoving sync for project ${projectId} with ${itemsProcessed} processed items`);
+    console.log(`🔄 [SMARTMOVING-SYNC] Starting SmartMoving sync for project ${projectId} with ${itemsProcessed} processed items from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
     
     // Connect to MongoDB to get inventory items
     await connectMongoDB();
     
-    // Get all inventory items for the project
-    const inventoryItems = await InventoryItem.find({ projectId });
+    // Get only inventory items created from this specific image or video
+    const sourceField = isVideo ? 'sourceVideoId' : 'sourceImageId';
+    const sourceInventoryItems = await InventoryItem.find({ 
+      projectId,
+      [sourceField]: sourceMediaId
+    });
     
-    if (inventoryItems.length === 0) {
-      console.log(`⚠️ [SMARTMOVING-SYNC] No inventory items found for project ${projectId}`);
+    if (sourceInventoryItems.length === 0) {
+      console.log(`⚠️ [SMARTMOVING-SYNC] No inventory items found for project ${projectId} from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
       return;
     }
     
-    console.log(`📦 [SMARTMOVING-SYNC] Found ${inventoryItems.length} inventory items to sync`);
+    console.log(`📦 [SMARTMOVING-SYNC] Found ${sourceInventoryItems.length} inventory items to sync from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
+    console.log(`📦 [SMARTMOVING-SYNC] Expected ${itemsProcessed} items based on webhook, found ${sourceInventoryItems.length} items from source media`);
     
     // Perform the SmartMoving sync
-    const syncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
+    const syncResult = await syncInventoryToSmartMoving(projectId, sourceInventoryItems);
     
     console.log(`🔍 [SMARTMOVING-SYNC] Sync completed:`, {
       success: syncResult.success,
@@ -101,10 +106,12 @@ export async function POST(request: NextRequest) {
       
       // SMARTMOVING SYNC: Trigger inventory sync if items were processed
       if (itemsProcessed && itemsProcessed > 0) {
-        console.log(`🔄 Triggering SmartMoving inventory sync for ${itemsProcessed} processed items`);
+        const sourceMediaId = imageId || videoId;
+        const isVideo = !!videoId;
+        console.log(`🔄 Triggering SmartMoving inventory sync for ${itemsProcessed} processed items from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
         // Fire-and-forget call to dedicated API
         setTimeout(() => {
-          triggerSmartMovingSync(projectId, itemsProcessed);
+          triggerSmartMovingSync(projectId, itemsProcessed, sourceMediaId, isVideo);
         }, 100); // Small delay to ensure webhook response is sent first
       }
     }

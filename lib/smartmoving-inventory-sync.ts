@@ -28,7 +28,8 @@ interface SmartMovingInventoryResponse {
 }
 
 const SMARTMOVING_BEDROOM_ROOM_ID = 'ff6564a6-38d7-4d87-8f1a-acc601150721';
-const SYNC_TIMEOUT_MS = 10000; // 10 second timeout
+const SYNC_TIMEOUT_MS = 30000; // 30 second timeout
+const BATCH_SIZE = 25; // Send items in batches of 25
 
 /**
  * Syncs inventory items from QubeSheets to SmartMoving
@@ -153,21 +154,53 @@ export async function syncInventoryToSmartMoving(
     
     console.log(`✅ [SMARTMOVING-SYNC] Prepared ${smartMovingItems.length} items for SmartMoving API`);
     
-    // 4. Call SmartMoving API with simplified approach
-    console.log(`🌐 [SMARTMOVING-SYNC] Calling SmartMoving API`);
-    console.log(`🔍 [SMARTMOVING-SYNC] API call parameters:`, {
-      opportunityId: smartMovingOpportunityId,
-      itemCount: smartMovingItems.length,
-      roomId: roomId || 'auto-assigned'
-    });
+    // 4. Send items in batches to avoid API timeouts
+    console.log(`🌐 [SMARTMOVING-SYNC] Syncing ${smartMovingItems.length} items in batches of ${BATCH_SIZE}`);
     
-    const syncResult = await syncToSmartMovingAPI(
-      smartMovingOpportunityId,
-      smartMovingItems,
-      smartMovingIntegration.smartMovingApiKey,
-      smartMovingIntegration.smartMovingClientId,
-      roomId // Pass the room ID we found
-    );
+    let totalSyncedCount = 0;
+    const batches = [];
+    
+    // Split items into batches
+    for (let i = 0; i < smartMovingItems.length; i += BATCH_SIZE) {
+      batches.push(smartMovingItems.slice(i, i + BATCH_SIZE));
+    }
+    
+    console.log(`📦 [SMARTMOVING-SYNC] Split into ${batches.length} batches`);
+    
+    // Process each batch
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      const batchNumber = batchIndex + 1;
+      
+      console.log(`🔄 [SMARTMOVING-SYNC] Processing batch ${batchNumber}/${batches.length} (${batch.length} items)`);
+      
+      const batchResult = await syncToSmartMovingAPI(
+        smartMovingOpportunityId,
+        batch,
+        smartMovingIntegration.smartMovingApiKey,
+        smartMovingIntegration.smartMovingClientId,
+        roomId // Pass the room ID we found
+      );
+      
+      if (batchResult.success) {
+        totalSyncedCount += batchResult.syncedCount;
+        console.log(`✅ [SMARTMOVING-SYNC] Batch ${batchNumber}/${batches.length} completed: ${batchResult.syncedCount} items synced`);
+      } else {
+        console.error(`❌ [SMARTMOVING-SYNC] Batch ${batchNumber}/${batches.length} failed: ${batchResult.error}`);
+        // Continue with other batches even if one fails
+      }
+      
+      // Small delay between batches to be gentle on the API
+      if (batchIndex < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+      }
+    }
+    
+    const syncResult = { 
+      success: totalSyncedCount > 0, 
+      syncedCount: totalSyncedCount,
+      error: totalSyncedCount === 0 ? 'All batches failed' : undefined
+    };
     
     console.log(`🔍 [SMARTMOVING-SYNC] API call result:`, {
       success: syncResult.success,
