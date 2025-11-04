@@ -32,6 +32,7 @@ async function triggerSmartMovingSync(projectId: string, itemsProcessed: number)
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': 'Bearer internal-sync',
       },
       body: JSON.stringify({ projectId }),
       signal: controller.signal

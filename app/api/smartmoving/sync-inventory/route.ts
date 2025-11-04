@@ -9,6 +9,19 @@ export async function POST(request: NextRequest) {
   try {
     console.log('🔄 [SMARTMOVING-SYNC-API] SmartMoving inventory sync API called');
     
+    // Simple internal API authentication - check for internal call
+    const authHeader = request.headers.get('authorization');
+    const userAgent = request.headers.get('user-agent');
+    const isInternalCall = authHeader === 'Bearer internal-sync' || userAgent?.includes('undici');
+    
+    if (!isInternalCall) {
+      console.log('❌ [SMARTMOVING-SYNC-API] Unauthorized - not an internal call');
+      return NextResponse.json(
+        { error: 'Unauthorized - internal API only' },
+        { status: 401 }
+      );
+    }
+    
     const body = await request.json();
     const { projectId } = body;
     
