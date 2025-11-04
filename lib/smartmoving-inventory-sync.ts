@@ -116,6 +116,18 @@ export async function syncInventoryToSmartMoving(
     }
     
     console.log(`🔄 [SMARTMOVING-SYNC] Mapping ${itemsToSync.length} items to SmartMoving format`);
+    
+    // First try to get or create a room for the items
+    const roomResult = await getExistingRooms(smartMovingOpportunityId, smartMovingIntegration.smartMovingApiKey, smartMovingIntegration.smartMovingClientId);
+    let roomId = null;
+    
+    if (roomResult.success && roomResult.rooms && roomResult.rooms.length > 0) {
+      roomId = roomResult.rooms[0].id;
+      console.log(`✅ [SMARTMOVING-SYNC] Will use existing room: ${roomResult.rooms[0].name} (${roomId})`);
+    } else {
+      console.log(`⚠️ [SMARTMOVING-SYNC] No existing rooms found, items will be assigned to default location`);
+    }
+    
     const smartMovingItems: SmartMovingInventoryItem[] = itemsToSync.map(item => {
       const mappedItem = {
         name: item.name,
@@ -138,12 +150,12 @@ export async function syncInventoryToSmartMoving(
     
     console.log(`✅ [SMARTMOVING-SYNC] Prepared ${smartMovingItems.length} items for SmartMoving API`);
     
-    // 4. Call SmartMoving API with timeout protection
+    // 4. Call SmartMoving API with simplified approach
     console.log(`🌐 [SMARTMOVING-SYNC] Calling SmartMoving API`);
     console.log(`🔍 [SMARTMOVING-SYNC] API call parameters:`, {
       opportunityId: smartMovingOpportunityId,
       itemCount: smartMovingItems.length,
-      roomId: SMARTMOVING_BEDROOM_ROOM_ID
+      roomId: roomId || 'auto-assigned'
     });
     
     const syncResult = await syncToSmartMovingAPI(
@@ -287,8 +299,8 @@ async function getDefaultRoomType(
     console.log(`🏠 [SMARTMOVING-ROOM-TYPES] ===== GETTING ROOM TYPES =====`);
     console.log(`🏠 [SMARTMOVING-ROOM-TYPES] Getting available room types`);
     
-    // Try to get room types - this endpoint might be available
-    const roomTypesUrl = `https://api-public.smartmoving.com/v1/api/roomtypes`;
+    // Try to get room types from the premium endpoint
+    const roomTypesUrl = `https://api-public.smartmoving.com/v1/api/premium/room-types`;
     console.log(`🌐 [SMARTMOVING-ROOM-TYPES] Calling room types API: ${roomTypesUrl}`);
     console.log(`🔍 [SMARTMOVING-ROOM-TYPES] Headers:`, {
       'x-api-key': `${apiKey.substring(0, 10)}...`,
@@ -654,7 +666,10 @@ async function syncToSmartMovingAPI(
   }
   
   const requestBody: SmartMovingInventoryRequest = { items };
+  
+  // Use the correct room-based inventory endpoint from SmartMoving API docs
   const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory/rooms/${roomId}`;
+  console.log(`🔄 [SMARTMOVING-API] Using room-based inventory endpoint: ${url}`);
   
   console.log(`🌐 [SMARTMOVING-API] Starting API call to SmartMoving`);
   console.log(`🔍 [SMARTMOVING-API] URL: ${url}`);
