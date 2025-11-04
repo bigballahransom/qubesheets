@@ -2,71 +2,53 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
 import simpleRealTime from '@/lib/simple-realtime';
-// Remove unused import - using dedicated API route instead
 import connectMongoDB from '@/lib/mongodb';
 import InventoryItem from '@/models/InventoryItem';
+import { syncInventoryToSmartMoving } from '@/lib/smartmoving-inventory-sync';
 
 // In-memory store for Server-Sent Events connections with connection limit
 const sseConnections = new Map<string, ReadableStreamDefaultController>();
 const MAX_SSE_CONNECTIONS = 20; // Limit to prevent memory/connection leaks
 
 /**
- * Triggers SmartMoving inventory sync via dedicated API route
+ * Triggers SmartMoving inventory sync directly in the processing complete webhook
  * This runs in the background and never blocks the webhook response
  */
 async function triggerSmartMovingSync(projectId: string, itemsProcessed: number) {
   try {
-    console.log(`🔄 [SMARTMOVING-TRIGGER] Triggering SmartMoving sync for project ${projectId} with ${itemsProcessed} processed items`);
+    console.log(`🔄 [SMARTMOVING-SYNC] Starting SmartMoving sync for project ${projectId} with ${itemsProcessed} processed items`);
     
-    // Call the dedicated SmartMoving sync API route
-    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
-    const syncUrl = `${baseUrl}/api/smartmoving/sync-inventory`;
+    // Connect to MongoDB to get inventory items
+    await connectMongoDB();
     
-    console.log(`🌐 [SMARTMOVING-TRIGGER] Calling SmartMoving sync API: ${syncUrl}`);
+    // Get all inventory items for the project
+    const inventoryItems = await InventoryItem.find({ projectId });
     
-    const requestHeaders = {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer internal-sync',
-      'User-Agent': 'qubesheets-internal/1.0'
-    };
-    
-    console.log(`🔍 [SMARTMOVING-TRIGGER] Request headers:`, requestHeaders);
-    console.log(`📦 [SMARTMOVING-TRIGGER] Request body:`, JSON.stringify({ projectId }));
-    
-    // Use fetch with timeout to prevent hanging
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-    
-    const response = await fetch(syncUrl, {
-      method: 'POST',
-      headers: requestHeaders,
-      body: JSON.stringify({ projectId }),
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`❌ [SMARTMOVING-TRIGGER] Sync API failed with status ${response.status}:`, errorText);
+    if (inventoryItems.length === 0) {
+      console.log(`⚠️ [SMARTMOVING-SYNC] No inventory items found for project ${projectId}`);
       return;
     }
     
-    const result = await response.json();
+    console.log(`📦 [SMARTMOVING-SYNC] Found ${inventoryItems.length} inventory items to sync`);
     
-    if (response.ok) {
-      console.log(`✅ [SMARTMOVING-TRIGGER] Sync API completed successfully:`, result);
+    // Perform the SmartMoving sync
+    const syncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
+    
+    console.log(`🔍 [SMARTMOVING-SYNC] Sync completed:`, {
+      success: syncResult.success,
+      syncedCount: syncResult.syncedCount,
+      error: syncResult.error
+    });
+    
+    if (syncResult.success) {
+      console.log(`✅ [SMARTMOVING-SYNC] Successfully synced ${syncResult.syncedCount} items to SmartMoving`);
     } else {
-      console.error(`❌ [SMARTMOVING-TRIGGER] Sync API failed:`, result);
+      console.error(`❌ [SMARTMOVING-SYNC] Sync failed: ${syncResult.error}`);
     }
     
   } catch (error) {
     // Log error but don't let it affect the webhook response
-    if (error instanceof Error && error.name === 'AbortError') {
-      console.error(`⏰ [SMARTMOVING-TRIGGER] Sync API timeout after 30 seconds for project ${projectId}`);
-    } else {
-      console.error(`❌ [SMARTMOVING-TRIGGER] Error calling SmartMoving sync API for project ${projectId}:`, error);
-    }
+    console.error(`❌ [SMARTMOVING-SYNC] Error during SmartMoving sync for project ${projectId}:`, error);
   }
 }
 
