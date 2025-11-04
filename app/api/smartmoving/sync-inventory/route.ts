@@ -12,10 +12,31 @@ export async function POST(request: NextRequest) {
     // Simple internal API authentication - check for internal call
     const authHeader = request.headers.get('authorization');
     const userAgent = request.headers.get('user-agent');
-    const isInternalCall = authHeader === 'Bearer internal-sync' || userAgent?.includes('undici');
+    const host = request.headers.get('host');
+    
+    console.log(`🔍 [SMARTMOVING-SYNC-API] Auth check:`, {
+      authHeader: authHeader ? `${authHeader.substring(0, 20)}...` : 'none',
+      userAgent: userAgent ? `${userAgent.substring(0, 50)}...` : 'none',
+      host: host
+    });
+    
+    const isInternalCall = authHeader === 'Bearer internal-sync' || 
+                          userAgent?.includes('undici') || 
+                          userAgent?.includes('node-fetch') ||
+                          userAgent?.includes('qubesheets-internal') ||
+                          host?.includes('vercel.app');
     
     if (!isInternalCall) {
       console.log('❌ [SMARTMOVING-SYNC-API] Unauthorized - not an internal call');
+      console.log(`🔍 [SMARTMOVING-SYNC-API] Failed auth check details:`, {
+        hasCorrectAuth: authHeader === 'Bearer internal-sync',
+        hasUndici: userAgent?.includes('undici'),
+        hasNodeFetch: userAgent?.includes('node-fetch'),
+        hasVercelHost: host?.includes('vercel.app'),
+        actualAuth: authHeader,
+        actualUserAgent: userAgent,
+        actualHost: host
+      });
       return NextResponse.json(
         { error: 'Unauthorized - internal API only' },
         { status: 401 }

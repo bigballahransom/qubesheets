@@ -24,21 +24,33 @@ async function triggerSmartMovingSync(projectId: string, itemsProcessed: number)
     
     console.log(`🌐 [SMARTMOVING-TRIGGER] Calling SmartMoving sync API: ${syncUrl}`);
     
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer internal-sync',
+      'User-Agent': 'qubesheets-internal/1.0'
+    };
+    
+    console.log(`🔍 [SMARTMOVING-TRIGGER] Request headers:`, requestHeaders);
+    console.log(`📦 [SMARTMOVING-TRIGGER] Request body:`, JSON.stringify({ projectId }));
+    
     // Use fetch with timeout to prevent hanging
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
     
     const response = await fetch(syncUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer internal-sync',
-      },
+      headers: requestHeaders,
       body: JSON.stringify({ projectId }),
       signal: controller.signal
     });
     
     clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-TRIGGER] Sync API failed with status ${response.status}:`, errorText);
+      return;
+    }
     
     const result = await response.json();
     
