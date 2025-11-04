@@ -1196,6 +1196,11 @@ useEffect(() => {
           value.toLowerCase().includes('safe')
         );
         
+        // Check if this is a hazardous item (requires special handling) for col2
+        const isHazardousItem = column && column.id === 'col2' && value && (
+          value.toLowerCase().includes('plant')
+        );
+        
         return (
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
