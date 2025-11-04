@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
 import simpleRealTime from '@/lib/simple-realtime';
-import { syncInventoryToSmartMovingBackground } from '@/lib/smartmoving-inventory-sync';
+// Remove unused import - using dedicated API route instead
 import connectMongoDB from '@/lib/mongodb';
 import InventoryItem from '@/models/InventoryItem';
 
@@ -11,55 +11,49 @@ const sseConnections = new Map<string, ReadableStreamDefaultController>();
 const MAX_SSE_CONNECTIONS = 20; // Limit to prevent memory/connection leaks
 
 /**
- * Triggers SmartMoving inventory sync for newly processed items
+ * Triggers SmartMoving inventory sync via dedicated API route
  * This runs in the background and never blocks the webhook response
  */
-async function triggerSmartMovingSync(projectId: string, mediaId: string, source: string) {
+async function triggerSmartMovingSync(projectId: string, itemsProcessed: number) {
   try {
-    console.log(`🔄 [SMARTMOVING-TRIGGER] Checking if SmartMoving sync needed for ${source} ${mediaId}`);
+    console.log(`🔄 [SMARTMOVING-TRIGGER] Triggering SmartMoving sync for project ${projectId} with ${itemsProcessed} processed items`);
     
-    await connectMongoDB();
+    // Call the dedicated SmartMoving sync API route
+    const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+    const syncUrl = `${baseUrl}/api/smartmoving/sync-inventory`;
     
-    // First, check if this project has SmartMoving integration
-    const Project = (await import('@/models/Project')).default;
-    const project = await Project.findById(projectId);
+    console.log(`🌐 [SMARTMOVING-TRIGGER] Calling SmartMoving sync API: ${syncUrl}`);
     
-    if (!project) {
-      console.log(`⚠️ [SMARTMOVING-TRIGGER] Project ${projectId} not found - skipping sync`);
-      return;
-    }
+    // Use fetch with timeout to prevent hanging
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
     
-    console.log(`🔍 [SMARTMOVING-TRIGGER] Project metadata:`, JSON.stringify(project.metadata, null, 2));
-    console.log(`🔍 [SMARTMOVING-TRIGGER] Checking for smartMovingOpportunityId:`, project.metadata?.smartMovingOpportunityId);
-    
-    if (!project.metadata?.smartMovingOpportunityId) {
-      console.log(`⚠️ [SMARTMOVING-TRIGGER] Project ${projectId} has no SmartMoving integration - skipping sync`);
-      console.log(`🔍 [SMARTMOVING-TRIGGER] Project created by userId: ${project.userId}`);
-      console.log(`🔍 [SMARTMOVING-TRIGGER] Project created at: ${project.createdAt}`);
-      return;
-    }
-    
-    console.log(`✅ [SMARTMOVING-TRIGGER] Project has SmartMoving integration, proceeding with sync`);
-    
-    // Get inventory items that were created from this media processing
-    const inventoryItems = await InventoryItem.find({
-      projectId,
-      ...(source === 'image' ? { sourceImageId: mediaId } : { sourceVideoId: mediaId })
+    const response = await fetch(syncUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ projectId }),
+      signal: controller.signal
     });
     
-    if (inventoryItems.length === 0) {
-      console.log(`⚠️ [SMARTMOVING-TRIGGER] No inventory items found for ${source} ${mediaId} - skipping sync`);
-      return;
+    clearTimeout(timeoutId);
+    
+    const result = await response.json();
+    
+    if (response.ok) {
+      console.log(`✅ [SMARTMOVING-TRIGGER] Sync API completed successfully:`, result);
+    } else {
+      console.error(`❌ [SMARTMOVING-TRIGGER] Sync API failed:`, result);
     }
-    
-    console.log(`📦 [SMARTMOVING-TRIGGER] Found ${inventoryItems.length} inventory items to sync to SmartMoving`);
-    
-    // Trigger background sync (fire-and-forget)
-    syncInventoryToSmartMovingBackground(projectId, inventoryItems);
     
   } catch (error) {
     // Log error but don't let it affect the webhook response
-    console.error(`❌ [SMARTMOVING-TRIGGER] Error triggering SmartMoving sync for project ${projectId}:`, error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      console.error(`⏰ [SMARTMOVING-TRIGGER] Sync API timeout after 30 seconds for project ${projectId}`);
+    } else {
+      console.error(`❌ [SMARTMOVING-TRIGGER] Error calling SmartMoving sync API for project ${projectId}:`, error);
+    }
   }
 }
 
@@ -113,7 +107,10 @@ export async function POST(request: NextRequest) {
       // SMARTMOVING SYNC: Trigger inventory sync if items were processed
       if (itemsProcessed && itemsProcessed > 0) {
         console.log(`🔄 Triggering SmartMoving inventory sync for ${itemsProcessed} processed items`);
-        triggerSmartMovingSync(projectId, completedId, source || (imageId ? 'image' : 'video'));
+        // Fire-and-forget call to dedicated API
+        setTimeout(() => {
+          triggerSmartMovingSync(projectId, itemsProcessed);
+        }, 100); // Small delay to ensure webhook response is sent first
       }
     }
 
