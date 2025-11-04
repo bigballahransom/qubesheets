@@ -28,7 +28,6 @@ interface SmartMovingInventoryResponse {
 }
 
 const SMARTMOVING_BEDROOM_ROOM_ID = 'ff6564a6-38d7-4d87-8f1a-acc601150721';
-const SYNC_TIMEOUT_MS = 30000; // 30 second timeout
 const BATCH_SIZE = 25; // Send items in batches of 25
 
 /**
@@ -154,7 +153,7 @@ export async function syncInventoryToSmartMoving(
     
     console.log(`✅ [SMARTMOVING-SYNC] Prepared ${smartMovingItems.length} items for SmartMoving API`);
     
-    // 4. Send items in batches to avoid API timeouts
+    // 4. Send items in batches for better API performance
     console.log(`🌐 [SMARTMOVING-SYNC] Syncing ${smartMovingItems.length} items in batches of ${BATCH_SIZE}`);
     
     let totalSyncedCount = 0;
@@ -652,7 +651,7 @@ async function syncInventoryDirectlyToOpportunity(
 }
 
 /**
- * Makes the actual API call to SmartMoving with timeout protection
+ * Makes the actual API call to SmartMoving
  */
 async function syncToSmartMovingAPI(
   opportunityId: string,
@@ -719,15 +718,8 @@ async function syncToSmartMovingAPI(
     'Ocp-Apim-Subscription-Key': `${clientId.substring(0, 10)}...`
   });
   
-  // Create timeout controller
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    console.log(`⏰ [SMARTMOVING-API] Timeout reached (${SYNC_TIMEOUT_MS}ms), aborting request`);
-    controller.abort();
-  }, SYNC_TIMEOUT_MS);
-  
   try {
-    console.log(`🚀 [SMARTMOVING-API] Sending POST request to SmartMoving`);
+    console.log(`🚀 [SMARTMOVING-API] Sending POST request to SmartMoving (no timeout)`);
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -735,11 +727,8 @@ async function syncToSmartMovingAPI(
         'x-api-key': apiKey,
         'Ocp-Apim-Subscription-Key': clientId
       },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
+      body: JSON.stringify(requestBody)
     });
-    
-    clearTimeout(timeoutId);
     console.log(`📡 [SMARTMOVING-API] Received response: ${response.status} ${response.statusText}`);
     console.log(`🔍 [SMARTMOVING-API] Response headers:`, Object.fromEntries(response.headers.entries()));
     
@@ -767,14 +756,6 @@ async function syncToSmartMovingAPI(
     };
     
   } catch (error) {
-    clearTimeout(timeoutId);
-    
-    if (error instanceof Error && error.name === 'AbortError') {
-      const errorMessage = `SmartMoving API timeout after ${SYNC_TIMEOUT_MS}ms`;
-      console.error(`⏰ [SMARTMOVING-API] ${errorMessage}`);
-      return { success: false, syncedCount: 0, error: errorMessage };
-    }
-    
     const errorMessage = error instanceof Error ? error.message : 'Unknown API error';
     console.error(`❌ [SMARTMOVING-API] API call failed with exception:`, error);
     console.error(`🔍 [SMARTMOVING-API] Error details:`, {
