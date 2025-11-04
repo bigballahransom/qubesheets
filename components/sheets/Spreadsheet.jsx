@@ -1201,6 +1201,17 @@ useEffect(() => {
           value.toLowerCase().includes('plant')
         );
         
+        // Check if this is a fragile item (requires careful handling) for col2
+        const isFragileItem = column && column.id === 'col2' && value && (
+          value.toLowerCase().includes('statue') ||
+          value.toLowerCase().includes('picture') ||
+          value.toLowerCase().includes('art') ||
+          value.toLowerCase().includes('mirror') ||
+          value.toLowerCase().includes('tv') ||
+          value.toLowerCase().includes('monitor') ||
+          value.toLowerCase().includes('glass')
+        );
+        
         return (
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
