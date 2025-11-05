@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { CheckCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight } from 'lucide-react';
 import CustomerPhotoUploader from '@/components/CustomerPhotoUploader';
+import InventoryInstructionsModal from '@/components/InventoryInstructionsModal';
 // RailwayTransferOverlay removed - using simple S3 upload with SQS
 import { toast } from 'sonner';
 import Logo from '../../../public/logo';
@@ -42,6 +43,7 @@ export default function CustomerUploadPage() {
   const [pendingJobIds, setPendingJobIds] = useState<string[]>([]);
   const [showProcessingStatus, setShowProcessingStatus] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [showInstructionsModal, setShowInstructionsModal] = useState(false);
   // Transfer overlay state removed - using simple S3 upload with SQS
 
   // Parse instructions for display (simple markdown-like parsing)
@@ -132,6 +134,8 @@ export default function CustomerUploadPage() {
         });
       } finally {
         setLoading(false);
+        // Show instructions modal after page loads
+        setShowInstructionsModal(true);
       }
     };
 
@@ -801,6 +805,12 @@ export default function CustomerUploadPage() {
       </div>
       
       {/* Railway Transfer Overlay removed - using simple S3 upload with SQS */}
+      
+      {/* Instructions Modal */}
+      <InventoryInstructionsModal
+        isOpen={showInstructionsModal}
+        onClose={() => setShowInstructionsModal(false)}
+      />
     </div>
   );
 }
