@@ -4,17 +4,19 @@ import {
   ClerkProvider,
   SignedIn,
   UserButton,
-  OrganizationSwitcher
+  OrganizationSwitcher,
+  useOrganization
 } from '@clerk/nextjs'
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Folder, Plus, ArrowRight, Loader2 } from 'lucide-react';
+import { Folder, Plus, ArrowRight, Loader2, Bell, Users } from 'lucide-react';
 import { Sidebar } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
 import { useAuth } from '@clerk/nextjs';
 import { SearchDropdown } from '@/components/SearchDropdown';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import SettingsSection from '@/components/SettingsSection';
+import { hasAddOn } from '@/lib/client-utils';
 
 interface Project {
   _id: string;
@@ -34,6 +36,9 @@ export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const { isLoaded, userId } = useAuth();
+  const { organization } = useOrganization();
+  
+  const hasCrmAddOn = organization && hasAddOn(organization, 'crm');
   
   // Fetch projects when auth state loads initially
   useEffect(() => {
@@ -112,12 +117,27 @@ export function AppSidebar() {
       <div className="flex flex-col h-full">
         {/* Add new project button and mobile search - only visible on mobile */}
         <div className="p-4 border-b flex-shrink-0 lg:hidden">
-          <CreateProjectModal onProjectCreated={handleProjectCreated}>
-            <button className="flex items-center gap-2 w-full p-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors cursor-pointer">
-              <Plus size={16} />
-              <span>New Project</span>
-            </button>
-          </CreateProjectModal>
+          <div className="flex items-center gap-2">
+            <CreateProjectModal onProjectCreated={handleProjectCreated}>
+              <button className="flex items-center gap-2 flex-1 p-2 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors cursor-pointer">
+                <Plus size={16} />
+                <span>New Project</span>
+              </button>
+            </CreateProjectModal>
+
+            {/* CRM Notification Bell - only show if organization has CRM add-on */}
+            {hasCrmAddOn && (
+              <button
+                className="p-2 rounded-md text-blue-700 hover:text-blue-800 hover:bg-blue-50 transition-colors"
+                onClick={() => {
+                  // TODO: Add notification functionality
+                  console.log('CRM notifications clicked');
+                }}
+              >
+                <Bell size={16} />
+              </button>
+            )}
+          </div>
           
           {/* Mobile search bar */}
           <Separator className="my-3" />
@@ -164,6 +184,23 @@ export function AppSidebar() {
             )}
           </div>
         </div>
+
+        {/* CRM Navigation - only show if organization has CRM add-on */}
+        {hasCrmAddOn && (
+          <div className="px-3 py-2">
+            <button
+              onClick={() => router.push('/customers')}
+              className={`flex items-center w-full px-3 py-2 text-sm rounded-lg transition-colors ${
+                pathname === '/customers' 
+                  ? 'bg-gray-100 text-gray-900' 
+                  : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+              }`}
+            >
+              <Users className="mr-3 h-4 w-4 flex-shrink-0" />
+              <span>Customers</span>
+            </button>
+          </div>
+        )}
         
         {/* Footer menu */}
         <ClerkProvider>
