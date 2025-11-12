@@ -70,16 +70,86 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Basic API key validation - just check format, don't authenticate fully
+    const apiKey = authHeader?.replace('Bearer ', '') || apiKeyHeader;
+    if (!apiKey || !apiKey.startsWith('qbs_')) {
+      return NextResponse.json(
+        { 
+          error: 'Invalid or missing API key',
+          message: 'Please provide API key either as "Authorization: Bearer qbs_keyId_secret" or "api_key: qbs_keyId_secret"'
+        },
+        { status: 401 }
+      );
+    }
+
+    // Basic payload validation
+    if (!payload['event-type']) {
+      return NextResponse.json(
+        { 
+          error: 'Missing event type',
+          message: 'Webhook payload must include event-type'
+        },
+        { status: 400 }
+      );
+    }
+
+    // Return 200 immediately to prevent SmartMoving from timing out
+    const response = NextResponse.json({
+      success: true,
+      message: 'Webhook received and will be processed'
+    });
+
+    // Process the webhook asynchronously in the background
+    setImmediate(async () => {
+      try {
+        await processSmartMovingWebhookAsync(authHeader, apiKeyHeader, payload);
+      } catch (error) {
+        console.error('Error in background webhook processing:', error);
+      }
+    });
+
+    return response;
+    
+  } catch (error) {
+    console.error('Error processing SmartMoving webhook:', error);
+    
+    return NextResponse.json(
+      { 
+        error: 'Internal server error',
+        message: 'Failed to process SmartMoving webhook. Please try again later.'
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Process SmartMoving webhook asynchronously in the background
+ */
+async function processSmartMovingWebhookAsync(
+  authHeader: string | null,
+  apiKeyHeader: string | null,
+  payload: SmartMovingWebhookPayload
+) {
+  try {
+    console.log('Starting background processing for SmartMoving webhook');
+
+    // Full authentication (moved to background)
+    let authContext;
     
     // Try standard API key authentication first
-    let authContext = await authenticateApiKey(request);
+    if (authHeader?.startsWith('Bearer ')) {
+      const request = new Request('http://localhost', {
+        headers: { 'authorization': authHeader }
+      });
+      authContext = await authenticateApiKey(request as NextRequest);
+    }
     
-    // If that fails, try the Authorization header without Bearer prefix (SmartMoving sends raw API key)
+    // If that fails, try the Authorization header without Bearer prefix
     if (!authContext && authHeader && !authHeader.startsWith('Bearer ')) {
-      console.log('Trying authentication with Authorization header (no Bearer prefix)');
       const apiKey = authHeader.trim();
       
-      // Validate API key format and authenticate manually
       if (apiKey.startsWith('qbs_')) {
         const parts = apiKey.split('_');
         if (parts.length === 3) {
@@ -100,7 +170,6 @@ export async function POST(request: NextRequest) {
                   organizationId: apiKeyRecord.organizationId,
                   apiKeyId: apiKeyRecord._id.toString(),
                 };
-                console.log('Successfully authenticated with Authorization header (no Bearer)');
               }
             }
           } catch (error) {
@@ -112,11 +181,8 @@ export async function POST(request: NextRequest) {
     
     // If that fails, try custom api_key header approach
     if (!authContext && apiKeyHeader) {
-      console.log('Trying authentication with api_key header');
-      // Manually authenticate using the api_key header
       const apiKey = apiKeyHeader.startsWith('qbs_') ? apiKeyHeader : `qbs_${apiKeyHeader}`;
       
-      // Validate API key format and authenticate manually
       if (apiKey.startsWith('qbs_')) {
         const parts = apiKey.split('_');
         if (parts.length === 3) {
@@ -137,7 +203,6 @@ export async function POST(request: NextRequest) {
                   organizationId: apiKeyRecord.organizationId,
                   apiKeyId: apiKeyRecord._id.toString(),
                 };
-                console.log('Successfully authenticated with api_key header');
               }
             }
           } catch (error) {
@@ -148,20 +213,8 @@ export async function POST(request: NextRequest) {
     }
     
     if (!authContext) {
-      console.log('Authentication failed for SmartMoving webhook');
-      return NextResponse.json(
-        { 
-          error: 'Invalid or missing API key',
-          message: 'Please provide API key either as "Authorization: Bearer qbs_keyId_secret" or "api_key: qbs_keyId_secret"',
-          debug: {
-            authHeaderPresent: !!authHeader,
-            apiKeyHeaderPresent: !!apiKeyHeader,
-            authHeaderValue: authHeader ? `${authHeader.substring(0, 20)}...` : null,
-            apiKeyHeaderValue: apiKeyHeader ? `${apiKeyHeader.substring(0, 20)}...` : null
-          }
-        },
-        { status: 401 }
-      );
+      console.error('Background processing: Authentication failed for SmartMoving webhook');
+      return;
     }
 
     await connectMongoDB();
@@ -172,31 +225,19 @@ export async function POST(request: NextRequest) {
     });
     
     if (!smartMovingIntegration) {
-      return NextResponse.json(
-        { 
-          error: 'SmartMoving integration not found',
-          message: 'Please configure SmartMoving integration in Settings > Integrations first'
-        },
-        { status: 400 }
-      );
+      console.error('Background processing: SmartMoving integration not found');
+      return;
     }
     
     // Only handle opportunity created events
     if (payload['event-type'] !== 'opportunity-created') {
-      return NextResponse.json({
-        success: true,
-        message: `Event type '${payload['event-type']}' ignored - only 'opportunity-created' events are processed`
-      });
+      console.log(`Background processing: Event type '${payload['event-type']}' ignored`);
+      return;
     }
     
     if (!payload['opportunity-id']) {
-      return NextResponse.json(
-        { 
-          error: 'Missing opportunity ID',
-          message: 'Webhook payload must include opportunity-id'
-        },
-        { status: 400 }
-      );
+      console.error('Background processing: Missing opportunity ID');
+      return;
     }
     
     // Check if project already exists for this opportunity
@@ -206,16 +247,8 @@ export async function POST(request: NextRequest) {
     });
     
     if (existingProject) {
-      return NextResponse.json({
-        success: true,
-        message: 'Project already exists for this opportunity',
-        project: {
-          id: existingProject._id,
-          name: existingProject.name,
-          customerName: existingProject.customerName,
-          smartMovingOpportunityId: payload['opportunity-id']
-        }
-      });
+      console.log(`Background processing: Project already exists for opportunity ${payload['opportunity-id']}`);
+      return;
     }
     
     // Fetch opportunity details from SmartMoving API
@@ -226,13 +259,8 @@ export async function POST(request: NextRequest) {
     );
     
     if (!opportunityDetails) {
-      return NextResponse.json(
-        { 
-          error: 'Failed to fetch opportunity details',
-          message: 'Could not retrieve opportunity information from SmartMoving API'
-        },
-        { status: 500 }
-      );
+      console.error('Background processing: Failed to fetch opportunity details');
+      return;
     }
     
     // Format phone number to Twilio format if provided
@@ -242,7 +270,7 @@ export async function POST(request: NextRequest) {
       return digits.length === 10 ? `+1${digits}` : '';
     };
     
-    // Create the project using the same pattern as the external projects API
+    // Create the project
     const customerName = opportunityDetails.customer.name;
     const phone = opportunityDetails.customer.phoneNumber;
     const formattedPhone = phone ? formatPhoneForTwilio(phone) : undefined;
@@ -265,33 +293,10 @@ export async function POST(request: NextRequest) {
     
     const project = await Project.create(projectData);
     
-    console.log(`SmartMoving project created successfully: ${project._id} for opportunity ${payload['opportunity-id']}`);
-    
-    // Return success response
-    return NextResponse.json({
-      success: true,
-      message: 'Project created successfully from SmartMoving opportunity',
-      project: {
-        id: project._id,
-        name: project.name,
-        customerName: project.customerName,
-        phone: project.phone,
-        createdAt: project.createdAt,
-        organizationId: project.organizationId,
-        smartMovingOpportunityId: payload['opportunity-id']
-      }
-    }, { status: 201 });
+    console.log(`Background processing: SmartMoving project created successfully: ${project._id} for opportunity ${payload['opportunity-id']}`);
     
   } catch (error) {
-    console.error('Error processing SmartMoving webhook:', error);
-    
-    return NextResponse.json(
-      { 
-        error: 'Internal server error',
-        message: 'Failed to process SmartMoving webhook. Please try again later.'
-      },
-      { status: 500 }
-    );
+    console.error('Error in background SmartMoving webhook processing:', error);
   }
 }
 
