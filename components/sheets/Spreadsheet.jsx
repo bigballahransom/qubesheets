@@ -118,6 +118,18 @@ export default function Spreadsheet({
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [selectedRows, setSelectedRows] = useState([]);
   
+  // Location update dialog state
+  const [locationDialog, setLocationDialog] = useState({
+    isOpen: false,
+    newLocation: '',
+    currentRowId: null,
+    currentColumn: null,
+    itemsFromSameMedia: [],
+    currentRow: null,
+    isAddingNewRoom: false
+  });
+  
+  
   // Media caching to prevent duplicate requests
   const [mediaCache, setMediaCache] = useState(new Map());
   const [ongoingRequests, setOngoingRequests] = useState(new Set());
@@ -1015,6 +1027,77 @@ useEffect(() => {
   }, []);
   
   // Render cell content based on column type
+  // Handle location updates with user choice
+  const handleLocationUpdate = useCallback((newLocation, currentRowId, currentColumn, updateAllFromMedia = true) => {
+    const currentRow = rows.find(r => r.id === currentRowId);
+    const itemName = currentRow?.cells?.col2 || 'Item';
+    const colId = currentColumn.id;
+    
+    let updatedRows;
+    let affectedItemCount = 1;
+    
+    if (updateAllFromMedia) {
+      // Get all items from the same media source
+      const itemsFromSameMedia = rows.filter(r => {
+        if (currentRow?.sourceImageId) {
+          return r.sourceImageId === currentRow.sourceImageId;
+        } else if (currentRow?.sourceVideoId) {
+          return r.sourceVideoId === currentRow.sourceVideoId;
+        }
+        // If no media source, only update the specific item
+        return r.id === currentRowId;
+      });
+      
+      affectedItemCount = itemsFromSameMedia.length;
+      
+      // Update all items from the same media
+      updatedRows = rows.map(r => {
+        if (itemsFromSameMedia.some(item => item.id === r.id)) {
+          return {
+            ...r,
+            cells: {
+              ...r.cells,
+              [colId]: newLocation
+            }
+          };
+        }
+        return r;
+      });
+    } else {
+      // Update only the specific item
+      updatedRows = rows.map(r => {
+        if (r.id === currentRowId) {
+          return {
+            ...r,
+            cells: {
+              ...r.cells,
+              [colId]: newLocation
+            }
+          };
+        }
+        return r;
+      });
+    }
+    
+    setRows(updatedRows);
+    setSaveStatus('saving');
+    
+    // Show appropriate toast notification
+    toast.success(
+      affectedItemCount > 1 
+        ? `${affectedItemCount} items from this ${currentRow?.sourceImageId ? 'photo' : 'video'} moved to ${newLocation}`
+        : `${itemName} moved to ${newLocation}`,
+      {
+        icon: '📍',
+        duration: 2000,
+      }
+    );
+    
+    setTimeout(() => {
+      onRowsChange(updatedRows);
+    }, 100);
+  }, [rows, setRows, setSaveStatus, onRowsChange]);
+
   const renderCellContent = useCallback((colType, value, rowId, colId, row, column) => {
     if (activeCell && activeCell.rowId === rowId && activeCell.colId === colId) {
       return (
@@ -1167,7 +1250,10 @@ useEffect(() => {
       );
     }
     
-    switch (colType) {
+    // Override Location column to use select dropdown
+    const effectiveColType = (column?.name === 'Location') ? 'select' : colType;
+    
+    switch (effectiveColType) {
       case 'company':
         // Check if this is a recommended box (purple highlighted) for col2
         const isRecommendedBox = column && column.id === 'col2' && row && (
@@ -1307,6 +1393,16 @@ useEffect(() => {
           // Static options for PBO/CP column
           selectOptions = ['N/A', 'PBO', 'CP'];
           defaultValue = 'N/A';
+        } else if (column.name === 'Location') {
+          // Dynamic room options for Location column
+          const uniqueLocations = [...new Set(
+            rows
+              .map(row => row.cells?.col1)
+              .filter(location => location && location.trim() !== '')
+          )].sort();
+          
+          selectOptions = [...uniqueLocations, '+ Add new room'];
+          defaultValue = '';
         }
         const displayValue = value || defaultValue;
         
@@ -1317,12 +1413,37 @@ useEffect(() => {
               onChange={(e) => {
                 e.stopPropagation();
                 const newValue = e.target.value;
-                
-                // Find the current row to get item details
                 const currentRow = rows.find(r => r.id === rowId);
+                
                 const itemName = currentRow?.cells?.col2 || 'Item';
                 
-                // Update the cell value immediately
+                // For Location column, always show modal (for existing rooms or new room)
+                if (column.name === 'Location') {
+                  // Get all items from the same media source
+                  const itemsFromSameMedia = rows.filter(r => {
+                    if (currentRow?.sourceImageId) {
+                      return r.sourceImageId === currentRow.sourceImageId;
+                    } else if (currentRow?.sourceVideoId) {
+                      return r.sourceVideoId === currentRow.sourceVideoId;
+                    }
+                    // If no media source, only update the specific item
+                    return r.id === rowId;
+                  });
+                  
+                  // Always show dialog for Location changes
+                  setLocationDialog({
+                    isOpen: true,
+                    newLocation: newValue,
+                    currentRowId: rowId,
+                    currentColumn: column,
+                    itemsFromSameMedia,
+                    currentRow,
+                    isAddingNewRoom: newValue === '+ Add new room'
+                  });
+                  return;
+                }
+                
+                // For other columns, update the specific cell
                 const updatedRows = rows.map(r => {
                   if (r.id === rowId) {
                     return {
@@ -1339,7 +1460,7 @@ useEffect(() => {
                 setRows(updatedRows);
                 setSaveStatus('saving');
                 
-                // Show toast notification
+                // Show toast notification for other columns
                 toast.success(
                   `${itemName} marked as ${newValue}`,
                   {
@@ -2204,6 +2325,157 @@ useEffect(() => {
               <span>No media data available</span>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Location Update Choice Dialog */}
+      <Dialog 
+        open={locationDialog.isOpen} 
+        onOpenChange={(open) => {
+          if (!open) {
+            setLocationDialog({
+              isOpen: false,
+              newLocation: '',
+              currentRowId: null,
+              currentColumn: null,
+              itemsFromSameMedia: [],
+              currentRow: null,
+              isAddingNewRoom: false
+            });
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {locationDialog.isAddingNewRoom ? 'Add New Room' : 'Update Location'}
+            </DialogTitle>
+            <DialogDescription>
+              {locationDialog.isAddingNewRoom ? (
+                'Enter a name for the new room and choose which items to move there.'
+              ) : (
+                `This item is from a ${locationDialog.currentRow?.sourceImageId ? 'photo' : 'video'} that contains ${locationDialog.itemsFromSameMedia.length} items. How would you like to update the location?`
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {locationDialog.isAddingNewRoom && (
+              <div className="space-y-2">
+                <label htmlFor="new-room-name" className="text-sm font-medium text-gray-700">
+                  Room Name
+                </label>
+                <input
+                  id="new-room-name"
+                  type="text"
+                  placeholder="Enter room name..."
+                  defaultValue=""
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  autoFocus
+                />
+              </div>
+            )}
+            
+            {locationDialog.itemsFromSameMedia.length > 1 && (
+              <div className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-start space-x-3">
+                  <input
+                    type="radio"
+                    id="update-all"
+                    name="location-update"
+                    defaultChecked
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <label htmlFor="update-all" className="font-medium text-gray-900 cursor-pointer">
+                      Update all {locationDialog.itemsFromSameMedia.length} items from this {locationDialog.currentRow?.sourceImageId ? 'photo' : 'video'}
+                    </label>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {locationDialog.isAddingNewRoom ? 
+                        'Move all items to the new room (recommended)' : 
+                        `Move all items to "${locationDialog.newLocation}" (recommended)`
+                      }
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start space-x-3">
+                  <input
+                    type="radio"
+                    id="update-single"
+                    name="location-update"
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <label htmlFor="update-single" className="font-medium text-gray-900 cursor-pointer">
+                      Update only this item
+                    </label>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {locationDialog.isAddingNewRoom ? 
+                        `Move only "${locationDialog.currentRow?.cells?.col2 || 'this item'}" to the new room` :
+                        `Move only "${locationDialog.currentRow?.cells?.col2 || 'this item'}" to "${locationDialog.newLocation}"`
+                      }
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setLocationDialog({
+                    isOpen: false,
+                    newLocation: '',
+                    currentRowId: null,
+                    currentColumn: null,
+                    itemsFromSameMedia: [],
+                    currentRow: null,
+                    isAddingNewRoom: false
+                  });
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  let finalLocation = locationDialog.newLocation;
+                  
+                  // If adding new room, get the input value
+                  if (locationDialog.isAddingNewRoom) {
+                    const roomNameInput = document.getElementById('new-room-name');
+                    finalLocation = roomNameInput?.value?.trim() || '';
+                    if (!finalLocation) {
+                      roomNameInput?.focus();
+                      return;
+                    }
+                  }
+                  
+                  const updateAll = locationDialog.itemsFromSameMedia.length === 1 || 
+                                   document.querySelector('input[name="location-update"]:checked')?.id === 'update-all';
+                  
+                  handleLocationUpdate(
+                    finalLocation,
+                    locationDialog.currentRowId,
+                    locationDialog.currentColumn,
+                    updateAll
+                  );
+                  
+                  setLocationDialog({
+                    isOpen: false,
+                    newLocation: '',
+                    currentRowId: null,
+                    currentColumn: null,
+                    itemsFromSameMedia: [],
+                    currentRow: null,
+                    isAddingNewRoom: false
+                  });
+                }}
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+              >
+                {locationDialog.isAddingNewRoom ? 'Add Room' : 'Update Location'}
+              </button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
