@@ -84,7 +84,8 @@ export default function Spreadsheet({
   refreshSpreadsheet = null,
   onInventoryUpdate = null,
   projectId = null,
-  inventoryItems = []
+  inventoryItems = [],
+  preloadedRooms = null
 }) {
   // State for spreadsheet data
   const [columns, setColumns] = useState(
@@ -524,8 +525,8 @@ useEffect(() => {
   
   // Handle cell editing
   const handleCellClick = useCallback((rowId, colId, currentValue) => {
-    // Prevent editing cuft (col4) and weight (col5) columns
-    if (colId === 'col4' || colId === 'col5') {
+    // Prevent editing location (col1), cuft (col4) and weight (col5) columns
+    if (colId === 'col1' || colId === 'col4' || colId === 'col5') {
       return;
     }
     setActiveCell({ rowId, colId });
@@ -1394,17 +1395,28 @@ useEffect(() => {
           selectOptions = ['N/A', 'PBO', 'CP'];
           defaultValue = 'N/A';
         } else if (column.name === 'Location') {
-          // Dynamic room options for Location column
-          const uniqueLocations = [...new Set(
+          // Dynamic room options for Location column - combine existing and preloaded rooms
+          const existingLocations = [...new Set(
             rows
               .map(row => row.cells?.col1)
-              .filter(location => location && location.trim() !== '')
-          )].sort();
+              .filter(location => location && location.trim() !== '' && location !== 'Analyzing...')
+          )];
           
-          selectOptions = [...uniqueLocations, '+ Add new room'];
+          // Combine with preloaded rooms if available (no duplicates)
+          let allRooms = [];
+          if (preloadedRooms && preloadedRooms.allRooms) {
+            // Use preloaded rooms which already combines inventory-derived + custom rooms
+            allRooms = [...new Set([...existingLocations, ...preloadedRooms.allRooms])];
+          } else {
+            // Fallback to just existing locations if no preloaded data
+            allRooms = existingLocations;
+          }
+          
+          selectOptions = [...allRooms.sort(), '+ Add new room'];
           defaultValue = '';
         }
-        const displayValue = value || defaultValue;
+        // Replace 'Analyzing...' with a more user-friendly display
+        const displayValue = value === 'Analyzing...' ? 'Processing...' : (value || defaultValue);
         
         return (
           <div className="relative w-full">
@@ -1959,16 +1971,6 @@ useEffect(() => {
             );
           })}
           
-          {/* Add row button */}
-          <div className="flex items-center border-b h-10 pl-8">
-            <button 
-              className="flex items-center justify-center text-blue-500 hover:bg-gray-100 p-2 rounded-md cursor-pointer transition-colors"
-              onClick={handleAddRow}
-            >
-              <Plus size={16} />
-              <span className="ml-1">New row</span>
-            </button>
-          </div>
         </div>
         
         {/* Autosave indicator */}

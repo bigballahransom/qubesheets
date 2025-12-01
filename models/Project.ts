@@ -28,6 +28,7 @@ export interface IProject extends Document {
     smartMovingCustomerId?: string;
     smartMovingQuoteNumber?: number;
     source?: string;
+    customRooms?: string[];
     [key: string]: any;
   };
   createdAt: Date;

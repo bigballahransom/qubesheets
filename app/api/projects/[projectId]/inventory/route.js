@@ -6,6 +6,7 @@ import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
+import { Inventory } from '@/models/inventory';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 import { logInventoryUpdate } from '@/lib/activity-logger';
 
@@ -102,10 +103,51 @@ export async function POST(request, { params }) {
     let items = Array.isArray(data) ? data : [data];
     console.log(`📦 Processing ${items.length} items`);
     
-    // Validate each item has required fields
+    // Process each item - handle catalog items and direct items
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (!item.name) {
+      
+      // If this is a catalog item reference, fetch the catalog item details
+      if (item.catalogItemId) {
+        console.log(`📋 Processing catalog item: ${item.catalogItemId}`);
+        try {
+          const catalogItem = await Inventory.findById(item.catalogItemId);
+          if (!catalogItem) {
+            console.error(`❌ Catalog item ${item.catalogItemId} not found`);
+            return NextResponse.json(
+              { error: `Catalog item ${item.catalogItemId} not found` },
+              { status: 404 }
+            );
+          }
+          
+          console.log(`✅ Found catalog item:`, catalogItem.name);
+          
+          // Replace the item with catalog item data plus any overrides
+          items[i] = {
+            name: catalogItem.name || `Catalog Item ${item.catalogItemId}`,
+            cuft: catalogItem.cubic_feet || 0,
+            weight: catalogItem.weight || 0,
+            fragile: false, // Default for catalog items
+            special_handling: "",
+            quantity: item.quantity || 1,
+            location: item.location || "",
+            // Keep any additional fields from the request
+            ...item,
+            // Remove catalogItemId as we've resolved it
+            catalogItemId: undefined
+          };
+          
+        } catch (error) {
+          console.error(`❌ Error fetching catalog item ${item.catalogItemId}:`, error);
+          return NextResponse.json(
+            { error: `Failed to fetch catalog item: ${error.message}` },
+            { status: 500 }
+          );
+        }
+      }
+      
+      // Validate each item has required fields after catalog resolution
+      if (!items[i].name) {
         console.log(`❌ Item ${i + 1} missing required field: name`);
         return NextResponse.json(
           { error: `Item ${i + 1} is missing required field: name` },

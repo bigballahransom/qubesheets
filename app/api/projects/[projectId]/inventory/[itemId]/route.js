@@ -87,25 +87,33 @@ export async function PATCH(
       }
     }
     
+    // Get the current item to check its current state
+    const currentItem = await InventoryItem.findOne(
+      getProjectFilter(authContext, projectId, { _id: itemId })
+    );
+    
+    if (!currentItem) {
+      return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+    }
+    
+    // Use new quantity if provided, otherwise use current quantity
+    const currentQuantity = currentItem.quantity || 1;
+    const newQuantity = data.quantity !== undefined ? data.quantity : currentQuantity;
+    
+    // BUSINESS RULE: If quantity increased, automatically mark all items as going
+    if (data.quantity !== undefined && newQuantity > currentQuantity) {
+      console.log(`📈 Quantity increased from ${currentQuantity} to ${newQuantity} - marking all as going`);
+      data.goingQuantity = newQuantity;
+      data.going = 'going';
+    }
+    
     // Handle migration and validation for goingQuantity
     if (data.goingQuantity !== undefined || data.going !== undefined) {
-      // Get the current item to check its quantity
-      const currentItem = await InventoryItem.findOne(
-        getProjectFilter(authContext, projectId, { _id: itemId })
-      );
-      
-      if (!currentItem) {
-        return NextResponse.json({ error: 'Item not found' }, { status: 404 });
-      }
-      
-      // Use new quantity if provided, otherwise use current quantity
-      const quantity = data.quantity !== undefined ? data.quantity : (currentItem.quantity || 1);
-      
       // If goingQuantity is being set, validate it
       if (data.goingQuantity !== undefined) {
-        if (data.goingQuantity < 0 || data.goingQuantity > quantity) {
+        if (data.goingQuantity < 0 || data.goingQuantity > newQuantity) {
           return NextResponse.json(
-            { error: `goingQuantity must be between 0 and ${quantity}` },
+            { error: `goingQuantity must be between 0 and ${newQuantity}` },
             { status: 400 }
           );
         }
@@ -113,7 +121,7 @@ export async function PATCH(
         // Update the going field based on goingQuantity
         if (data.goingQuantity === 0) {
           data.going = 'not going';
-        } else if (data.goingQuantity === quantity) {
+        } else if (data.goingQuantity === newQuantity) {
           data.going = 'going';
         } else {
           data.going = 'partial'; // New status for partial quantities
@@ -123,7 +131,7 @@ export async function PATCH(
       // If only going is being set (for backward compatibility), calculate goingQuantity
       else if (data.going !== undefined && data.goingQuantity === undefined) {
         if (data.going === 'going') {
-          data.goingQuantity = quantity;
+          data.goingQuantity = newQuantity;
         } else if (data.going === 'not going') {
           data.goingQuantity = 0;
         }

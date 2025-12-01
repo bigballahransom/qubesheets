@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Plus
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -19,6 +19,7 @@ import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
 import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
+import AddInventoryModal from './modals/AddInventoryModal';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import simpleRealTime from '@/lib/simple-realtime';
@@ -104,6 +105,11 @@ export default function InventoryManager() {
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
 const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
+const [isAddInventoryModalOpen, setIsAddInventoryModalOpen] = useState(false);
+// Pre-loaded data for faster Add Inventory modal
+const [preloadedInventory, setPreloadedInventory] = useState(null);
+const [preloadedRooms, setPreloadedRooms] = useState(null);
+const [inventoryLoading, setInventoryLoading] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
 const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
@@ -138,6 +144,47 @@ useEffect(() => {
   
   // Reference to track if data has been loaded
   const dataLoadedRef = useRef(false);
+
+  // Pre-load static inventory catalog for faster modal experience
+  const preloadInventoryCatalog = useCallback(async () => {
+    if (preloadedInventory || inventoryLoading) return; // Already loaded or loading
+    
+    setInventoryLoading(true);
+    try {
+      console.log('🚀 Pre-loading inventory catalog...');
+      const response = await fetch('/api/inventory?limit=50'); // Load first page
+      if (!response.ok) {
+        throw new Error('Failed to fetch inventory catalog');
+      }
+      
+      const data = await response.json();
+      setPreloadedInventory(data);
+      console.log(`✅ Pre-loaded ${data.items.length} inventory items`);
+    } catch (error) {
+      console.error('❌ Error pre-loading inventory:', error);
+    } finally {
+      setInventoryLoading(false);
+    }
+  }, [preloadedInventory, inventoryLoading]);
+
+  // Pre-load project rooms for faster modal experience
+  const preloadProjectRooms = useCallback(async () => {
+    if (!currentProject || preloadedRooms) return; // No project or already loaded
+    
+    try {
+      console.log('🚀 Pre-loading project rooms...');
+      const response = await fetch(`/api/projects/${currentProject._id}/rooms`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch project rooms');
+      }
+      
+      const data = await response.json();
+      setPreloadedRooms(data);
+      console.log(`✅ Pre-loaded ${data.existingRooms.length} existing rooms, ${data.allRooms.length} total options`);
+    } catch (error) {
+      console.error('❌ Error pre-loading rooms:', error);
+    }
+  }, [currentProject, preloadedRooms]);
 
   // SIMPLE REAL-TIME: Setup in-memory processing listener
   useEffect(() => {
@@ -209,6 +256,15 @@ useEffect(() => {
     
     return () => clearInterval(fallbackPolling);
   }, [currentProject?._id]);
+
+  // Pre-load inventory catalog and rooms immediately when project loads
+  useEffect(() => {
+    if (currentProject) {
+      // Start preloading immediately when project is available
+      preloadInventoryCatalog();
+      preloadProjectRooms();
+    }
+  }, [currentProject]);
 
   // Function to convert inventory items to spreadsheet rows
   const convertItemsToRows = useCallback((items) => {
@@ -1048,8 +1104,12 @@ useEffect(() => {
         });
         
         // Add extra debugging for quantity changes specifically
-        if (newRow.cells?.col3 !== previousRow.cells?.col3) {
-          console.log(`🔍 QUANTITY CHANGE DETECTED: ${newRow.cells?.col2} qty: "${previousRow.cells?.col3}" → "${newRow.cells?.col3}"`);
+        const newQty = newRow.cells?.col3;
+        const oldQty = previousRow.cells?.col3;
+        console.log(`🔍 QUANTITY CHECK for ${newRow.cells?.col2}: old="${oldQty}" new="${newQty}" equal=${newQty === oldQty}`);
+        
+        if (newQty !== oldQty) {
+          console.log(`🔍 QUANTITY CHANGE DETECTED: ${newRow.cells?.col2} qty: "${oldQty}" → "${newQty}"`);
         }
         
         if (hasChanges) {
@@ -1102,7 +1162,7 @@ useEffect(() => {
         const oldQuantity = parseInt(previousRow?.cells?.col3) || 1;
         const quantityChanged = newQuantity !== oldQuantity;
         
-        console.log(`🔍 Quantity comparison for ${row.cells?.col2}:`, {
+        console.log(`🔍 Change comparison for ${row.cells?.col2}:`, {
           newQuantity,
           oldQuantity,
           quantityChanged,
@@ -1229,20 +1289,18 @@ useEffect(() => {
                 
                 if (goingValue === 'not going') {
                   optimisticGoingQuantity = 0;
-                } else if (goingValue === 'going' || newQuantity > oldQuantity) {
+                } else if (newQuantity > oldQuantity) {
+                  // PRIORITY: If quantity increased, ALWAYS mark all as going regardless of current status
+                  optimisticGoingQuantity = newQuantity;
+                } else if (goingValue === 'going') {
                   optimisticGoingQuantity = newQuantity;
                 } else if (goingValue.includes('(') && goingValue.includes('/')) {
                   const match = goingValue.match(/going \((\d+)\/\d+\)/);
                   const oldGoingQuantity = match ? parseInt(match[1]) : oldQuantity;
                   
-                  if (newQuantity < oldQuantity) {
-                    // When decreasing quantity, proportionally reduce going quantity
-                    const ratio = oldGoingQuantity / oldQuantity;
-                    optimisticGoingQuantity = Math.max(0, Math.min(newQuantity, Math.floor(newQuantity * ratio)));
-                  } else {
-                    // When increasing quantity, assume new items are also going (moving company logic)
-                    optimisticGoingQuantity = Math.min(newQuantity, oldGoingQuantity + (newQuantity - oldQuantity));
-                  }
+                  // When decreasing quantity, proportionally reduce going quantity
+                  const ratio = oldGoingQuantity / oldQuantity;
+                  optimisticGoingQuantity = Math.max(0, Math.min(newQuantity, Math.floor(newQuantity * ratio)));
                 } else {
                   optimisticGoingQuantity = newQuantity;
                 }
@@ -1250,15 +1308,13 @@ useEffect(() => {
                 // Validate bounds for going quantity
                 optimisticGoingQuantity = Math.max(0, Math.min(newQuantity, optimisticGoingQuantity));
                 
-                console.log(`⚡ Optimistic inventory update for ${item.name}:`, {
+                console.log(`⚡ OPTIMISTIC UPDATE for ${item.name}:`, {
                   oldQuantity,
                   newQuantity, 
-                  goingValue,
+                  goingValue: `"${goingValue}"`,
                   oldGoingQuantity: item.goingQuantity,
                   newGoingQuantity: optimisticGoingQuantity,
-                  unitCuft: item.cuft,
-                  totalCuftBefore: (item.cuft || 0) * (item.goingQuantity || 0),
-                  totalCuftAfter: (item.cuft || 0) * optimisticGoingQuantity
+                  shouldShowAllGoing: optimisticGoingQuantity === newQuantity
                 });
                 
                 // Validation warnings
@@ -1293,6 +1349,42 @@ useEffect(() => {
         const previousRow = previousRowsRef.current.find(r => r.inventoryItemId === row.inventoryItemId);
         const oldQuantity = parseInt(previousRow?.cells?.col3) || 1;
         const quantityChanged = newQuantity !== oldQuantity;
+        
+        // Check if location changed - but ONLY save if it's a meaningful change
+        const oldLocation = (previousRow?.cells?.col1 || '').trim();
+        const newLocation = (row.cells?.col1 || '').trim();
+        const locationChanged = newLocation !== oldLocation && oldLocation !== '' && newLocation !== '';
+        
+        // Handle location updates with debouncing - these are important to save!
+        if (locationChanged) {
+          console.log(`📍 REAL Location change detected for ${row.cells?.col2}: "${oldLocation}" → "${newLocation}"`);
+          
+          // Debounced location update - only save if different from what we last saved
+          const lastSavedLocation = row.lastSavedLocation || '';
+          if (newLocation !== lastSavedLocation) {
+            row.lastSavedLocation = newLocation; // Mark as being saved
+            
+            fetch(`/api/projects/${currentProject._id}/inventory/${row.inventoryItemId}`, {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ location: newLocation }),
+            })
+            .then(response => {
+              if (response.ok) {
+                console.log(`✅ Successfully updated location for ${row.cells?.col2} to "${newLocation}"`);
+              } else {
+                console.error(`❌ Failed to update location for ${row.cells?.col2}`);
+                row.lastSavedLocation = oldLocation; // Revert on failure
+              }
+            })
+            .catch(error => {
+              console.error(`❌ Error updating location for ${row.cells?.col2}:`, error);
+              row.lastSavedLocation = oldLocation; // Revert on failure
+            });
+          }
+        }
         
         // Get the current inventory item to check its type and get unit values
         const currentItem = inventoryItems.find(item => item._id === row.inventoryItemId);
@@ -1346,28 +1438,33 @@ useEffect(() => {
         
         if (quantityChanged) {
           // Quantity changed - implement smart going logic
+          console.log(`🔍 Quantity change logic for ${row.cells?.col2}: oldQty=${oldQuantity}, newQty=${newQuantity}, goingValue="${goingValue}"`);
+          
           if (goingValue === 'not going') {
             // If explicitly not going, keep it as not going
             goingQuantity = 0;
-          } else if (goingValue === 'going' || newQuantity > oldQuantity) {
-            // If "going" or quantity increased, assume all items are going
+            console.log(`  → Set to not going: ${goingQuantity}`);
+          } else if (newQuantity > oldQuantity) {
+            // PRIORITY: If quantity increased, ALWAYS mark all as going regardless of current status
             goingQuantity = newQuantity;
+            console.log(`  → Quantity increase: ALL going (${goingQuantity}/${newQuantity})`);
+          } else if (goingValue === 'going') {
+            // If currently all going and quantity same/decreased, keep all going
+            goingQuantity = newQuantity;
+            console.log(`  → Currently all going: ${goingQuantity}`);
           } else if (goingValue.includes('(') && goingValue.includes('/')) {
-            // Handle partial going quantities - adjust based on quantity change
+            // Handle partial going quantities - only for quantity decreases now
             const match = goingValue.match(/going \((\d+)\/\d+\)/);
             const oldGoingQuantity = match ? parseInt(match[1]) : oldQuantity;
             
-            if (newQuantity < oldQuantity) {
-              // When decreasing quantity, proportionally reduce going quantity
-              const ratio = oldGoingQuantity / oldQuantity;
-              goingQuantity = Math.max(0, Math.min(newQuantity, Math.floor(newQuantity * ratio)));
-            } else {
-              // When increasing quantity, assume new items are also going (moving company logic)
-              goingQuantity = Math.min(newQuantity, oldGoingQuantity + (newQuantity - oldQuantity));
-            }
+            // When decreasing quantity, proportionally reduce going quantity
+            const ratio = oldGoingQuantity / oldQuantity;
+            goingQuantity = Math.max(0, Math.min(newQuantity, Math.floor(newQuantity * ratio)));
+            console.log(`  → Partial decrease: ${oldGoingQuantity}/${oldQuantity} → ${goingQuantity}/${newQuantity}`);
           } else {
-            // Default to all going for increased quantities
+            // Default to all going
             goingQuantity = newQuantity;
+            console.log(`  → Default all going: ${goingQuantity}`);
           }
         } else {
           // Quantity didn't change - use existing going logic
@@ -1445,15 +1542,15 @@ useEffect(() => {
           data: inventoryData
         });
         
-        const response = await fetch(`/api/projects/${currentProject._id}/inventory/${row.inventoryItemId}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(inventoryData),
-        });
+        // Only trigger PATCH if data has actually changed
+        const hasChanges = await checkAndUpdateIfChanged(row.inventoryItemId, inventoryData, currentItem);
+        if (hasChanges) {
+          console.log(`📝 Triggered PATCH for inventory item ${row.inventoryItemId} with changes:`, inventoryData);
+        } else {
+          console.log(`📝 No changes detected for inventory item ${row.inventoryItemId}, skipping PATCH`);
+        }
         
-        if (!response.ok) {
+        /* if (!response.ok) {
           const errorText = await response.text();
           console.error(`❌ Failed to update inventory item ${row.inventoryItemId}:`, {
             status: response.status,
@@ -1489,11 +1586,13 @@ useEffect(() => {
           }
           
           return null;
-        }
+        } */
+        
         
         // Update local state for real-time UI updates
-        const updatedItem = await response.json();
-        return updatedItem;
+        // const updatedItem = await response.json();
+        // return updatedItem;
+        return { success: true, data: inventoryData };
       });
       
       // Wait for all updates to complete
@@ -1728,7 +1827,175 @@ useEffect(() => {
       console.error('Error persisting inventory update:', error);
     }
   }, [convertItemsToRows, currentProject]);
-  
+
+  // Efficient change detection and PATCH function
+  const checkAndUpdateIfChanged = useCallback(async (inventoryItemId, newData, currentItem) => {
+    // Compare new data with current item to detect actual changes
+    const hasLocationChange = newData.location !== currentItem.location;
+    const hasNameChange = newData.name !== currentItem.name;
+    const hasQuantityChange = newData.quantity !== currentItem.quantity;
+    const hasCuftChange = Math.abs((newData.cuft || 0) - (currentItem.cuft || 0)) > 0.01;
+    const hasWeightChange = Math.abs((newData.weight || 0) - (currentItem.weight || 0)) > 0.01;
+    const hasGoingQuantityChange = newData.goingQuantity !== currentItem.goingQuantity;
+    const hasPackedByChange = newData.packed_by !== currentItem.packed_by;
+
+    const hasAnyChange = hasLocationChange || hasNameChange || hasQuantityChange || 
+                        hasCuftChange || hasWeightChange || hasGoingQuantityChange || hasPackedByChange;
+
+    if (!hasAnyChange) {
+      return false; // No changes, skip PATCH
+    }
+
+    console.log(`🔄 Changes detected for ${currentItem.name}:`, {
+      location: hasLocationChange ? `${currentItem.location} → ${newData.location}` : '✓',
+      name: hasNameChange ? `${currentItem.name} → ${newData.name}` : '✓',
+      quantity: hasQuantityChange ? `${currentItem.quantity} → ${newData.quantity}` : '✓',
+      cuft: hasCuftChange ? `${currentItem.cuft} → ${newData.cuft}` : '✓',
+      weight: hasWeightChange ? `${currentItem.weight} → ${newData.weight}` : '✓',
+      goingQuantity: hasGoingQuantityChange ? `${currentItem.goingQuantity} → ${newData.goingQuantity}` : '✓',
+      packed_by: hasPackedByChange ? `${currentItem.packed_by} → ${newData.packed_by}` : '✓'
+    });
+
+    // Perform PATCH operation
+    try {
+      const url = `/api/projects/${currentProject._id}/inventory/${inventoryItemId}`;
+      console.log(`🔄 Making PATCH request to: ${url}`, { data: newData });
+      
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newData),
+      });
+
+      if (!response.ok) {
+        let errorDetails;
+        try {
+          const errorData = await response.json();
+          errorDetails = errorData;
+        } catch (e) {
+          // If JSON parsing fails, try text
+          try {
+            errorDetails = await response.text();
+          } catch (e2) {
+            errorDetails = 'Unable to parse error response';
+          }
+        }
+        
+        console.error(`❌ Failed to update inventory item ${inventoryItemId}:`, {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorDetails,
+          data: newData,
+          url: `/api/projects/${currentProject._id}/inventory/${inventoryItemId}`
+        });
+        return false;
+      }
+
+      console.log(`✅ Successfully updated inventory item ${inventoryItemId}`);
+      
+      // Update the local inventoryItems state with the updated data to ensure stats recalculate
+      setInventoryItems(prev => {
+        const updated = prev.map(item => 
+          item._id === inventoryItemId 
+            ? { ...item, ...newData } 
+            : item
+        );
+        
+        console.log(`📊 Updated inventoryItems for stats recalculation. Item ${inventoryItemId} updated with:`, newData);
+        
+        // Also trigger spreadsheet rows update to ensure UI and stats are in sync
+        const updatedRows = convertItemsToRows(updated);
+        setSpreadsheetRows(updatedRows);
+        previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
+        
+        return updated;
+      });
+      
+      return true;
+    } catch (error) {
+      console.error('Error updating inventory item:', error);
+      return false;
+    }
+  }, [currentProject, convertItemsToRows]);
+
+  // Handle opening the add inventory modal
+  const handleOpenAddInventoryModal = useCallback(() => {
+    setIsAddInventoryModalOpen(true);
+  }, []);
+
+  // Handle adding new inventory items from the modal
+  const handleInventoryAdded = useCallback((newItems, updatedItems = []) => {
+    console.log('✅ New inventory items added:', newItems);
+    console.log('✅ Inventory items updated:', updatedItems);
+    
+    // Handle created items
+    if (newItems.length > 0) {
+      // Add new items to inventory items state
+      setInventoryItems(prev => [...prev, ...newItems]);
+    }
+    
+    // Handle updated items - update them in state for immediate statistics refresh
+    if (updatedItems.length > 0) {
+      setInventoryItems(prev => {
+        const updated = prev.map(item => {
+          const updatedItem = updatedItems.find(u => u._id === item._id);
+          return updatedItem ? { ...item, ...updatedItem } : item;
+        });
+        
+        // Trigger immediate spreadsheet regeneration for updated items
+        const updatedRows = convertItemsToRows(updated);
+        setSpreadsheetRows(updatedRows);
+        previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
+        
+        return updated;
+      });
+    }
+    
+    // Reload inventory to ensure we have the latest data with proper relationships
+    reloadInventoryItems();
+    
+    // Force spreadsheet to refresh
+    setSpreadsheetUpdateKey(prev => prev + 1);
+    
+    const totalChanges = newItems.length + updatedItems.length;
+    toast.success(`Successfully processed ${totalChanges} inventory change${totalChanges > 1 ? 's' : ''}`);
+  }, [reloadInventoryItems, convertItemsToRows]);
+
+  // Reload project rooms from API
+  const reloadProjectRooms = useCallback(async () => {
+    if (!currentProject) return;
+    
+    try {
+      console.log('🔄 Reloading project rooms...');
+      const response = await fetch(`/api/projects/${currentProject._id}/rooms`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch rooms');
+      }
+      const data = await response.json();
+      setPreloadedRooms(data);
+      console.log('✅ Project rooms reloaded:', data);
+    } catch (error) {
+      console.error('❌ Error reloading project rooms:', error);
+    }
+  }, [currentProject]);
+
+  // Handle new room creation from the modal
+  const handleRoomAdded = useCallback((roomName) => {
+    console.log('✅ New room added:', roomName);
+    
+    // Update the preloaded rooms to include the new room immediately
+    setPreloadedRooms(prev => ({
+      ...prev,
+      existingRooms: [...(prev?.existingRooms || []), roomName],
+      allRooms: [...(prev?.allRooms || []), roomName]
+    }));
+    
+    // Also reload from API to ensure consistency
+    setTimeout(() => reloadProjectRooms(), 100);
+  }, [reloadProjectRooms]);
+
   // Calculate stats based on what's displayed in the spreadsheet (source of truth)
   const totalItems = useMemo(() => {
     return spreadsheetRows.reduce((total, row) => {
@@ -2536,6 +2803,27 @@ const ProcessingNotification = () => {
                 {/* Optional toolbar */}
                 <div className="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                   <h2 className="text-sm font-medium text-slate-700">Inventory Spreadsheet</h2>
+                  {/* Add Inventory button - available as soon as project loads */}
+                  {currentProject && (
+                    <Button
+                      onClick={handleOpenAddInventoryModal}
+                      disabled={inventoryLoading}
+                      size="sm"
+                      className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 disabled:opacity-50"
+                    >
+                      {inventoryLoading ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Loading...
+                        </>
+                      ) : (
+                        <>
+                          <Plus size={16} />
+                          Add Inventory
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </div>
                 
                 {/* Spreadsheet Component */}
@@ -2565,6 +2853,7 @@ const ProcessingNotification = () => {
                       onInventoryUpdate={handleInventoryUpdate}
                       projectId={projectId}
                       inventoryItems={inventoryItems}
+                      preloadedRooms={preloadedRooms}
                     />
                   )}
                 </div>
@@ -2718,6 +3007,19 @@ const ProcessingNotification = () => {
     </DialogFooter>
   </DialogContent>
 </Dialog>
+
+{/* Add Inventory Modal */}
+{projectId && (
+  <AddInventoryModal
+    isOpen={isAddInventoryModalOpen}
+    onClose={() => setIsAddInventoryModalOpen(false)}
+    onInventoryAdded={handleInventoryAdded}
+    onRoomAdded={handleRoomAdded}
+    projectId={projectId}
+    preloadedInventory={preloadedInventory}
+    preloadedRooms={preloadedRooms}
+  />
+)}
     </div>
   );
 }

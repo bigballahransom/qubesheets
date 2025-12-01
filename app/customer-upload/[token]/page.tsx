@@ -453,37 +453,10 @@ export default function CustomerUploadPage() {
         setShowProcessingStatus(true);
         console.log('⏳ Upload complete, AI analysis processing in background...');
         
-        // IMMEDIATE: Add to simple real-time system for instant updates
-        const isVideo = result.videoId;
-        
-        if (result.projectId) {
-          // Dynamically import to avoid SSR issues
-          import('@/lib/simple-realtime').then(({ default: simpleRealTime }) => {
-            simpleRealTime.addProcessing(result.projectId, {
-              id: uploadId,
-              name: file.name,
-              type: isVideo ? 'video' : 'image',
-              status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
-              source: 'customer_upload'
-            });
-          }).catch(console.error);
+        // Store project ID for SSE connection
+        if (result.projectId && !projectId) {
+          setProjectId(result.projectId);
         }
-        
-        // Legacy event for backward compatibility
-        const processingEvent = new CustomEvent('customerUploadProcessing', {
-          detail: {
-            projectId: result.projectId || projectId,
-            uploadId,
-            fileName: file.name,
-            type: isVideo ? 'video' : 'image',
-            status: isVideo ? 'AI video analysis in progress...' : 'AI analysis in progress...',
-            source: 'customer_upload',
-            sqsMessageId: result.sqsMessageId
-          }
-        });
-        
-        window.dispatchEvent(processingEvent);
-        console.log('📡 Customer upload added to simple real-time system');
         
       } else {
         console.log('✅ Upload complete');
@@ -647,7 +620,7 @@ export default function CustomerUploadPage() {
         </div>
 
         {/* Processing Status Section */}
-        {/* {showProcessingStatus && pendingJobIds.length > 0 && (
+        {showProcessingStatus && pendingJobIds.length > 0 && (
           <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-6 py-4 border-b border-blue-100">
               <div className="flex items-center gap-3">
@@ -658,14 +631,14 @@ export default function CustomerUploadPage() {
                   <h3 className="text-lg font-semibold text-blue-800">
                     AI Analysis in Progress
                   </h3>
-                  <p className="text-sm text-blue-700">Processing {pendingJobIds.length} image{pendingJobIds.length !== 1 ? 's' : ''} to identify items automatically</p>
+                  <p className="text-sm text-blue-700">Processing {pendingJobIds.length} item{pendingJobIds.length !== 1 ? 's' : ''} to identify contents automatically</p>
                 </div>
               </div>
             </div>
             <div className="p-6">
               <div className="flex items-center gap-3 text-blue-700">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-                <span>AI is analyzing your photos to identify items and create your moving inventory</span>
+                <span>AI is analyzing your photos and videos to identify items and create your moving inventory</span>
               </div>
               <div className="flex items-center gap-3 text-blue-700 mt-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{animationDelay: '0.5s'}}></div>
@@ -673,7 +646,7 @@ export default function CustomerUploadPage() {
               </div>
             </div>
           </div>
-        )} */}
+        )}
 
         {/* Upload Success Section */}
         {totalUploadedFiles > 0 && (

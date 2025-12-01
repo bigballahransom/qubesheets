@@ -10,7 +10,7 @@ import Video from '@/models/Video';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ projectId: string }> }
+  { params }: { params: { projectId: string } }
 ) {
   try {
     const authContext = await getAuthContext();
