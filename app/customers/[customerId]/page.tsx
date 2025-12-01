@@ -28,7 +28,6 @@ import {
   MenubarTrigger,
 } from "@/components/ui/menubar";
 import InventoryContent from "@/components/inventory/InventoryContent";
-import ProjectStats from "@/components/inventory/ProjectStats";
 import AdminPhotoUploader from "@/components/AdminPhotoUploader";
 import SendUploadLinkModal from "@/components/SendUploadLinkModal";
 import ShareVideoLinkModal from "@/components/video/ShareVideoLinkModal";
@@ -592,19 +591,7 @@ export default function CustomerDetailPage() {
                 <TabsContent value="inventory">
                   {customer?.projectId ? (
                     <InventoryContent 
-                      projectId={customer.projectId}
-                      onProjectUpdate={setCurrentProject}
-                      onStatsUpdate={(stats, rows) => {
-                        setInventoryStats(rows);
-                      }}
-                      hideProjectName={true}
-                      hideActions={true}
-                      onStartVideoInventory={handleStartVideoInventory}
-                      onUploadInventory={handleUploadInventory}
-                      onSendUploadLink={handleSendUploadLink}
-                      onActivityLog={handleActivityLog}
-                      onDownloadProject={handleDownloadProject}
-                      refreshKey={imageGalleryKey}
+                      customerId={customer._id}
                     />
                   ) : (
                     <Card>

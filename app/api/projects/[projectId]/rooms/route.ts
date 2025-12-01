@@ -5,7 +5,7 @@ import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/rooms - Get all unique rooms/locations for a project
-export async function GET(request: Request, { params }: { params: { projectId: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   try {
     console.log('📥 GET /api/projects/[projectId]/rooms called');
     
@@ -71,7 +71,7 @@ export async function GET(request: Request, { params }: { params: { projectId: s
 }
 
 // POST /api/projects/:projectId/rooms - Create a custom room for a project
-export async function POST(request: Request, { params }: { params: { projectId: string } }) {
+export async function POST(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   try {
     console.log('📥 POST /api/projects/[projectId]/rooms called');
     

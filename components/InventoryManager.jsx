@@ -2092,6 +2092,51 @@ useEffect(() => {
       return total + Math.max(0, Math.min(quantity, goingQuantity));
     }, 0);
   }, [spreadsheetRows]);
+
+  // Separate calculations for boxes without recommended
+  const boxesWithoutRecommended = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      const isBox = row.itemType === 'existing_box' || 
+                   (row.cells?.col2 || '').toLowerCase().includes('box');
+      
+      // Exclude boxes_needed (recommended boxes)
+      if (!isBox || row.itemType === 'boxes_needed') return total;
+      
+      const quantity = parseInt(row.cells?.col3) || 1;
+      const goingValue = row.cells?.col6 || 'going';
+      let goingQuantity = 0;
+      
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      return total + Math.max(0, Math.min(quantity, goingQuantity));
+    }, 0);
+  }, [spreadsheetRows]);
+
+  // Calculate just recommended boxes
+  const recommendedBoxesOnly = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Only count boxes_needed (recommended boxes)
+      if (row.itemType === 'boxes_needed') {
+        const quantity = parseInt(row.cells?.col3) || 1;
+        return total + quantity;
+      }
+      
+      return total;
+    }, 0);
+  }, [spreadsheetRows]);
   
   // Calculate total cubic feet from spreadsheet (source of truth)
   const totalCubicFeet = useMemo(() => {
@@ -2152,6 +2197,56 @@ useEffect(() => {
     
     return finalResult;
   }, [spreadsheetRows]);
+
+  // Calculate cubic feet without recommended boxes
+  const cubicFeetWithoutRecommended = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Skip boxes_needed (recommended boxes)
+      if (row.itemType === 'boxes_needed') return total;
+      
+      const displayCuft = parseFloat(row.cells?.col4) || 0;
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      
+      let goingCuft;
+      if (goingQuantity === quantity) {
+        goingCuft = displayCuft;
+      } else {
+        goingCuft = quantity > 0 ? (displayCuft * goingQuantity) / quantity : 0;
+      }
+      
+      return total + goingCuft;
+    }, 0).toFixed(0);
+  }, [spreadsheetRows]);
+
+  // Calculate cubic feet for just recommended boxes
+  const cubicFeetRecommendedOnly = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Only count boxes_needed (recommended boxes)
+      if (row.itemType !== 'boxes_needed') return total;
+      
+      const displayCuft = parseFloat(row.cells?.col4) || 0;
+      return total + displayCuft;
+    }, 0).toFixed(0);
+  }, [spreadsheetRows]);
   
   // Calculate total weight from spreadsheet (source of truth)
   const totalWeight = useMemo(() => {
@@ -2211,6 +2306,56 @@ useEffect(() => {
     console.log(`⚖️ [${timestamp}] WEIGHT CALCULATION COMPLETE: totalDisplayWeight: ${totalDisplayWeight.toFixed(2)}, finalGoingWeight: ${finalResult}`);
     
     return finalResult;
+  }, [spreadsheetRows]);
+
+  // Calculate weight without recommended boxes
+  const weightWithoutRecommended = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Skip boxes_needed (recommended boxes)
+      if (row.itemType === 'boxes_needed') return total;
+      
+      const displayWeight = parseFloat(row.cells?.col5) || 0;
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      
+      let goingWeight;
+      if (goingQuantity === quantity) {
+        goingWeight = displayWeight;
+      } else {
+        goingWeight = quantity > 0 ? (displayWeight * goingQuantity) / quantity : 0;
+      }
+      
+      return total + goingWeight;
+    }, 0).toFixed(0);
+  }, [spreadsheetRows]);
+
+  // Calculate weight for just recommended boxes
+  const weightRecommendedOnly = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Only count boxes_needed (recommended boxes)
+      if (row.itemType !== 'boxes_needed') return total;
+      
+      const displayWeight = parseFloat(row.cells?.col5) || 0;
+      return total + displayWeight;
+    }, 0).toFixed(0);
   }, [spreadsheetRows]);
   
   // Validation: Check for discrepancies between calculated stats and manual totals
@@ -2695,7 +2840,7 @@ const ProcessingNotification = () => {
         {/* Main content container */}
         <div className="max-w-7xl mx-auto px-4 py-4">
           {/* Stats Cards in a clean grid layout */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             {/* Box 1: Total Items */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
               <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center mr-3 flex-shrink-0">
@@ -2714,7 +2859,10 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Boxes</p>
-                <p className="text-2xl font-bold text-slate-800">{totalBoxes}</p>
+                <p className="text-2xl font-bold text-slate-800">{boxesWithoutRecommended}</p>
+                {totalBoxes !== boxesWithoutRecommended && (
+                  <p className="text-xs text-slate-400">Total w/ rec: {totalBoxes}</p>
+                )}
               </div>
             </div>
             
@@ -2727,7 +2875,10 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Volume</p>
-                <p className="text-2xl font-bold text-slate-800">{totalCubicFeet} <span className="text-sm font-medium text-slate-500">cuft</span></p>
+                <p className="text-2xl font-bold text-slate-800">{cubicFeetWithoutRecommended} <span className="text-sm font-medium text-slate-500">cuft</span></p>
+                {totalCubicFeet !== cubicFeetWithoutRecommended && (
+                  <p className="text-xs text-slate-400">Total w/ rec: {totalCubicFeet} cuft</p>
+                )}
               </div>
             </div>
             
@@ -2738,11 +2889,15 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Weight</p>
-                <p className="text-2xl font-bold text-slate-800">{totalWeight} <span className="text-sm font-medium text-slate-500">lbs</span></p>
+                <p className="text-2xl font-bold text-slate-800">{weightWithoutRecommended} <span className="text-sm font-medium text-slate-500">lbs</span></p>
+                {totalWeight !== weightWithoutRecommended && (
+                  <p className="text-xs text-slate-400">Total w/ rec: {totalWeight} lbs</p>
+                )}
               </div>
             </div>
             
-            {/* Box 5: Inventory Status */}
+            {/* Box 5: Inventory Status - Commented out as requested */}
+            {/*
             <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
               <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center mr-3 flex-shrink-0">
                 <Table className="h-5 w-5 text-emerald-600" />
@@ -2754,6 +2909,7 @@ const ProcessingNotification = () => {
                 </p>
               </div>
             </div>
+            */}
           </div>
           
 {/* Video Processing Status - Hidden from users but still handles completion events */}

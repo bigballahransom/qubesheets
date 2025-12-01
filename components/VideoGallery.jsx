@@ -658,11 +658,45 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                             return totalCount > 0 ? `${totalCount} items` : `${video.analysisResult.itemsCount || 0} items`;
                           })()}
                         </Badge>
-                        {video.analysisResult.totalBoxes && video.analysisResult.totalBoxes > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            {video.analysisResult.totalBoxes} boxes
-                          </Badge>
-                        )}
+                        {(() => {
+                          const videoInventoryItems = inventoryItems.filter(invItem => {
+                            const videoId = invItem.sourceVideoId?._id || invItem.sourceVideoId;
+                            return videoId === video._id;
+                          });
+                          
+                          // Count different types of boxes
+                          const recommendedBoxes = videoInventoryItems.filter(invItem => 
+                            invItem.itemType === 'boxes_needed' || 
+                            (invItem.name && invItem.name.includes('Box') && invItem.name.includes(' - '))
+                          );
+                          const existingBoxes = videoInventoryItems.filter(invItem => 
+                            invItem.itemType === 'existing_box' || invItem.itemType === 'packed_box' ||
+                            (invItem.name && invItem.name.includes('Box') && !invItem.name.includes(' - '))
+                          );
+                          
+                          const recommendedCount = recommendedBoxes.reduce((sum, box) => sum + (box.quantity || 1), 0);
+                          const existingCount = existingBoxes.reduce((sum, box) => sum + (box.quantity || 1), 0);
+                          
+                          return (
+                            <>
+                              {existingCount > 0 && (
+                                <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700 border-orange-200">
+                                  {existingCount} boxes
+                                </Badge>
+                              )}
+                              {recommendedCount > 0 && (
+                                <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                                  {recommendedCount} recommended
+                                </Badge>
+                              )}
+                              {recommendedCount === 0 && existingCount === 0 && video.analysisResult.totalBoxes && video.analysisResult.totalBoxes > 0 && (
+                                <Badge variant="outline" className="text-xs">
+                                  {video.analysisResult.totalBoxes} boxes
+                                </Badge>
+                              )}
+                            </>
+                          );
+                        })()}
                       </>
                     ) : (
                       <Badge variant="outline" className="text-xs">
@@ -782,24 +816,91 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                 });
                 
                 if (items.length > 0) {
+                  // Group items by type
+                  const regularItems = items.filter(invItem => 
+                    invItem.itemType === 'regular_item' || invItem.itemType === 'furniture' || 
+                    !invItem.itemType || 
+                    (!invItem.name?.includes('Box'))
+                  );
+                  const recommendedBoxes = items.filter(invItem => 
+                    invItem.itemType === 'boxes_needed' || 
+                    (invItem.name && invItem.name.includes('Box') && invItem.name.includes(' - '))
+                  );
+                  const existingBoxes = items.filter(invItem => 
+                    invItem.itemType === 'existing_box' || invItem.itemType === 'packed_box' ||
+                    (invItem.name && invItem.name.includes('Box') && !invItem.name.includes(' - '))
+                  );
+
                   return (
-                    <div className="mb-4">
-                      <h4 className="font-medium text-gray-900 mb-2">Inventory Items</h4>
-                      <div className="flex flex-wrap gap-1">
-                        {items.map((invItem) => {
-                          const quantity = invItem.quantity || 1;
-                          return Array.from({ length: quantity }, (_, index) => (
-                            <ToggleGoingBadge 
-                              key={`${invItem._id}-${index}`}
-                              inventoryItem={invItem}
-                              quantityIndex={index}
-                              projectId={projectId}
-                              onInventoryUpdate={onInventoryUpdate}
-                              showItemName={true}
-                            />
-                          ));
-                        }).flat()}
-                      </div>
+                    <div className="mb-4 space-y-3">
+                      {regularItems.length > 0 && (
+                        <div>
+                          <h4 className="font-medium text-gray-900 mb-2">Items</h4>
+                          <div className="flex flex-wrap gap-1">
+                            {regularItems.map((invItem) => {
+                              const quantity = invItem.quantity || 1;
+                              return Array.from({ length: quantity }, (_, index) => (
+                                <ToggleGoingBadge 
+                                  key={`${invItem._id}-${index}`}
+                                  inventoryItem={invItem}
+                                  quantityIndex={index}
+                                  projectId={projectId}
+                                  onInventoryUpdate={onInventoryUpdate}
+                                  showItemName={true}
+                                />
+                              ));
+                            }).flat()}
+                          </div>
+                        </div>
+                      )}
+
+                      {existingBoxes.length > 0 && (
+                        <div>
+                          <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-1">
+                            Boxes
+                            <span className="inline-block w-3 h-3 bg-orange-100 border border-orange-300 rounded text-orange-700 text-[10px] font-bold leading-3 text-center">B</span>
+                          </h4>
+                          <div className="flex flex-wrap gap-1">
+                            {existingBoxes.map((invItem) => {
+                              const quantity = invItem.quantity || 1;
+                              return Array.from({ length: quantity }, (_, index) => (
+                                <ToggleGoingBadge 
+                                  key={`${invItem._id}-${index}`}
+                                  inventoryItem={invItem}
+                                  quantityIndex={index}
+                                  projectId={projectId}
+                                  onInventoryUpdate={onInventoryUpdate}
+                                  showItemName={true}
+                                />
+                              ));
+                            }).flat()}
+                          </div>
+                        </div>
+                      )}
+
+                      {recommendedBoxes.length > 0 && (
+                        <div>
+                          <h4 className="font-medium text-gray-900 mb-2 flex items-center gap-1">
+                            Recommended Boxes
+                            <span className="inline-block w-3 h-3 bg-purple-100 border border-purple-300 rounded text-purple-700 text-[10px] font-bold leading-3 text-center">R</span>
+                          </h4>
+                          <div className="flex flex-wrap gap-1">
+                            {recommendedBoxes.map((invItem) => {
+                              const quantity = invItem.quantity || 1;
+                              return Array.from({ length: quantity }, (_, index) => (
+                                <ToggleGoingBadge 
+                                  key={`${invItem._id}-${index}`}
+                                  inventoryItem={invItem}
+                                  quantityIndex={index}
+                                  projectId={projectId}
+                                  onInventoryUpdate={onInventoryUpdate}
+                                  showItemName={true}
+                                />
+                              ));
+                            }).flat()}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -807,7 +908,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
               })()}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
+                {/* <div>
                   <h4 className="font-medium text-gray-900 mb-2">Details</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -829,7 +930,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                       <span>{formatDate(selectedVideo.createdAt)}</span>
                     </div>
                   </div>
-                </div>
+                </div> */}
                 
                 {selectedVideo.analysisResult && (
                   <div>
@@ -846,12 +947,47 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                           return totalCount > 0 ? totalCount : selectedVideo.analysisResult.itemsCount;
                         })()}</span>
                       </div>
-                      {selectedVideo.analysisResult.totalBoxes && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Boxes needed:</span>
-                          <span>{selectedVideo.analysisResult.totalBoxes}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const videoInventoryItems = inventoryItems.filter(invItem => {
+                          const videoId = invItem.sourceVideoId?._id || invItem.sourceVideoId;
+                          return videoId === selectedVideo._id;
+                        });
+                        
+                        const existingBoxes = videoInventoryItems.filter(invItem => 
+                          invItem.itemType === 'existing_box' || invItem.itemType === 'packed_box' ||
+                          (invItem.name && invItem.name.includes('Box') && !invItem.name.includes(' - '))
+                        );
+                        const recommendedBoxes = videoInventoryItems.filter(invItem => 
+                          invItem.itemType === 'boxes_needed' || 
+                          (invItem.name && invItem.name.includes('Box') && invItem.name.includes(' - '))
+                        );
+                        
+                        const existingCount = existingBoxes.reduce((sum, box) => sum + (box.quantity || 1), 0);
+                        const recommendedCount = recommendedBoxes.reduce((sum, box) => sum + (box.quantity || 1), 0);
+                        
+                        return (
+                          <>
+                            {existingCount > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Boxes:</span>
+                                <span>{existingCount}</span>
+                              </div>
+                            )}
+                            {recommendedCount > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Recommended boxes:</span>
+                                <span>{recommendedCount}</span>
+                              </div>
+                            )}
+                            {existingCount === 0 && recommendedCount === 0 && selectedVideo.analysisResult.totalBoxes && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Boxes needed:</span>
+                                <span>{selectedVideo.analysisResult.totalBoxes}</span>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                       <div className="flex justify-between">
                         <span className="text-gray-500">Status:</span>
                         <span className={`inline-block px-2 py-1 text-xs rounded ${

@@ -168,6 +168,9 @@ export async function POST(request, { params }) {
         weight: item.weight || 0,
         fragile: item.fragile || false,
         special_handling: item.special_handling || "",
+        // Initialize going status and goingQuantity properly
+        going: item.going || 'going',
+        goingQuantity: item.goingQuantity ?? (item.quantity || 1),
       };
       
       // Only include organizationId if the user is in an organization
