@@ -92,8 +92,8 @@ export function ToggleGoingBadge({
       variant="default" 
       className={`text-xs cursor-pointer transition-all duration-200 hover:scale-105 ${
         isThisInstanceGoing 
-          ? 'bg-green-100 text-green-800 hover:bg-green-200' 
-          : 'bg-red-100 text-red-800 hover:bg-red-200'
+          ? 'bg-white border border-gray-200 text-gray-900 hover:bg-gray-50' 
+          : 'bg-gray-100 border border-gray-300 text-gray-700 hover:bg-gray-200'
       } ${isUpdating ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}
       style={{ userSelect: 'none' }}
     >

@@ -783,92 +783,175 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
                 )}
               </div>
               
-              {/* Inventory Items from this image */}
+              {/* Items, Boxes, and Recommended Boxes from this image */}
               {(() => {
-                const items = inventoryItems.filter(item => {
+                const allItems = inventoryItems.filter(item => {
                   const imageId = item.sourceImageId?._id || item.sourceImageId;
                   return imageId === selectedItem._id;
                 });
                 
-                if (items.length > 0) {
-                  return (
-                    <div className="mb-4">
-                      <h4 className="font-medium text-gray-900 mb-2">Inventory Items</h4>
-                      <div className="flex flex-wrap gap-1">
-                        {items.map((invItem) => {
-                          const quantity = invItem.quantity || 1;
-                          // Create an array with length equal to quantity to show each item separately
-                          return Array.from({ length: quantity }, (_, index) => (
-                            <ToggleGoingBadge 
-                              key={`${invItem._id}-${index}`}
-                              inventoryItem={invItem}
-                              quantityIndex={index}
-                              projectId={projectId}
-                              onInventoryUpdate={onInventoryUpdate}
-                              showItemName={true}
-                            />
-                          ));
-                        }).flat()}
-                      </div>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="font-medium text-gray-900 mb-2">Details</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">File size:</span>
-                      <span>{formatFileSize(selectedItem.size)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Type:</span>
-                      <span>{selectedItem.mimeType}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Uploaded:</span>
-                      <span>{formatDate(selectedItem.createdAt)}</span>
-                    </div>
-                  </div>
-                </div>
+                // Separate items by type
+                const regularItems = allItems.filter(item => 
+                  item.itemType === 'regular_item' || 
+                  item.itemType === 'furniture' || 
+                  (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                );
+                const existingBoxes = allItems.filter(item => 
+                  item.itemType === 'existing_box' || 
+                  item.itemType === 'packed_box'
+                );
+                const recommendedBoxes = allItems.filter(item => item.itemType === 'boxes_needed');
                 
-                {selectedItem.analysisResult && (
-                  <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Items found:</span>
-                        <span>{(() => {
-                          const imageInventoryItems = inventoryItems.filter(invItem => {
-                            const imageId = invItem.sourceImageId?._id || invItem.sourceImageId;
-                            return imageId === selectedItem._id;
-                          });
-                          const totalCount = imageInventoryItems.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
-                          return totalCount > 0 ? totalCount : selectedItem.analysisResult.itemsCount;
-                        })()}</span>
-                      </div>
-                      {selectedItem.analysisResult.totalBoxes && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Boxes needed:</span>
-                          <span>{selectedItem.analysisResult.totalBoxes}</span>
+                if (allItems.length === 0) return null;
+                
+                return (
+                  <div className="mb-4">
+                    {/* Regular Items Section */}
+                    {regularItems.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-medium text-gray-900 mb-2">Items</h4>
+                        <div className="flex flex-wrap gap-1">
+                          {regularItems.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                     
-                    {selectedItem.analysisResult.summary && (
-                      <div className="mt-3">
-                        <h5 className="font-medium text-gray-900 mb-1">Summary</h5>
-                        <p className="text-sm text-gray-600">
-                          {selectedItem.analysisResult.summary}
-                        </p>
+                    {/* Existing Boxes Section */}
+                    {existingBoxes.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="font-medium text-gray-900">Boxes</h4>
+                          <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                            B
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {existingBoxes.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Recommended Boxes Section */}
+                    {recommendedBoxes.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="font-medium text-gray-900">Recommended Boxes</h4>
+                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                            R
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {recommendedBoxes.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
                       </div>
                     )}
                   </div>
-                )}
-              </div>
+                );
+              })()}
+
+              {selectedItem.analysisResult && (
+                <div className="mb-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
+                  <div className="space-y-2 text-sm">
+                    {(() => {
+                      const imageInventoryItems = inventoryItems.filter(invItem => {
+                        const imageId = invItem.sourceImageId?._id || invItem.sourceImageId;
+                        return imageId === selectedItem._id;
+                      });
+                      
+                      const regularItems = imageInventoryItems.filter(invItem => 
+                        invItem.itemType === 'regular_item' || invItem.itemType === 'furniture'
+                      );
+                      
+                      const boxes = imageInventoryItems.filter(invItem => 
+                        invItem.itemType === 'existing_box' || invItem.itemType === 'packed_box'
+                      );
+                      
+                      const recommendedBoxes = imageInventoryItems.filter(invItem => 
+                        invItem.itemType === 'boxes_needed'
+                      );
+                      
+                      const regularItemsCount = regularItems.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
+                      const boxesCount = boxes.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
+                      const recommendedBoxesCount = recommendedBoxes.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
+                      
+                      return (
+                        <>
+                          {regularItemsCount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Items found:</span>
+                              <span>{regularItemsCount}</span>
+                            </div>
+                          )}
+                          {boxesCount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Boxes found:</span>
+                              <span>{boxesCount}</span>
+                            </div>
+                          )}
+                          {(recommendedBoxesCount > 0 || selectedItem.analysisResult.totalBoxes) && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Recommended boxes:</span>
+                              <span>{recommendedBoxesCount || selectedItem.analysisResult.totalBoxes}</span>
+                            </div>
+                          )}
+                          {regularItemsCount === 0 && boxesCount === 0 && recommendedBoxesCount === 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Items found:</span>
+                              <span>{selectedItem.analysisResult.itemsCount}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                  
+                  {selectedItem.analysisResult.summary && (
+                    <div className="mt-3">
+                      <h5 className="font-medium text-gray-900 mb-1">Summary</h5>
+                      <p className="text-sm text-gray-600">
+                        {selectedItem.analysisResult.summary}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
               
               {selectedItem.description && (
                 <div>

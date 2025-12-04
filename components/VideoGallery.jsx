@@ -1173,105 +1173,183 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                   )}
                 </div>
               
-              {/* Inventory Items from this video */}
+              {/* Items, Boxes, and Recommended Boxes from this video */}
               {(() => {
-                const items = inventoryItems.filter(item => {
+                const allItems = inventoryItems.filter(item => {
                   const videoId = item.sourceVideoId?._id || item.sourceVideoId;
                   return videoId === selectedVideo._id;
                 });
                 
-                if (items.length > 0) {
-                  return (
-                    <div className="mb-4">
-                      <h4 className="font-medium text-gray-900 mb-2">Inventory Items</h4>
-                      <div className="flex flex-wrap gap-1">
-                        {items.map((invItem) => {
-                          const quantity = invItem.quantity || 1;
-                          // Create an array with length equal to quantity to show each item separately
-                          return Array.from({ length: quantity }, (_, index) => (
-                            <ToggleGoingBadge 
-                              key={`${invItem._id}-${index}`}
-                              inventoryItem={invItem}
-                              quantityIndex={index}
-                              projectId={projectId}
-                              onInventoryUpdate={onInventoryUpdate}
-                              showItemName={true}
-                            />
-                          ));
-                        }).flat()}
-                      </div>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="font-medium text-gray-900 mb-2">Details</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">File size:</span>
-                      <span>{formatFileSize(selectedVideo.size)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Type:</span>
-                      <span>{selectedVideo.mimeType}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Uploaded:</span>
-                      <span>{formatDate(selectedVideo.createdAt)}</span>
-                    </div>
-                    {selectedVideo.duration > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Duration:</span>
-                        <span>{formatDuration(selectedVideo.duration)}</span>
+                // Separate items by type
+                const regularItems = allItems.filter(item => 
+                  item.itemType === 'regular_item' || 
+                  item.itemType === 'furniture' || 
+                  (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                );
+                const existingBoxes = allItems.filter(item => 
+                  item.itemType === 'existing_box' || 
+                  item.itemType === 'packed_box'
+                );
+                const recommendedBoxes = allItems.filter(item => item.itemType === 'boxes_needed');
+                
+                if (allItems.length === 0) return null;
+                
+                return (
+                  <div className="mb-4">
+                    {/* Regular Items Section */}
+                    {regularItems.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-medium text-gray-900 mb-2">Items</h4>
+                        <div className="flex flex-wrap gap-1">
+                          {regularItems.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
                       </div>
                     )}
+                    
+                    {/* Existing Boxes Section */}
+                    {existingBoxes.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="font-medium text-gray-900">Boxes</h4>
+                          <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                            B
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {existingBoxes.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Recommended Boxes Section */}
+                    {recommendedBoxes.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="font-medium text-gray-900">Recommended Boxes</h4>
+                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                            R
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {recommendedBoxes.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {selectedVideo.analysisResult && (
+                <div className="mb-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
+                  <div className="space-y-2 text-sm">
+                    {(() => {
+                      const videoInventoryItems = inventoryItems.filter(item => {
+                        const videoId = item.sourceVideoId?._id || item.sourceVideoId;
+                        return videoId === selectedVideo._id;
+                      });
+                      
+                      const regularItems = videoInventoryItems.filter(item => 
+                        item.itemType === 'regular_item' || item.itemType === 'furniture'
+                      );
+                      
+                      const boxes = videoInventoryItems.filter(item => 
+                        item.itemType === 'existing_box' || item.itemType === 'packed_box'
+                      );
+                      
+                      const recommendedBoxes = videoInventoryItems.filter(item => 
+                        item.itemType === 'boxes_needed'
+                      );
+                      
+                      const regularItemsCount = regularItems.reduce((total, item) => total + (item.quantity || 1), 0);
+                      const boxesCount = boxes.reduce((total, item) => total + (item.quantity || 1), 0);
+                      const recommendedBoxesCount = recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
+                      
+                      return (
+                        <>
+                          {regularItemsCount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Items found:</span>
+                              <span>{regularItemsCount}</span>
+                            </div>
+                          )}
+                          {boxesCount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Boxes found:</span>
+                              <span>{boxesCount}</span>
+                            </div>
+                          )}
+                          {recommendedBoxesCount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Recommended boxes:</span>
+                              <span>{recommendedBoxesCount}</span>
+                            </div>
+                          )}
+                          {regularItemsCount === 0 && boxesCount === 0 && recommendedBoxesCount === 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Items found:</span>
+                              <span>{selectedVideo.analysisResult.itemsCount || 0}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Storage:</span>
-                      <span>{modalHasS3Video ? 'S3' : 'Unknown'}</span>
+                      <span className="text-gray-500">Status:</span>
+                      <span className={`inline-block px-2 py-1 text-xs rounded ${
+                        selectedVideo.analysisResult.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        selectedVideo.analysisResult.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                        selectedVideo.analysisResult.status === 'failed' ? 'bg-red-100 text-red-800' :
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {selectedVideo.analysisResult.status || 'pending'}
+                      </span>
                     </div>
+                    {selectedVideo.analysisResult.summary && (
+                      <div>
+                        <span className="text-gray-500 block mb-1">Summary:</span>
+                        <p className="text-gray-900">{selectedVideo.analysisResult.summary}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
-                
-                {selectedVideo.analysisResult && (
-                  <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Items found:</span>
-                        <span>{(() => {
-                          const videoInventoryItems = inventoryItems.filter(item => {
-                            const videoId = item.sourceVideoId?._id || item.sourceVideoId;
-                            return videoId === selectedVideo._id;
-                          });
-                          const totalCount = videoInventoryItems.reduce((total, item) => total + (item.quantity || 1), 0);
-                          return totalCount > 0 ? totalCount : (selectedVideo.analysisResult.itemsCount || 0);
-                        })()}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Status:</span>
-                        <span className={`inline-block px-2 py-1 text-xs rounded ${
-                          selectedVideo.analysisResult.status === 'completed' ? 'bg-green-100 text-green-800' :
-                          selectedVideo.analysisResult.status === 'processing' ? 'bg-blue-100 text-blue-800' :
-                          selectedVideo.analysisResult.status === 'failed' ? 'bg-red-100 text-red-800' :
-                          'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {selectedVideo.analysisResult.status || 'pending'}
-                        </span>
-                      </div>
-                      {selectedVideo.analysisResult.summary && (
-                        <div>
-                          <span className="text-gray-500 block mb-1">Summary:</span>
-                          <p className="text-gray-900">{selectedVideo.analysisResult.summary}</p>
-                        </div>
-                      )}
-                    </div>
-                    
-                  </div>
-                )}
-              </div>
+              )}
 
               {/* Description */}
               {selectedVideo.description && (

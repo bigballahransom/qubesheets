@@ -139,8 +139,8 @@ export default function BoxesManager({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {/* Total Recommended */}
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
-          <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center mr-3 flex-shrink-0">
-            <Target className="h-5 w-5 text-blue-600" />
+          <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center mr-3 flex-shrink-0">
+            <Target className="h-5 w-5 text-purple-600" />
           </div>
           <div>
             <p className="text-xs font-medium text-slate-500">Recommended</p>
@@ -150,8 +150,8 @@ export default function BoxesManager({
         
         {/* Total Packed */}
         <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
-          <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center mr-3 flex-shrink-0">
-            <CheckCircle className="h-5 w-5 text-green-600" />
+          <div className="w-10 h-10 rounded-lg bg-orange-100 flex items-center justify-center mr-3 flex-shrink-0">
+            <CheckCircle className="h-5 w-5 text-orange-600" />
           </div>
           <div>
             <p className="text-xs font-medium text-slate-500">Packed</p>
@@ -280,8 +280,8 @@ export default function BoxesManager({
                     style={{ minWidth: '800px' }}
                     className={`flex ${
                       isRecommended
-                        ? 'bg-blue-50 border-l-2 border-l-blue-300'
-                        : 'bg-green-50 border-l-2 border-l-green-300'
+                        ? 'bg-purple-50 border-l-2 border-l-purple-300'
+                        : 'bg-orange-50 border-l-2 border-l-orange-300'
                     } hover:bg-opacity-80 transition-colors`}
                   >
                     {/* Row number */}
@@ -293,9 +293,9 @@ export default function BoxesManager({
                     <div className="w-60 min-w-[240px] border-r flex items-center p-3">
                       <div className="flex items-center gap-2">
                         {isRecommended ? (
-                          <Target className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                          <Target className="w-4 h-4 text-purple-600 flex-shrink-0" />
                         ) : (
-                          <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                          <CheckCircle className="w-4 h-4 text-orange-600 flex-shrink-0" />
                         )}
                         <span className="text-sm text-gray-900 font-medium">{boxType}</span>
                       </div>
@@ -346,8 +346,8 @@ export default function BoxesManager({
                     <div className="w-20 min-w-[80px] border-r flex items-center p-3">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                         isRecommended 
-                          ? 'bg-blue-100 text-blue-700' 
-                          : 'bg-green-100 text-green-700'
+                          ? 'bg-purple-100 text-purple-700' 
+                          : 'bg-orange-100 text-orange-700'
                       }`}>
                         {isRecommended ? 'Rec.' : 'Packed'}
                       </span>

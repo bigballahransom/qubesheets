@@ -2097,9 +2097,6 @@ useEffect(() => {
               )}
               {truncateFileName(selectedMedia?.originalName || previewMedia?.name)}
             </DialogTitle>
-            <DialogDescription>
-              Uploaded on {selectedMedia && formatDate(selectedMedia.createdAt)}
-            </DialogDescription>
           </DialogHeader>
           
           {loadingMedia ? (
@@ -2211,107 +2208,188 @@ useEffect(() => {
                 )}
               </div>
               
-              {/* Inventory Items from this media */}
+              {/* Items, Boxes, and Recommended Boxes from this media */}
               {(() => {
-                const items = inventoryItems.filter(item => {
+                const allItems = inventoryItems.filter(item => {
                   const mediaId = item.sourceImageId?._id || item.sourceImageId || item.sourceVideoId?._id || item.sourceVideoId;
                   return mediaId === selectedMedia._id;
                 });
                 
-                if (items.length > 0) {
-                  return (
-                    <div className="mb-4">
-                      <h4 className="font-medium text-gray-900 mb-2">Inventory Items</h4>
-                      <div className="flex flex-wrap gap-1">
-                        {items.map((invItem) => {
-                          const quantity = invItem.quantity || 1;
-                          // Create an array with length equal to quantity to show each item separately
-                          return Array.from({ length: quantity }, (_, index) => (
-                            <ToggleGoingBadge 
-                              key={`${invItem._id}-${index}`}
-                              inventoryItem={invItem}
-                              quantityIndex={index}
-                              projectId={projectId}
-                              onInventoryUpdate={onInventoryUpdate}
-                              showItemName={true}
-                            />
-                          ));
-                        }).flat()}
+                // Separate items by type
+                const regularItems = allItems.filter(item => 
+                  item.itemType === 'regular_item' || 
+                  item.itemType === 'furniture' || 
+                  (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                );
+                const existingBoxes = allItems.filter(item => 
+                  item.itemType === 'existing_box' || 
+                  item.itemType === 'packed_box'
+                );
+                const recommendedBoxes = allItems.filter(item => item.itemType === 'boxes_needed');
+                
+                if (allItems.length === 0) return null;
+                
+                return (
+                  <div className="mb-4">
+                    {/* Regular Items Section */}
+                    {regularItems.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-medium text-gray-900 mb-2">Items</h4>
+                        <div className="flex flex-wrap gap-1">
+                          {regularItems.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
                       </div>
-                    </div>
-                  );
-                }
-                return null;
+                    )}
+                    
+                    {/* Existing Boxes Section */}
+                    {existingBoxes.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="font-medium text-gray-900">Boxes</h4>
+                          <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                            B
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {existingBoxes.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Recommended Boxes Section */}
+                    {recommendedBoxes.length > 0 && (
+                      <div className="mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h4 className="font-medium text-gray-900">Recommended Boxes</h4>
+                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                            R
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {recommendedBoxes.map((invItem) => {
+                            const quantity = invItem.quantity || 1;
+                            return Array.from({ length: quantity }, (_, index) => (
+                              <ToggleGoingBadge 
+                                key={`${invItem._id}-${index}`}
+                                inventoryItem={invItem}
+                                quantityIndex={index}
+                                projectId={projectId}
+                                onInventoryUpdate={onInventoryUpdate}
+                                showItemName={true}
+                              />
+                            ));
+                          }).flat()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
               })()}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="font-medium text-gray-900 mb-2">Details</h4>
+              {selectedMedia.analysisResult && (
+                <div className="mb-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
                   <div className="space-y-2 text-sm">
+                    {(() => {
+                      const mediaInventoryItems = inventoryItems.filter(item => {
+                        const mediaId = selectedMedia.type === 'image' 
+                          ? (item.sourceImageId?._id || item.sourceImageId)
+                          : (item.sourceVideoId?._id || item.sourceVideoId);
+                        return mediaId === selectedMedia._id;
+                      });
+                      
+                      const regularItems = mediaInventoryItems.filter(item => 
+                        item.itemType === 'regular_item' || item.itemType === 'furniture'
+                      );
+                      
+                      const boxes = mediaInventoryItems.filter(item => 
+                        item.itemType === 'existing_box' || item.itemType === 'packed_box'
+                      );
+                      
+                      const recommendedBoxes = mediaInventoryItems.filter(item => 
+                        item.itemType === 'boxes_needed'
+                      );
+                      
+                      const regularItemsCount = regularItems.reduce((total, item) => total + (item.quantity || 1), 0);
+                      const boxesCount = boxes.reduce((total, item) => total + (item.quantity || 1), 0);
+                      const recommendedBoxesCount = recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
+                      
+                      return (
+                        <>
+                          {regularItemsCount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Items found:</span>
+                              <span>{regularItemsCount}</span>
+                            </div>
+                          )}
+                          {boxesCount > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Boxes found:</span>
+                              <span>{boxesCount}</span>
+                            </div>
+                          )}
+                          {(recommendedBoxesCount > 0 || selectedMedia.analysisResult.totalBoxes) && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Recommended boxes:</span>
+                              <span>{recommendedBoxesCount || selectedMedia.analysisResult.totalBoxes}</span>
+                            </div>
+                          )}
+                          {regularItemsCount === 0 && boxesCount === 0 && recommendedBoxesCount === 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Items found:</span>
+                              <span>{selectedMedia.analysisResult.itemsCount || 0}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                     <div className="flex justify-between">
-                      <span className="text-gray-500">File size:</span>
-                      <span>{formatFileSize(selectedMedia.size)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Type:</span>
-                      <span>{selectedMedia.mimeType}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Uploaded:</span>
-                      <span>{formatDate(selectedMedia.createdAt)}</span>
-                    </div>
-                    {selectedMedia.type === 'video' && selectedMedia.duration > 0 && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Duration:</span>
-                        <span>{formatDuration(selectedMedia.duration)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Storage:</span>
-                      <span>{selectedMedia.type === 'video' ? 'S3' : 'MongoDB'}</span>
+                      <span className="text-gray-500">Status:</span>
+                      <span className={`inline-block px-2 py-1 text-xs rounded ${
+                        selectedMedia.analysisResult.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        selectedMedia.analysisResult.status === 'processing' ? 'bg-blue-100 text-blue-800' :
+                        selectedMedia.analysisResult.status === 'failed' ? 'bg-red-100 text-red-800' :
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {selectedMedia.analysisResult.status || 'pending'}
+                      </span>
                     </div>
                   </div>
+                  
+                  {selectedMedia.analysisResult.summary && (
+                    <div className="mt-3">
+                      <h5 className="font-medium text-gray-900 mb-1">Summary</h5>
+                      <p className="text-sm text-gray-600">
+                        {selectedMedia.analysisResult.summary}
+                      </p>
+                    </div>
+                  )}
                 </div>
-                
-                {selectedMedia.analysisResult && (
-                  <div>
-                    <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Items found:</span>
-                        <span>{selectedMedia.analysisResult.itemsCount || 0}</span>
-                      </div>
-                      {selectedMedia.analysisResult.totalBoxes && (
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Boxes needed:</span>
-                          <span>{selectedMedia.analysisResult.totalBoxes}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Status:</span>
-                        <span className={`inline-block px-2 py-1 text-xs rounded ${
-                          selectedMedia.analysisResult.status === 'completed' ? 'bg-green-100 text-green-800' :
-                          selectedMedia.analysisResult.status === 'processing' ? 'bg-blue-100 text-blue-800' :
-                          selectedMedia.analysisResult.status === 'failed' ? 'bg-red-100 text-red-800' :
-                          'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {selectedMedia.analysisResult.status || 'pending'}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    
-                    {selectedMedia.analysisResult.summary && (
-                      <div className="mt-3">
-                        <h5 className="font-medium text-gray-900 mb-1">Summary</h5>
-                        <p className="text-sm text-gray-600">
-                          {selectedMedia.analysisResult.summary}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              )}
               
               {selectedMedia.description && (
                 <div>
