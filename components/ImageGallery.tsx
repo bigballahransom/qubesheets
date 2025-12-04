@@ -676,22 +676,55 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
                       </Badge>
                     ) : item.analysisResult?.status === 'completed' ? (
                       <>
-                        <Badge variant="secondary" className="text-xs">
-                          <Package size={10} className="mr-1" />
-                          {(() => {
-                            const imageInventoryItems = inventoryItems.filter(invItem => {
-                              const imageId = invItem.sourceImageId?._id || invItem.sourceImageId;
-                              return imageId === item._id;
-                            });
-                            const totalCount = imageInventoryItems.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
-                            return totalCount > 0 ? `${totalCount} items` : `${item.analysisResult.itemsCount} items`;
-                          })()}
-                        </Badge>
-                        {item.analysisResult.totalBoxes && item.analysisResult.totalBoxes > 0 && (
-                          <Badge variant="outline" className="text-xs">
-                            {item.analysisResult.totalBoxes} boxes
-                          </Badge>
-                        )}
+                        {(() => {
+                          const imageInventoryItems = inventoryItems.filter(invItem => {
+                            const imageId = invItem.sourceImageId?._id || invItem.sourceImageId;
+                            return imageId === item._id;
+                          });
+                          
+                          // Separate items by type
+                          const regularItems = imageInventoryItems.filter(invItem => 
+                            invItem.itemType === 'regular_item' || 
+                            invItem.itemType === 'furniture' || 
+                            (!invItem.itemType && invItem.itemType !== 'existing_box' && invItem.itemType !== 'packed_box' && invItem.itemType !== 'boxes_needed')
+                          );
+                          const existingBoxes = imageInventoryItems.filter(invItem => 
+                            invItem.itemType === 'existing_box' || 
+                            invItem.itemType === 'packed_box'
+                          );
+                          const recommendedBoxes = imageInventoryItems.filter(invItem => invItem.itemType === 'boxes_needed');
+                          
+                          const regularItemsCount = regularItems.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
+                          const boxesCount = existingBoxes.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
+                          const recommendedBoxesCount = recommendedBoxes.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
+                          
+                          return (
+                            <>
+                              {regularItemsCount > 0 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  <Package size={10} className="mr-1" />
+                                  {regularItemsCount} items
+                                </Badge>
+                              )}
+                              {boxesCount > 0 && (
+                                <Badge className="text-xs bg-orange-100 text-orange-800 border-orange-200">
+                                  {boxesCount} boxes
+                                </Badge>
+                              )}
+                              {recommendedBoxesCount > 0 && (
+                                <Badge className="text-xs bg-purple-100 text-purple-800 border-purple-200">
+                                  {recommendedBoxesCount} recommended
+                                </Badge>
+                              )}
+                              {regularItemsCount === 0 && boxesCount === 0 && recommendedBoxesCount === 0 && item.analysisResult.itemsCount > 0 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  <Package size={10} className="mr-1" />
+                                  {item.analysisResult.itemsCount} items
+                                </Badge>
+                              )}
+                            </>
+                          );
+                        })()}
                       </>
                     ) : (
                       <Badge variant="outline" className="text-xs">

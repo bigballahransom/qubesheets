@@ -965,22 +965,55 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                 </Badge>
               ) : video.analysisResult?.status === 'completed' ? (
                 <>
-                  <Badge variant="secondary" className="text-xs">
-                    <Package size={10} className="mr-1" />
-                    {(() => {
-                      const videoInventoryItems = inventoryItems.filter(item => {
-                        const videoId = item.sourceVideoId?._id || item.sourceVideoId;
-                        return videoId === video._id;
-                      });
-                      const totalCount = videoInventoryItems.reduce((total, item) => total + (item.quantity || 1), 0);
-                      return totalCount > 0 ? `${totalCount} items` : `${video.analysisResult.itemsCount || 0} items`;
-                    })()}
-                  </Badge>
-                  {video.analysisResult.totalBoxes && video.analysisResult.totalBoxes > 0 && (
-                    <Badge variant="outline" className="text-xs">
-                      {video.analysisResult.totalBoxes} boxes
-                    </Badge>
-                  )}
+                  {(() => {
+                    const videoInventoryItems = inventoryItems.filter(item => {
+                      const videoId = item.sourceVideoId?._id || item.sourceVideoId;
+                      return videoId === video._id;
+                    });
+                    
+                    // Separate items by type
+                    const regularItems = videoInventoryItems.filter(item => 
+                      item.itemType === 'regular_item' || 
+                      item.itemType === 'furniture' || 
+                      (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                    );
+                    const existingBoxes = videoInventoryItems.filter(item => 
+                      item.itemType === 'existing_box' || 
+                      item.itemType === 'packed_box'
+                    );
+                    const recommendedBoxes = videoInventoryItems.filter(item => item.itemType === 'boxes_needed');
+                    
+                    const regularItemsCount = regularItems.reduce((total, item) => total + (item.quantity || 1), 0);
+                    const boxesCount = existingBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
+                    const recommendedBoxesCount = recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
+                    
+                    return (
+                      <>
+                        {regularItemsCount > 0 && (
+                          <Badge variant="secondary" className="text-xs">
+                            <Package size={10} className="mr-1" />
+                            {regularItemsCount} items
+                          </Badge>
+                        )}
+                        {boxesCount > 0 && (
+                          <Badge className="text-xs bg-orange-100 text-orange-800 border-orange-200">
+                            {boxesCount} boxes
+                          </Badge>
+                        )}
+                        {recommendedBoxesCount > 0 && (
+                          <Badge className="text-xs bg-purple-100 text-purple-800 border-purple-200">
+                            {recommendedBoxesCount} recommended
+                          </Badge>
+                        )}
+                        {regularItemsCount === 0 && boxesCount === 0 && recommendedBoxesCount === 0 && video.analysisResult.itemsCount > 0 && (
+                          <Badge variant="secondary" className="text-xs">
+                            <Package size={10} className="mr-1" />
+                            {video.analysisResult.itemsCount} items
+                          </Badge>
+                        )}
+                      </>
+                    );
+                  })()}
                 </>
               ) : (
                 <Badge variant="outline" className="text-xs">
