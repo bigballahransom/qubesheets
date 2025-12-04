@@ -5,10 +5,16 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from './ui/tooltip';
 import EditableProjectName from './EditableProjectName';
 import AdminPhotoUploader from './AdminPhotoUploader';
 import ImageGallery from './ImageGallery';
@@ -1826,6 +1832,37 @@ useEffect(() => {
     }, 0);
   }, [spreadsheetRows]);
   
+  // Calculate boxes without recommended boxes
+  const totalBoxesWithoutRecommended = useMemo(() => {
+    return spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Only count existing boxes, not recommended boxes
+      const isExistingBox = row.itemType === 'existing_box' || 
+                           ((row.cells?.col2 || '').toLowerCase().includes('box') && 
+                            row.itemType !== 'boxes_needed');
+      
+      if (!isExistingBox) return total;
+      
+      const quantity = parseInt(row.cells?.col3) || 1;
+      const goingValue = row.cells?.col6 || 'going';
+      let goingQuantity = 0;
+      
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      return total + Math.max(0, Math.min(quantity, goingQuantity));
+    }, 0);
+  }, [spreadsheetRows]);
+  
   // Calculate total cubic feet from spreadsheet (source of truth)
   const totalCubicFeet = useMemo(() => {
     const timestamp = new Date().toISOString().slice(11, 23);
@@ -1886,6 +1923,45 @@ useEffect(() => {
     return finalResult;
   }, [spreadsheetRows]);
   
+  // Calculate cubic feet without recommended boxes
+  const totalCubicFeetWithoutRecommended = useMemo(() => {
+    const result = spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Skip recommended boxes
+      if (row.itemType === 'boxes_needed') return total;
+      
+      const displayCuft = parseFloat(row.cells?.col4) || 0;
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      
+      let goingCuft;
+      if (goingQuantity === quantity) {
+        goingCuft = displayCuft;
+      } else {
+        goingCuft = quantity > 0 ? (displayCuft * goingQuantity) / quantity : 0;
+      }
+      
+      return total + goingCuft;
+    }, 0);
+    
+    return result.toFixed(0);
+  }, [spreadsheetRows]);
+  
   // Calculate total weight from spreadsheet (source of truth)
   const totalWeight = useMemo(() => {
     const timestamp = new Date().toISOString().slice(11, 23);
@@ -1944,6 +2020,45 @@ useEffect(() => {
     console.log(`⚖️ [${timestamp}] WEIGHT CALCULATION COMPLETE: totalDisplayWeight: ${totalDisplayWeight.toFixed(2)}, finalGoingWeight: ${finalResult}`);
     
     return finalResult;
+  }, [spreadsheetRows]);
+  
+  // Calculate weight without recommended boxes
+  const totalWeightWithoutRecommended = useMemo(() => {
+    const result = spreadsheetRows.reduce((total, row) => {
+      if (row.isAnalyzing) return total;
+      
+      // Skip recommended boxes
+      if (row.itemType === 'boxes_needed') return total;
+      
+      const displayWeight = parseFloat(row.cells?.col5) || 0;
+      const goingValue = row.cells?.col6 || 'going';
+      const quantity = parseInt(row.cells?.col3) || 1;
+      
+      let goingQuantity = 0;
+      if (goingValue === 'not going') {
+        goingQuantity = 0;
+      } else if (goingValue === 'going') {
+        goingQuantity = quantity;
+      } else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      } else {
+        goingQuantity = quantity;
+      }
+      
+      goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
+      
+      let goingWeight;
+      if (goingQuantity === quantity) {
+        goingWeight = displayWeight;
+      } else {
+        goingWeight = quantity > 0 ? (displayWeight * goingQuantity) / quantity : 0;
+      }
+      
+      return total + goingWeight;
+    }, 0);
+    
+    return result.toFixed(0);
   }, [spreadsheetRows]);
   
   // Validation: Check for discrepancies between calculated stats and manual totals
@@ -2426,9 +2541,10 @@ const ProcessingNotification = () => {
 </header>
         
         {/* Main content container */}
+        <TooltipProvider>
         <div className="max-w-7xl mx-auto px-4 py-4">
           {/* Stats Cards in a clean grid layout */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
             {/* Box 1: Total Items */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
               <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center mr-3 flex-shrink-0">
@@ -2447,7 +2563,18 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Boxes</p>
-                <p className="text-2xl font-bold text-slate-800">{totalBoxes}</p>
+                <p className="text-2xl font-bold text-slate-800">{totalBoxesWithoutRecommended}</p>
+                <div className="flex items-center gap-1">
+                  <p className="text-xs text-slate-500">Total w/ rec: {totalBoxes}</p>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3 w-3 text-slate-400 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">Total including recommended boxes needed for packing</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
             </div>
             
@@ -2460,7 +2587,18 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Volume</p>
-                <p className="text-2xl font-bold text-slate-800">{totalCubicFeet} <span className="text-sm font-medium text-slate-500">cuft</span></p>
+                <p className="text-2xl font-bold text-slate-800">{totalCubicFeetWithoutRecommended} <span className="text-sm font-medium text-slate-500">cuft</span></p>
+                <div className="flex items-center gap-1">
+                  <p className="text-xs text-slate-500">Total w/ rec: {totalCubicFeet} cuft</p>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3 w-3 text-slate-400 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">Total volume including recommended boxes needed for packing</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
             </div>
             
@@ -2471,20 +2609,18 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Weight</p>
-                <p className="text-2xl font-bold text-slate-800">{totalWeight} <span className="text-sm font-medium text-slate-500">lbs</span></p>
-              </div>
-            </div>
-            
-            {/* Box 5: Inventory Status */}
-            <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
-              <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center mr-3 flex-shrink-0">
-                <Table className="h-5 w-5 text-emerald-600" />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Status</p>
-                <p className="text-lg font-bold text-slate-800">
-                  {inventoryItems.length === 0 ? 'Ready to Edit' : 'Ready to Pack'}
-                </p>
+                <p className="text-2xl font-bold text-slate-800">{totalWeightWithoutRecommended} <span className="text-sm font-medium text-slate-500">lbs</span></p>
+                <div className="flex items-center gap-1">
+                  <p className="text-xs text-slate-500">Total w/ rec: {totalWeight} lbs</p>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3 w-3 text-slate-400 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">Total weight including recommended boxes needed for packing</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               </div>
             </div>
           </div>
@@ -2623,6 +2759,7 @@ const ProcessingNotification = () => {
             </TabsContent>
           </Tabs>
         </div>
+        </TooltipProvider>
       </div>
       
       {/* Photo Uploader Modal */}
