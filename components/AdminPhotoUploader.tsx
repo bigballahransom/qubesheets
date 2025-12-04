@@ -9,7 +9,7 @@ import { uploadVideoFile } from '@/lib/videoUploadHelper';
 interface AdminPhotoUploaderProps {
   onUpload: (file: File) => Promise<void>;
   uploading: boolean;
-  onClose: () => void;
+  onClose?: () => void; // Made optional since we're not using it for auto-close
   projectId: string;
 }
 
@@ -573,7 +573,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
     
     setIsProcessingQueue(false);
     
-    // Show toast and close modal if uploads were successful AND no errors are showing
+    // Show toast if uploads were successful
     console.log(`🏁 Queue processing complete. Success count: ${successCount}, hasValidationErrors: ${hasValidationErrors}, error: ${error}`);
     if (successCount > 0) {
       const message = successCount === 1 
@@ -585,14 +585,10 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
       // Show toast notification
       toast.success(message);
       
-      // Only close the modal if there are no validation errors showing
-      if (!error && !hasValidationErrors) {
-        setTimeout(() => {
-          console.log('Closing modal after successful uploads');
-          onClose();
-        }, 500); // Small delay to ensure toast is visible
-      } else {
-        console.log('Modal staying open due to validation errors');
+      // Reset state for new uploads
+      setUploadedCount(0);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
     }
   };
