@@ -192,6 +192,35 @@ export default function IntegrationsPage() {
                 </div>
               )}
               
+              {/* Supermove Integration */}
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <img src="/supermove.png" alt="Supermove" className="h-16 w-auto mb-4" />
+                <h2 className="text-lg font-medium mb-2">Supermove Integration</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Sync inventory surveys directly to Supermove projects
+                </p>
+                
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Send inventory as surveys</p>
+                      <p className="text-xs text-gray-600">Transform QubeSheets inventory into Supermove survey format</p>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => window.location.href = '/settings/integrations/supermove'}
+                    >
+                      Configure
+                    </Button>
+                  </div>
+                  
+                  <div className="text-xs text-gray-500 pt-2 border-t">
+                    <strong>Features:</strong> One-time sync per project, Room-based grouping, Customer email linking
+                  </div>
+                </div>
+              </div>
+
               {/* SmartMoving Integration */}
               <div className="bg-white rounded-lg shadow-sm border p-6">
                 <img src="/smartmoving.png" alt="SmartMoving" className="h-16 w-auto mb-4" />

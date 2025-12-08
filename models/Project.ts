@@ -4,6 +4,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface IProject extends Document {
   name: string;
   customerName: string;
+  customerEmail?: string;
   phone?: string;
   userId: string;
   organizationId?: string;
@@ -28,6 +29,12 @@ export interface IProject extends Document {
     smartMovingCustomerId?: string;
     smartMovingQuoteNumber?: number;
     source?: string;
+    supermoveSync?: {
+      synced: boolean;
+      syncedAt: Date;
+      itemCount: number;
+      syncedItemsHash: string;
+    };
     [key: string]: any;
   };
   createdAt: Date;
@@ -38,6 +45,7 @@ const ProjectSchema: Schema = new Schema(
   {
     name: { type: String, required: true },
     customerName: { type: String, required: true },
+    customerEmail: { type: String, required: false },
     phone: { type: String, required: false },
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },

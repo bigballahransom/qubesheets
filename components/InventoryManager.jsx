@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -25,6 +25,7 @@ import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
 import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
+import SupermoveSyncModal from './modals/SupermoveSyncModal';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import simpleRealTime from '@/lib/simple-realtime';
@@ -115,6 +116,10 @@ const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
 const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 const [spreadsheetUpdateKey, setSpreadsheetUpdateKey] = useState(0);
+const [supermoveEnabled, setSupermoveEnabled] = useState(false);
+const [supermoveSyncStatus, setSupermoveSyncStatus] = useState(null);
+const [supermoveLoading, setSupermoveLoading] = useState(false);
+const [supermoveSyncModalOpen, setSupermoveSyncModalOpen] = useState(false);
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const sseRetryTimeoutRef = useRef(null);
@@ -1734,6 +1739,122 @@ useEffect(() => {
       console.error('Error persisting inventory update:', error);
     }
   }, [convertItemsToRows, currentProject]);
+
+  // Supermove Integration Functions
+  const checkSupermoveIntegration = useCallback(async () => {
+    if (!currentProject?.organizationId) return;
+
+    try {
+      const response = await fetch(`/api/organizations/${currentProject.organizationId}/supermove`);
+      if (response.ok) {
+        const data = await response.json();
+        setSupermoveEnabled(data.enabled && data.configured);
+      }
+    } catch (error) {
+      console.error('Error checking Supermove integration:', error);
+      setSupermoveEnabled(false);
+    }
+  }, [currentProject?.organizationId]);
+
+  const fetchSupermoveSyncStatus = useCallback(async () => {
+    if (!currentProject?._id || !supermoveEnabled) return;
+
+    try {
+      const response = await fetch(`/api/supermove/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setSupermoveSyncStatus(data);
+      }
+    } catch (error) {
+      console.error('Error fetching Supermove sync status:', error);
+    }
+  }, [currentProject?._id, supermoveEnabled]);
+
+  const handleSupermoveSync = useCallback(async () => {
+    if (!currentProject?._id) {
+      toast.error('No project selected');
+      return;
+    }
+
+    // Fetch fresh sync status before checking
+    try {
+      const response = await fetch(`/api/supermove/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const freshSyncStatus = await response.json();
+        setSupermoveSyncStatus(freshSyncStatus);
+        
+        if (freshSyncStatus.isSynced) {
+          toast.info('Project already synced to Supermove. Supermove only allows one survey per project.');
+          return;
+        }
+
+        if (!freshSyncStatus.hasCustomerEmail) {
+          toast.error('Customer email is required for Supermove sync. Please add customer email to project.');
+          return;
+        }
+
+        if (freshSyncStatus.inventoryStats.goingItems === 0) {
+          toast.error('No items marked as going to sync to Supermove');
+          return;
+        }
+
+        // Open the sync options modal
+        setSupermoveSyncModalOpen(true);
+      }
+    } catch (error) {
+      console.error('Error fetching sync status:', error);
+      toast.error('Failed to check sync status');
+    }
+  }, [currentProject]);
+
+  const handleSupermoveSyncWithOptions = useCallback(async (syncOptions) => {
+    if (!currentProject?._id) return;
+
+    setSupermoveLoading(true);
+    setSupermoveSyncModalOpen(false);
+
+    try {
+      const response = await fetch('/api/supermove/sync-inventory', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId: currentProject._id,
+          syncOptions: syncOptions
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        toast.success(`Successfully synced ${data.syncDetails.itemsSynced} items to Supermove!`);
+        // Refresh sync status
+        await fetchSupermoveSyncStatus();
+      } else {
+        throw new Error(data.error || 'Sync failed');
+      }
+    } catch (error) {
+      console.error('Supermove sync error:', error);
+      toast.error(error.message || 'Failed to sync to Supermove');
+    } finally {
+      setSupermoveLoading(false);
+    }
+  }, [currentProject, fetchSupermoveSyncStatus]);
+
+  // Check Supermove integration when project loads
+  useEffect(() => {
+    if (currentProject) {
+      checkSupermoveIntegration();
+    }
+  }, [currentProject, checkSupermoveIntegration]);
+
+  // Fetch sync status when Supermove is enabled
+  useEffect(() => {
+    if (supermoveEnabled) {
+      fetchSupermoveSyncStatus();
+    }
+  }, [supermoveEnabled, fetchSupermoveSyncStatus]);
   
   // Calculate stats based on what's displayed in the spreadsheet (source of truth)
   const totalItems = useMemo(() => {
@@ -2520,6 +2641,32 @@ const ProcessingNotification = () => {
               <Clock size={16} className="mr-1" />
               Activity Log
             </MenubarItem>
+            {supermoveEnabled && (
+              <>
+                <MenubarSeparator />
+                <MenubarItem 
+                  onClick={handleSupermoveSync}
+                  disabled={supermoveLoading || supermoveSyncStatus?.isSynced}
+                >
+                  {supermoveLoading ? (
+                    <>
+                      <Loader2 size={16} className="mr-1 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : supermoveSyncStatus?.isSynced ? (
+                    <>
+                      <ExternalLink size={16} className="mr-1" />
+                      Already Synced
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink size={16} className="mr-1" />
+                      Sync with Supermove
+                    </>
+                  )}
+                </MenubarItem>
+              </>
+            )}
             <MenubarSeparator />
             <MenubarItem onClick={() => handleDownloadProject()}>
               <Download size={16} className="mr-1" />
@@ -2807,6 +2954,15 @@ const ProcessingNotification = () => {
     customerPhone={currentProject.phone}
   />
 )}
+
+{/* Supermove Sync Modal */}
+<SupermoveSyncModal
+  open={supermoveSyncModalOpen}
+  onOpenChange={setSupermoveSyncModalOpen}
+  onSync={handleSupermoveSyncWithOptions}
+  loading={supermoveLoading}
+  inventoryStats={supermoveSyncStatus?.inventoryStats || {}}
+/>
 
 {/* Activity Log Dialog */}
 {currentProject && (

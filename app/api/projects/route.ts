@@ -57,6 +57,7 @@ export async function POST(request: NextRequest) {
     const projectData: any = {
       name: data.name,
       customerName: data.customerName,
+      customerEmail: data.customerEmail,
       phone: data.phone,
       description: data.description,
       userId,

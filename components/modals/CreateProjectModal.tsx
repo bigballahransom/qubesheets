@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -65,13 +65,57 @@ interface CreateProjectModalProps {
 export default function CreateProjectModal({ children, onProjectCreated }: CreateProjectModalProps) {
   const [open, setOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
+  const [customerEmail, setCustomerEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [supermoveEnabled, setSupermoveEnabled] = useState(false);
+  const [checkingSupermove, setCheckingSupermove] = useState(false);
   const router = useRouter();
+
+  // Check if Supermove is enabled for this organization when modal opens
+  useEffect(() => {
+    if (open) {
+      checkSupermoveIntegration();
+    }
+  }, [open]);
+
+  const checkSupermoveIntegration = async () => {
+    setCheckingSupermove(true);
+    
+    try {
+      // Get the user's organization first
+      const orgResponse = await fetch('/api/user/organization');
+      
+      if (orgResponse.ok) {
+        const orgData = await orgResponse.json();
+        
+        if (orgData.organizationId) {
+          // Check if Supermove is enabled for this organization
+          const supermoveResponse = await fetch(`/api/organizations/${orgData.organizationId}/supermove`);
+          
+          if (supermoveResponse.ok) {
+            const supermoveData = await supermoveResponse.json();
+            const isEnabled = supermoveData.enabled && supermoveData.configured;
+            setSupermoveEnabled(isEnabled);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking Supermove integration:', error);
+      // Fail silently - email field will just not show
+    }
+    setCheckingSupermove(false);
+  };
 
   const createProject = async () => {
     if (!customerName.trim()) return;
+    
+    // If Supermove is enabled and customer email is required but not provided
+    if (supermoveEnabled && !customerEmail.trim()) {
+      toast.error('Customer email is required for Supermove integration');
+      return;
+    }
     
     setIsCreating(true);
     
@@ -84,6 +128,7 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
         body: JSON.stringify({
           name: customerName.trim(),
           customerName: customerName.trim(),
+          customerEmail: supermoveEnabled ? customerEmail.trim() : undefined,
           phone: phone.trim() ? formatPhoneForTwilio(phone.trim()) : undefined,
         }),
       });
@@ -100,6 +145,7 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
       
       // Clear the form
       setCustomerName('');
+      setCustomerEmail('');
       setPhone('');
       setPhoneError('');
       setOpen(false);
@@ -125,6 +171,7 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
     setOpen(newOpen);
     if (!newOpen) {
       setCustomerName('');
+      setCustomerEmail('');
       setPhone('');
       setPhoneError('');
     }
@@ -166,6 +213,30 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
               autoFocus
             />
           </div>
+
+          {/* Customer Email - Only shown when Supermove is enabled */}
+          {supermoveEnabled && (
+            <div className="space-y-2">
+              <Label htmlFor="customerEmail" className="flex items-center gap-2">
+                Customer Email <span className="text-red-500">*</span>
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                  Supermove
+                </span>
+              </Label>
+              <Input
+                id="customerEmail"
+                type="email"
+                placeholder="customer@example.com"
+                value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)}
+                disabled={isCreating}
+                required={supermoveEnabled}
+              />
+              <p className="text-xs text-gray-600">
+                Required for Supermove integration to link survey data
+              </p>
+            </div>
+          )}
           
           <div className="space-y-2">
             <Label htmlFor="phone">Phone Number (Optional)</Label>
