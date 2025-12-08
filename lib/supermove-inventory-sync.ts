@@ -108,7 +108,7 @@ export async function syncInventoryToSupermove(
       }
       
       // Apply sync options filter
-      const itemType = item.itemType;
+      const itemType = item.itemType || 'regular_item';
       if (syncOptions === 'items_only') {
         // Only include regular items and furniture, exclude all box types
         if (['packed_box', 'existing_box', 'boxes_needed'].includes(itemType)) {
