@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     
     // Filter to only items that are going
     const goingItems = inventoryItems.filter(item => 
-      item.going !== false && (item.goingQuantity || 0) > 0
+      item.going !== 'not going'
     );
     
     if (goingItems.length === 0) {
