@@ -45,10 +45,10 @@ export async function GET(request, { params }) {
     console.log(`✅ Found ${items.length} inventory items`);
     
     // Debug: Log sourceImageId/sourceVideoId info for debugging linking issues
-    console.log('🔍 Inventory items source tracking debug:');
-    items.forEach((item, index) => {
-      console.log(`  Item ${index + 1}: "${item.name}" - sourceImageId: ${item.sourceImageId ? item.sourceImageId._id || item.sourceImageId : 'null'}, sourceVideoId: ${item.sourceVideoId ? item.sourceVideoId._id || item.sourceVideoId : 'null'}`);
-    });
+    // console.log('🔍 Inventory items source tracking debug:');
+    // items.forEach((item, index) => {
+    //   console.log(`  Item ${index + 1}: "${item.name}" - sourceImageId: ${item.sourceImageId ? item.sourceImageId._id || item.sourceImageId : 'null'}, sourceVideoId: ${item.sourceVideoId ? item.sourceVideoId._id || item.sourceVideoId : 'null'}`);
+    // });
     
     return NextResponse.json(items);
   } catch (error) {

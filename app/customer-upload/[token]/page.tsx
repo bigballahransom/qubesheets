@@ -506,6 +506,9 @@ export default function CustomerUploadPage() {
       // Don't show success toast yet - let Railway transfer overlay handle it
       console.log('📄 Photo uploaded to database, waiting for Railway transfer...');
       
+      // Return the result object for CustomerPhotoUploader to access
+      return result;
+      
     } catch (err) {
       console.error('Upload error:', err);
       

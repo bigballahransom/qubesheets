@@ -41,9 +41,14 @@ export default async function handler(req, res) {
     try {
       if (!isConnected) return;
 
-      // EMERGENCY: Auto-close connection after 5 minutes
-      if (Date.now() - connectionStartTime > 5 * 60 * 1000) {
-        console.log('📡 SSE auto-closing after 5 minutes to prevent leaks');
+      // Auto-close connection after 4.5 minutes to prevent Vercel timeout (5 min limit)
+      if (Date.now() - connectionStartTime > 4.5 * 60 * 1000) {
+        console.log('📡 SSE auto-closing before Vercel timeout');
+        res.write(`data: ${JSON.stringify({
+          type: 'reconnect_required',
+          message: 'Connection timeout approaching, please reconnect',
+          timestamp: new Date().toISOString()
+        })}\n\n`);
         res.end();
         return;
       }
@@ -184,8 +189,8 @@ export default async function handler(req, res) {
     }
   };
 
-  // EMERGENCY: Increased to 15s to prevent connection leaks during bulk uploads (balanced performance vs connections)
-  intervalId = setInterval(checkVideoUpdates, 15000);
+  // Start with 5s interval for active processing, will increase to 60s when idle
+  intervalId = setInterval(checkVideoUpdates, hasProcessingVideos ? 5000 : 60000);
 
   // Send initial check
   checkVideoUpdates();
@@ -257,4 +262,5 @@ export const config = {
     bodyParser: false, // Disable body parsing for SSE
     externalResolver: true, // Let Next.js know this is a long-running connection
   },
+  maxDuration: 300, // Set max duration to 5 minutes
 }

@@ -1,5 +1,6 @@
 // app/api/projects/[projectId]/inventory/[itemId]/route.js
 import { NextResponse } from 'next/server';
+import mongoose from 'mongoose';
 import connectMongoDB from '@/lib/mongodb';
 import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
@@ -88,8 +89,26 @@ export async function PATCH(
     }
     
     // Handle migration and validation for goingQuantity
+    let needCurrentQuantity = false;
     if (data.goingQuantity !== undefined || data.going !== undefined) {
-      // Get the current item to check its quantity
+      // Check if we need to fetch the current item
+      if (data.quantity === undefined && (data.goingQuantity !== undefined || data.going === 'going')) {
+        needCurrentQuantity = true;
+      }
+    }
+    
+    // Prepare the update operation
+    const updateOps = { $set: data };
+    
+    // Use a single findOneAndUpdate with validation
+    const updateOptions = {
+      new: true,
+      runValidators: true
+    };
+    
+    // If we need current quantity, use a more complex update
+    if (needCurrentQuantity) {
+      // Get current item in a single operation with update
       const currentItem = await InventoryItem.findOne(
         getProjectFilter(authContext, projectId, { _id: itemId })
       );
@@ -98,10 +117,9 @@ export async function PATCH(
         return NextResponse.json({ error: 'Item not found' }, { status: 404 });
       }
       
-      // Use new quantity if provided, otherwise use current quantity
       const quantity = data.quantity !== undefined ? data.quantity : (currentItem.quantity || 1);
       
-      // If goingQuantity is being set, validate it
+      // Validate goingQuantity
       if (data.goingQuantity !== undefined) {
         if (data.goingQuantity < 0 || data.goingQuantity > quantity) {
           return NextResponse.json(
@@ -116,12 +134,9 @@ export async function PATCH(
         } else if (data.goingQuantity === quantity) {
           data.going = 'going';
         } else {
-          data.going = 'partial'; // New status for partial quantities
+          data.going = 'partial';
         }
-      }
-      
-      // If only going is being set (for backward compatibility), calculate goingQuantity
-      else if (data.going !== undefined && data.goingQuantity === undefined) {
+      } else if (data.going !== undefined && data.goingQuantity === undefined) {
         if (data.going === 'going') {
           data.goingQuantity = quantity;
         } else if (data.going === 'not going') {
@@ -130,21 +145,39 @@ export async function PATCH(
       }
     }
     
-    // Find and update the item
-    const item = await InventoryItem.findOneAndUpdate(
-      getProjectFilter(authContext, projectId, { _id: itemId }),
-      { $set: data },
-      { new: true }
-    );
+    // Perform the update with project timestamp update in a single transaction
+    const session = await mongoose.startSession();
+    let item;
     
-    if (!item) {
-      return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+    try {
+      await session.withTransaction(async () => {
+        // Update inventory item
+        item = await InventoryItem.findOneAndUpdate(
+          getProjectFilter(authContext, projectId, { _id: itemId }),
+          updateOps,
+          { ...updateOptions, session }
+        );
+        
+        if (!item) {
+          throw new Error('Item not found');
+        }
+        
+        // Update project timestamp
+        await Project.findByIdAndUpdate(
+          projectId,
+          { updatedAt: new Date() },
+          { session }
+        );
+      });
+      
+      await session.endSession();
+    } catch (error) {
+      await session.endSession();
+      if (error.message === 'Item not found') {
+        return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+      }
+      throw error;
     }
-    
-    // Update project's updatedAt timestamp
-    await Project.findByIdAndUpdate(projectId, { 
-      updatedAt: new Date() 
-    });
     
     return NextResponse.json(item);
   } catch (error) {

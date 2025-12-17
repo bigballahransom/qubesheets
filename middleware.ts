@@ -16,7 +16,7 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/livekit/token(.*)',
   '/api/projects/(.*)/public-info',
   '/api/external/(.*)',  // External API endpoints with API key auth
-  '/api/processing-complete',  // Webhook endpoint for Railway services
+  '/api/processing-complete(.*)',  // Webhook endpoint and SSE for Railway services
   '/api/generate-video-upload-url',  // Video upload pre-signed URL generation
   '/api/confirm-video-upload'  // Video upload confirmation
 ]);

@@ -80,8 +80,26 @@ async function uploadLargeVideo(
   console.log('📡 API response status:', urlResponse.status);
 
   if (!urlResponse.ok) {
-    const errorData = await urlResponse.text();
-    throw new Error(`Failed to get upload URL: ${errorData}`);
+    const errorText = await urlResponse.text();
+    let errorData;
+    try {
+      errorData = JSON.parse(errorText);
+    } catch {
+      errorData = { error: errorText };
+    }
+    
+    // Provide user-friendly error messages
+    if (errorData.error) {
+      if (errorData.error.includes('Video file too large')) {
+        throw new Error(errorData.error);
+      } else if (errorData.error.includes('Invalid file type')) {
+        throw new Error('This video format is not supported. Please convert your video to MP4 format and try again.');
+      } else if (errorData.error.includes('Invalid or expired')) {
+        throw new Error('Your upload link has expired. Please request a new link from your moving company.');
+      }
+    }
+    
+    throw new Error(`Failed to prepare video upload: ${errorData.error || errorText}`);
   }
 
   const { uploadUrl, s3Key, bucket, metadata } = await urlResponse.json();

@@ -652,12 +652,14 @@ const AgentView = React.memo(({
   // SSE for real-time inventory updates
   const sseRef = useRef(null);
   const sseRetryTimeoutRef = useRef(null);
+  const prevProcessingCount = useRef(0);
   
   // Real inventory data (replaces detectedItems)
   const [inventoryItems, setInventoryItems] = useState([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
   const [capturedImages, setCapturedImages] = useState([]);
   const [imagesLoading, setImagesLoading] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState([]);
   
   const remoteParticipants = useRemoteParticipants();
   const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useAdvancedCameraSwitching();
@@ -833,6 +835,45 @@ const AgentView = React.memo(({
     }
   }, [projectId]);
 
+  // Poll database for processing status and refresh image data when processing completes
+  useEffect(() => {
+    if (!projectId) return;
+
+    const checkProcessingStatus = async () => {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/processing-status`);
+        if (response.ok) {
+          const data = await response.json();
+          const currentCount = data.items.length;
+          
+          // Detect when processing completes (count goes to 0) or new processing starts
+          if (prevProcessingCount.current > 0 && currentCount === 0) {
+            console.log('📸 Video call processing completed, refreshing image data to show analysis results');
+            fetchCapturedImages(true); // Force refresh to get updated analysis results
+            fetchInventoryItems();     // Refresh inventory to show new detected items
+          } else if (currentCount > prevProcessingCount.current) {
+            console.log('📸 Video call new processing started, refreshing image data');
+            fetchCapturedImages(true); // Refresh to ensure we have latest data
+            fetchInventoryItems();     // Refresh inventory when new processing starts
+          }
+          
+          prevProcessingCount.current = currentCount;
+          setProcessingStatus(data.items || []);
+        }
+      } catch (error) {
+        console.error('Error fetching processing status for video call:', error);
+      }
+    };
+
+    // Initial check
+    checkProcessingStatus();
+    
+    // Poll every 3 seconds
+    const interval = setInterval(checkProcessingStatus, 3000);
+    
+    return () => clearInterval(interval);
+  }, [projectId]);
+
   // Refresh images when SSE updates occur (not on timer to avoid glitching)
   // Removed periodic refresh to prevent UI glitching
 
@@ -843,7 +884,7 @@ const AgentView = React.memo(({
     console.log('🔌 Setting up Video Call SSE connection for project:', projectId);
     
     const setupSSE = () => {
-      const eventSource = new EventSource(`/api/processing-complete?projectId=${projectId}`);
+      const eventSource = new EventSource(`/api/processing-complete-simple?projectId=${projectId}`);
       sseRef.current = eventSource;
 
       eventSource.onopen = () => {
@@ -1147,6 +1188,7 @@ const AgentView = React.memo(({
                 projectId={projectId}
                 fetchCapturedImages={fetchCapturedImages}
                 onInventoryUpdate={handleInventoryUpdate}
+                processingStatus={processingStatus}
                 onRemoveItem={async (id) => {
                   // Remove from database via API
                   try {
@@ -1288,6 +1330,7 @@ const AgentView = React.memo(({
               projectId={projectId}
               fetchCapturedImages={fetchCapturedImages}
               onInventoryUpdate={handleInventoryUpdate}
+              processingStatus={processingStatus}
               onRemoveItem={async (id) => {
                 // Remove from database via API
                 try {
@@ -1335,7 +1378,7 @@ const AgentView = React.memo(({
 });
 
 // Enhanced InventorySidebar component - Updated for real database items
-const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate }) => {
+const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate, processingStatus }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isSmallScreen, setIsSmallScreen] = useState(false);
@@ -1527,27 +1570,33 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
                   />
                   {/* Status Overlay */}
                   <div className="absolute top-2 right-2">
-                    {image.analysisResult?.status === 'processing' ? (
-                      <div className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                        <Loader2 size={12} className="animate-spin" />
-                        Processing
-                      </div>
-                    ) : image.analysisResult?.status === 'completed' ? (
-                      <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                        <CheckCircle size={12} />
-                        Analyzed
-                      </div>
-                    ) : image.analysisResult?.status === 'failed' ? (
-                      <div className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                        <AlertCircle size={12} />
-                        Failed
-                      </div>
-                    ) : (
-                      <div className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                        <Loader2 size={12} className="animate-spin" />
-                        Analyzing
-                      </div>
-                    )}
+                    {(() => {
+                      // Check if image is in processing status (database-driven)
+                      const isProcessing = processingStatus.some(p => p.id === image._id);
+                      
+                      if (isProcessing) {
+                        return (
+                          <div className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <Loader2 size={12} className="animate-spin" />
+                            Processing
+                          </div>
+                        );
+                      } else if (image.analysisResult?.status === 'failed') {
+                        return (
+                          <div className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <AlertCircle size={12} />
+                            Failed
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
+                            <CheckCircle size={12} />
+                            Analyzed
+                          </div>
+                        );
+                      }
+                    })()}
                   </div>
                 </div>
 

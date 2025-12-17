@@ -663,6 +663,7 @@ export async function POST(
       return NextResponse.json({
         success: true,
         imageId: imageDoc._id.toString(),
+        projectId: projectId?.toString(),
         s3Result: {
           key: s3Result.key,
           bucket: s3Result.bucket,

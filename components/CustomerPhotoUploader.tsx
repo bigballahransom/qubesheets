@@ -36,16 +36,36 @@ async function checkVideoDuration(file: File): Promise<number> {
     const video = document.createElement('video');
     const url = URL.createObjectURL(file);
     
+    // Add timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      video.src = '';
+      reject(new Error('Video metadata loading timed out. The file may be too large or corrupted.'));
+    }, 15000); // 15 second timeout
+    
     video.onloadedmetadata = () => {
+      clearTimeout(timeout);
       URL.revokeObjectURL(url);
-      resolve(video.duration);
+      const duration = video.duration;
+      
+      // Check for invalid duration values
+      if (isNaN(duration) || duration === Infinity || duration <= 0) {
+        reject(new Error('Invalid video duration detected. The video file may be corrupted.'));
+        return;
+      }
+      
+      resolve(duration);
     };
     
-    video.onerror = () => {
+    video.onerror = (event) => {
+      clearTimeout(timeout);
       URL.revokeObjectURL(url);
-      reject(new Error('Failed to load video metadata'));
+      console.error('Video error event:', event);
+      reject(new Error(`Failed to load video: ${file.name}. The format may not be supported by your browser.`));
     };
     
+    // Set video properties to help with loading
+    video.preload = 'metadata';
     video.src = url;
   });
 }
@@ -377,7 +397,7 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
           console.log(`🎬 Video duration check: ${file.name} = ${duration.toFixed(2)} seconds`);
           
           if (duration > 60) { // 60 seconds = 1 minute
-            setError(`This video is too long. Please select a video shorter than 1 minute for optimal processing. Pro tip: Take 1 short video for each room!`);
+            setError(`This video is too long (${Math.floor(duration)} seconds). Please select a video shorter than 1 minute. Pro tip: Take 1 short video for each room!`);
             throw new Error('Video duration exceeds limit');
           }
         } catch (durationError) {
@@ -385,8 +405,10 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
           if (durationError instanceof Error && durationError.message === 'Video duration exceeds limit') {
             throw durationError;
           }
-          // Otherwise, it's a metadata reading error - continue with upload
-          console.warn('⚠️ Could not check video duration:', durationError);
+          // Otherwise, it's a metadata reading error - show specific error
+          console.error('❌ Video metadata error:', durationError);
+          setError(`Unable to process this video file. The video may be corrupted or in an unsupported format. Please try a different video or convert it to MP4 format.`);
+          throw new Error('Video metadata read failed');
         }
       }
       
@@ -471,36 +493,29 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
               onFileUploaded(finalFile.name);
             }
             
-            // IMMEDIATE: Add to simple real-time system for instant processing badge
-            if (result.videoId && result.projectId) {
-              // Dynamically import to avoid SSR issues
-              import('@/lib/simple-realtime').then(({ default: simpleRealTime }) => {
-                simpleRealTime.addProcessing(result.projectId, {
-                  id: result.videoId,
-                  name: finalFile.name,
-                  type: 'video',
-                  status: 'AI video analysis in progress...',
-                  source: 'customer_upload'
-                });
-                console.log('📊 Added customer video to processing badge:', finalFile.name);
-              }).catch(console.error);
+            // Processing status is now handled automatically by the database
+            // The video upload creates a record with processingStatus='queued' 
+            console.log('✅ Video uploaded - processing status managed by database:', {
+              videoId: result.videoId,
+              projectId: result.projectId,
+              fileName: finalFile.name
+            });
               
-              // Legacy event for backward compatibility
-              const processingEvent = new CustomEvent('customerUploadProcessing', {
-                detail: {
-                  projectId: result.projectId,
-                  uploadId: result.videoId,
-                  fileName: finalFile.name,
-                  type: 'video',
-                  status: 'AI video analysis in progress...',
-                  source: 'customer_upload',
-                  sqsMessageId: result.sqsMessageId
-                }
-              });
-              
-              window.dispatchEvent(processingEvent);
-              console.log('📡 Customer video upload processing event dispatched');
-            }
+            // Legacy event for backward compatibility
+            const processingEvent = new CustomEvent('customerUploadProcessing', {
+              detail: {
+                projectId: result.projectId,
+                uploadId: result.videoId,
+                fileName: finalFile.name,
+                type: 'video',
+                status: 'AI video analysis in progress...',
+                source: 'customer_upload',
+                sqsMessageId: result.sqsMessageId
+              }
+            });
+            
+            window.dispatchEvent(processingEvent);
+            console.log('📡 Customer video upload processing event dispatched');
             
             if (fileInputRef.current) {
               fileInputRef.current.value = '';
@@ -530,6 +545,17 @@ export default function CustomerPhotoUploader({ onUpload, uploading, customerTok
             await onUpload(finalFile);
             uploadSuccess = true;
             setUploadedCount(prev => prev + 1);
+            
+            // Processing status is now handled automatically by the database
+            // The image upload creates a record with processingStatus='queued' 
+            if (!isVideo) {
+              console.log('✅ Image uploaded - processing status managed by database:', {
+                fileName: finalFile.name
+              });
+              
+              // Processing status is now managed by database - no need for manual events
+              console.log('📡 Customer image upload processing event dispatched');
+            }
             
             if (fileInputRef.current) {
               fileInputRef.current.value = '';
