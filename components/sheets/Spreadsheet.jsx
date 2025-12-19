@@ -106,6 +106,7 @@ export default function Spreadsheet({
   const [activeCell, setActiveCell] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('By Media');
+  const [itemTypeFilter, setItemTypeFilter] = useState('All Items');
   const [columnCount, setColumnCount] = useState(`${columns.length}/6 columns`);
   const [rowCount, setRowCount] = useState(`${rows.length}/${rows.length} rows`);
   const [zoom, setZoom] = useState(100);
@@ -832,12 +833,37 @@ useEffect(() => {
     document.addEventListener('mouseup', handleMouseUp);
   }, [isResizing]);
   
-  // Filter rows based on search term
+  // Filter rows based on search term and item type
   let filteredRows = rows.filter(row => {
-    if (!searchTerm) return true;
-    return Object.values(row.cells).some(
-      cellValue => cellValue && cellValue.toString().toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    // Search term filter
+    if (searchTerm) {
+      const searchMatch = Object.values(row.cells).some(
+        cellValue => cellValue && cellValue.toString().toLowerCase().includes(searchTerm.toLowerCase())
+      );
+      if (!searchMatch) return false;
+    }
+
+    // Item type filter
+    if (itemTypeFilter !== 'All Items') {
+      if (itemTypeFilter === 'Items') {
+        // Show regular items and furniture (non-box items)
+        if (row.itemType === 'existing_box' || row.itemType === 'packed_box' || row.itemType === 'boxes_needed') {
+          return false;
+        }
+      } else if (itemTypeFilter === 'Boxes') {
+        // Show existing/packed boxes
+        if (row.itemType !== 'existing_box' && row.itemType !== 'packed_box') {
+          return false;
+        }
+      } else if (itemTypeFilter === 'Recommended Boxes') {
+        // Show AI-recommended boxes
+        if (row.itemType !== 'boxes_needed') {
+          return false;
+        }
+      }
+    }
+
+    return true;
   });
 
   // Sort rows based on view mode
@@ -1585,6 +1611,46 @@ useEffect(() => {
               </div>
             )}
           </div>
+
+          {/* Item Type Filter */}
+          <div className="relative dropdown-container">
+            <button 
+              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100"
+              onClick={() => setShowDropdown(showDropdown === 'itemType' ? null : 'itemType')}
+            >
+              <Package size={16} />
+              <span>{itemTypeFilter}</span>
+              <ChevronDown size={14} />
+            </button>
+            {showDropdown === 'itemType' && (
+              <div className="absolute top-full left-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-40 w-48">
+                <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
+                  setItemTypeFilter('All Items');
+                  setShowDropdown(null);
+                }}>
+                  📦 All Items
+                </div>
+                <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
+                  setItemTypeFilter('Items');
+                  setShowDropdown(null);
+                }}>
+                  🏠 Items
+                </div>
+                <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
+                  setItemTypeFilter('Boxes');
+                  setShowDropdown(null);
+                }}>
+                  📦 Boxes
+                </div>
+                <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
+                  setItemTypeFilter('Recommended Boxes');
+                  setShowDropdown(null);
+                }}>
+                  💡 Recommended Boxes
+                </div>
+              </div>
+            )}
+          </div>
           
           {/* <div className="relative dropdown-container">
             <button 
@@ -1605,6 +1671,7 @@ useEffect(() => {
               {/* <ChevronDown size={14} /> */}
             </button>
           </div>
+
 
           {/* Not going items count */}
           {/* {notGoingCount > 0 && (
@@ -1647,6 +1714,87 @@ useEffect(() => {
           />
         </div>
       </div>
+
+      {/* Bulk Selection Controls - Always visible at top */}
+      {selectedRows.length > 0 && (
+        <div className="bg-blue-50 border-b border-blue-200 p-3 z-30">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-blue-900">
+              {selectedRows.length} row{selectedRows.length > 1 ? 's' : ''} selected
+              <span className="text-xs text-blue-600 ml-1">
+                (IDs: {selectedRows.slice(0, 3).join(', ')}{selectedRows.length > 3 ? '...' : ''})
+              </span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button 
+                className="p-1 px-3 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-sm cursor-pointer transition-colors"
+                onClick={async () => {
+                  try {
+                    // Find all rows being deleted
+                    const rowsToDelete = rows.filter(row => selectedRows.includes(row.id));
+                    
+                    console.log(`🗑️ Bulk deleting ${rowsToDelete.length} rows:`, rowsToDelete.map(r => ({ 
+                      id: r.id, 
+                      inventoryItemId: r.inventoryItemId,
+                      item: r.cells?.col2 
+                    })));
+                    
+                    // Call onDeleteInventoryItem for each row that has an inventoryItemId
+                    const inventoryDeletions = rowsToDelete
+                      .filter(row => row.inventoryItemId)
+                      .map(row => row.inventoryItemId);
+                    
+                    console.log(`📝 ${inventoryDeletions.length} rows have inventory items to delete`);
+                    console.log(`📝 ${rowsToDelete.length - inventoryDeletions.length} rows are manual entries (no inventory items)`);
+                    
+                    // Delete inventory items asynchronously
+                    if (inventoryDeletions.length > 0) {
+                      console.log('🔥 About to call onDeleteInventoryItem for:', inventoryDeletions);
+                      inventoryDeletions.forEach((inventoryItemId, index) => {
+                        console.log(`🗑️ Calling onDeleteInventoryItem for item ${index + 1}/${inventoryDeletions.length}:`, inventoryItemId);
+                        onDeleteInventoryItem(inventoryItemId);
+                      });
+                    } else {
+                      console.log('⚠️ No inventory items to delete - all rows are manual entries');
+                    }
+                    
+                    // Remove the rows from the UI immediately for better UX
+                    const newRows = rows.filter(row => !selectedRows.includes(row.id));
+                    setRows(newRows);
+                    setSelectedRows([]);
+                    setRowCount(`${newRows.length}/${newRows.length} rows`);
+                    setSaveStatus('saving');
+                    
+                    // Call onRowsChange to save the updated data
+                    onRowsChange(newRows);
+                    
+                    console.log(`✅ Successfully removed ${rowsToDelete.length} rows from spreadsheet`);
+                  } catch (error) {
+                    console.error('❌ Error during bulk deletion:', error);
+                    // Even if there's an error with inventory deletion, we should still remove from UI
+                    const newRows = rows.filter(row => !selectedRows.includes(row.id));
+                    setRows(newRows);
+                    setSelectedRows([]);
+                    setRowCount(`${newRows.length}/${newRows.length} rows`);
+                    setSaveStatus('error');
+                    
+                    // Call onRowsChange to save the updated data even if inventory deletion failed
+                    onRowsChange(newRows);
+                  }
+                }}
+              >
+                Delete
+              </button>
+              <button 
+                className="p-1 px-3 rounded-md bg-gray-100 hover:bg-gray-200 text-sm cursor-pointer transition-colors"
+                onClick={() => setSelectedRows([])}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       <div className="flex-1 overflow-auto" ref={spreadsheetRef}>
         <div className="relative overflow-x-auto">
@@ -2000,85 +2148,6 @@ useEffect(() => {
         </button>
       </div>
       
-      {/* Context menu for selected rows */}
-      {selectedRows.length > 0 && (
-        <div className="fixed bottom-4 left-4 bg-white rounded-md shadow-md p-2 z-20">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">
-              {selectedRows.length} row{selectedRows.length > 1 ? 's' : ''} selected
-              {/* Debug info */}
-              <span className="text-xs text-gray-500 ml-1">
-                (IDs: {selectedRows.slice(0, 3).join(', ')}{selectedRows.length > 3 ? '...' : ''})
-              </span>
-            </span>
-            <button 
-              className="p-1 px-2 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-sm cursor-pointer transition-colors"
-              onClick={async () => {
-                try {
-                  // Find all rows being deleted
-                  const rowsToDelete = rows.filter(row => selectedRows.includes(row.id));
-                  
-                  console.log(`🗑️ Bulk deleting ${rowsToDelete.length} rows:`, rowsToDelete.map(r => ({ 
-                    id: r.id, 
-                    inventoryItemId: r.inventoryItemId,
-                    item: r.cells?.col2 
-                  })));
-                  
-                  // Call onDeleteInventoryItem for each row that has an inventoryItemId
-                  const inventoryDeletions = rowsToDelete
-                    .filter(row => row.inventoryItemId)
-                    .map(row => row.inventoryItemId);
-                  
-                  console.log(`📝 ${inventoryDeletions.length} rows have inventory items to delete`);
-                  console.log(`📝 ${rowsToDelete.length - inventoryDeletions.length} rows are manual entries (no inventory items)`);
-                  
-                  // Delete inventory items asynchronously
-                  if (inventoryDeletions.length > 0) {
-                    console.log('🔥 About to call onDeleteInventoryItem for:', inventoryDeletions);
-                    inventoryDeletions.forEach((inventoryItemId, index) => {
-                      console.log(`🗑️ Calling onDeleteInventoryItem for item ${index + 1}/${inventoryDeletions.length}:`, inventoryItemId);
-                      onDeleteInventoryItem(inventoryItemId);
-                    });
-                  } else {
-                    console.log('⚠️ No inventory items to delete - all rows are manual entries');
-                  }
-                  
-                  // Remove the rows from the UI immediately for better UX
-                  const newRows = rows.filter(row => !selectedRows.includes(row.id));
-                  setRows(newRows);
-                  setSelectedRows([]);
-                  setRowCount(`${newRows.length}/${newRows.length} rows`);
-                  setSaveStatus('saving');
-                  
-                  // Call onRowsChange to save the updated data
-                  onRowsChange(newRows);
-                  
-                  console.log(`✅ Successfully removed ${rowsToDelete.length} rows from spreadsheet`);
-                } catch (error) {
-                  console.error('❌ Error during bulk deletion:', error);
-                  // Even if there's an error with inventory deletion, we should still remove from UI
-                  const newRows = rows.filter(row => !selectedRows.includes(row.id));
-                  setRows(newRows);
-                  setSelectedRows([]);
-                  setRowCount(`${newRows.length}/${newRows.length} rows`);
-                  setSaveStatus('error');
-                  
-                  // Call onRowsChange to save the updated data even if inventory deletion failed
-                  onRowsChange(newRows);
-                }
-              }}
-            >
-              Delete
-            </button>
-            <button 
-              className="p-1 px-2 rounded-md bg-gray-100 hover:bg-gray-200 text-sm cursor-pointer transition-colors"
-              onClick={() => setSelectedRows([])}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
       
       {/* Enhanced Media Preview Modal */}
       <Dialog open={previewMedia !== null} onOpenChange={(open) => {

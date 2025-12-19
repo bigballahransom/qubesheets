@@ -1,7 +1,7 @@
 // models/ActivityLog.ts - Activity tracking for projects
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type ActivityType = 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited';
+export type ActivityType = 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity';
 export type UploadSource = 'admin' | 'customer' | 'video_call' | 'inventory_upload';
 
 export interface IActivityDetails {
@@ -34,6 +34,12 @@ export interface IActivityDetails {
   customerPhone?: string;
   linkToken?: string;
   expiresAt?: Date;
+  
+  // For notes
+  noteId?: mongoose.Types.ObjectId | string;
+  noteTitle?: string;
+  noteCategory?: string;
+  notePriority?: string;
   
   // Common fields
   userName?: string;
@@ -72,7 +78,7 @@ const ActivityLogSchema: Schema = new Schema(
     },
     activityType: {
       type: String,
-      enum: ['upload', 'inventory_update', 'video_call', 'upload_link_sent', 'upload_link_visited'],
+      enum: ['upload', 'inventory_update', 'video_call', 'upload_link_sent', 'upload_link_visited', 'note_activity'],
       required: true,
       index: true
     },

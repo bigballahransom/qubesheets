@@ -26,6 +26,8 @@ import SendUploadLinkModal from './SendUploadLinkModal';
 import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import SupermoveSyncModal from './modals/SupermoveSyncModal';
+import InventoryNotes from './InventoryNotes';
+import { Badge } from './ui/badge';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import simpleRealTimeDatabase from '@/lib/simple-realtime-database';
@@ -121,6 +123,7 @@ const [supermoveSyncStatus, setSupermoveSyncStatus] = useState(null);
 const [supermoveLoading, setSupermoveLoading] = useState(false);
 const [supermoveSyncModalOpen, setSupermoveSyncModalOpen] = useState(false);
 const [refreshTrigger, setRefreshTrigger] = useState(0); // For cross-device inventory refresh
+const [notesCount, setNotesCount] = useState(0);
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const sseRetryTimeoutRef = useRef(null);
@@ -135,7 +138,7 @@ useEffect(() => {
   
   // Default columns setup
   const defaultColumns = [
-    { id: 'col1', name: 'Location', type: 'text' },
+    { id: 'col1', name: 'Location', type: 'select' },
     { id: 'col2', name: 'Item', type: 'company' },
     { id: 'col3', name: 'Count', type: 'text' },
     { id: 'col4', name: 'Cuft', type: 'url' },
@@ -629,9 +632,10 @@ useEffect(() => {
       let items = []; // Declare items at function scope
       
       // IMMEDIATE: Load inventory items and spreadsheet data in parallel for faster loading
-      const [itemsResponse, spreadsheetResponse] = await Promise.all([
+      const [itemsResponse, spreadsheetResponse, notesCountResponse] = await Promise.all([
         fetch(`/api/projects/${id}/inventory`),
-        fetch(`/api/projects/${id}/spreadsheet`)
+        fetch(`/api/projects/${id}/spreadsheet`),
+        fetch(`/api/projects/${id}/notes/count`)
       ]);
       
       // Set inventory items immediately when available
@@ -689,6 +693,13 @@ useEffect(() => {
                   : col
               );
             }
+            
+            // Update Location column to be select type if it's currently text
+            migratedColumns = migratedColumns.map(col => 
+              col.name === 'Location' && col.type === 'text' 
+                ? { ...col, type: 'select' } 
+                : col
+            );
             
             // Add PBO/CP column if missing (should be at position 7, after Going)
             if (!hasPackedByColumn) {
@@ -823,6 +834,12 @@ useEffect(() => {
         }
         
         dataLoadedRef.current = true;
+      }
+      
+      // Set notes count if available
+      if (notesCountResponse && notesCountResponse.ok) {
+        const notesData = await notesCountResponse.json();
+        setNotesCount(notesData.count || 0);
       }
       
       // Clear loading state only after ALL data is processed and ready to display
@@ -2003,23 +2020,111 @@ useEffect(() => {
       }
     });
     
-    // Add footer
-    const pageCount = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.setTextColor(...textColor);
-      doc.text(
-        `Page ${i} of ${pageCount}`,
-        doc.internal.pageSize.width / 2,
-        doc.internal.pageSize.height - 10,
-        { align: 'center' }
-      );
-    }
+    // Add notes section if there are notes
+    const fetchAndAddNotes = async () => {
+      try {
+        const notesResponse = await fetch(`/api/projects/${currentProject._id}/notes?sortBy=priority&sortOrder=desc`);
+        if (notesResponse.ok) {
+          const notesData = await notesResponse.json();
+          const notes = notesData.notes || [];
+          
+          if (notes.length > 0) {
+            // Add new page for notes
+            doc.addPage();
+            let notesY = 20;
+            
+            // Notes header
+            doc.setFontSize(16);
+            doc.setTextColor(...primaryColor);
+            doc.text('Project Notes', 20, notesY);
+            notesY += 15;
+            
+            // Add each note
+            notes.forEach((note, index) => {
+              // Check if we need a new page
+              if (notesY > doc.internal.pageSize.height - 60) {
+                doc.addPage();
+                notesY = 20;
+                doc.setFontSize(16);
+                doc.setTextColor(...primaryColor);
+                doc.text('Project Notes (continued)', 20, notesY);
+                notesY += 15;
+              }
+              
+              // Note box
+              const noteBoxHeight = 40;
+              
+              // Priority color
+              const priorityColors = {
+                urgent: [254, 226, 226], // red-100
+                high: [254, 243, 199], // orange-100
+                normal: [243, 244, 246], // gray-100
+                low: [219, 234, 254] // blue-100
+              };
+              
+              doc.setFillColor(...(priorityColors[note.priority] || priorityColors.normal));
+              doc.roundedRect(20, notesY - 8, 170, noteBoxHeight, 2, 2, 'F');
+              
+              // Note title
+              doc.setFontSize(12);
+              doc.setFont('helvetica', 'bold');
+              doc.setTextColor(0, 0, 0);
+              doc.text(note.title, 25, notesY);
+              
+              // Category and priority badges
+              doc.setFontSize(8);
+              doc.setFont('helvetica', 'normal');
+              doc.setTextColor(...textColor);
+              const badges = [];
+              if (note.category && note.category !== 'general') badges.push(note.category);
+              if (note.priority && note.priority !== 'normal') badges.push(note.priority);
+              if (badges.length > 0) {
+                doc.text(badges.join(' • ').toUpperCase(), 25, notesY + 6);
+              }
+              
+              // Note content (truncated)
+              doc.setFontSize(10);
+              doc.setTextColor(...textColor);
+              const maxContentLength = 180;
+              const content = note.content.length > maxContentLength 
+                ? note.content.substring(0, maxContentLength) + '...' 
+                : note.content;
+              
+              // Split content into lines that fit within the box width
+              const lines = doc.splitTextToSize(content, 160);
+              lines.slice(0, 3).forEach((line, i) => {
+                doc.text(line, 25, notesY + 14 + (i * 5));
+              });
+              
+              notesY += noteBoxHeight + 5;
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching notes for PDF:', error);
+      }
+      
+      // Add footer
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(...textColor);
+        doc.text(
+          `Page ${i} of ${pageCount}`,
+          doc.internal.pageSize.width / 2,
+          doc.internal.pageSize.height - 10,
+          { align: 'center' }
+        );
+      }
+      
+      // Save the PDF
+      const fileName = `${currentProject?.name || 'inventory'}-${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+    };
     
-    // Save the PDF
-    const fileName = `${currentProject?.name || 'inventory'}-${new Date().toISOString().split('T')[0]}.pdf`;
-    doc.save(fileName);
+    // Execute the notes fetching and PDF saving
+    fetchAndAddNotes();
   };
 
   // Add this component to show processing status in the header
@@ -2327,6 +2432,10 @@ const ProcessingNotification = () => {
                 <Video size={16} />
                 Videos
               </TabsTrigger>
+              <TabsTrigger value="notes" className="flex items-center gap-2">
+                <MessageSquare size={16} />
+                Notes
+              </TabsTrigger>
             </TabsList>
             
             <TabsContent value="inventory">
@@ -2416,6 +2525,31 @@ const ProcessingNotification = () => {
                       inventoryItems={inventoryItems}
                       onInventoryUpdate={handleInventoryUpdate}
                     />
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="notes">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="p-6">
+                  {console.log('Notes TabsContent rendering, currentProject:', currentProject?._id)}
+                  {currentProject ? (
+                    <>
+                      {console.log('About to render InventoryNotes component')}
+                      <InventoryNotes 
+                        projectId={currentProject._id}
+                        onNoteUpdate={() => {
+                          // Refresh notes count when a note is created/updated/deleted
+                          fetch(`/api/projects/${currentProject._id}/notes/count`)
+                            .then(res => res.json())
+                            .then(data => setNotesCount(data.count || 0))
+                            .catch(console.error);
+                        }}
+                      />
+                    </>
+                  ) : (
+                    <div>No current project loaded</div>
                   )}
                 </div>
               </div>

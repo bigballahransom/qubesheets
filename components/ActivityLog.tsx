@@ -14,7 +14,8 @@ import {
   Send,
   Archive,
   Eye,
-  Package
+  Package,
+  MessageSquare
 } from 'lucide-react';
 import { Button } from './ui/button';
 
@@ -26,7 +27,7 @@ interface ActivityLogProps {
 
 interface Activity {
   _id: string;
-  activityType: 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited';
+  activityType: 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity';
   action: string;
   details: {
     fileName?: string;
@@ -39,6 +40,10 @@ interface Activity {
     roomId?: string;
     videosRecorded?: number;
     userName?: string;
+    noteId?: string;
+    noteTitle?: string;
+    noteCategory?: string;
+    notePriority?: string;
   };
   createdAt: string;
   user: {
@@ -102,6 +107,8 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return <Send className="w-4 h-4 text-indigo-600" />;
       case 'upload_link_visited':
         return <Eye className="w-4 h-4 text-teal-600" />;
+      case 'note_activity':
+        return <MessageSquare className="w-4 h-4 text-amber-600" />;
       default:
         return <Archive className="w-4 h-4 text-gray-600" />;
     }
@@ -161,6 +168,14 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return (
           <span>
             Customer <strong>{activity.details.customerName}</strong> opened the upload link
+          </span>
+        );
+        
+      case 'note_activity':
+        return (
+          <span>
+            <strong>{userName}</strong> {activity.action} 
+            <span className="font-medium"> {activity.details.noteTitle}</span>
           </span>
         );
         

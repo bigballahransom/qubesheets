@@ -49,12 +49,14 @@ import {
   Edit2,
   Trash2,
   Save,
+  MessageSquare,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
 import Logo from '../../public/logo';
 import { Button } from '../ui/button';
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
+import VideoCallNotes from '../VideoCallNotes';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
@@ -639,7 +641,8 @@ const CustomerView = React.memo(({ onCallEnd }) => {
 const AgentView = React.memo(({ 
   projectId, 
   currentRoom,
-  setCurrentRoom
+  setCurrentRoom,
+  participantName
 }) => {
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -1189,6 +1192,7 @@ const AgentView = React.memo(({
                 fetchCapturedImages={fetchCapturedImages}
                 onInventoryUpdate={handleInventoryUpdate}
                 processingStatus={processingStatus}
+                participantName={participantName}
                 onRemoveItem={async (id) => {
                   // Remove from database via API
                   try {
@@ -1331,6 +1335,7 @@ const AgentView = React.memo(({
               fetchCapturedImages={fetchCapturedImages}
               onInventoryUpdate={handleInventoryUpdate}
               processingStatus={processingStatus}
+              participantName={participantName}
               onRemoveItem={async (id) => {
                 // Remove from database via API
                 try {
@@ -1378,10 +1383,11 @@ const AgentView = React.memo(({
 });
 
 // Enhanced InventorySidebar component - Updated for real database items
-const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate, processingStatus }) => {
+const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate, processingStatus, participantName }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isSmallScreen, setIsSmallScreen] = useState(false);
+  const [activeTab, setActiveTab] = useState('photos');
   
 
   useEffect(() => {
@@ -1462,76 +1468,177 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
         </div>
       </div>
 
-      {/* Photo Stats */}
-      <div className="bg-gray-50 p-4 md:p-6 border-b border-gray-200">
-        <div className="grid grid-cols-3 gap-3 md:gap-4">
-          <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-blue-100">
-            <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
-              <Camera className="w-5 h-5 md:w-6 md:h-6 text-white" />
-            </div>
-            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Total Photos</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-900">{capturedImages.length}</p>
-          </div>
-          <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-green-100">
-            <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
-              <CheckCircle className="w-5 h-5 md:w-6 md:h-6 text-white" />
-            </div>
-            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Analyzed</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-900">
-              {capturedImages.filter(img => img.analysisResult?.status === 'completed').length}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl md:rounded-2xl p-3 md:p-4 text-center shadow-lg border border-purple-100">
-            <div className="w-10 md:w-12 h-10 md:h-12 bg-gradient-to-br from-purple-500 to-violet-600 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-2 md:mb-3">
-              <Loader2 className="w-5 h-5 md:w-6 md:h-6 text-white" />
-            </div>
-            <p className="text-xs md:text-sm font-medium text-gray-600 mb-1">Processing</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-900">
-              {capturedImages.filter(img => img.analysisResult?.status === 'processing' || !img.analysisResult?.status).length}
-            </p>
-          </div>
+      {/* Tab Navigation - Responsive Design */}
+      <div className="bg-gray-50 border-b border-gray-200">
+        <div className="flex">
+          <button
+            onClick={() => setActiveTab('photos')}
+            className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
+              activeTab === 'photos'
+                ? 'text-blue-600 bg-white border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <Camera className="w-4 h-4" />
+            <span className="hidden sm:inline">Photos</span>
+            <span className="sm:hidden">Photos</span>
+            {capturedImages.length > 0 && (
+              <span className={`px-1.5 sm:px-2 py-0.5 text-xs rounded-full font-bold ${
+                activeTab === 'photos' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'
+              }`}>
+                {capturedImages.length}
+              </span>
+            )}
+          </button>
+          {/* <button
+            onClick={() => setActiveTab('inventory')}
+            className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
+              activeTab === 'inventory'
+                ? 'text-blue-600 bg-white border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            <span className="hidden sm:inline">Items</span>
+            <span className="sm:hidden">Items</span>
+            {items.length > 0 && (
+              <span className={`px-1.5 sm:px-2 py-0.5 text-xs rounded-full font-bold ${
+                activeTab === 'inventory' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'
+              }`}>
+                {items.reduce((total, item) => total + (item.quantity || 1), 0)}
+              </span>
+            )}
+          </button> */}
+          <button
+            onClick={() => setActiveTab('notes')}
+            className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
+              activeTab === 'notes'
+                ? 'text-blue-600 bg-white border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" />
+            <span className="hidden sm:inline">Notes</span>
+            <span className="sm:hidden">Notes</span>
+          </button>
         </div>
       </div>
 
-      {/* Inventory Items Section */}
-      {items.length > 0 && (
-        <div className="bg-white border-b border-gray-200 p-4 md:p-6">
-          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Package size={20} />
-            Inventory Items ({items.reduce((total, item) => total + (item.quantity || 1), 0)})
-          </h3>
-          <div className="space-y-3 max-h-48 overflow-y-auto">
-            {items.map((item) => (
-              <div key={item._id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 truncate">{item.name}</p>
-                  <p className="text-sm text-gray-500 flex items-center gap-1">
-                    {getRoomIcon(item.location)} {item.location}
-                    {item.quantity > 1 && <span>• Qty: {item.quantity}</span>}
-                  </p>
+      {/* Item Stats - Only show on photos tab */}
+      {activeTab === 'photos' && (() => {
+        // Categorize all items by type
+        const regularItems = items.filter(item => 
+          item.itemType === 'regular_item' || 
+          item.itemType === 'furniture' || 
+          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+        );
+        
+        const existingBoxes = items.filter(item => 
+          item.itemType === 'existing_box' || 
+          item.itemType === 'packed_box'
+        );
+        
+        const recommendedBoxes = items.filter(item => 
+          item.itemType === 'boxes_needed'
+        );
+        
+        return (
+          <div className="bg-white px-3 py-2 border-b border-gray-200">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-gray-50 rounded-lg p-2 text-center border border-gray-200">
+                <div className="flex items-center justify-center mb-1">
+                  <Package className="w-3 h-3 text-gray-500" />
                 </div>
-                <div className="flex flex-wrap gap-1 ml-3">
-                  {/* Create ToggleGoingBadge for each quantity */}
-                  {Array.from({ length: item.quantity || 1 }, (_, index) => (
-                    <ToggleGoingBadge 
-                      key={`${item._id}-${index}`}
-                      inventoryItem={item}
-                      quantityIndex={index}
-                      projectId={projectId}
-                      onInventoryUpdate={onInventoryUpdate}
-                      showItemName={false}
-                      className="text-xs"
-                    />
-                  ))}
-                </div>
+                <p className="text-xs text-gray-600 mb-1">Items</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {regularItems.reduce((total, item) => total + (item.quantity || 1), 0)}
+                </p>
               </div>
-            ))}
+              <div className="bg-orange-50 rounded-lg p-2 text-center border border-orange-200">
+                <div className="flex items-center justify-center mb-1">
+                  <span className="text-[10px] font-bold text-orange-700 bg-orange-200 w-3 h-3 rounded-full inline-flex items-center justify-center">
+                    B
+                  </span>
+                </div>
+                <p className="text-xs text-orange-700 mb-1">Boxes</p>
+                <p className="text-sm font-semibold text-orange-800">
+                  {existingBoxes.reduce((total, item) => total + (item.quantity || 1), 0)}
+                </p>
+              </div>
+              <div className="bg-purple-50 rounded-lg p-2 text-center border border-purple-200">
+                <div className="flex items-center justify-center mb-1">
+                  <span className="text-[10px] font-bold text-purple-700 bg-purple-200 w-3 h-3 rounded-full inline-flex items-center justify-center">
+                    R
+                  </span>
+                </div>
+                <p className="text-xs text-purple-700 mb-1">Recommended</p>
+                <p className="text-sm font-semibold text-purple-800">
+                  {recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0)}
+                </p>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      {/* Photos Gallery - Scrollable */}
-      <div className="flex-1 min-h-0 overflow-y-auto bg-gray-50">
+      {/* Inventory Items Section */}
+      {/* {activeTab === 'inventory' && (
+        items.length > 0 ? (
+          <div className="bg-white border-b border-gray-200 p-4 md:p-6">
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Package size={20} />
+              Inventory Items ({items.reduce((total, item) => total + (item.quantity || 1), 0)})
+            </h3>
+            <div className="space-y-3 max-h-48 overflow-y-auto">
+              {items.map((item) => (
+                <div key={item._id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 truncate">{item.name}</p>
+                    <p className="text-sm text-gray-500 flex items-center gap-1">
+                      {getRoomIcon(item.location)} {item.location}
+                      {item.quantity > 1 && <span>• Qty: {item.quantity}</span>}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1 ml-3">
+                    {Array.from({ length: item.quantity || 1 }, (_, index) => (
+                      <ToggleGoingBadge 
+                        key={`${item._id}-${index}`}
+                        inventoryItem={item}
+                        quantityIndex={index}
+                        projectId={projectId}
+                        onInventoryUpdate={onInventoryUpdate}
+                        showItemName={false}
+                        className="text-xs"
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center p-8">
+            <div className="w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl flex items-center justify-center mb-4">
+              <Package size={32} className="text-gray-400" />
+            </div>
+            <h4 className="text-lg font-bold text-gray-900 mb-2">No Items Yet</h4>
+            <p className="text-sm text-gray-600 text-center leading-relaxed max-w-sm">
+              Inventory items will appear here as photos are analyzed during the video call.
+            </p>
+          </div>
+        )
+      )} */}
+
+      {/* Notes Section - Video Call Specific UI */}
+      <div className={`flex-1 min-h-0 overflow-y-auto bg-white ${activeTab === 'notes' ? '' : 'hidden'}`}>
+        <VideoCallNotes 
+          projectId={projectId} 
+          participantName={participantName}
+        />
+      </div>
+
+      {/* Photos Gallery - Scrollable - Only show on photos tab */}
+      <div className={`flex-1 min-h-0 overflow-y-auto bg-gray-50 ${activeTab === 'photos' ? '' : 'hidden'}`}>
         {imagesLoading ? (
           <div className="flex flex-col items-center justify-center h-full p-8">
             <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
@@ -1553,7 +1660,7 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
             </div>
           </div>
         ) : (
-          <div className="p-3 md:p-4 grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+          <div className="p-3 md:p-4 grid grid-cols-1 gap-3 md:gap-4">
             {capturedImages.map((image) => (
               <div key={image._id} className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100">
                 {/* Image Preview */}
@@ -1611,22 +1718,52 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
                     </span>
                   </div>
 
-                  {/* Analysis Results */}
-                  {image.analysisResult?.status === 'completed' && (
-                    <div className="flex flex-wrap gap-1 mb-2">
-                      {image.analysisResult.itemsCount > 0 && (
-                        <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-blue-100 text-blue-800">
-                          <Package size={10} className="mr-1" />
-                          {image.analysisResult.itemsCount} items
-                        </span>
-                      )}
-                      {image.analysisResult.totalBoxes > 0 && (
-                        <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-green-100 text-green-800">
-                          📦 {image.analysisResult.totalBoxes} boxes
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  {/* Analysis Results - Item Type Differentiation */}
+                  {(() => {
+                    const imageInventoryItems = items.filter(item => {
+                      const imageId = item.sourceImageId?._id || item.sourceImageId;
+                      return imageId === image._id;
+                    });
+                    
+                    if (imageInventoryItems.length === 0) return null;
+                    
+                    // Categorize items by type
+                    const regularItems = imageInventoryItems.filter(item => 
+                      item.itemType === 'regular_item' || 
+                      item.itemType === 'furniture' || 
+                      (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                    );
+                    
+                    const existingBoxes = imageInventoryItems.filter(item => 
+                      item.itemType === 'existing_box' || 
+                      item.itemType === 'packed_box'
+                    );
+                    
+                    const recommendedBoxes = imageInventoryItems.filter(item => 
+                      item.itemType === 'boxes_needed'
+                    );
+                    
+                    return (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {regularItems.length > 0 && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-gray-100 text-gray-800">
+                            <Package size={10} className="mr-1" />
+                            {regularItems.reduce((total, item) => total + (item.quantity || 1), 0)} items
+                          </span>
+                        )}
+                        {existingBoxes.length > 0 && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-orange-100 text-orange-800 border-orange-200">
+                            {existingBoxes.reduce((total, item) => total + (item.quantity || 1), 0)} boxes
+                          </span>
+                        )}
+                        {recommendedBoxes.length > 0 && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-purple-100 text-purple-800 border-purple-200">
+                            {recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0)} recommended
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Summary */}
                   {image.analysisResult?.summary && (
@@ -1635,37 +1772,113 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
                     </p>
                   )}
 
-                  {/* Inventory Items from this image */}
+                  {/* Inventory Items from this image - Separated by Type */}
                   {(() => {
                     const imageInventoryItems = items.filter(item => {
                       const imageId = item.sourceImageId?._id || item.sourceImageId;
                       return imageId === image._id;
                     });
                     
-                    if (imageInventoryItems.length > 0) {
-                      return (
-                        <div className="mt-2">
-                          <p className="text-xs font-medium text-gray-700 mb-1">Items from this photo:</p>
-                          <div className="flex flex-wrap gap-1">
-                            {imageInventoryItems.map((invItem) => {
-                              const quantity = invItem.quantity || 1;
-                              return Array.from({ length: quantity }, (_, index) => (
-                                <ToggleGoingBadge 
-                                  key={`${invItem._id}-${index}`}
-                                  inventoryItem={invItem}
-                                  quantityIndex={index}
-                                  projectId={projectId}
-                                  onInventoryUpdate={onInventoryUpdate}
-                                  showItemName={true}
-                                  className="text-xs"
-                                />
-                              ));
-                            }).flat()}
+                    if (imageInventoryItems.length === 0) return null;
+                    
+                    // Categorize items by type
+                    const regularItems = imageInventoryItems.filter(item => 
+                      item.itemType === 'regular_item' || 
+                      item.itemType === 'furniture' || 
+                      (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                    );
+                    
+                    const existingBoxes = imageInventoryItems.filter(item => 
+                      item.itemType === 'existing_box' || 
+                      item.itemType === 'packed_box'
+                    );
+                    
+                    const recommendedBoxes = imageInventoryItems.filter(item => 
+                      item.itemType === 'boxes_needed'
+                    );
+                    
+                    return (
+                      <div className="mt-2 space-y-2">
+                        {/* Regular Items Section */}
+                        {regularItems.length > 0 && (
+                          <div>
+                            <h5 className="text-xs font-medium text-gray-700 mb-1">Items</h5>
+                            <div className="flex flex-wrap gap-1">
+                              {regularItems.map((invItem) => {
+                                const quantity = invItem.quantity || 1;
+                                return Array.from({ length: quantity }, (_, index) => (
+                                  <ToggleGoingBadge 
+                                    key={`${invItem._id}-${index}`}
+                                    inventoryItem={invItem}
+                                    quantityIndex={index}
+                                    projectId={projectId}
+                                    onInventoryUpdate={onInventoryUpdate}
+                                    showItemName={true}
+                                    className="text-xs"
+                                  />
+                                ));
+                              }).flat()}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    }
-                    return null;
+                        )}
+
+                        {/* Existing Boxes Section */}
+                        {existingBoxes.length > 0 && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <h5 className="text-xs font-medium text-gray-700">Boxes</h5>
+                              <span className="text-[8px] font-bold text-orange-700 bg-orange-100 w-3 h-3 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                B
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {existingBoxes.map((invItem) => {
+                                const quantity = invItem.quantity || 1;
+                                return Array.from({ length: quantity }, (_, index) => (
+                                  <ToggleGoingBadge 
+                                    key={`${invItem._id}-${index}`}
+                                    inventoryItem={invItem}
+                                    quantityIndex={index}
+                                    projectId={projectId}
+                                    onInventoryUpdate={onInventoryUpdate}
+                                    showItemName={true}
+                                    className="text-xs"
+                                  />
+                                ));
+                              }).flat()}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Recommended Boxes Section */}
+                        {recommendedBoxes.length > 0 && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <h5 className="text-xs font-medium text-gray-700">Recommended</h5>
+                              <span className="text-[8px] font-bold text-purple-700 bg-purple-100 w-3 h-3 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                R
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {recommendedBoxes.map((invItem) => {
+                                const quantity = invItem.quantity || 1;
+                                return Array.from({ length: quantity }, (_, index) => (
+                                  <ToggleGoingBadge 
+                                    key={`${invItem._id}-${index}`}
+                                    inventoryItem={invItem}
+                                    quantityIndex={index}
+                                    projectId={projectId}
+                                    onInventoryUpdate={onInventoryUpdate}
+                                    showItemName={true}
+                                    className="text-xs"
+                                  />
+                                ));
+                              }).flat()}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
                   })()}
                   
                   {/* File Size */}
@@ -1903,6 +2116,7 @@ export default function VideoCallInventory({
             projectId={projectId}
             currentRoom={currentRoom}
             setCurrentRoom={setCurrentRoom}
+            participantName={participantName}
           />
         ) : (
           <CustomerView onCallEnd={onCallEnd} />
