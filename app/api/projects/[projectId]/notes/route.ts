@@ -6,6 +6,7 @@ import InventoryNote from '@/models/InventoryNote';
 import Project from '@/models/Project';
 import ActivityLog from '@/models/ActivityLog';
 import mongoose from 'mongoose';
+import { clerkClient } from '@clerk/nextjs/server';
 
 // GET /api/projects/[projectId]/notes - List all notes for a project
 export async function GET(
@@ -26,6 +27,8 @@ export async function GET(
     const search = searchParams.get('search');
     const sortBy = searchParams.get('sortBy') || 'createdAt';
     const sortOrder = searchParams.get('sortOrder') || 'desc';
+    const attachedToVideoRecording = searchParams.get('attachedToVideoRecording');
+    const attachedToRoomId = searchParams.get('attachedToRoomId');
 
     await connectMongoDB();
 
@@ -46,27 +49,96 @@ export async function GET(
     if (category) {
       query.category = category;
     }
-
-    if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { content: { $regex: search, $options: 'i' } },
-        { tags: { $in: [new RegExp(search, 'i')] } }
-      ];
+    
+    // Build video-related queries
+    let videoQuery = null;
+    if (attachedToVideoRecording && attachedToRoomId) {
+      // When we have both, search for notes with either field
+      videoQuery = {
+        $or: [
+          { attachedToVideoRecording: attachedToVideoRecording },
+          { attachedToRoomId: attachedToRoomId }
+        ]
+      };
+    } else if (attachedToVideoRecording) {
+      query.attachedToVideoRecording = attachedToVideoRecording;
+    } else if (attachedToRoomId) {
+      query.attachedToRoomId = attachedToRoomId;
     }
+    
+    // Build search query
+    let searchQuery = null;
+    if (search) {
+      searchQuery = {
+        $or: [
+          { title: { $regex: search, $options: 'i' } },
+          { content: { $regex: search, $options: 'i' } },
+          { tags: { $in: [new RegExp(search, 'i')] } }
+        ]
+      };
+    }
+    
+    // Combine video and search queries if both exist
+    if (videoQuery && searchQuery) {
+      query.$and = [videoQuery, searchQuery];
+    } else if (videoQuery) {
+      Object.assign(query, videoQuery);
+    } else if (searchQuery) {
+      Object.assign(query, searchQuery);
+    }
+    
+    console.log('Notes API - Query parameters:', {
+      projectId,
+      category,
+      attachedToVideoRecording,
+      attachedToRoomId,
+      search,
+      sortBy,
+      sortOrder
+    });
+    console.log('Notes API - MongoDB query:', JSON.stringify(query, null, 2));
 
     // Build sort
-    const sortOptions: any = {
-      isPinned: -1,
-      [sortBy]: sortOrder === 'asc' ? 1 : -1
-    };
+    const sortOptions: any = {};
+    
+    // Only add isPinned sort for non-video-call notes
+    if (!attachedToVideoRecording) {
+      sortOptions.isPinned = -1;
+    }
+    
+    // Add the main sort field
+    sortOptions[sortBy] = sortOrder === 'asc' ? 1 : -1;
 
     const notes = await InventoryNote.find(query)
       .sort(sortOptions)
       .lean();
+      
+    console.log('Notes API - Found notes:', notes.length);
+    if (attachedToVideoRecording) {
+      console.log('Notes API - First note sample:', notes[0]);
+    }
+
+    // Enrich notes with user names
+    const userIds = [...new Set(notes.map(note => note.userId))];
+    const userMap = new Map();
+    
+    try {
+      const clerk = await clerkClient();
+      const response = await clerk.users.getUserList({ userId: userIds });
+      response.data.forEach((user: any) => {
+        userMap.set(user.id, `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username || 'Unknown User');
+      });
+    } catch (err) {
+      console.error('Error fetching user names:', err);
+    }
+    
+    const enrichedNotes = notes.map(note => ({
+      ...note,
+      userName: userMap.get(note.userId) || 'Unknown User'
+    }));
 
     return NextResponse.json({
-      notes,
+      notes: enrichedNotes,
       count: notes.length,
       project: {
         id: project._id,
@@ -112,7 +184,10 @@ export async function POST(
       category = 'general',
       tags = [],
       roomLocation,
-      attachedToItems = []
+      attachedToItems = [],
+      attachedToVideoRecording,
+      attachedToRoomId,
+      videoTimestamp
     } = body;
 
     if (!content || !content.trim()) {
@@ -143,6 +218,18 @@ export async function POST(
       roomLocation,
       attachedToItems
     };
+    
+    if (attachedToVideoRecording) {
+      noteData.attachedToVideoRecording = attachedToVideoRecording;
+    }
+    
+    if (attachedToRoomId) {
+      noteData.attachedToRoomId = attachedToRoomId;
+    }
+    
+    if (videoTimestamp !== undefined && videoTimestamp !== null) {
+      noteData.videoTimestamp = videoTimestamp;
+    }
 
     // Add title only if provided
     if (title && title.trim()) {
@@ -156,6 +243,12 @@ export async function POST(
 
     
     const note = await InventoryNote.create(noteData);
+    
+    // Get the created note with user info for response
+    const enrichedNote = {
+      ...note.toObject(),
+      userName: 'You' // For immediate display, will be replaced with actual name on refresh
+    };
 
     // Log activity
     const activityData: any = {
@@ -181,7 +274,7 @@ export async function POST(
     await ActivityLog.create(activityData);
 
     return NextResponse.json({
-      note,
+      note: enrichedNote,
       message: 'Note created successfully'
     }, { status: 201 });
 

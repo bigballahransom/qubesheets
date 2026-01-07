@@ -50,6 +50,7 @@ import {
   Trash2,
   Save,
   MessageSquare,
+  Radio,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
@@ -61,6 +62,130 @@ import VideoCallNotes from '../VideoCallNotes';
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
 const darkGlassStyle = "backdrop-blur-xl bg-black/20 border border-white/10 shadow-2xl";
+
+// Hook for tracking recording status
+function useRecordingStatus(roomName) {
+  const [recordingStatus, setRecordingStatus] = useState('not_started'); // 'not_started' | 'starting' | 'recording' | 'stopping' | 'completed' | 'failed'
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [startTime, setStartTime] = useState(null);
+
+  const remoteParticipants = useRemoteParticipants();
+  const { localParticipant } = useLocalParticipant();
+  
+  // Check if both agent and customer are present
+  const bothParticipantsPresent = useMemo(() => {
+    const allParticipants = [localParticipant, ...remoteParticipants].filter(Boolean);
+    console.log('🎯 [CLIENT] Checking participants:', {
+      totalCount: allParticipants.length,
+      localIdentity: localParticipant?.identity,
+      remoteIdentities: remoteParticipants.map(p => p.identity),
+      roomName
+    });
+    
+    const hasAgent = allParticipants.some(p => p.identity.startsWith('agent-'));
+    const hasCustomer = allParticipants.some(p => p.identity.startsWith('customer-'));
+    
+    console.log('🎯 [CLIENT] Participant check result:', {
+      hasAgent,
+      hasCustomer,
+      bothPresent: hasAgent && hasCustomer
+    });
+    
+    return hasAgent && hasCustomer;
+  }, [localParticipant, remoteParticipants, roomName]);
+
+  // Update recording status when participants change
+  useEffect(() => {
+    if (bothParticipantsPresent && recordingStatus === 'not_started') {
+      setRecordingStatus('starting');
+      setStartTime(new Date());
+      console.log('🎥 Recording should start - both participants present');
+    } else if (!bothParticipantsPresent && (recordingStatus === 'recording' || recordingStatus === 'starting')) {
+      setRecordingStatus('stopping');
+      console.log('🛑 Recording should stop - participant left');
+    }
+  }, [bothParticipantsPresent, recordingStatus]);
+
+  // Update duration timer
+  useEffect(() => {
+    if (recordingStatus === 'recording' && startTime) {
+      const interval = setInterval(() => {
+        const now = new Date();
+        const duration = Math.floor((now - startTime) / 1000);
+        setRecordingDuration(duration);
+      }, 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [recordingStatus, startTime]);
+
+  // Auto-transition from starting to recording after a brief delay
+  useEffect(() => {
+    if (recordingStatus === 'starting') {
+      const timer = setTimeout(() => {
+        setRecordingStatus('recording');
+      }, 3000); // 3 seconds delay to simulate recording start
+      
+      return () => clearTimeout(timer);
+    }
+  }, [recordingStatus]);
+
+  const formatDuration = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return {
+    recordingStatus,
+    recordingDuration,
+    formattedDuration: formatDuration(recordingDuration),
+    bothParticipantsPresent
+  };
+}
+
+// Recording Status Indicator Component
+const RecordingIndicator = React.memo(({ recordingStatus, formattedDuration, className = "" }) => {
+  const getStatusDisplay = () => {
+    switch (recordingStatus) {
+      case 'starting':
+        return {
+          text: 'Starting Recording...',
+          bgColor: 'bg-yellow-500',
+          pulse: true,
+          icon: <Loader2 className="w-4 h-4 animate-spin" />
+        };
+      case 'recording':
+        return {
+          text: `REC ${formattedDuration}`,
+          bgColor: 'bg-red-500',
+          pulse: true,
+          icon: <Radio className="w-4 h-4" />
+        };
+      case 'stopping':
+        return {
+          text: 'Stopping...',
+          bgColor: 'bg-orange-500',
+          pulse: false,
+          icon: <Loader2 className="w-4 h-4 animate-spin" />
+        };
+      default:
+        return null;
+    }
+  };
+
+  const statusDisplay = getStatusDisplay();
+  if (!statusDisplay) return null;
+
+  return (
+    <div className={`fixed top-4 left-4 z-50 ${className}`}>
+      <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold shadow-lg border border-white/20 ${statusDisplay.bgColor} ${statusDisplay.pulse ? 'animate-pulse' : ''}`}>
+        {statusDisplay.icon}
+        {statusDisplay.text}
+      </div>
+    </div>
+  );
+});
 
 // Enhanced camera switching with responsive approach
 // components/video/VideoCallInventory.jsx
@@ -362,11 +487,14 @@ function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
 }
 
-const CustomerView = React.memo(({ onCallEnd }) => {
+const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   const [showControls, setShowControls] = useState(true);
   const [isSmallScreen, setIsSmallScreen] = useState(true); // Default to true to avoid flash of content
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
+  
+  // Recording status tracking
+  const recordingStatus = useRecordingStatus(roomId);
 
   // Detect Android for specific fixes
   const isAndroid = useMemo(() => {
@@ -559,6 +687,11 @@ const CustomerView = React.memo(({ onCallEnd }) => {
         })
       }}
     >
+      {/* Recording Indicator - Hidden
+      <RecordingIndicator 
+        recordingStatus={recordingStatus.recordingStatus}
+        formattedDuration={recordingStatus.formattedDuration}
+      /> */}
       {/* Animated background elements */}
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/30 rounded-full blur-3xl animate-pulse"></div>
@@ -642,7 +775,8 @@ const AgentView = React.memo(({
   projectId, 
   currentRoom,
   setCurrentRoom,
-  participantName
+  participantName,
+  roomId
 }) => {
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -666,6 +800,9 @@ const AgentView = React.memo(({
   
   const remoteParticipants = useRemoteParticipants();
   const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useAdvancedCameraSwitching();
+  
+  // Recording status tracking
+  const recordingStatus = useRecordingStatus(roomId);
 
   const tracks = useTracks(
     [
@@ -1193,6 +1330,7 @@ const AgentView = React.memo(({
                 onInventoryUpdate={handleInventoryUpdate}
                 processingStatus={processingStatus}
                 participantName={participantName}
+                roomId={roomId}
                 onRemoveItem={async (id) => {
                   // Remove from database via API
                   try {
@@ -1225,6 +1363,12 @@ const AgentView = React.memo(({
   // Desktop view - Compact layout with controls
   return (
     <div className="h-screen max-h-screen flex flex-col bg-gray-50 overflow-hidden">
+      {/* Recording Indicator - Hidden
+      <RecordingIndicator 
+        recordingStatus={recordingStatus.recordingStatus}
+        formattedDuration={recordingStatus.formattedDuration}
+        className="fixed top-4 right-4"
+      /> */}
       {/* Compact Header */}
       <div className="bg-white border-b border-gray-200 px-4 py-2 flex-shrink-0">
         <div className="flex items-center justify-between">
@@ -1336,6 +1480,7 @@ const AgentView = React.memo(({
               onInventoryUpdate={handleInventoryUpdate}
               processingStatus={processingStatus}
               participantName={participantName}
+              roomId={roomId}
               onRemoveItem={async (id) => {
                 // Remove from database via API
                 try {
@@ -1383,7 +1528,7 @@ const AgentView = React.memo(({
 });
 
 // Enhanced InventorySidebar component - Updated for real database items
-const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate, processingStatus, participantName }) => {
+const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate, processingStatus, participantName, roomId }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isSmallScreen, setIsSmallScreen] = useState(false);
@@ -1633,7 +1778,7 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
       <div className={`flex-1 min-h-0 overflow-y-auto bg-white ${activeTab === 'notes' ? '' : 'hidden'}`}>
         <VideoCallNotes 
           projectId={projectId} 
-          participantName={participantName}
+          roomId={roomId}
         />
       </div>
 
@@ -2117,9 +2262,10 @@ export default function VideoCallInventory({
             currentRoom={currentRoom}
             setCurrentRoom={setCurrentRoom}
             participantName={participantName}
+            roomId={roomId}
           />
         ) : (
-          <CustomerView onCallEnd={onCallEnd} />
+          <CustomerView onCallEnd={onCallEnd} roomId={roomId} />
         )}
       </LiveKitRoom>
     </div>

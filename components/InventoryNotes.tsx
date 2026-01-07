@@ -23,7 +23,8 @@ import {
   X,
   Loader2,
   Check,
-  MapPin
+  MapPin,
+  Video
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -67,10 +68,13 @@ interface Note {
   _id: string;
   title?: string;
   content: string;
-  category: 'general' | 'inventory' | 'customer' | 'moving-day' | 'special-instructions';
+  category: 'general' | 'inventory' | 'customer' | 'moving-day' | 'special-instructions' | 'video-call';
   tags: string[];
   isPinned: boolean;
   roomLocation?: string;
+  attachedToVideoRecording?: string;
+  attachedToRoomId?: string;
+  videoTimestamp?: number;
   lastEditedBy?: {
     userId: string;
     userName: string;
@@ -90,7 +94,8 @@ const categoryConfig = {
   inventory: { icon: Package, label: 'Inventory', color: 'text-blue-500' },
   customer: { icon: User, label: 'Customer', color: 'text-purple-500' },
   'moving-day': { icon: Truck, label: 'Moving Day', color: 'text-green-500' },
-  'special-instructions': { icon: AlertCircle, label: 'Special Instructions', color: 'text-orange-500' }
+  'special-instructions': { icon: AlertCircle, label: 'Special Instructions', color: 'text-orange-500' },
+  'video-call': { icon: MessageSquare, label: 'Video Call', color: 'text-indigo-500' }
 };
 
 
@@ -112,7 +117,10 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
     content: '',
     category: 'general' as Note['category'],
     tags: [] as string[],
-    roomLocation: ''
+    roomLocation: '',
+    attachedToVideoRecording: undefined as string | undefined,
+    attachedToRoomId: undefined as string | undefined,
+    videoTimestamp: undefined as number | undefined
   });
   const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
@@ -307,7 +315,10 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
       content: '',
       category: 'general',
       tags: [],
-      roomLocation: ''
+      roomLocation: '',
+      attachedToVideoRecording: undefined,
+      attachedToRoomId: undefined,
+      videoTimestamp: undefined
     });
     setTagInput('');
     setSelectedNote(null);
@@ -320,7 +331,10 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
       content: note.content,
       category: note.category,
       tags: note.tags,
-      roomLocation: note.roomLocation || ''
+      roomLocation: note.roomLocation || '',
+      attachedToVideoRecording: note.attachedToVideoRecording,
+      attachedToRoomId: note.attachedToRoomId,
+      videoTimestamp: note.videoTimestamp
     });
     setIsEditOpen(true);
   };
@@ -458,6 +472,15 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
                         <span>·</span>
                         <MapPin className="h-3 w-3" />
                         <span>{note.roomLocation}</span>
+                      </>
+                    )}
+                    {note.category === 'video-call' && (note.attachedToVideoRecording || note.attachedToRoomId) && (
+                      <>
+                        <span>·</span>
+                        <Video className="h-3 w-3 text-blue-500" />
+                        <span className="text-blue-600">
+                          {note.attachedToRoomId ? `Room ${note.attachedToRoomId.split('-').pop()}` : 'Video Call'}
+                        </span>
                       </>
                     )}
                   </div>

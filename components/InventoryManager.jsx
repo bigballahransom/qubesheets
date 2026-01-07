@@ -27,6 +27,7 @@ import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import SupermoveSyncModal from './modals/SupermoveSyncModal';
 import InventoryNotes from './InventoryNotes';
+import VideoRecordingsTab from './VideoRecordingsTab';
 import { Badge } from './ui/badge';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -2432,6 +2433,10 @@ const ProcessingNotification = () => {
                 <Video size={16} />
                 Videos
               </TabsTrigger>
+              <TabsTrigger value="videocalls" className="flex items-center gap-2">
+                <Video size={16} />
+                Video Calls
+              </TabsTrigger>
               <TabsTrigger value="notes" className="flex items-center gap-2">
                 <MessageSquare size={16} />
                 Notes
@@ -2548,6 +2553,18 @@ const ProcessingNotification = () => {
                         }}
                       />
                     </>
+                  ) : (
+                    <div>No current project loaded</div>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="videocalls">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
+                <div className="p-6">
+                  {currentProject ? (
+                    <VideoRecordingsTab projectId={currentProject._id} />
                   ) : (
                     <div>No current project loaded</div>
                   )}

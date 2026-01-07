@@ -7,10 +7,13 @@ export interface IInventoryNote extends Document {
   projectId: Types.ObjectId;
   userId: string;
   organizationId?: string;
-  category?: 'general' | 'inventory' | 'customer' | 'moving-day' | 'special-instructions';
+  category?: 'general' | 'inventory' | 'customer' | 'moving-day' | 'special-instructions' | 'video-call';
   tags?: string[];
   isPinned?: boolean;
   attachedToItems?: string[]; // Array of inventory item IDs
+  attachedToVideoRecording?: string; // Video recording ID
+  attachedToRoomId?: string; // Room ID for live video calls
+  videoTimestamp?: number; // Seconds from start of video
   roomLocation?: string;
   lastEditedBy?: {
     userId: string;
@@ -53,7 +56,7 @@ const InventoryNoteSchema: Schema = new Schema(
     },
     category: { 
       type: String,
-      enum: ['general', 'inventory', 'customer', 'moving-day', 'special-instructions'],
+      enum: ['general', 'inventory', 'customer', 'moving-day', 'special-instructions', 'video-call'],
       default: 'general',
       index: true
     },
@@ -69,6 +72,18 @@ const InventoryNoteSchema: Schema = new Schema(
     attachedToItems: [{
       type: String
     }],
+    attachedToVideoRecording: {
+      type: String,
+      index: true
+    },
+    attachedToRoomId: {
+      type: String,
+      index: true
+    },
+    videoTimestamp: {
+      type: Number,
+      min: 0
+    },
     roomLocation: {
       type: String,
       trim: true
@@ -93,6 +108,10 @@ const InventoryNoteSchema: Schema = new Schema(
 InventoryNoteSchema.index({ projectId: 1, isPinned: -1, createdAt: -1 });
 InventoryNoteSchema.index({ projectId: 1, category: 1 });
 InventoryNoteSchema.index({ 'tags': 1 });
+InventoryNoteSchema.index({ attachedToVideoRecording: 1, createdAt: -1 });
+InventoryNoteSchema.index({ attachedToRoomId: 1, createdAt: -1 });
+// Compound index for video-related queries that check both fields
+InventoryNoteSchema.index({ attachedToVideoRecording: 1, attachedToRoomId: 1, createdAt: -1 });
 
 // Virtual for formatted dates
 InventoryNoteSchema.virtual('createdAtFormatted').get(function() {

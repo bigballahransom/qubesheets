@@ -14,11 +14,13 @@ const isPublicRoute = createRouteMatcher([
 const isPublicApiRoute = createRouteMatcher([
   '/api/customer-upload/(.*)',
   '/api/livekit/token(.*)',
+  '/api/livekit/webhook(.*)',  // LiveKit webhook endpoint
   '/api/projects/(.*)/public-info',
   '/api/external/(.*)',  // External API endpoints with API key auth
   '/api/processing-complete(.*)',  // Webhook endpoint and SSE for Railway services
   '/api/generate-video-upload-url',  // Video upload pre-signed URL generation
-  '/api/confirm-video-upload'  // Video upload confirmation
+  '/api/confirm-video-upload',  // Video upload confirmation
+  '/api/test-webhook(.*)'  // Test webhook endpoint
 ]);
 
 // Routes that require organization context

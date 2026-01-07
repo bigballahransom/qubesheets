@@ -4,11 +4,22 @@ import { AccessToken } from 'livekit-server-sdk';
 import { auth } from '@clerk/nextjs/server';
 
 export async function POST(request: NextRequest) {
+  console.log('🎟️ =================================');
+  console.log('🎟️ LIVEKIT TOKEN REQUEST');
+  console.log('🎟️ =================================');
+  
   try {
     // Get room name and participant name from request
     const { roomName, participantName } = await request.json();
     
+    console.log('🎫 Token request details:', {
+      roomName,
+      participantName,
+      timestamp: new Date().toISOString()
+    });
+    
     if (!roomName || !participantName) {
+      console.error('❌ Missing required fields');
       return NextResponse.json(
         { error: 'Room name and participant name are required' },
         { status: 400 }
@@ -17,6 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Check if this is an agent (agents need authentication)
     const isAgent = participantName.toLowerCase().includes('agent');
+    console.log(`🏷️ Participant type detection: ${isAgent ? 'AGENT' : 'CUSTOMER'}`);
     
     if (isAgent) {
       // Agents must be authenticated
@@ -45,11 +57,13 @@ export async function POST(request: NextRequest) {
     if (isAgent) {
       const { userId } = await auth();
       identity = `agent-${userId}`;
+      console.log(`🆔 Agent identity generated: ${identity}`);
     } else {
       // For customers, create a unique ID based on room and timestamp
       const timestamp = Date.now();
       const randomSuffix = Math.random().toString(36).substring(2, 8);
       identity = `customer-${timestamp}-${randomSuffix}`;
+      console.log(`🆔 Customer identity generated: ${identity}`);
     }
 
     // Create access token
@@ -74,7 +88,19 @@ export async function POST(request: NextRequest) {
     // Generate token
     const token = await at.toJwt();
 
-    console.log(`✅ Generated LiveKit token for ${isAgent ? 'agent' : 'customer'}: ${participantName}`);
+    console.log(`✅ Generated LiveKit token successfully`);
+    console.log('🎟️ Token details:', {
+      participantType: isAgent ? 'agent' : 'customer',
+      participantName,
+      identity,
+      roomName,
+      tokenLength: token.length,
+      wsUrl
+    });
+    
+    console.log('🎟️ =================================');
+    console.log('🎟️ TOKEN GENERATION COMPLETE');
+    console.log('🎟️ =================================');
 
     return NextResponse.json({
       token,

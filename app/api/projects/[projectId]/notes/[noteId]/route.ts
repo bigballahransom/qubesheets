@@ -142,6 +142,16 @@ export async function PUT(
       }
     }
 
+    if (body.videoTimestamp !== undefined) {
+      // Allow null to remove timestamp
+      updateData.videoTimestamp = body.videoTimestamp === null ? undefined : body.videoTimestamp;
+      if (updateData.videoTimestamp !== existingNote.videoTimestamp) {
+        changes.push('video timestamp');
+        oldValues.videoTimestamp = existingNote.videoTimestamp;
+        newValues.videoTimestamp = body.videoTimestamp;
+      }
+    }
+
     // Add last edited by info
     updateData.lastEditedBy = {
       userId: authContext.userId,
