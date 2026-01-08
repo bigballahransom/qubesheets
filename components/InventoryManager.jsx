@@ -2416,32 +2416,37 @@ const ProcessingNotification = () => {
           
           {/* Tabs for Inventory and Images */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="mb-4">
-              <TabsTrigger value="inventory" className="flex items-center gap-2">
+            <div className="mb-4 relative">
+              <div className="-mx-4 px-4 overflow-x-auto scrollbar-hide" style={{ WebkitOverflowScrolling: 'touch' }}>
+                <TabsList className="flex w-max min-w-full md:w-full bg-muted/50">
+              <TabsTrigger value="inventory" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
                 <Table size={16} />
                 Inventory
               </TabsTrigger>
-              <TabsTrigger value="boxes" className="flex items-center gap-2">
+              <TabsTrigger value="boxes" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
                 <Box size={16} />
                 Boxes
               </TabsTrigger>
-              <TabsTrigger value="images" className="flex items-center gap-2">
+              <TabsTrigger value="images" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
                 <Images size={16} />
                 Images
               </TabsTrigger>
-              <TabsTrigger value="videos" className="flex items-center gap-2">
+              <TabsTrigger value="videos" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
                 <Video size={16} />
                 Videos
               </TabsTrigger>
-              <TabsTrigger value="videocalls" className="flex items-center gap-2">
+              <TabsTrigger value="videocalls" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
                 <Video size={16} />
-                Video Calls
+                <span className="hidden sm:inline">Video Calls</span>
+                <span className="sm:hidden">Calls</span>
               </TabsTrigger>
-              <TabsTrigger value="notes" className="flex items-center gap-2">
+              <TabsTrigger value="notes" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
                 <MessageSquare size={16} />
                 Notes
               </TabsTrigger>
-            </TabsList>
+                </TabsList>
+              </div>
+            </div>
             
             <TabsContent value="inventory">
               {/* Spreadsheet Container */}
