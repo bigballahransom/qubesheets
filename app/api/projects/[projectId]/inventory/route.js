@@ -38,8 +38,8 @@ export async function GET(request, { params }) {
     const items = await InventoryItem.find(
       getProjectFilter(authContext, projectId)
     )
-    .populate('sourceImageId', 'name originalName mimeType') // Populate basic image info
-    .populate('sourceVideoId', 'originalName mimeType duration') // Populate basic video info
+    .populate('sourceImageId', 'name originalName mimeType manualRoomEntry') // Populate basic image info
+    .populate('sourceVideoId', 'originalName mimeType duration manualRoomEntry') // Populate basic video info
     .sort({ createdAt: -1 });
     
     console.log(`✅ Found ${items.length} inventory items`);

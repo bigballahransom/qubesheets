@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { uploadVideoFile } from '@/lib/videoUploadHelper';
 
 interface AdminPhotoUploaderProps {
-  onUpload: (file: File) => Promise<void>;
+  onUpload: (file: File, manualRoomEntry?: string) => Promise<void>;
   uploading: boolean;
   onClose?: () => void; // Made optional since we're not using it for auto-close
   projectId: string;
@@ -295,6 +295,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
   const [isProcessingQueue, setIsProcessingQueue] = useState(false);
   const [hasValidationErrors, setHasValidationErrors] = useState(false);
   const fileQueueRef = useRef<File[]>([]);
+  const [manualRoomEntry, setManualRoomEntry] = useState('');
 
 
   const handleFileWithResult = async (file: File): Promise<boolean> => {
@@ -434,7 +435,8 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         try {
           const result = await uploadVideoFile(finalFile, {
             projectId: projectId,
-            isCustomerUpload: false
+            isCustomerUpload: false,
+            manualRoomEntry: manualRoomEntry.trim() || undefined
           });
 
           if (result.success) {
@@ -465,7 +467,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
               await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
             }
             
-            await onUpload(finalFile);
+            await onUpload(finalFile, manualRoomEntry.trim() || undefined);
             uploadSuccess = true;
             
             if (fileInputRef.current) {
@@ -631,6 +633,25 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
           </div>
         )}
         
+        {/* Manual Room Entry */}
+        <div className="bg-gray-50 rounded-lg p-4 border">
+          <label htmlFor="manualRoomEntry" className="block text-sm font-medium text-gray-700 mb-2">
+            Manual Room Location (Optional)
+          </label>
+          <input
+            id="manualRoomEntry"
+            type="text"
+            value={manualRoomEntry}
+            onChange={(e) => setManualRoomEntry(e.target.value)}
+            placeholder="e.g., Living Room, Master Bedroom, Kitchen..."
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={uploading || isConverting || isProcessingQueue}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            If specified, this will override our AI room detection for uploaded files
+          </p>
+        </div>
+
         {/* Upload Area */}
         <div
           className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${

@@ -39,7 +39,8 @@ export async function POST(request: NextRequest) {
       mimeType,
       fileSize,
       isCustomerUpload,
-      customerToken
+      customerToken,
+      manualRoomEntry
     } = metadata;
 
     // Skip user validation since no authentication required
@@ -145,6 +146,7 @@ export async function POST(request: NextRequest) {
       mimeType: normalizedMimeType,
       originalMimeType: mimeType,
       size: actualFileSize || fileSize,
+      manualRoomEntry: manualRoomEntry || undefined,
       s3RawFile: {
         bucket: bucketName,
         key: s3Key,

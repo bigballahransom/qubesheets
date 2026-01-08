@@ -159,6 +159,7 @@ export async function POST(
 
     const formData = await request.formData();
     const file = formData.get('image') as File;
+    const manualRoomEntry = formData.get('manualRoomEntry') as string | null;
 
     if (!file) {
       return NextResponse.json(
@@ -287,6 +288,7 @@ export async function POST(
           organizationId: orgId,
           description: 'Admin upload via AdminPhotoUploader',
           source: 'admin_upload',
+          manualRoomEntry: manualRoomEntry || undefined,
           s3RawFile: {
             key: s3Result.key,
             bucket: s3Result.bucket,
@@ -501,7 +503,7 @@ export async function POST(
         userId,
         organizationId: orgId,
         description: 'Admin upload via AdminPhotoUploader',
-        source: 'admin_upload',
+        manualRoomEntry: manualRoomEntry || undefined,
         s3RawFile: {
           key: s3Result.key,
           bucket: s3Result.bucket,

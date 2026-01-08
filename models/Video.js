@@ -57,6 +57,10 @@ const VideoSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  manualRoomEntry: {
+    type: String,
+    required: false // Manual room location override
+  },
   source: {
     type: String,
     enum: ['admin_upload', 'customer_upload', 'video_call', 'inventory_upload'],

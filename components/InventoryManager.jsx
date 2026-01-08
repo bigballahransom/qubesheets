@@ -309,7 +309,11 @@ useEffect(() => {
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
         ai_generated: item.ai_generated, // Preserve AI generated flag
         cells: {
-          col1: item.location || '',
+          col1: (() => {
+            // Prioritize manual room entry from source image/video over AI-generated location
+            const manualRoomEntry = item.sourceImageId?.manualRoomEntry || item.sourceVideoId?.manualRoomEntry;
+            return manualRoomEntry || item.location || '';
+          })(),
           col2: item.name || '',
           col3: item.quantity?.toString() || '1',
           col4: (() => {
@@ -853,7 +857,7 @@ useEffect(() => {
   };
   
   // Handle file upload for AdminPhotoUploader
-  const handleFileUpload = useCallback(async (file) => {
+  const handleFileUpload = useCallback(async (file, manualRoomEntry) => {
     if (!currentProject) return;
     
     setUploading(true);
@@ -888,6 +892,9 @@ useEffect(() => {
       
       const formData = new FormData();
       formData.append('image', file);
+      if (manualRoomEntry) {
+        formData.append('manualRoomEntry', manualRoomEntry);
+      }
 
       const response = await fetch(`/api/projects/${currentProject._id}/admin-upload`, {
         method: 'POST',

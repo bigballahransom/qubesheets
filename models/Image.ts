@@ -11,6 +11,7 @@ export interface IImage extends Document {
   userId: string;
   organizationId?: string;
   description?: string;
+  manualRoomEntry?: string; // Manual room location override
   processingStatus?: 'queued' | 'processing' | 'completed' | 'failed';
   analysisResult?: {
     summary: string;
@@ -52,6 +53,7 @@ const ImageSchema: Schema = new Schema(
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
     description: { type: String },
+    manualRoomEntry: { type: String, required: false }, // Manual room location override
     processingStatus: { type: String, enum: ['queued', 'processing', 'completed', 'failed'], default: 'queued' },
     analysisResult: {
       summary: { type: String },

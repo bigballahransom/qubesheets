@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
     console.log('🎬 Video upload URL generation request received');
     const body = await request.json();
     console.log('📝 Request body:', { fileName: body.fileName, fileSize: body.fileSize, mimeType: body.mimeType, projectId: body.projectId, isCustomerUpload: body.isCustomerUpload });
-    const { fileName, fileSize, mimeType, projectId: requestProjectId, isCustomerUpload = false, customerToken } = body;
+    const { fileName, fileSize, mimeType, projectId: requestProjectId, isCustomerUpload = false, customerToken, manualRoomEntry } = body;
     let projectId = requestProjectId;
 
     // Validate required fields
@@ -123,7 +123,8 @@ export async function POST(request: NextRequest) {
         mimeType,
         fileSize,
         isCustomerUpload,
-        customerToken
+        customerToken,
+        manualRoomEntry: manualRoomEntry || undefined
       }
     });
 
