@@ -1559,7 +1559,7 @@ useEffect(() => {
       }}
     >
       {/* Toolbar */}
-      <div className="flex items-center justify-between p-2 bg-white border-b z-30">
+      <div className="flex items-center justify-between flex-wrap gap-2 p-2 bg-white border-b z-30">
         <div className="flex items-center gap-2">
           <div className="relative dropdown-container">
             <button 
@@ -1703,12 +1703,12 @@ useEffect(() => {
           </div> */}
         </div>
         
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search size={16} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" />
-          <input 
-            type="text" 
-            placeholder="Search" 
-            className="pl-8 pr-2 py-1 border rounded-md"
+          <input
+            type="text"
+            placeholder="Search"
+            className="pl-8 pr-2 py-1 border rounded-md w-full sm:w-40"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
