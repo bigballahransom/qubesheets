@@ -4,8 +4,9 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { 
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink
+import { useOrganization } from '@clerk/nextjs';
+import {
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -96,6 +97,10 @@ export default function InventoryManager() {
   const router = useRouter();
   const params = useParams();
   const projectId = params?.projectId;
+  const { organization } = useOrganization();
+
+  // Check if organization has CRM add-on
+  const hasCrmAddOn = organization?.publicMetadata?.subscription?.addOns?.includes('crm');
   
   const [inventoryItems, setInventoryItems] = useState([]);
   const [isUploaderOpen, setIsUploaderOpen] = useState(false);
@@ -2229,10 +2234,28 @@ const ProcessingNotification = () => {
     {/* Project Name and Save Status */}
     <div className="flex items-center">
       {currentProject && (
-        <EditableProjectName 
-          initialName={currentProject.name} 
-          onNameChange={updateProjectName} 
+        <EditableProjectName
+          initialName={currentProject.name}
+          onNameChange={updateProjectName}
         />
+      )}
+      {/* Link to Customer Record - only shown for CRM add-on users */}
+      {hasCrmAddOn && currentProject?.customerId && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => router.push(`/customers/${currentProject.customerId}`)}
+                className="ml-2 p-1.5 rounded-md hover:bg-blue-50 text-blue-600 transition-colors cursor-pointer"
+              >
+                <Users size={18} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>View Customer Record</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       )}
       <div className="ml-4 text-sm">
         {renderSavingStatus()}

@@ -26,7 +26,15 @@ const isPublicApiRoute = createRouteMatcher([
 // Routes that require organization context
 const isOrganizationRoute = createRouteMatcher([
   '/projects(.*)',
+  '/customers(.*)',
+  '/dashboard(.*)',
+  '/calendar(.*)',
+  '/dispatch(.*)',
+  '/reporting(.*)',
+  '/tickets(.*)',
+  '/automations(.*)',
   '/api/projects(.*)',
+  '/api/customers(.*)',
   '/api/inventory(.*)',
   '/api/images(.*)'
 ]);

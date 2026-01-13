@@ -2,16 +2,24 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key } from 'lucide-react';
+import { useOrganization } from '@clerk/nextjs';
+import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key, Building2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SettingsItem {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   href: string;
+  crmOnly?: boolean;
 }
 
 const settingsItems: SettingsItem[] = [
+  {
+    title: 'CRM Settings',
+    icon: Building2,
+    href: '/settings/crm',
+    crmOnly: true,
+  },
   {
     title: 'Notifications',
     icon: Bell,
@@ -40,6 +48,8 @@ const settingsItems: SettingsItem[] = [
 ];
 
 export function SettingsSection() {
+  const { organization } = useOrganization();
+  const hasCrmAddOn = (organization?.publicMetadata as any)?.subscription?.addOns?.includes('crm');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const pathname = usePathname();
@@ -85,10 +95,12 @@ export function SettingsSection() {
             ? "bottom-full mb-2 max-h-[40vh] overflow-y-auto" // Mobile: above with scrolling
             : "bottom-full mb-1" // Desktop: just above
         )}>
-          {settingsItems.map((item) => {
+          {settingsItems
+            .filter(item => !item.crmOnly || hasCrmAddOn)
+            .map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
-            
+
             return (
               <a
                 key={item.href}
@@ -98,8 +110,8 @@ export function SettingsSection() {
                   'flex items-center gap-3 px-3 text-sm rounded-md transition-colors cursor-pointer',
                   'touch-manipulation', // Better touch response
                   isMobile ? 'py-3 min-h-[44px]' : 'py-2', // Larger touch targets on mobile
-                  isActive 
-                    ? 'bg-gray-100 text-gray-900 font-medium' 
+                  isActive
+                    ? 'bg-gray-100 text-gray-900 font-medium'
                     : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 active:bg-gray-100'
                 )}
               >

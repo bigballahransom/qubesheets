@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -10,14 +9,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, Check } from 'lucide-react';
 
-// Phone formatting utilities
 const formatPhoneNumber = (value: string, previousValue: string = ''): string => {
   const digits = value.replace(/\D/g, '');
   const prevDigits = previousValue.replace(/\D/g, '');
@@ -48,13 +45,42 @@ const formatPhoneForAPI = (formattedPhone: string): string => {
   return digits.length === 10 ? `+1${digits}` : '';
 };
 
-interface CreateCustomerModalProps {
-  children: ReactNode;
-  onCustomerCreated?: (customer: any) => void;
+const formatPhoneForDisplay = (apiPhone: string | undefined): string => {
+  if (!apiPhone) return '';
+  const digits = apiPhone.replace(/\D/g, '');
+  const last10 = digits.slice(-10);
+  if (last10.length === 10) {
+    return `(${last10.slice(0, 3)}) ${last10.slice(3, 6)}-${last10.slice(6)}`;
+  }
+  return apiPhone;
+};
+
+interface Customer {
+  _id: string;
+  firstName: string;
+  lastName: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+  address?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export default function CreateCustomerModal({ children, onCustomerCreated }: CreateCustomerModalProps) {
-  const [open, setOpen] = useState(false);
+interface EditCustomerModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  customer: Customer;
+  onCustomerUpdated: (customer: Customer) => void;
+}
+
+export default function EditCustomerModal({
+  open,
+  onOpenChange,
+  customer,
+  onCustomerUpdated,
+}: EditCustomerModalProps) {
   const [loading, setLoading] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -62,16 +88,17 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
   const [phone, setPhone] = useState('');
   const [company, setCompany] = useState('');
   const [phoneError, setPhoneError] = useState('');
-  const router = useRouter();
 
-  const resetForm = () => {
-    setFirstName('');
-    setLastName('');
-    setEmail('');
-    setPhone('');
-    setCompany('');
-    setPhoneError('');
-  };
+  useEffect(() => {
+    if (open && customer) {
+      setFirstName(customer.firstName || '');
+      setLastName(customer.lastName || '');
+      setEmail(customer.email || '');
+      setPhone(formatPhoneForDisplay(customer.phone));
+      setCompany(customer.company || '');
+      setPhoneError('');
+    }
+  }, [open, customer]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,11 +108,17 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
       return;
     }
 
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (phone.trim() && phoneDigits.length !== 10) {
+      toast.error('Phone number must be 10 digits');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const response = await fetch('/api/customers', {
-        method: 'POST',
+      const response = await fetch(`/api/customers/${customer._id}`, {
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -101,60 +134,40 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to create customer');
+        throw new Error(result.error || 'Failed to update customer');
       }
 
-      toast.success('Customer created successfully!', {
-        description: `${result.customer.firstName} ${result.customer.lastName} is ready.`
-      });
+      toast.success('Customer updated successfully');
 
-      resetForm();
-      setOpen(false);
-
-      if (onCustomerCreated) {
-        onCustomerCreated(result.customer);
-      }
-
-      // Navigate to the new customer page
-      router.push(`/customers/${result.customer._id}`);
-
+      onCustomerUpdated(result);
+      onOpenChange(false);
     } catch (error: any) {
-      console.error('Error creating customer:', error);
-      toast.error(error.message || 'Failed to create customer');
+      console.error('Error updating customer:', error);
+      toast.error(error.message || 'Failed to update customer');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOpenChange = (newOpen: boolean) => {
-    setOpen(newOpen);
-    if (!newOpen) {
-      resetForm();
-    }
-  };
-
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        {children}
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
-            <DialogTitle>Add New Customer</DialogTitle>
+            <DialogTitle>Edit Customer</DialogTitle>
             <DialogDescription>
-              Enter customer information. A project will be created automatically.
+              Update customer information.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="firstName">
+                <Label htmlFor="edit-firstName">
                   First Name <span className="text-red-500">*</span>
                 </Label>
                 <Input
-                  id="firstName"
+                  id="edit-firstName"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   placeholder="John"
@@ -163,11 +176,11 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
                 />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="lastName">
+                <Label htmlFor="edit-lastName">
                   Last Name <span className="text-red-500">*</span>
                 </Label>
                 <Input
-                  id="lastName"
+                  id="edit-lastName"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   placeholder="Smith"
@@ -177,9 +190,9 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="edit-email">Email</Label>
               <Input
-                id="email"
+                id="edit-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -189,9 +202,9 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="phone">Phone Number</Label>
+              <Label htmlFor="edit-phone">Phone Number</Label>
               <Input
-                id="phone"
+                id="edit-phone"
                 type="tel"
                 value={phone}
                 onChange={(e) => {
@@ -215,11 +228,11 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="company">
+              <Label htmlFor="edit-company">
                 Company <span className="text-gray-400 text-sm">(Optional)</span>
               </Label>
               <Input
-                id="company"
+                id="edit-company"
                 value={company}
                 onChange={(e) => setCompany(e.target.value)}
                 placeholder="Acme Corp"
@@ -232,7 +245,7 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
             <Button
               type="button"
               variant="outline"
-              onClick={() => setOpen(false)}
+              onClick={() => onOpenChange(false)}
               disabled={loading}
             >
               Cancel
@@ -244,12 +257,12 @@ export default function CreateCustomerModal({ children, onCustomerCreated }: Cre
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
+                  Saving...
                 </>
               ) : (
                 <>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create Customer
+                  <Check className="mr-2 h-4 w-4" />
+                  Save Changes
                 </>
               )}
             </Button>

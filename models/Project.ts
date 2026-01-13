@@ -6,9 +6,16 @@ export interface IProject extends Document {
   customerName: string;
   customerEmail?: string;
   phone?: string;
+  customerId?: string;
   userId: string;
   organizationId?: string;
   description?: string;
+  // Job scheduling fields
+  jobDate?: Date;
+  arrivalWindowStart?: string;
+  arrivalWindowEnd?: string;
+  opportunityType?: string;
+  jobType?: string;
   uploadLinkTracking?: {
     lastSentAt?: Date;
     lastSentTo?: {
@@ -47,9 +54,16 @@ const ProjectSchema: Schema = new Schema(
     customerName: { type: String, required: true },
     customerEmail: { type: String, required: false },
     phone: { type: String, required: false },
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: false, index: true },
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
     description: { type: String },
+    // Job scheduling fields
+    jobDate: { type: Date, required: false },
+    arrivalWindowStart: { type: String, required: false },
+    arrivalWindowEnd: { type: String, required: false },
+    opportunityType: { type: String, required: false },
+    jobType: { type: String, required: false },
     uploadLinkTracking: {
       lastSentAt: { type: Date },
       lastSentTo: {

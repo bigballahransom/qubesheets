@@ -3,21 +3,31 @@
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
+import CreateCustomerModal from '@/components/modals/CreateCustomerModal';
 import { SearchDropdown } from '@/components/SearchDropdown';
 import {
   SignedIn,
   UserButton,
-  OrganizationSwitcher
+  OrganizationSwitcher,
+  useOrganization
 } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
 
 export function DesktopHeaderBar() {
   const router = useRouter();
-  
+  const { organization } = useOrganization();
+
+  // Check if organization has CRM add-on
+  const hasCrmAddOn = (organization?.publicMetadata as any)?.subscription?.addOns?.includes('crm');
+
   const handleProjectCreated = (project: any) => {
-    // Navigate to the new project
     router.push(`/projects/${project._id}`);
   };
+
+  const handleCustomerCreated = (customer: any) => {
+    router.push(`/customers/${customer._id}`);
+  };
+
   return (
     <div className="hidden lg:block fixed top-0 left-64 right-0 h-16 bg-white border-b border-gray-200 z-50 shadow-sm">
       <div className="flex items-center justify-between h-full px-6">
@@ -25,27 +35,39 @@ export function DesktopHeaderBar() {
           {/* Search bar with dropdown */}
           <SearchDropdown />
         </div>
-        
+
         <div className="flex items-center space-x-4">
           <SignedIn>
-            {/* New Project Button */}
-            <CreateProjectModal onProjectCreated={handleProjectCreated}>
-              <Button 
-                size="sm" 
-                className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                New Project
-              </Button>
-            </CreateProjectModal>
-            
+            {/* Conditionally show New Customer or New Project button */}
+            {hasCrmAddOn ? (
+              <CreateCustomerModal onCustomerCreated={handleCustomerCreated}>
+                <Button
+                  size="sm"
+                  className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  New Customer
+                </Button>
+              </CreateCustomerModal>
+            ) : (
+              <CreateProjectModal onProjectCreated={handleProjectCreated}>
+                <Button
+                  size="sm"
+                  className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  New Project
+                </Button>
+              </CreateProjectModal>
+            )}
+
             {/* Organization Switcher */}
             <div className="min-w-[200px]">
               <OrganizationSwitcher
                 organizationProfileMode="modal"
                 createOrganizationMode="modal"
-                afterCreateOrganizationUrl="/projects"
-                afterSelectOrganizationUrl="/projects"
+                afterCreateOrganizationUrl="/"
+                afterSelectOrganizationUrl="/"
                 hidePersonal={false}
                 appearance={{
                   elements: {
@@ -58,10 +80,10 @@ export function DesktopHeaderBar() {
                 }}
               />
             </div>
-            
+
             {/* User Button */}
             <div className="flex-shrink-0">
-              <UserButton 
+              <UserButton
                 userProfileMode="modal"
                 appearance={{
                   elements: {
