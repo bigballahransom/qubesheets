@@ -623,6 +623,55 @@ export default function CustomerDetailPage() {
 
 // Inventory Card Component
 function InventoryCard({ projectId, router }: { projectId?: string; router: any }) {
+  const [inventoryStats, setInventoryStats] = useState({
+    totalItems: 0,
+    totalCubicFeet: 0,
+    totalWeight: 0,
+    loading: true
+  });
+
+  useEffect(() => {
+    const fetchInventoryStats = async () => {
+      if (!projectId) {
+        setInventoryStats(prev => ({ ...prev, loading: false }));
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/projects/${projectId}/inventory`);
+        if (response.ok) {
+          const items = await response.json();
+
+          // Calculate stats from inventory items
+          let totalItems = 0;
+          let totalCubicFeet = 0;
+          let totalWeight = 0;
+
+          items.forEach((item: any) => {
+            const quantity = item.quantity || 1;
+            totalItems += quantity;
+            totalCubicFeet += (item.cuft || 0) * quantity;
+            totalWeight += (item.weight || 0) * quantity;
+          });
+
+          setInventoryStats({
+            totalItems,
+            totalCubicFeet: Math.round(totalCubicFeet * 10) / 10,
+            totalWeight: Math.round(totalWeight * 10) / 10,
+            loading: false
+          });
+        } else {
+          setInventoryStats(prev => ({ ...prev, loading: false }));
+        }
+      } catch (error) {
+        console.error('Error fetching inventory:', error);
+        setInventoryStats(prev => ({ ...prev, loading: false }));
+      }
+    };
+
+    fetchInventoryStats();
+  }, [projectId]);
+
   return (
     <div className="bg-white rounded-xl border shadow-sm p-6 hover:shadow-md transition-shadow">
       <div className="flex items-center gap-2 mb-4">
@@ -635,15 +684,21 @@ function InventoryCard({ projectId, router }: { projectId?: string; router: any 
       <div className="space-y-3 mb-4">
         <div className="flex items-center justify-between">
           <span className="text-gray-600">Items:</span>
-          <Badge variant="secondary" className="bg-blue-100 text-blue-700 font-semibold">13</Badge>
+          <Badge variant="secondary" className="bg-blue-100 text-blue-700 font-semibold">
+            {inventoryStats.loading ? '...' : inventoryStats.totalItems}
+          </Badge>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-gray-600">Volume:</span>
-          <span className="font-semibold text-gray-900">604.0 ft³</span>
+          <span className="font-semibold text-gray-900">
+            {inventoryStats.loading ? '...' : `${inventoryStats.totalCubicFeet} ft³`}
+          </span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-gray-600">Weight:</span>
-          <span className="font-semibold text-gray-900">4228.0 lbs</span>
+          <span className="font-semibold text-gray-900">
+            {inventoryStats.loading ? '...' : `${inventoryStats.totalWeight} lbs`}
+          </span>
         </div>
       </div>
 
