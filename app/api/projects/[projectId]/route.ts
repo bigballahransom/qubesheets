@@ -81,6 +81,9 @@ export async function PATCH(
       'arrivalWindowEnd',
       'opportunityType',
       'jobType',
+      'origin',
+      'destination',
+      'stops',
     ];
 
     // Filter to only allowed fields

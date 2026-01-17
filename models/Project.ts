@@ -1,6 +1,16 @@
 // models/Project.ts
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface ILocation {
+  address: string;
+  unit?: string;
+  lat?: number;
+  lng?: number;
+  flightsOfStairs?: number;
+  elevator?: boolean;
+  longWalk?: boolean;
+}
+
 export interface IProject extends Document {
   name: string;
   customerName: string;
@@ -16,6 +26,10 @@ export interface IProject extends Document {
   arrivalWindowEnd?: string;
   opportunityType?: string;
   jobType?: string;
+  // Location fields
+  origin?: ILocation;
+  destination?: ILocation;
+  stops?: ILocation[];
   uploadLinkTracking?: {
     lastSentAt?: Date;
     lastSentTo?: {
@@ -64,6 +78,34 @@ const ProjectSchema: Schema = new Schema(
     arrivalWindowEnd: { type: String, required: false },
     opportunityType: { type: String, required: false },
     jobType: { type: String, required: false },
+    // Location fields
+    origin: {
+      address: { type: String },
+      unit: { type: String },
+      lat: { type: Number },
+      lng: { type: Number },
+      flightsOfStairs: { type: Number, default: 0 },
+      elevator: { type: Boolean, default: false },
+      longWalk: { type: Boolean, default: false }
+    },
+    destination: {
+      address: { type: String },
+      unit: { type: String },
+      lat: { type: Number },
+      lng: { type: Number },
+      flightsOfStairs: { type: Number, default: 0 },
+      elevator: { type: Boolean, default: false },
+      longWalk: { type: Boolean, default: false }
+    },
+    stops: [{
+      address: { type: String },
+      unit: { type: String },
+      lat: { type: Number },
+      lng: { type: Number },
+      flightsOfStairs: { type: Number, default: 0 },
+      elevator: { type: Boolean, default: false },
+      longWalk: { type: Boolean, default: false }
+    }],
     uploadLinkTracking: {
       lastSentAt: { type: Date },
       lastSentTo: {

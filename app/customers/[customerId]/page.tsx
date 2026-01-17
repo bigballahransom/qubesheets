@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   User,
@@ -28,8 +28,13 @@ import {
   CircleDot,
   Download,
   Send,
-  Trash2
+  Trash2,
+  Minus,
+  ArrowRight,
+  Home
 } from 'lucide-react';
+import { useLoadScript } from '@react-google-maps/api';
+import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -69,6 +74,16 @@ interface Customer {
   updatedAt: string;
 }
 
+interface Location {
+  address: string;
+  unit?: string;
+  lat?: number;
+  lng?: number;
+  flightsOfStairs?: number;
+  elevator?: boolean;
+  longWalk?: boolean;
+}
+
 interface Project {
   _id: string;
   name: string;
@@ -79,6 +94,9 @@ interface Project {
   arrivalWindowEnd?: string;
   opportunityType?: string;
   jobType?: string;
+  origin?: Location;
+  destination?: Location;
+  stops?: Location[];
 }
 
 export default function CustomerDetailPage() {
@@ -550,58 +568,10 @@ export default function CustomerDetailPage() {
                 </div>
 
                 {/* Locations Card */}
-                <div className="bg-white rounded-xl border shadow-sm p-6 hover:shadow-md transition-shadow">
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 bg-orange-100 rounded-lg">
-                        <MapPin className="h-5 w-5 text-orange-600" />
-                      </div>
-                      <h2 className="text-lg font-semibold text-gray-900">Locations</h2>
-                    </div>
-                    <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer">
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                  </div>
-
-                  <div className="space-y-6">
-                    {/* Origin */}
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <CircleDot className="h-5 w-5 text-blue-500" />
-                          <span className="font-medium text-gray-900">Origin</span>
-                        </div>
-                        <p className="text-gray-700 ml-7">618 N 41st St, Seattle, WA 98103, USA</p>
-                        <p className="text-sm text-gray-500 ml-7 mt-1">
-                          Unit: <span className="font-medium">N/A</span>
-                        </p>
-                      </div>
-                      <div className="w-24 h-20 bg-slate-100 rounded-lg flex items-center justify-center text-xs text-gray-400 overflow-hidden">
-                        <div className="w-full h-full bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center">
-                          <MapPin className="h-6 w-6 text-slate-400" />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="border-t"></div>
-
-                    {/* Stop One */}
-                    <div className="flex gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <CircleDot className="h-5 w-5 text-green-500" />
-                          <span className="font-medium text-gray-900">Stop One</span>
-                        </div>
-                        <p className="text-gray-700 ml-7">718-C N 94th St, Seattle, WA 98103, USA</p>
-                      </div>
-                      <div className="w-24 h-20 bg-slate-100 rounded-lg flex items-center justify-center text-xs text-gray-400 overflow-hidden">
-                        <div className="w-full h-full bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center">
-                          <MapPin className="h-6 w-6 text-slate-400" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <LocationsCard
+                  project={firstProject}
+                  onProjectUpdated={handleProjectUpdated}
+                />
               </div>
 
               {/* Right Column - Hidden on mobile (cards appear inline above) */}
@@ -841,6 +811,538 @@ function MaterialsServicesCard() {
         </div>
         <p className="text-sm text-gray-400 text-center py-4">No services selected</p>
       </div>
+    </div>
+  );
+}
+
+// Static Map Thumbnail Component
+function StaticMapThumbnail({ address, lat, lng, className = "w-24 h-20" }: { address?: string; lat?: number; lng?: number; className?: string }) {
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+
+  if (!address && !lat && !lng) {
+    return (
+      <div className={`${className} bg-gradient-to-br from-slate-200 to-slate-300 rounded-lg flex items-center justify-center`}>
+        <MapPin className="h-6 w-6 text-slate-400" />
+      </div>
+    );
+  }
+
+  const location = lat && lng ? `${lat},${lng}` : encodeURIComponent(address || '');
+  const mapUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${location}&zoom=15&size=400x200&scale=2&maptype=hybrid&markers=color:red%7C${location}&key=${apiKey}`;
+
+  return (
+    <img
+      src={mapUrl}
+      alt={`Map of ${address || 'location'}`}
+      className={`${className} rounded-lg object-cover`}
+    />
+  );
+}
+
+// Google Places Autocomplete libraries
+const libraries: ("places")[] = ["places"];
+
+// Places Autocomplete Input Component
+function PlacesAutocomplete({
+  value,
+  onChange,
+  onSelect,
+  placeholder = "Enter address..."
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSelect: (place: google.maps.places.PlaceResult) => void;
+  placeholder?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+
+  useEffect(() => {
+    if (!inputRef.current || !window.google) return;
+
+    autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
+      types: ['address'],
+      componentRestrictions: { country: 'us' }
+    });
+
+    autocompleteRef.current.addListener('place_changed', () => {
+      const place = autocompleteRef.current?.getPlace();
+      if (place) {
+        onSelect(place);
+        if (place.formatted_address) {
+          onChange(place.formatted_address);
+        }
+      }
+    });
+
+    return () => {
+      if (autocompleteRef.current) {
+        google.maps.event.clearInstanceListeners(autocompleteRef.current);
+      }
+    };
+  }, [onChange, onSelect]);
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full px-3 py-3 border-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-base"
+    />
+  );
+}
+
+// Locations Card Component
+function LocationsCard({ project, onProjectUpdated }: { project?: Project; onProjectUpdated: (project: Project) => void }) {
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingLocation, setEditingLocation] = useState<'origin' | 'destination' | number | null>(null);
+  const [addressInput, setAddressInput] = useState('');
+  const [flightsOfStairs, setFlightsOfStairs] = useState(0);
+  const [elevator, setElevator] = useState(false);
+  const [longWalk, setLongWalk] = useState(false);
+  const [selectedLat, setSelectedLat] = useState<number | undefined>();
+  const [selectedLng, setSelectedLng] = useState<number | undefined>();
+  const [saving, setSaving] = useState(false);
+  const [stops, setStops] = useState<Location[]>(project?.stops || []);
+
+  // Sync stops when project updates
+  useEffect(() => {
+    setStops(project?.stops || []);
+  }, [project?.stops]);
+
+  const { isLoaded } = useLoadScript({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '',
+    libraries
+  });
+
+  const handleEditLocation = (type: 'origin' | 'destination' | number) => {
+    setEditingLocation(type);
+    let location: Location | undefined;
+    if (type === 'origin') {
+      location = project?.origin;
+    } else if (type === 'destination') {
+      location = project?.destination;
+    } else {
+      location = stops[type];
+    }
+    setAddressInput(location?.address || '');
+    setFlightsOfStairs(location?.flightsOfStairs || 0);
+    setElevator(location?.elevator || false);
+    setLongWalk(location?.longWalk || false);
+    setSelectedLat(location?.lat);
+    setSelectedLng(location?.lng);
+    setEditModalOpen(true);
+  };
+
+  const handleAddStop = () => {
+    setEditingLocation(stops.length);
+    setAddressInput('');
+    setFlightsOfStairs(0);
+    setElevator(false);
+    setLongWalk(false);
+    setSelectedLat(undefined);
+    setSelectedLng(undefined);
+    setEditModalOpen(true);
+  };
+
+  const handleRemoveStop = async (index: number) => {
+    if (!project) return;
+    const newStops = stops.filter((_, i) => i !== index);
+    setStops(newStops);
+
+    try {
+      const response = await fetch(`/api/projects/${project._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stops: newStops })
+      });
+      if (response.ok) {
+        const updatedProject = await response.json();
+        onProjectUpdated(updatedProject);
+      }
+    } catch (error) {
+      console.error('Error removing stop:', error);
+    }
+  };
+
+  const handlePlaceSelect = useCallback((place: google.maps.places.PlaceResult) => {
+    if (place.geometry?.location) {
+      setSelectedLat(place.geometry.location.lat());
+      setSelectedLng(place.geometry.location.lng());
+    }
+  }, []);
+
+  const handleSaveLocation = async () => {
+    if (!project || editingLocation === null) return;
+
+    setSaving(true);
+    try {
+      let lat = selectedLat;
+      let lng = selectedLng;
+
+      // If no coordinates from autocomplete, geocode the address
+      if (!lat || !lng) {
+        const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+        if (addressInput && apiKey) {
+          const geocodeResponse = await fetch(
+            `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressInput)}&key=${apiKey}`
+          );
+          const geocodeData = await geocodeResponse.json();
+
+          if (geocodeData.results && geocodeData.results[0]) {
+            lat = geocodeData.results[0].geometry.location.lat;
+            lng = geocodeData.results[0].geometry.location.lng;
+          }
+        }
+      }
+
+      const locationData: Location = {
+        address: addressInput,
+        lat,
+        lng,
+        flightsOfStairs,
+        elevator,
+        longWalk
+      };
+
+      let updateData: any;
+      if (editingLocation === 'origin') {
+        updateData = { origin: locationData };
+      } else if (editingLocation === 'destination') {
+        updateData = { destination: locationData };
+      } else {
+        // It's a stop (number index)
+        const newStops = [...stops];
+        if (editingLocation >= stops.length) {
+          newStops.push(locationData);
+        } else {
+          newStops[editingLocation] = locationData;
+        }
+        setStops(newStops);
+        updateData = { stops: newStops };
+      }
+
+      const response = await fetch(`/api/projects/${project._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updateData)
+      });
+
+      if (response.ok) {
+        const updatedProject = await response.json();
+        onProjectUpdated(updatedProject);
+        setEditModalOpen(false);
+        setEditingLocation(null);
+      }
+    } catch (error) {
+      console.error('Error saving location:', error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const origin = project?.origin;
+  const destination = project?.destination;
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-6 hover:shadow-md transition-shadow">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-2">
+          <div className="p-2 bg-orange-100 rounded-lg">
+            <MapPin className="h-5 w-5 text-orange-600" />
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900">Locations</h2>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        {/* Origin */}
+        <div className="flex gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <CircleDot className="h-5 w-5 text-blue-500" />
+              <span className="font-medium text-gray-900">Origin</span>
+              <button
+                onClick={() => handleEditLocation('origin')}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors cursor-pointer"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              {origin?.address && (
+                <a
+                  href={`https://www.zillow.com/homes/${encodeURIComponent(origin.address)}_rb/`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors cursor-pointer"
+                  title="View on Zillow"
+                >
+                  <Home className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+            {origin?.address ? (
+              <>
+                <p className="text-gray-700 ml-7">{origin.address}</p>
+                <div className="flex gap-4 ml-7 mt-2 text-sm text-gray-500">
+                  {(origin.flightsOfStairs ?? 0) > 0 && (
+                    <span>{origin.flightsOfStairs} floor{origin.flightsOfStairs !== 1 ? 's' : ''}</span>
+                  )}
+                  {origin.elevator && <span>Elevator</span>}
+                  {origin.longWalk && <span>Long walk</span>}
+                </div>
+              </>
+            ) : (
+              <p className="text-gray-400 ml-7 italic">No address set</p>
+            )}
+          </div>
+          <StaticMapThumbnail address={origin?.address} lat={origin?.lat} lng={origin?.lng} />
+        </div>
+
+        {/* Stops */}
+        {stops.map((stop, index) => (
+          <div key={index}>
+            {/* Connector line before stop */}
+            <div className="relative py-2">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-dashed border-gray-200"></div>
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <CircleDot className="h-5 w-5 text-orange-500" />
+                  <span className="font-medium text-gray-900">Stop {index + 1}</span>
+                  <button
+                    onClick={() => handleEditLocation(index)}
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors cursor-pointer"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    onClick={() => handleRemoveStop(index)}
+                    className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                  {stop.address && (
+                    <a
+                      href={`https://www.zillow.com/homes/${encodeURIComponent(stop.address)}_rb/`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors cursor-pointer"
+                      title="View on Zillow"
+                    >
+                      <Home className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+                {stop.address ? (
+                  <>
+                    <p className="text-gray-700 ml-7">{stop.address}</p>
+                    <div className="flex gap-4 ml-7 mt-2 text-sm text-gray-500">
+                      {(stop.flightsOfStairs ?? 0) > 0 && (
+                        <span>{stop.flightsOfStairs} floor{stop.flightsOfStairs !== 1 ? 's' : ''}</span>
+                      )}
+                      {stop.elevator && <span>Elevator</span>}
+                      {stop.longWalk && <span>Long walk</span>}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-gray-400 ml-7 italic">No address set</p>
+                )}
+              </div>
+              <StaticMapThumbnail address={stop.address} lat={stop.lat} lng={stop.lng} />
+            </div>
+          </div>
+        ))}
+
+        {/* Add Stop Button */}
+        <div className="relative py-2">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-dashed border-gray-300"></div>
+          </div>
+          <div className="relative flex justify-center">
+            <button
+              onClick={handleAddStop}
+              className="group flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-full text-sm font-medium text-gray-500 hover:text-blue-600 hover:border-blue-300 hover:shadow-sm transition-all duration-200"
+            >
+              <Plus className="h-4 w-4 group-hover:scale-110 transition-transform" />
+              <span>Add Stop</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Destination */}
+        <div className="flex gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <CircleDot className="h-5 w-5 text-green-500" />
+              <span className="font-medium text-gray-900">Destination</span>
+              <button
+                onClick={() => handleEditLocation('destination')}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors cursor-pointer"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              {destination?.address && (
+                <a
+                  href={`https://www.zillow.com/homes/${encodeURIComponent(destination.address)}_rb/`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors cursor-pointer"
+                  title="View on Zillow"
+                >
+                  <Home className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+            {destination?.address ? (
+              <>
+                <p className="text-gray-700 ml-7">{destination.address}</p>
+                <div className="flex gap-4 ml-7 mt-2 text-sm text-gray-500">
+                  {(destination.flightsOfStairs ?? 0) > 0 && (
+                    <span>{destination.flightsOfStairs} floor{destination.flightsOfStairs !== 1 ? 's' : ''}</span>
+                  )}
+                  {destination.elevator && <span>Elevator</span>}
+                  {destination.longWalk && <span>Long walk</span>}
+                </div>
+              </>
+            ) : (
+              <p className="text-gray-400 ml-7 italic">No address set</p>
+            )}
+          </div>
+          <StaticMapThumbnail address={destination?.address} lat={destination?.lat} lng={destination?.lng} />
+        </div>
+      </div>
+
+      {/* Edit Location Modal */}
+      {editModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg mx-4 shadow-xl max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-semibold mb-6">
+              {editingLocation === 'origin'
+                ? 'Origin'
+                : editingLocation === 'destination'
+                  ? 'Destination'
+                  : typeof editingLocation === 'number' && editingLocation >= stops.length
+                    ? 'Add Stop'
+                    : `Stop ${typeof editingLocation === 'number' ? editingLocation + 1 : ''}`}
+            </h3>
+
+            <div className="space-y-6">
+              {/* Address Input with Autocomplete */}
+              <div>
+                {isLoaded ? (
+                  <PlacesAutocomplete
+                    value={addressInput}
+                    onChange={setAddressInput}
+                    onSelect={handlePlaceSelect}
+                    placeholder="Enter address..."
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    value={addressInput}
+                    onChange={(e) => setAddressInput(e.target.value)}
+                    placeholder="Loading..."
+                    className="w-full px-3 py-3 border-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-base"
+                    disabled
+                  />
+                )}
+              </div>
+
+              {/* Flights of Stairs */}
+              <div className="flex items-center justify-between py-3 border-b">
+                <div className="flex items-center gap-3">
+                  <span className="text-lg">✈️</span>
+                  <span className="font-medium text-gray-900">Flights of Stairs</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setFlightsOfStairs(Math.max(0, flightsOfStairs - 1))}
+                    className="w-8 h-8 flex items-center justify-center border rounded-md hover:bg-gray-100 transition-colors"
+                  >
+                    <Minus className="h-4 w-4" />
+                  </button>
+                  <span className="w-8 text-center font-medium">{flightsOfStairs}</span>
+                  <button
+                    onClick={() => setFlightsOfStairs(flightsOfStairs + 1)}
+                    className="w-8 h-8 flex items-center justify-center border rounded-md hover:bg-gray-100 transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Elevator */}
+              <div className="flex items-center justify-between py-3 border-b">
+                <div className="flex items-center gap-3">
+                  <span className="text-lg">⊠</span>
+                  <span className="font-medium text-gray-900">Elevator</span>
+                </div>
+                <Switch
+                  checked={elevator}
+                  onCheckedChange={setElevator}
+                />
+              </div>
+
+              {/* Long Walk */}
+              <div className="flex items-center justify-between py-3 border-b">
+                <div className="flex items-center gap-3">
+                  <ArrowRight className="h-5 w-5 text-gray-600" />
+                  <span className="font-medium text-gray-900">Long Walk</span>
+                </div>
+                <Switch
+                  checked={longWalk}
+                  onCheckedChange={setLongWalk}
+                />
+              </div>
+
+              {/* Map Preview */}
+              {(addressInput || selectedLat) && (
+                <div className="mt-4">
+                  <StaticMapThumbnail
+                    address={addressInput}
+                    lat={selectedLat}
+                    lng={selectedLng}
+                    className="w-full h-40"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditModalOpen(false);
+                  setEditingLocation(null);
+                }}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveLocation}
+                disabled={saving || !addressInput.trim()}
+                className="flex-1"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save'
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
