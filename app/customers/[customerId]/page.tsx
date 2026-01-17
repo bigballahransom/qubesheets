@@ -894,6 +894,175 @@ function PlacesAutocomplete({
   );
 }
 
+// Route Map Component
+function RouteMap({
+  origin,
+  destination,
+  stops,
+  isLoaded
+}: {
+  origin?: Location;
+  destination?: Location;
+  stops: Location[];
+  isLoaded: boolean;
+}) {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const [routeInfo, setRouteInfo] = useState<{
+    distance: string;
+    duration: string;
+  } | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isLoaded || !mapRef.current || !origin?.address || !destination?.address) {
+      return;
+    }
+
+    const directionsService = new google.maps.DirectionsService();
+    const directionsRenderer = new google.maps.DirectionsRenderer({
+      suppressMarkers: false,
+      polylineOptions: {
+        strokeColor: '#3B82F6',
+        strokeWeight: 5,
+        strokeOpacity: 0.8
+      }
+    });
+
+    const map = new google.maps.Map(mapRef.current, {
+      zoom: 10,
+      center: { lat: origin.lat || 40.7128, lng: origin.lng || -74.0060 },
+      mapTypeId: 'hybrid',
+      disableDefaultUI: false,
+      zoomControl: true,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: true
+    });
+
+    directionsRenderer.setMap(map);
+
+    // Build waypoints from stops
+    const waypoints = stops
+      .filter(stop => stop.address)
+      .map(stop => ({
+        location: stop.lat && stop.lng
+          ? { lat: stop.lat, lng: stop.lng }
+          : stop.address,
+        stopover: true
+      }));
+
+    const request: google.maps.DirectionsRequest = {
+      origin: origin.lat && origin.lng
+        ? { lat: origin.lat, lng: origin.lng }
+        : origin.address,
+      destination: destination.lat && destination.lng
+        ? { lat: destination.lat, lng: destination.lng }
+        : destination.address,
+      waypoints: waypoints,
+      travelMode: google.maps.TravelMode.DRIVING,
+      optimizeWaypoints: false
+    };
+
+    directionsService.route(request, (result, status) => {
+      if (status === google.maps.DirectionsStatus.OK && result) {
+        directionsRenderer.setDirections(result);
+
+        // Calculate total distance and duration
+        let totalDistance = 0;
+        let totalDuration = 0;
+        result.routes[0].legs.forEach(leg => {
+          totalDistance += leg.distance?.value || 0;
+          totalDuration += leg.duration?.value || 0;
+        });
+
+        const miles = (totalDistance / 1609.34).toFixed(1);
+        const hours = Math.floor(totalDuration / 3600);
+        const minutes = Math.round((totalDuration % 3600) / 60);
+
+        setRouteInfo({
+          distance: `${miles} mi`,
+          duration: hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
+        });
+        setMapError(null);
+      } else {
+        setMapError('Could not calculate route');
+      }
+    });
+  }, [isLoaded, origin, destination, stops]);
+
+  if (!origin?.address || !destination?.address) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+        <MapPin className="h-12 w-12 text-gray-300 mb-3" />
+        <p className="text-sm">Add origin and destination to view route</p>
+      </div>
+    );
+  }
+
+  if (!isLoaded) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Route Info */}
+      {routeInfo && (
+        <div className="flex items-center gap-4 p-3 bg-blue-50 rounded-lg">
+          <div className="flex items-center gap-2">
+            <Truck className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-medium text-blue-900">{routeInfo.distance}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-medium text-blue-900">{routeInfo.duration}</span>
+          </div>
+          {stops.length > 0 && (
+            <div className="flex items-center gap-2">
+              <CircleDot className="h-4 w-4 text-orange-500" />
+              <span className="text-sm font-medium text-blue-900">{stops.length} stop{stops.length !== 1 ? 's' : ''}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {mapError && (
+        <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">
+          {mapError}
+        </div>
+      )}
+
+      {/* Map */}
+      <div
+        ref={mapRef}
+        className="w-full h-80 rounded-lg overflow-hidden border border-gray-200"
+      />
+
+      {/* Route Summary */}
+      <div className="flex items-center gap-2 text-sm text-gray-600">
+        <div className="flex items-center gap-1">
+          <CircleDot className="h-3 w-3 text-blue-500" />
+          <span className="truncate max-w-[150px]">{origin.address.split(',')[0]}</span>
+        </div>
+        {stops.map((_, index) => (
+          <div key={index} className="flex items-center gap-1">
+            <ArrowRight className="h-3 w-3 text-gray-400" />
+            <CircleDot className="h-3 w-3 text-orange-500" />
+          </div>
+        ))}
+        <ArrowRight className="h-3 w-3 text-gray-400" />
+        <div className="flex items-center gap-1">
+          <CircleDot className="h-3 w-3 text-green-500" />
+          <span className="truncate max-w-[150px]">{destination.address.split(',')[0]}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Locations Card Component
 function LocationsCard({ project, onProjectUpdated }: { project?: Project; onProjectUpdated: (project: Project) => void }) {
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -1045,10 +1214,11 @@ function LocationsCard({ project, onProjectUpdated }: { project?: Project; onPro
 
   const origin = project?.origin;
   const destination = project?.destination;
+  const [activeTab, setActiveTab] = useState<'locations' | 'route'>('locations');
 
   return (
     <div className="bg-white rounded-xl border shadow-sm p-6 hover:shadow-md transition-shadow">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <div className="p-2 bg-orange-100 rounded-lg">
             <MapPin className="h-5 w-5 text-orange-600" />
@@ -1057,6 +1227,31 @@ function LocationsCard({ project, onProjectUpdated }: { project?: Project; onPro
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 p-1 bg-gray-100 rounded-lg mb-6">
+        <button
+          onClick={() => setActiveTab('locations')}
+          className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-all ${
+            activeTab === 'locations'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Locations
+        </button>
+        <button
+          onClick={() => setActiveTab('route')}
+          className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-all ${
+            activeTab === 'route'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Route
+        </button>
+      </div>
+
+      {activeTab === 'locations' ? (
       <div className="space-y-6">
         {/* Origin */}
         <div className="flex gap-4">
@@ -1217,6 +1412,15 @@ function LocationsCard({ project, onProjectUpdated }: { project?: Project; onPro
           <StaticMapThumbnail address={destination?.address} lat={destination?.lat} lng={destination?.lng} />
         </div>
       </div>
+      ) : (
+        /* Route Tab */
+        <RouteMap
+          origin={origin}
+          destination={destination}
+          stops={stops}
+          isLoaded={isLoaded}
+        />
+      )}
 
       {/* Edit Location Modal */}
       {editModalOpen && (
