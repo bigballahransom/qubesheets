@@ -70,30 +70,30 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
   const [phoneError, setPhoneError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [supermoveEnabled, setSupermoveEnabled] = useState(false);
+  const [smartMovingEnabled, setSmartMovingEnabled] = useState(false);
   const [checkingSupermove, setCheckingSupermove] = useState(false);
   const router = useRouter();
 
-  // Check if Supermove is enabled for this organization when modal opens
+  // Check integrations when modal opens
   useEffect(() => {
     if (open) {
       checkSupermoveIntegration();
+      checkSmartMovingIntegration();
     }
   }, [open]);
 
   const checkSupermoveIntegration = async () => {
     setCheckingSupermove(true);
-    
+
     try {
-      // Get the user's organization first
       const orgResponse = await fetch('/api/user/organization');
-      
+
       if (orgResponse.ok) {
         const orgData = await orgResponse.json();
-        
+
         if (orgData.organizationId) {
-          // Check if Supermove is enabled for this organization
           const supermoveResponse = await fetch(`/api/organizations/${orgData.organizationId}/supermove`);
-          
+
           if (supermoveResponse.ok) {
             const supermoveData = await supermoveResponse.json();
             const isEnabled = supermoveData.enabled && supermoveData.configured;
@@ -103,9 +103,30 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
       }
     } catch (error) {
       console.error('Error checking Supermove integration:', error);
-      // Fail silently - email field will just not show
     }
     setCheckingSupermove(false);
+  };
+
+  const checkSmartMovingIntegration = async () => {
+    try {
+      const orgResponse = await fetch('/api/user/organization');
+
+      if (orgResponse.ok) {
+        const orgData = await orgResponse.json();
+
+        if (orgData.organizationId) {
+          const smartMovingResponse = await fetch(`/api/organizations/${orgData.organizationId}/smartmoving`);
+
+          if (smartMovingResponse.ok) {
+            const smartMovingData = await smartMovingResponse.json();
+            const isEnabled = smartMovingData.enabled && smartMovingData.configured;
+            setSmartMovingEnabled(isEnabled);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking SmartMoving integration:', error);
+    }
   };
 
   const createProject = async () => {
@@ -239,7 +260,14 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
           )}
           
           <div className="space-y-2">
-            <Label htmlFor="phone">Phone Number (Optional)</Label>
+            <Label htmlFor="phone" className="flex items-center gap-2">
+              Phone Number (Optional)
+              {smartMovingEnabled && (
+                <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                  SmartMoving
+                </span>
+              )}
+            </Label>
             <Input
               id="phone"
               type="tel"
@@ -263,8 +291,13 @@ export default function CreateProjectModal({ children, onProjectCreated }: Creat
             {phoneError && (
               <p className="text-sm text-red-500">{phoneError}</p>
             )}
+            {smartMovingEnabled && (
+              <p className="text-xs text-gray-600">
+                Phone number must match a lead in SmartMoving to sync inventory
+              </p>
+            )}
           </div>
-          
+
           <DialogFooter>
             <Button
               type="button"

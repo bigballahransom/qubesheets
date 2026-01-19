@@ -25,6 +25,38 @@ const SmartMovingIntegrationSchema = new mongoose.Schema({
   smartMovingApiKey: {
     type: String,
     required: true
+  },
+
+  // Default values for lead conversion
+  defaultTariffId: {
+    type: String,
+    required: false
+  },
+
+  defaultReferralSourceId: {
+    type: String,
+    required: false
+  },
+
+  defaultMoveSizeId: {
+    type: String,
+    required: false
+  },
+
+  defaultSalesPersonId: {
+    type: String,
+    required: false
+  },
+
+  defaultServiceTypeId: {
+    type: Number,
+    default: 1 // 1 = Moving
+  },
+
+  // Auto-send customer upload link when opportunity is created
+  sendUploadLinkOnCreate: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true // Automatically manage createdAt and updatedAt

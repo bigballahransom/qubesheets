@@ -9,6 +9,7 @@ import {
 } from '@clerk/nextjs'
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import Image from 'next/image';
 import {
   Folder,
   Plus,
@@ -42,6 +43,11 @@ interface Project {
   customerName?: string;
   phone?: string;
   updatedAt: string;
+  metadata?: {
+    smartMovingOpportunityId?: string;
+    smartMovingSyncedAt?: string;
+    source?: string;
+  };
 }
 
 export function AppSidebar() {
@@ -332,25 +338,43 @@ export function AppSidebar() {
                   </div>
                 ) : (
                   <ul className="space-y-1">
-                    {projects.map((project) => (
-                      <li key={project._id}>
-                        <button
-                          onClick={() => handleProjectClick(project._id)}
-                          className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
-                            activeProjectId === project._id ? 'bg-gray-100' : ''
-                          }`}
-                        >
-                          <Folder size={16} className="mr-2 flex-shrink-0 text-blue-500" />
-                          <div className="flex-1 overflow-hidden">
-                            <p className="truncate font-medium">{project.name}</p>
-                            <p className="text-xs text-gray-500">
-                              Updated {formatDate(project.updatedAt)}
-                            </p>
-                          </div>
-                          <ArrowRight size={14} className="text-gray-400" />
-                        </button>
-                      </li>
-                    ))}
+                    {projects.map((project) => {
+                      // Show SmartMoving logo only for projects that have been synced (have syncedAt timestamp)
+                      const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
+
+                      return (
+                        <li key={project._id}>
+                          <button
+                            onClick={() => handleProjectClick(project._id)}
+                            className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
+                              activeProjectId === project._id ? 'bg-gray-100' : ''
+                            }`}
+                          >
+                            <Folder size={16} className="mr-2 flex-shrink-0 text-blue-500" />
+                            <div className="flex-1 overflow-hidden">
+                              <p className="truncate font-medium flex items-center gap-1.5">
+                                {project.name}
+                                {isSyncedToSmartMoving && (
+                                  <span title="Synced with SmartMoving">
+                                    <Image
+                                      src="/smtiny.png"
+                                      alt="Synced to SmartMoving"
+                                      width={14}
+                                      height={14}
+                                      className="flex-shrink-0"
+                                    />
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                Updated {formatDate(project.updatedAt)}
+                              </p>
+                            </div>
+                            <ArrowRight size={14} className="text-gray-400" />
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </>

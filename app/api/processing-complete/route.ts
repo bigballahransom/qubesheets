@@ -3,8 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
 import simpleRealTime from '@/lib/simple-realtime';
 import connectMongoDB from '@/lib/mongodb';
-import InventoryItem from '@/models/InventoryItem';
-import { syncInventoryToSmartMoving } from '@/lib/smartmoving-inventory-sync';
 
 // Type definitions for pending SSE events
 interface SSEEventData {
@@ -52,53 +50,6 @@ function broadcastToSSEConnections(projectId: string, eventData: any) {
         console.log(`🗑️ Removed failed SSE connection: ${connectionId}`);
       }
     });
-  }
-}
-
-/**
- * Triggers SmartMoving inventory sync directly in the processing complete webhook
- * This runs in the background and never blocks the webhook response
- */
-async function triggerSmartMovingSync(projectId: string, itemsProcessed: number, sourceMediaId: string, isVideo: boolean) {
-  try {
-    console.log(`🔄 [SMARTMOVING-SYNC] Starting SmartMoving sync for project ${projectId} with ${itemsProcessed} processed items from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
-    
-    // Connect to MongoDB to get inventory items
-    await connectMongoDB();
-    
-    // Get only inventory items created from this specific image or video
-    const sourceField = isVideo ? 'sourceVideoId' : 'sourceImageId';
-    const sourceInventoryItems = await InventoryItem.find({ 
-      projectId,
-      [sourceField]: sourceMediaId
-    });
-    
-    if (sourceInventoryItems.length === 0) {
-      console.log(`⚠️ [SMARTMOVING-SYNC] No inventory items found for project ${projectId} from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
-      return;
-    }
-    
-    console.log(`📦 [SMARTMOVING-SYNC] Found ${sourceInventoryItems.length} inventory items to sync from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
-    console.log(`📦 [SMARTMOVING-SYNC] Expected ${itemsProcessed} items based on webhook, found ${sourceInventoryItems.length} items from source media`);
-    
-    // Perform the SmartMoving sync
-    const syncResult = await syncInventoryToSmartMoving(projectId, sourceInventoryItems);
-    
-    console.log(`🔍 [SMARTMOVING-SYNC] Sync completed:`, {
-      success: syncResult.success,
-      syncedCount: syncResult.syncedCount,
-      error: syncResult.error
-    });
-    
-    if (syncResult.success) {
-      console.log(`✅ [SMARTMOVING-SYNC] Successfully synced ${syncResult.syncedCount} items to SmartMoving`);
-    } else {
-      console.error(`❌ [SMARTMOVING-SYNC] Sync failed: ${syncResult.error}`);
-    }
-    
-  } catch (error) {
-    // Log error but don't let it affect the webhook response
-    console.error(`❌ [SMARTMOVING-SYNC] Error during SmartMoving sync for project ${projectId}:`, error);
   }
 }
 
@@ -355,16 +306,6 @@ export async function POST(request: NextRequest) {
         console.error('Failed to remove from server processing state:', error);
       }
       
-      // SMARTMOVING SYNC: Trigger inventory sync if items were processed
-      if (itemsProcessed && itemsProcessed > 0) {
-        const sourceMediaId = imageId || videoId;
-        const isVideo = !!videoId;
-        console.log(`🔄 Triggering SmartMoving inventory sync for ${itemsProcessed} processed items from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
-        // Fire-and-forget call to dedicated API
-        setTimeout(() => {
-          triggerSmartMovingSync(projectId, itemsProcessed, sourceMediaId, isVideo);
-        }, 100); // Small delay to ensure webhook response is sent first
-      }
     }
 
     // Broadcast to all connected SSE clients for this project

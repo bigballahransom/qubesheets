@@ -5,6 +5,7 @@ import SmartMovingIntegration from '@/models/SmartMovingIntegration';
 import { authenticateApiKey } from '@/lib/api-key-auth';
 import bcrypt from 'bcryptjs';
 import ApiKey from '@/models/ApiKey';
+import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
 
 interface SmartMovingWebhookPayload {
   'event-type': string;
@@ -292,9 +293,35 @@ async function processSmartMovingWebhookAsync(
     };
     
     const project = await Project.create(projectData);
-    
+
     console.log(`Background processing: SmartMoving project created successfully: ${project._id} for opportunity ${payload['opportunity-id']}`);
-    
+
+    // Send customer upload link if enabled and phone number is valid
+    if (smartMovingIntegration.sendUploadLinkOnCreate && formattedPhone) {
+      try {
+        console.log(`Background processing: Sending upload link to ${customerName} at ${formattedPhone}`);
+
+        const uploadLinkResult = await generateAndSendUploadLink({
+          projectId: project._id.toString(),
+          customerName: customerName,
+          customerPhone: formattedPhone,
+          authContext: {
+            userId: 'smartmoving-webhook',
+            organizationId: authContext.organizationId,
+          },
+        });
+
+        if (uploadLinkResult.success) {
+          console.log(`Background processing: Upload link sent successfully to ${customerName}`);
+        } else {
+          console.error(`Background processing: Failed to send upload link: ${uploadLinkResult.error}`);
+        }
+      } catch (uploadError) {
+        // Don't fail the webhook if upload link sending fails
+        console.error('Background processing: Error sending upload link:', uploadError);
+      }
+    }
+
   } catch (error) {
     console.error('Error in background SmartMoving webhook processing:', error);
   }

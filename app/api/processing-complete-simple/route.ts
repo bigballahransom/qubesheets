@@ -5,8 +5,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
-import InventoryItem from '@/models/InventoryItem';
-import { syncInventoryToSmartMoving } from '@/lib/smartmoving-inventory-sync';
 
 // SSE connections for real-time updates (minimal SSE for UI responsiveness)
 const sseConnections = new Map<string, ReadableStreamDefaultController>();
@@ -32,32 +30,6 @@ function broadcastCompletionEvent(projectId: string, eventData: any) {
         sseConnections.delete(connectionId);
       }
     });
-  }
-}
-
-// SmartMoving sync (fire-and-forget)
-async function triggerSmartMovingSync(projectId: string, itemsProcessed: number, sourceMediaId: string, isVideo: boolean) {
-  try {
-    console.log(`🔄 SmartMoving sync: ${itemsProcessed} items from ${isVideo ? 'video' : 'image'} ${sourceMediaId}`);
-    
-    await connectMongoDB();
-    
-    const sourceField = isVideo ? 'sourceVideoId' : 'sourceImageId';
-    const sourceInventoryItems = await InventoryItem.find({ 
-      projectId,
-      [sourceField]: sourceMediaId
-    });
-    
-    if (sourceInventoryItems.length === 0) {
-      console.log(`⚠️ No inventory items found for ${sourceMediaId}`);
-      return;
-    }
-    
-    const syncResult = await syncInventoryToSmartMoving(projectId, sourceInventoryItems);
-    console.log(`✅ SmartMoving sync completed:`, { success: syncResult.success, count: syncResult.syncedCount });
-    
-  } catch (error) {
-    console.error(`❌ SmartMoving sync error:`, error);
   }
 }
 
@@ -128,13 +100,6 @@ export async function POST(request: NextRequest) {
       
     } else {
       console.log(`⚠️ Item ${completedId} not found in database - may have been already completed`);
-    }
-
-    // Trigger SmartMoving sync if items were processed
-    if (itemsProcessed && itemsProcessed > 0) {
-      setTimeout(() => {
-        triggerSmartMovingSync(projectId, itemsProcessed, completedId, isVideo);
-      }, 100);
     }
 
     return NextResponse.json({ 

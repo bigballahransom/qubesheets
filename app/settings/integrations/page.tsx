@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
-import { Plug, Save, Key, TestTube } from 'lucide-react';
+import { Plug, Save, Key, TestTube, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -13,17 +13,18 @@ import IntercomChat from '@/components/IntercomChat';
 export default function IntegrationsPage() {
   const { user } = useUser();
   const { organization } = useOrganization();
-  
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResults, setTestResults] = useState<any>(null);
-  
+
   // SmartMoving integration state
   const [smartMovingEnabled, setSmartMovingEnabled] = useState(false);
   const [smartMovingClientId, setSmartMovingClientId] = useState('');
   const [smartMovingApiKey, setSmartMovingApiKey] = useState('');
   const [hasExistingIntegration, setHasExistingIntegration] = useState(false);
+  const [sendUploadLinkOnCreate, setSendUploadLinkOnCreate] = useState(false);
 
   useEffect(() => {
     loadIntegrations();
@@ -39,6 +40,7 @@ export default function IntegrationsPage() {
           setHasExistingIntegration(true);
           setSmartMovingEnabled(true);
           setSmartMovingClientId(data.integration.smartMovingClientId);
+          setSendUploadLinkOnCreate(data.integration.sendUploadLinkOnCreate || false);
           // API key is not returned for security, just show that it exists
           if (data.integration.hasApiKey) {
             setSmartMovingApiKey('••••••••••••••••');
@@ -55,7 +57,7 @@ export default function IntegrationsPage() {
   const saveIntegrations = async () => {
     setSaving(true);
     try {
-      // Only save if enabled and credentials provided
+      // Save new credentials or update existing with new credentials
       if (smartMovingEnabled && smartMovingClientId && smartMovingApiKey && !smartMovingApiKey.includes('•')) {
         const response = await fetch('/api/integrations/smartmoving', {
           method: 'POST',
@@ -65,6 +67,7 @@ export default function IntegrationsPage() {
           body: JSON.stringify({
             smartMovingClientId,
             smartMovingApiKey,
+            sendUploadLinkOnCreate,
           }),
         });
 
@@ -75,6 +78,24 @@ export default function IntegrationsPage() {
 
         toast.success('SmartMoving integration saved successfully!');
         setHasExistingIntegration(true);
+      } else if (smartMovingEnabled && hasExistingIntegration && smartMovingApiKey.includes('•')) {
+        // Update settings only (without changing credentials)
+        const response = await fetch('/api/integrations/smartmoving', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sendUploadLinkOnCreate,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update settings');
+        }
+
+        toast.success('SmartMoving settings updated successfully!');
       } else if (!smartMovingEnabled && hasExistingIntegration) {
         // Delete integration if disabled
         const response = await fetch('/api/integrations/smartmoving', {
@@ -90,6 +111,7 @@ export default function IntegrationsPage() {
         setHasExistingIntegration(false);
         setSmartMovingClientId('');
         setSmartMovingApiKey('');
+        setSendUploadLinkOnCreate(false);
       } else if (smartMovingEnabled && (!smartMovingClientId || !smartMovingApiKey)) {
         toast.error('Please provide both Client ID and API Key');
         return;
@@ -383,6 +405,39 @@ export default function IntegrationsPage() {
                               <p>2. Add the webhook URL above</p>
                               <p>3. Select "Opportunity Created" event</p>
                               <p>4. Add your Qube Sheets API key as a custom header (Authorization: Bearer your_api_key)</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Auto-Configuration Info */}
+                      {/* {hasExistingIntegration && (
+                        <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                          <h3 className="font-medium text-green-900 mb-2">Auto-Configuration</h3>
+                          <p className="text-sm text-green-700">
+                            Default values (tariff, referral source, etc.) are automatically configured when you first sync a project to SmartMoving. No manual setup required.
+                          </p>
+                        </div>
+                      )} */}
+
+                      {/* Auto-send Upload Link Option */}
+                      {hasExistingIntegration && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              id="send-upload-link-on-create"
+                              checked={sendUploadLinkOnCreate}
+                              onChange={(e) => setSendUploadLinkOnCreate(e.target.checked)}
+                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <label htmlFor="send-upload-link-on-create" className="text-sm font-medium text-gray-900 cursor-pointer">
+                                Send customer upload link when opportunity is created
+                              </label>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Automatically send an SMS with an upload link to the customer when a new opportunity is created in SmartMoving.
+                              </p>
                             </div>
                           </div>
                         </div>

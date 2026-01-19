@@ -39,6 +39,7 @@ export async function GET() {
         organizationId: integration.organizationId,
         smartMovingClientId: integration.smartMovingClientId,
         hasApiKey: !!integration.smartMovingApiKey,
+        sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt,
         lastUpdatedBy: integration.userId // Show who last updated it
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { smartMovingClientId, smartMovingApiKey } = body;
+    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate } = body;
 
     if (!smartMovingClientId || !smartMovingApiKey) {
       return NextResponse.json(
@@ -82,11 +83,12 @@ export async function POST(request: Request) {
     await connectMongoDB();
 
     // Save/update for organization only
-    const integrationData = {
+    const integrationData: Record<string, any> = {
       userId, // Track who created/updated it
       organizationId: orgId,
       smartMovingClientId: smartMovingClientId.trim(),
-      smartMovingApiKey: smartMovingApiKey.trim()
+      smartMovingApiKey: smartMovingApiKey.trim(),
+      sendUploadLinkOnCreate: sendUploadLinkOnCreate || false
     };
 
     const integration = await SmartMovingIntegration.findOneAndUpdate(
@@ -107,6 +109,7 @@ export async function POST(request: Request) {
         organizationId: integration.organizationId,
         smartMovingClientId: integration.smartMovingClientId,
         hasApiKey: !!integration.smartMovingApiKey,
+        sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt
       }
@@ -115,6 +118,66 @@ export async function POST(request: Request) {
     console.error('Error saving SmartMoving integration:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to save integration' },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH - Update SmartMoving integration settings (without requiring credentials)
+export async function PATCH(request: Request) {
+  try {
+    const { userId, orgId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    if (!orgId) {
+      return NextResponse.json(
+        { error: 'Organization required for integrations' },
+        { status: 400 }
+      );
+    }
+
+    const body = await request.json();
+    const { sendUploadLinkOnCreate } = body;
+
+    await connectMongoDB();
+
+    // Only update if integration exists
+    const integration = await SmartMovingIntegration.findOneAndUpdate(
+      { organizationId: orgId },
+      {
+        $set: {
+          sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
+          userId // Track who updated it
+        }
+      },
+      { new: true }
+    );
+
+    if (!integration) {
+      return NextResponse.json(
+        { error: 'Integration not found for this organization' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'SmartMoving settings updated successfully',
+      integration: {
+        id: integration._id,
+        organizationId: integration.organizationId,
+        smartMovingClientId: integration.smartMovingClientId,
+        hasApiKey: !!integration.smartMovingApiKey,
+        sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
+        updatedAt: integration.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error updating SmartMoving settings:', error);
+    return NextResponse.json(
+      { error: 'Failed to update settings' },
       { status: 500 }
     );
   }

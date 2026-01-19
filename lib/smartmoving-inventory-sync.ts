@@ -787,7 +787,456 @@ export async function syncInventoryToSmartMovingBackground(
   }, 100); // Small delay to ensure main operation completes first
 }
 
+// ============ Lead Matching and Conversion Functions ============
+
+export interface SmartMovingLead {
+  id: string;
+  customerId?: string; // Some leads have a linked customer
+  customerName: string;
+  emailAddress?: string;
+  phoneNumber?: string;
+  serviceDate?: number;
+  salesPersonId?: string;
+  moveSizeId?: string;
+  branchId?: string;
+  type?: number; // JobType
+  originAddressFull?: string;
+  destinationAddressFull?: string;
+  referralSourceName?: string;
+}
+
+// ============ Customer Matching Functions ============
+
+export interface SmartMovingCustomerOpportunity {
+  id: string;
+  quoteNumber?: string;
+  status?: number; // 0=NewLead, 1=LeadInProgress, 3=Opportunity, 4=Booked, 10=Completed, etc.
+  jobs?: Array<{
+    id: string;
+    jobNumber?: string;
+    serviceDate?: string;
+    type?: number;
+  }>;
+}
+
+export interface SmartMovingCustomer {
+  id: string;
+  name: string;
+  phoneNumber?: string;
+  emailAddress?: string;
+  address?: string;
+  opportunities?: SmartMovingCustomerOpportunity[];
+  secondaryPhoneNumbers?: Array<{
+    phoneNumber: string;
+    phoneType?: number;
+  }>;
+}
+
+/**
+ * Fetches all customers from SmartMoving
+ */
+export async function fetchSmartMovingCustomers(
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; customers: SmartMovingCustomer[]; error?: string }> {
+  console.log(`🔄 [SMARTMOVING-CUSTOMERS] Starting to fetch customers from SmartMoving`);
+
+  try {
+    // Fetch customers with opportunity info included
+    const url = `https://api-public.smartmoving.com/v1/api/customers?IncludeOpportunityInfo=true`;
+
+    console.log(`🔍 [SMARTMOVING-CUSTOMERS] Fetching customers: ${url}`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-CUSTOMERS] API error: ${response.status} - ${errorText}`);
+      return { success: false, customers: [], error: `SmartMoving API error: ${response.status}` };
+    }
+
+    const data = await response.json();
+
+    // Handle both array and paginated responses
+    let customers: SmartMovingCustomer[] = [];
+    if (Array.isArray(data)) {
+      customers = data;
+    } else if (data.pageResults && Array.isArray(data.pageResults)) {
+      customers = data.pageResults;
+    } else if (data.items && Array.isArray(data.items)) {
+      customers = data.items;
+    }
+
+    console.log(`✅ [SMARTMOVING-CUSTOMERS] Total customers fetched: ${customers.length}`);
+    return { success: true, customers };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-CUSTOMERS] Error fetching customers:`, error);
+    return { success: false, customers: [], error: errorMessage };
+  }
+}
+
+/**
+ * Finds a customer that matches the given phone number
+ */
+export function findCustomerByPhone(
+  customers: SmartMovingCustomer[],
+  projectPhone: string
+): SmartMovingCustomer | null {
+  const normalizedProjectPhone = normalizePhoneNumber(projectPhone);
+
+  if (!normalizedProjectPhone) {
+    console.log(`⚠️ [SMARTMOVING-CUSTOMERS] No valid phone number to match`);
+    return null;
+  }
+
+  console.log(`🔍 [SMARTMOVING-CUSTOMERS] Searching for phone: ${normalizedProjectPhone}`);
+
+  const matchedCustomer = customers.find(customer => {
+    // Check primary phone
+    const normalizedPrimaryPhone = normalizePhoneNumber(customer.phoneNumber);
+    if (normalizedPrimaryPhone === normalizedProjectPhone) {
+      return true;
+    }
+
+    // Check secondary phones
+    if (customer.secondaryPhoneNumbers) {
+      return customer.secondaryPhoneNumbers.some(secondary =>
+        normalizePhoneNumber(secondary.phoneNumber) === normalizedProjectPhone
+      );
+    }
+
+    return false;
+  });
+
+  if (matchedCustomer) {
+    console.log(`✅ [SMARTMOVING-CUSTOMERS] Found matching customer: ${matchedCustomer.id} - ${matchedCustomer.name}`);
+    console.log(`📊 [SMARTMOVING-CUSTOMERS] Customer opportunities: ${matchedCustomer.opportunities?.length || 0}`);
+    if (matchedCustomer.opportunities && matchedCustomer.opportunities.length > 0) {
+      console.log(`📊 [SMARTMOVING-CUSTOMERS] First opportunity: ${matchedCustomer.opportunities[0].id}`);
+    }
+  } else {
+    console.log(`⚠️ [SMARTMOVING-CUSTOMERS] No matching customer found for phone: ${normalizedProjectPhone}`);
+  }
+
+  return matchedCustomer || null;
+}
+
+export interface CreateCustomerRequest {
+  name: string;
+  phoneNumber?: string;
+  phoneType?: number; // 0=Mobile, 1=Home, 2=Office, 3=Other
+  emailAddress?: string;
+  address?: string;
+}
+
+/**
+ * Creates a new customer in SmartMoving from lead data
+ */
+export async function createCustomerFromLead(
+  lead: SmartMovingLead,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; customerId?: string; error?: string }> {
+  const customerData: CreateCustomerRequest = {
+    name: lead.customerName,
+    phoneNumber: lead.phoneNumber,
+    emailAddress: lead.emailAddress,
+  };
+
+  const url = 'https://api-public.smartmoving.com/v1/api/premium/customers';
+
+  console.log(`🔄 [SMARTMOVING-CREATE-CUSTOMER] Creating customer from lead data`);
+  console.log(`📦 [SMARTMOVING-CREATE-CUSTOMER] Customer data:`, JSON.stringify(customerData, null, 2));
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(customerData)
+    });
+
+    const responseText = await response.text();
+    console.log(`📡 [SMARTMOVING-CREATE-CUSTOMER] Response status: ${response.status}`);
+    console.log(`📡 [SMARTMOVING-CREATE-CUSTOMER] Response body: ${responseText}`);
+
+    if (response.ok && responseText) {
+      const result = JSON.parse(responseText);
+      // Handle both: direct string ID response OR object with id/customerId
+      const customerId = typeof result === 'string' ? result : (result.id || result.customerId);
+
+      if (customerId) {
+        console.log(`✅ [SMARTMOVING-CREATE-CUSTOMER] Customer created! ID: ${customerId}`);
+        return { success: true, customerId };
+      }
+    }
+
+    return {
+      success: false,
+      error: `Failed to create customer: ${response.status} - ${responseText}`
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-CREATE-CUSTOMER] Error:`, error);
+    return { success: false, error: errorMessage };
+  }
+}
+
+export interface ConvertLeadRequest {
+  customerId: string; // Required - must create customer first
+  referralSourceId: string;
+  tariffId: string;
+  branchId?: string;
+  moveDate: string; // yyyy-MM-dd format
+  moveSizeId: string;
+  salesPersonId: string;
+  serviceTypeId: number;
+  originAddress?: {
+    fullAddress?: string;
+    street?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    lat?: number;
+    lng?: number;
+  };
+  destinationAddress?: {
+    fullAddress?: string;
+    street?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    lat?: number;
+    lng?: number;
+  };
+}
+
+/**
+ * Normalizes a phone number to just the last 10 digits
+ */
+export function normalizePhoneNumber(phone?: string): string {
+  if (!phone) return '';
+  return phone.replace(/\D/g, '').slice(-10);
+}
+
+/**
+ * Fetches all leads from SmartMoving
+ */
+export async function fetchSmartMovingLeads(
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; leads: SmartMovingLead[]; error?: string }> {
+  const allLeads: SmartMovingLead[] = [];
+  let currentPage = 1;
+  let isLastPage = false;
+  const maxPages = 50;
+
+  console.log(`🔄 [SMARTMOVING-LEADS] Starting to fetch leads from SmartMoving`);
+
+  try {
+    while (!isLastPage && currentPage <= maxPages) {
+      const url = `https://api-public.smartmoving.com/v1/api/leads?Page=${currentPage}&PageSize=1000`;
+
+      console.log(`🔍 [SMARTMOVING-LEADS] Fetching page ${currentPage}: ${url}`);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'x-api-key': apiKey,
+          'Ocp-Apim-Subscription-Key': clientId,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ [SMARTMOVING-LEADS] API error: ${response.status} - ${errorText}`);
+        return { success: false, leads: [], error: `SmartMoving API error: ${response.status}` };
+      }
+
+      const data = await response.json();
+
+      if (data.pageResults && Array.isArray(data.pageResults)) {
+        allLeads.push(...data.pageResults);
+        console.log(`✅ [SMARTMOVING-LEADS] Page ${currentPage}: ${data.pageResults.length} leads`);
+      }
+
+      isLastPage = data.lastPage === true || !data.pageResults || data.pageResults.length === 0;
+      currentPage++;
+    }
+
+    console.log(`✅ [SMARTMOVING-LEADS] Total leads fetched: ${allLeads.length}`);
+    return { success: true, leads: allLeads };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-LEADS] Error fetching leads:`, error);
+    return { success: false, leads: [], error: errorMessage };
+  }
+}
+
+/**
+ * Finds a lead that matches the given phone number
+ */
+export function findLeadByPhone(
+  leads: SmartMovingLead[],
+  projectPhone: string
+): SmartMovingLead | null {
+  const normalizedProjectPhone = normalizePhoneNumber(projectPhone);
+
+  if (!normalizedProjectPhone) {
+    console.log(`⚠️ [SMARTMOVING-LEADS] No valid phone number to match`);
+    return null;
+  }
+
+  console.log(`🔍 [SMARTMOVING-LEADS] Searching for phone: ${normalizedProjectPhone}`);
+
+  const matchedLead = leads.find(lead => {
+    const normalizedLeadPhone = normalizePhoneNumber(lead.phoneNumber);
+    return normalizedLeadPhone === normalizedProjectPhone;
+  });
+
+  if (matchedLead) {
+    console.log(`✅ [SMARTMOVING-LEADS] Found matching lead: ${matchedLead.id} - ${matchedLead.customerName}`);
+    console.log(`📊 [SMARTMOVING-LEADS] Full lead object:`, JSON.stringify(matchedLead, null, 2));
+  } else {
+    console.log(`⚠️ [SMARTMOVING-LEADS] No matching lead found for phone: ${normalizedProjectPhone}`);
+  }
+
+  return matchedLead || null;
+}
+
+/**
+ * Converts a SmartMoving lead to an opportunity
+ */
+export async function convertLeadToOpportunity(
+  leadId: string,
+  conversionData: ConvertLeadRequest,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; opportunityId?: string; error?: string }> {
+  const url = `https://api-public.smartmoving.com/v1/api/premium/lead/${leadId}/convert`;
+
+  console.log(`🔄 [SMARTMOVING-CONVERT] Converting lead ${leadId} to opportunity`);
+  console.log(`📦 [SMARTMOVING-CONVERT] Conversion data:`, JSON.stringify(conversionData, null, 2));
+
+  try {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(conversionData)
+    });
+
+    const responseText = await response.text();
+    console.log(`📡 [SMARTMOVING-CONVERT] Response status: ${response.status}`);
+    console.log(`📡 [SMARTMOVING-CONVERT] Response body: ${responseText}`);
+
+    if (!response.ok) {
+      console.error(`❌ [SMARTMOVING-CONVERT] Failed to convert lead: ${response.status}`);
+      return {
+        success: false,
+        error: `Failed to convert lead: ${response.status} - ${responseText}`
+      };
+    }
+
+    const result = responseText ? JSON.parse(responseText) : {};
+    const opportunityId = result.opportunityId;
+
+    if (!opportunityId) {
+      console.error(`❌ [SMARTMOVING-CONVERT] No opportunityId in response`);
+      return { success: false, error: 'No opportunityId returned from SmartMoving' };
+    }
+
+    console.log(`✅ [SMARTMOVING-CONVERT] Lead converted successfully! OpportunityId: ${opportunityId}`);
+    return { success: true, opportunityId };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-CONVERT] Exception during conversion:`, error);
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
+ * Creates a new opportunity directly in SmartMoving (when no lead exists)
+ */
+export async function createOpportunity(
+  opportunityData: ConvertLeadRequest,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; opportunityId?: string; error?: string }> {
+  const url = `https://api-public.smartmoving.com/v1/api/premium/opportunity`;
+
+  console.log(`🔄 [SMARTMOVING-CREATE-OPP] Creating new opportunity`);
+  console.log(`📦 [SMARTMOVING-CREATE-OPP] Opportunity data:`, JSON.stringify(opportunityData, null, 2));
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(opportunityData)
+    });
+
+    const responseText = await response.text();
+    console.log(`📡 [SMARTMOVING-CREATE-OPP] Response status: ${response.status}`);
+    console.log(`📡 [SMARTMOVING-CREATE-OPP] Response body: ${responseText}`);
+
+    if (!response.ok) {
+      console.error(`❌ [SMARTMOVING-CREATE-OPP] Failed to create opportunity: ${response.status}`);
+      return {
+        success: false,
+        error: `Failed to create opportunity: ${response.status} - ${responseText}`
+      };
+    }
+
+    const result = responseText ? JSON.parse(responseText) : {};
+    const opportunityId = result.opportunityId;
+
+    if (!opportunityId) {
+      console.error(`❌ [SMARTMOVING-CREATE-OPP] No opportunityId in response`);
+      return { success: false, error: 'No opportunityId returned from SmartMoving' };
+    }
+
+    console.log(`✅ [SMARTMOVING-CREATE-OPP] Opportunity created successfully! OpportunityId: ${opportunityId}`);
+    return { success: true, opportunityId };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-CREATE-OPP] Exception during creation:`, error);
+    return { success: false, error: errorMessage };
+  }
+}
+
 export default {
   syncInventoryToSmartMoving,
-  syncInventoryToSmartMovingBackground
+  syncInventoryToSmartMovingBackground,
+  fetchSmartMovingLeads,
+  findLeadByPhone,
+  convertLeadToOpportunity,
+  createOpportunity,
+  normalizePhoneNumber,
+  createCustomerFromLead,
+  fetchSmartMovingCustomers,
+  findCustomerByPhone
 };

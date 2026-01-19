@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -27,6 +27,8 @@ import SendUploadLinkModal from './SendUploadLinkModal';
 import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import SupermoveSyncModal from './modals/SupermoveSyncModal';
+import SmartMovingSyncModal from './modals/SmartMovingSyncModal';
+import EditProjectDetailsModal from './modals/EditProjectDetailsModal';
 import InventoryNotes from './InventoryNotes';
 import VideoRecordingsTab from './VideoRecordingsTab';
 import { Badge } from './ui/badge';
@@ -128,6 +130,12 @@ const [supermoveEnabled, setSupermoveEnabled] = useState(false);
 const [supermoveSyncStatus, setSupermoveSyncStatus] = useState(null);
 const [supermoveLoading, setSupermoveLoading] = useState(false);
 const [supermoveSyncModalOpen, setSupermoveSyncModalOpen] = useState(false);
+const [smartMovingEnabled, setSmartMovingEnabled] = useState(false);
+const [smartMovingSyncStatus, setSmartMovingSyncStatus] = useState(null);
+const [smartMovingLoading, setSmartMovingLoading] = useState(false);
+const [smartMovingSyncModalOpen, setSmartMovingSyncModalOpen] = useState(false);
+const [smartMovingSyncResult, setSmartMovingSyncResult] = useState(null);
+const [editProjectModalOpen, setEditProjectModalOpen] = useState(false);
 const [refreshTrigger, setRefreshTrigger] = useState(0); // For cross-device inventory refresh
 const [notesCount, setNotesCount] = useState(0);
 const pollIntervalRef = useRef(null);
@@ -1401,7 +1409,108 @@ useEffect(() => {
       fetchSupermoveSyncStatus();
     }
   }, [supermoveEnabled, fetchSupermoveSyncStatus]);
-  
+
+  // SmartMoving Integration Functions
+  const checkSmartMovingIntegration = useCallback(async () => {
+    if (!currentProject?.organizationId) return;
+    try {
+      const response = await fetch('/api/integrations/smartmoving');
+      const data = await response.json();
+      // Integration is enabled if it exists and has API key
+      setSmartMovingEnabled(data.exists && data.integration?.hasApiKey);
+    } catch (error) {
+      console.error('Error checking SmartMoving integration:', error);
+      setSmartMovingEnabled(false);
+    }
+  }, [currentProject?.organizationId]);
+
+  const fetchSmartMovingSyncStatus = useCallback(async () => {
+    if (!currentProject?._id || !smartMovingEnabled) return;
+    try {
+      const response = await fetch(`/api/smartmoving/sync-from-lead?projectId=${currentProject._id}`);
+      const data = await response.json();
+      if (data.success) {
+        setSmartMovingSyncStatus(data.status);
+      }
+    } catch (error) {
+      console.error('Error fetching SmartMoving sync status:', error);
+    }
+  }, [currentProject?._id, smartMovingEnabled]);
+
+  const handleSmartMovingSync = useCallback(async () => {
+    if (!currentProject?._id) return;
+
+    // Check sync status first
+    const statusResponse = await fetch(`/api/smartmoving/sync-from-lead?projectId=${currentProject._id}`);
+    const statusData = await statusResponse.json();
+
+    // Block if already synced (one-time sync only)
+    if (statusData.status?.syncedAt) {
+      toast.info('This project has already been synced to SmartMoving.');
+      return;
+    }
+
+    // Check for phone if this is a new sync (no existing opportunity from webhook)
+    if (!statusData.status?.hasOpportunityId && !statusData.status?.hasPhone) {
+      toast.error('This project needs a phone number to sync with SmartMoving.');
+      return;
+    }
+
+    // Open the sync modal
+    setSmartMovingSyncResult(null);
+    setSmartMovingSyncModalOpen(true);
+  }, [currentProject?._id]);
+
+  const handleSmartMovingSyncConfirm = useCallback(async (syncOption = 'items_only') => {
+    if (!currentProject?._id) return;
+
+    setSmartMovingLoading(true);
+    setSmartMovingSyncResult(null);
+
+    try {
+      const response = await fetch('/api/smartmoving/sync-from-lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: currentProject._id, syncOption })
+      });
+
+      const data = await response.json();
+      setSmartMovingSyncResult(data);
+
+      if (data.success) {
+        toast.success('Successfully synced to SmartMoving!');
+        await fetchSmartMovingSyncStatus();
+      }
+    } catch (error) {
+      console.error('SmartMoving sync error:', error);
+      setSmartMovingSyncResult({
+        success: false,
+        error: 'internal_error',
+        message: error.message || 'Failed to sync to SmartMoving'
+      });
+    } finally {
+      setSmartMovingLoading(false);
+    }
+  }, [currentProject?._id, fetchSmartMovingSyncStatus]);
+
+  const handleSmartMovingSyncReset = useCallback(() => {
+    setSmartMovingSyncResult(null);
+  }, []);
+
+  // Check SmartMoving integration when project loads
+  useEffect(() => {
+    if (currentProject) {
+      checkSmartMovingIntegration();
+    }
+  }, [currentProject, checkSmartMovingIntegration]);
+
+  // Fetch SmartMoving sync status when enabled
+  useEffect(() => {
+    if (smartMovingEnabled) {
+      fetchSmartMovingSyncStatus();
+    }
+  }, [smartMovingEnabled, fetchSmartMovingSyncStatus]);
+
   // Calculate stats based on what's displayed in the spreadsheet (source of truth)
   const totalItems = useMemo(() => {
     return spreadsheetRows.reduce((total, row) => {
@@ -1727,7 +1836,40 @@ useEffect(() => {
     
     return result.toFixed(0);
   }, [spreadsheetRows]);
-  
+
+  // Compute inventory stats for sync modals (works regardless of which integration is enabled)
+  const computedInventoryStats = useMemo(() => {
+    let itemsCount = 0;
+    let existingBoxesCount = 0;
+    let recommendedBoxesCount = 0;
+
+    spreadsheetRows.forEach((row) => {
+      if (row.isAnalyzing) return;
+
+      const goingValue = row.cells?.col6 || 'going';
+      if (goingValue === 'not going') return;
+
+      const quantity = parseInt(row.cells?.col3) || 1;
+      let goingQuantity = quantity;
+      if (goingValue.includes('(') && goingValue.includes('/')) {
+        const match = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQuantity = match ? parseInt(match[1]) : quantity;
+      }
+
+      const itemType = row.itemType || 'regular_item';
+
+      if (itemType === 'boxes_needed') {
+        recommendedBoxesCount += goingQuantity;
+      } else if (itemType === 'existing_box' || itemType === 'packed_box') {
+        existingBoxesCount += goingQuantity;
+      } else {
+        itemsCount += goingQuantity;
+      }
+    });
+
+    return { itemsCount, existingBoxesCount, recommendedBoxesCount };
+  }, [spreadsheetRows]);
+
   // Validation: Check for discrepancies between calculated stats and manual totals
   useEffect(() => {
     if (spreadsheetRows.length === 0) return;
@@ -2234,10 +2376,27 @@ const ProcessingNotification = () => {
     {/* Project Name and Save Status */}
     <div className="flex items-center">
       {currentProject && (
-        <EditableProjectName
-          initialName={currentProject.name}
-          onNameChange={updateProjectName}
-        />
+        <>
+          <EditableProjectName
+            initialName={currentProject.name}
+            onNameChange={updateProjectName}
+          />
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setEditProjectModalOpen(true)}
+                  className="ml-1 p-1.5 rounded-md hover:bg-gray-100 text-gray-500 transition-colors cursor-pointer"
+                >
+                  <Pencil size={16} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Edit Project Details</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </>
       )}
       {/* Link to Customer Record - only shown for CRM add-on users */}
       {hasCrmAddOn && currentProject?.customerId && (
@@ -2314,6 +2473,32 @@ const ProcessingNotification = () => {
                     <>
                       <ExternalLink size={16} className="mr-1" />
                       Sync with Supermove
+                    </>
+                  )}
+                </MenubarItem>
+              </>
+            )}
+            {smartMovingEnabled && (
+              <>
+                <MenubarSeparator />
+                <MenubarItem
+                  onClick={handleSmartMovingSync}
+                  disabled={smartMovingLoading || smartMovingSyncStatus?.syncedAt}
+                >
+                  {smartMovingLoading ? (
+                    <>
+                      <Loader2 size={16} className="mr-1 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : smartMovingSyncStatus?.syncedAt ? (
+                    <>
+                      <ExternalLink size={16} className="mr-1" />
+                      Synced to SmartMoving
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink size={16} className="mr-1" />
+                      Sync to SmartMoving
                     </>
                   )}
                 </MenubarItem>
@@ -2665,6 +2850,31 @@ const ProcessingNotification = () => {
   loading={supermoveLoading}
   inventoryStats={supermoveSyncStatus?.inventoryStats || {}}
 />
+
+{/* SmartMoving Sync Modal */}
+<SmartMovingSyncModal
+  open={smartMovingSyncModalOpen}
+  onOpenChange={setSmartMovingSyncModalOpen}
+  onSync={handleSmartMovingSyncConfirm}
+  loading={smartMovingLoading}
+  projectPhone={currentProject?.phone}
+  result={smartMovingSyncResult}
+  onReset={handleSmartMovingSyncReset}
+  inventoryStats={computedInventoryStats}
+/>
+
+{/* Edit Project Details Modal */}
+{currentProject && (
+  <EditProjectDetailsModal
+    open={editProjectModalOpen}
+    onOpenChange={setEditProjectModalOpen}
+    project={currentProject}
+    onProjectUpdated={(updatedProject) => {
+      setCurrentProject(updatedProject);
+    }}
+    showEmail={supermoveEnabled}
+  />
+)}
 
 {/* Activity Log Dialog */}
 {currentProject && (
