@@ -308,6 +308,7 @@ async function processSmartMovingWebhookAsync(
           authContext: {
             userId: 'smartmoving-webhook',
             organizationId: authContext.organizationId,
+            isPersonalAccount: false,
           },
         });
 
