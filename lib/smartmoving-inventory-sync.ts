@@ -117,11 +117,22 @@ export async function syncInventoryToSmartMoving(
     
     console.log(`🔄 [SMARTMOVING-SYNC] Mapping ${itemsToSync.length} items to SmartMoving format`);
     
+    // Clear existing inventory first to prevent duplicates on resync
+    console.log(`🧹 [SMARTMOVING-SYNC] Clearing existing inventory before sync...`);
+    const clearResult = await clearOpportunityInventory(
+      smartMovingOpportunityId,
+      smartMovingIntegration.smartMovingApiKey,
+      smartMovingIntegration.smartMovingClientId
+    );
+    if (clearResult.deletedCount > 0) {
+      console.log(`✅ [SMARTMOVING-SYNC] Cleared ${clearResult.deletedCount} existing items`);
+    }
+
     // Get existing rooms from the opportunity - this is critical for finding valid room IDs
     console.log(`🔍 [SMARTMOVING-SYNC] Getting existing rooms from opportunity ${smartMovingOpportunityId}`);
     const roomResult = await getExistingRooms(smartMovingOpportunityId, smartMovingIntegration.smartMovingApiKey, smartMovingIntegration.smartMovingClientId);
     let roomId = null;
-    
+
     if (roomResult.success && roomResult.rooms && roomResult.rooms.length > 0) {
       roomId = roomResult.rooms[0].id;
       console.log(`✅ [SMARTMOVING-SYNC] Will use existing room: ${roomResult.rooms[0].name} (${roomId})`);
@@ -317,10 +328,103 @@ async function getExistingRooms(
     }
     
     return { success: true, rooms };
-    
+
   } catch (error) {
     console.error(`❌ [SMARTMOVING-EXISTING-ROOMS] Error getting existing rooms:`, error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Deletes a single inventory item from SmartMoving
+ */
+async function deleteInventoryItem(
+  opportunityId: string,
+  roomId: string,
+  itemId: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory/rooms/${roomId}/items/${itemId}?changeVolumeWeightCalculationMode=false&markAsNeedsReview=false`;
+
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Failed to delete item: ${response.status} - ${errorText}` };
+    }
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Clears all existing inventory from a SmartMoving opportunity
+ * This allows for clean resyncs without duplicates
+ */
+async function clearOpportunityInventory(
+  opportunityId: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; deletedCount: number; error?: string }> {
+  console.log(`🧹 [SMARTMOVING-CLEAR] Clearing existing inventory for opportunity ${opportunityId}`);
+
+  try {
+    // Get existing rooms with inventory
+    const roomsResult = await getExistingRooms(opportunityId, apiKey, clientId);
+
+    if (!roomsResult.success || !roomsResult.rooms) {
+      console.log(`⚠️ [SMARTMOVING-CLEAR] Could not fetch existing rooms`);
+      return { success: true, deletedCount: 0 }; // Not a failure, just nothing to clear
+    }
+
+    let totalDeleted = 0;
+
+    for (const room of roomsResult.rooms) {
+      const items = room.items || [];
+
+      if (items.length === 0) {
+        continue;
+      }
+
+      console.log(`🗑️ [SMARTMOVING-CLEAR] Deleting ${items.length} items from room "${room.name}" (${room.id})`);
+
+      for (const item of items) {
+        const deleteResult = await deleteInventoryItem(
+          opportunityId,
+          room.id,
+          item.id,
+          apiKey,
+          clientId
+        );
+
+        if (deleteResult.success) {
+          totalDeleted++;
+        } else {
+          console.log(`⚠️ [SMARTMOVING-CLEAR] Failed to delete item ${item.id}: ${deleteResult.error}`);
+        }
+
+        // Small delay to be gentle on the API
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    console.log(`✅ [SMARTMOVING-CLEAR] Cleared ${totalDeleted} items from opportunity`);
+    return { success: true, deletedCount: totalDeleted };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-CLEAR] Error clearing inventory:`, error);
+    return { success: false, deletedCount: 0, error: errorMessage };
   }
 }
 
@@ -833,49 +937,62 @@ export interface SmartMovingCustomer {
 }
 
 /**
- * Fetches all customers from SmartMoving
+ * Fetches all customers from SmartMoving (with pagination)
  */
 export async function fetchSmartMovingCustomers(
   apiKey: string,
   clientId: string
 ): Promise<{ success: boolean; customers: SmartMovingCustomer[]; error?: string }> {
+  const allCustomers: SmartMovingCustomer[] = [];
+  let currentPage = 1;
+  let isLastPage = false;
+  const maxPages = 50;
+
   console.log(`🔄 [SMARTMOVING-CUSTOMERS] Starting to fetch customers from SmartMoving`);
 
   try {
-    // Fetch customers with opportunity info included
-    const url = `https://api-public.smartmoving.com/v1/api/customers?IncludeOpportunityInfo=true`;
+    while (!isLastPage && currentPage <= maxPages) {
+      const url = `https://api-public.smartmoving.com/v1/api/customers?IncludeOpportunityInfo=true&Page=${currentPage}&PageSize=1000`;
 
-    console.log(`🔍 [SMARTMOVING-CUSTOMERS] Fetching customers: ${url}`);
+      console.log(`🔍 [SMARTMOVING-CUSTOMERS] Fetching page ${currentPage}: ${url}`);
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'x-api-key': apiKey,
-        'Ocp-Apim-Subscription-Key': clientId,
-        'Content-Type': 'application/json'
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'x-api-key': apiKey,
+          'Ocp-Apim-Subscription-Key': clientId,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ [SMARTMOVING-CUSTOMERS] API error: ${response.status} - ${errorText}`);
+        return { success: false, customers: [], error: `SmartMoving API error: ${response.status}` };
       }
-    });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`❌ [SMARTMOVING-CUSTOMERS] API error: ${response.status} - ${errorText}`);
-      return { success: false, customers: [], error: `SmartMoving API error: ${response.status}` };
+      const data = await response.json();
+
+      // Handle both array and paginated responses
+      if (Array.isArray(data)) {
+        allCustomers.push(...data);
+        isLastPage = data.length === 0;
+      } else if (data.pageResults && Array.isArray(data.pageResults)) {
+        allCustomers.push(...data.pageResults);
+        console.log(`✅ [SMARTMOVING-CUSTOMERS] Page ${currentPage}: ${data.pageResults.length} customers`);
+        isLastPage = data.lastPage === true || data.pageResults.length === 0;
+      } else if (data.items && Array.isArray(data.items)) {
+        allCustomers.push(...data.items);
+        isLastPage = data.items.length === 0;
+      } else {
+        isLastPage = true;
+      }
+
+      currentPage++;
     }
 
-    const data = await response.json();
-
-    // Handle both array and paginated responses
-    let customers: SmartMovingCustomer[] = [];
-    if (Array.isArray(data)) {
-      customers = data;
-    } else if (data.pageResults && Array.isArray(data.pageResults)) {
-      customers = data.pageResults;
-    } else if (data.items && Array.isArray(data.items)) {
-      customers = data.items;
-    }
-
-    console.log(`✅ [SMARTMOVING-CUSTOMERS] Total customers fetched: ${customers.length}`);
-    return { success: true, customers };
+    console.log(`✅ [SMARTMOVING-CUSTOMERS] Total customers fetched: ${allCustomers.length}`);
+    return { success: true, customers: allCustomers };
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1228,6 +1345,243 @@ export async function createOpportunity(
   }
 }
 
+/**
+ * Searches for customers by phone number using SmartMoving's premium search endpoint
+ * Much faster than fetching all customers - searches server-side
+ */
+export async function searchCustomersByPhone(
+  phone: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; customers: SmartMovingCustomer[]; error?: string }> {
+  const normalizedPhone = normalizePhoneNumber(phone);
+
+  if (!normalizedPhone) {
+    console.log(`⚠️ [SMARTMOVING-SEARCH] No valid phone number to search`);
+    return { success: false, customers: [], error: 'Invalid phone number' };
+  }
+
+  // Search query must be at least 3 characters
+  if (normalizedPhone.length < 3) {
+    console.log(`⚠️ [SMARTMOVING-SEARCH] Phone too short for search (min 3 chars)`);
+    return { success: false, customers: [], error: 'Phone number too short' };
+  }
+
+  console.log(`🔍 [SMARTMOVING-SEARCH] Searching for customers with phone: ${normalizedPhone}`);
+
+  try {
+    // Use the premium search endpoint - much faster than fetching all customers
+    const url = `https://api-public.smartmoving.com/v1/api/premium/customers/search?searchQuery=${encodeURIComponent(normalizedPhone)}`;
+
+    console.log(`🌐 [SMARTMOVING-SEARCH] Calling premium search API: ${url}`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-SEARCH] API error: ${response.status} - ${errorText}`);
+
+      // If premium endpoint fails, fall back to fetching all customers
+      if (response.status === 404 || response.status === 403) {
+        console.log(`🔄 [SMARTMOVING-SEARCH] Falling back to fetch-all method...`);
+        return searchCustomersByPhoneFallback(normalizedPhone, apiKey, clientId);
+      }
+
+      return { success: false, customers: [], error: `SmartMoving API error: ${response.status}` };
+    }
+
+    const customers: SmartMovingCustomer[] = await response.json();
+
+    console.log(`✅ [SMARTMOVING-SEARCH] Search returned ${customers.length} customers`);
+
+    if (customers.length > 0) {
+      console.log(`📊 [SMARTMOVING-SEARCH] Results:`, customers.map(c => ({
+        id: c.id,
+        name: c.name,
+        phone: c.phoneNumber
+      })));
+    }
+
+    // Double-check phone match (search might return partial matches)
+    const exactMatches = customers.filter(customer => {
+      const normalizedPrimaryPhone = normalizePhoneNumber(customer.phoneNumber);
+      if (normalizedPrimaryPhone === normalizedPhone) {
+        return true;
+      }
+      if (customer.secondaryPhoneNumbers) {
+        return customer.secondaryPhoneNumbers.some(secondary =>
+          normalizePhoneNumber(secondary.phoneNumber) === normalizedPhone
+        );
+      }
+      return false;
+    });
+
+    console.log(`✅ [SMARTMOVING-SEARCH] Found ${exactMatches.length} exact phone matches`);
+
+    return { success: true, customers: exactMatches };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-SEARCH] Error searching customers:`, error);
+    return { success: false, customers: [], error: errorMessage };
+  }
+}
+
+/**
+ * Fallback search method - fetches all customers and filters locally
+ * Used when premium search endpoint is not available
+ */
+async function searchCustomersByPhoneFallback(
+  normalizedPhone: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; customers: SmartMovingCustomer[]; error?: string }> {
+  console.log(`🔍 [SMARTMOVING-SEARCH-FALLBACK] Fetching all customers...`);
+
+  const customersResult = await fetchSmartMovingCustomers(apiKey, clientId);
+
+  if (!customersResult.success) {
+    console.error(`❌ [SMARTMOVING-SEARCH-FALLBACK] Failed to fetch customers: ${customersResult.error}`);
+    return { success: false, customers: [], error: customersResult.error };
+  }
+
+  console.log(`🔍 [SMARTMOVING-SEARCH-FALLBACK] Searching through ${customersResult.customers.length} customers`);
+
+  const matchingCustomers = customersResult.customers.filter(customer => {
+    const normalizedPrimaryPhone = normalizePhoneNumber(customer.phoneNumber);
+    if (normalizedPrimaryPhone === normalizedPhone) {
+      console.log(`✅ [SMARTMOVING-SEARCH-FALLBACK] Match: ${customer.name} - ${customer.phoneNumber}`);
+      return true;
+    }
+    if (customer.secondaryPhoneNumbers) {
+      return customer.secondaryPhoneNumbers.some(secondary =>
+        normalizePhoneNumber(secondary.phoneNumber) === normalizedPhone
+      );
+    }
+    return false;
+  });
+
+  console.log(`✅ [SMARTMOVING-SEARCH-FALLBACK] Found ${matchingCustomers.length} matches`);
+
+  return { success: true, customers: matchingCustomers };
+}
+
+/**
+ * Fetches opportunities for a specific customer
+ */
+export async function getOpportunitiesByCustomerId(
+  customerId: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; opportunities: SmartMovingCustomerOpportunity[]; error?: string }> {
+  console.log(`🔍 [SMARTMOVING-OPPS] Fetching opportunities for customer: ${customerId}`);
+
+  try {
+    const url = `https://api-public.smartmoving.com/v1/api/customers/${customerId}/opportunities`;
+
+    console.log(`🌐 [SMARTMOVING-OPPS] Calling opportunities API: ${url}`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-OPPS] API error: ${response.status} - ${errorText}`);
+      return { success: false, opportunities: [], error: `SmartMoving API error: ${response.status}` };
+    }
+
+    const data = await response.json();
+
+    // Handle various response formats
+    let opportunities: SmartMovingCustomerOpportunity[] = [];
+    if (Array.isArray(data)) {
+      opportunities = data;
+    } else if (data.pageResults && Array.isArray(data.pageResults)) {
+      opportunities = data.pageResults;
+    } else if (data.items && Array.isArray(data.items)) {
+      opportunities = data.items;
+    }
+
+    console.log(`✅ [SMARTMOVING-OPPS] Found ${opportunities.length} opportunities for customer`);
+
+    if (opportunities.length > 0) {
+      console.log(`📊 [SMARTMOVING-OPPS] Opportunities:`, opportunities.map(o => ({
+        id: o.id,
+        quoteNumber: o.quoteNumber,
+        status: o.status
+      })));
+    }
+
+    return { success: true, opportunities };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-OPPS] Error fetching opportunities:`, error);
+    return { success: false, opportunities: [], error: errorMessage };
+  }
+}
+
+/**
+ * Selects the most recent/relevant opportunity from a list
+ * Priority: Booked (4) > Opportunity (3) > LeadInProgress (1) > NewLead (0)
+ * Avoids: Completed (10), Lost, Cancelled
+ */
+export function getMostRecentOpportunity(
+  opportunities: SmartMovingCustomerOpportunity[]
+): SmartMovingCustomerOpportunity | null {
+  if (!opportunities || opportunities.length === 0) {
+    return null;
+  }
+
+  // Status priorities (higher = better)
+  // 4 = Booked, 3 = Opportunity, 1 = LeadInProgress, 0 = NewLead
+  // Avoid: 10 = Completed, and other high numbers typically mean closed/lost
+  const statusPriority: Record<number, number> = {
+    4: 100,  // Booked - best choice
+    3: 80,   // Opportunity - good choice
+    1: 60,   // LeadInProgress
+    0: 40,   // NewLead
+  };
+
+  // Filter out completed/lost opportunities and sort by priority
+  const validOpportunities = opportunities
+    .filter(opp => {
+      const status = opp.status ?? 0;
+      // Exclude completed (10+) opportunities
+      return status < 10;
+    })
+    .sort((a, b) => {
+      const priorityA = statusPriority[a.status ?? 0] ?? 20;
+      const priorityB = statusPriority[b.status ?? 0] ?? 20;
+      return priorityB - priorityA; // Higher priority first
+    });
+
+  if (validOpportunities.length === 0) {
+    // If all opportunities are completed/lost, return the first one anyway
+    // (user might want to sync to a completed job)
+    console.log(`⚠️ [SMARTMOVING-OPPS] All opportunities are completed/lost, using first one`);
+    return opportunities[0];
+  }
+
+  const selected = validOpportunities[0];
+  console.log(`✅ [SMARTMOVING-OPPS] Selected opportunity: ${selected.id} (status: ${selected.status})`);
+
+  return selected;
+}
+
 export default {
   syncInventoryToSmartMoving,
   syncInventoryToSmartMovingBackground,
@@ -1238,5 +1592,8 @@ export default {
   normalizePhoneNumber,
   createCustomerFromLead,
   fetchSmartMovingCustomers,
-  findCustomerByPhone
+  findCustomerByPhone,
+  searchCustomersByPhone,
+  getOpportunitiesByCustomerId,
+  getMostRecentOpportunity
 };
