@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -2483,7 +2483,7 @@ const ProcessingNotification = () => {
                 <MenubarSeparator />
                 <MenubarItem
                   onClick={handleSmartMovingSync}
-                  disabled={smartMovingLoading || smartMovingSyncStatus?.syncedAt}
+                  disabled={smartMovingLoading}
                 >
                   {smartMovingLoading ? (
                     <>
@@ -2492,8 +2492,8 @@ const ProcessingNotification = () => {
                     </>
                   ) : smartMovingSyncStatus?.syncedAt ? (
                     <>
-                      <ExternalLink size={16} className="mr-1" />
-                      Synced to SmartMoving
+                      <RefreshCw size={16} className="mr-1" />
+                      Resync to SmartMoving
                     </>
                   ) : (
                     <>
