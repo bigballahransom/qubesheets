@@ -66,34 +66,64 @@ export async function syncInventoryToSmartMoving(
     
     console.log(`✅ [SMARTMOVING-SYNC] Project found: ${project.name}`);
     console.log(`🔍 [SMARTMOVING-SYNC] Project metadata:`, JSON.stringify(project.metadata, null, 2));
-    
-    const smartMovingOpportunityId = project.metadata?.smartMovingOpportunityId;
-    if (!smartMovingOpportunityId) {
-      console.log(`⚠️ [SMARTMOVING-SYNC] Project ${projectId} has no smartMovingOpportunityId in metadata`);
-      console.log(`🔍 [SMARTMOVING-SYNC] Available metadata keys:`, Object.keys(project.metadata || {}));
-      return { success: false, syncedCount: 0, error: 'No SmartMoving opportunity ID' };
-    }
-    
-    console.log(`✅ [SMARTMOVING-SYNC] Found SmartMoving opportunity ID: ${smartMovingOpportunityId}`);
-    
-    // 2. Get SmartMoving integration for this organization
+
+    // 2. Get SmartMoving integration for this organization (need this before lead conversion)
     console.log(`🔍 [SMARTMOVING-SYNC] Looking up SmartMoving integration for organization ${project.organizationId}`);
     const smartMovingIntegration = await SmartMovingIntegration.findOne({
       organizationId: project.organizationId
     });
-    
+
     if (!smartMovingIntegration) {
       console.log(`❌ [SMARTMOVING-SYNC] No SmartMoving integration found for organization ${project.organizationId}`);
       console.log(`🔍 [SMARTMOVING-SYNC] Available integrations count:`, await SmartMovingIntegration.countDocuments());
       return { success: false, syncedCount: 0, error: 'No SmartMoving integration configured' };
     }
-    
+
     console.log(`✅ [SMARTMOVING-SYNC] SmartMoving integration found for organization`);
     console.log(`🔍 [SMARTMOVING-SYNC] Integration details:`, {
       clientId: smartMovingIntegration.smartMovingClientId?.substring(0, 10) + '...',
       hasApiKey: !!smartMovingIntegration.smartMovingApiKey,
       apiKeyLength: smartMovingIntegration.smartMovingApiKey?.length
     });
+
+    // 3. Get or create SmartMoving opportunity ID
+    let smartMovingOpportunityId = project.metadata?.smartMovingOpportunityId;
+
+    if (!smartMovingOpportunityId) {
+      console.log(`⚠️ [SMARTMOVING-SYNC] Project ${projectId} has no smartMovingOpportunityId in metadata`);
+      console.log(`🔍 [SMARTMOVING-SYNC] Available metadata keys:`, Object.keys(project.metadata || {}));
+
+      // Check if we have a lead ID we can convert
+      const smartMovingLeadId = project.metadata?.smartMovingLeadId;
+      if (smartMovingLeadId) {
+        console.log(`🔄 [SMARTMOVING-SYNC] Found lead ID: ${smartMovingLeadId}. Attempting to convert to opportunity...`);
+
+        // Convert lead to opportunity
+        const conversionResult = await convertLeadToOpportunityForSync(
+          smartMovingLeadId,
+          smartMovingIntegration,
+          project
+        );
+
+        if (conversionResult.success && conversionResult.opportunityId) {
+          // Save the new opportunity ID to project metadata
+          await Project.findByIdAndUpdate(projectId, {
+            'metadata.smartMovingOpportunityId': conversionResult.opportunityId
+          });
+
+          smartMovingOpportunityId = conversionResult.opportunityId;
+          console.log(`✅ [SMARTMOVING-SYNC] Lead converted! New OpportunityId: ${smartMovingOpportunityId}`);
+        } else {
+          console.error(`❌ [SMARTMOVING-SYNC] Failed to convert lead: ${conversionResult.error}`);
+          return { success: false, syncedCount: 0, error: `Lead conversion failed: ${conversionResult.error}` };
+        }
+      } else {
+        // No opportunity ID and no lead ID
+        return { success: false, syncedCount: 0, error: 'No SmartMoving opportunity ID or lead ID' };
+      }
+    }
+
+    console.log(`✅ [SMARTMOVING-SYNC] Using SmartMoving opportunity ID: ${smartMovingOpportunityId}`);
     
     // 3. Filter and map inventory items for SmartMoving
     console.log(`🔍 [SMARTMOVING-SYNC] Filtering items for sync eligibility`);
@@ -143,22 +173,31 @@ export async function syncInventoryToSmartMoving(
     }
     
     const smartMovingItems: SmartMovingInventoryItem[] = itemsToSync.map(item => {
+      const quantity = item.goingQuantity || item.quantity || 1;
+
+      // SmartMoving expects per-item volume/weight and multiplies by quantity on their end.
+      // Our cuft/weight values are already totals (per-item × quantity from frontend display).
+      // So we divide by quantity to get per-item values for SmartMoving.
+      const perItemVolume = quantity > 1 ? (item.cuft || 0) / quantity : (item.cuft || 0);
+      const perItemWeight = quantity > 1 ? (item.weight || 0) / quantity : (item.weight || 0);
+
       const mappedItem = {
         name: item.name,
         description: item.description || '',
         notes: item.special_handling || '',
-        volume: item.cuft || 0,
-        weight: item.weight || 0,
-        quantity: item.goingQuantity || item.quantity || 1,
+        volume: perItemVolume,
+        weight: perItemWeight,
+        quantity: quantity,
         quantityNotGoing: 0, // All our items are going
         saveToMaster: false // Don't clog their master inventory
       };
-      
+
       console.log(`📦 [SMARTMOVING-SYNC] Mapped item:`, {
         original: { name: item.name, cuft: item.cuft, weight: item.weight, quantity: item.quantity },
+        perItem: { volume: perItemVolume, weight: perItemWeight },
         mapped: mappedItem
       });
-      
+
       return mappedItem;
     });
     
@@ -1580,6 +1619,96 @@ export function getMostRecentOpportunity(
   console.log(`✅ [SMARTMOVING-OPPS] Selected opportunity: ${selected.id} (status: ${selected.status})`);
 
   return selected;
+}
+
+/**
+ * Helper function to convert a lead to an opportunity for inventory sync.
+ * Uses integration defaults for required fields.
+ */
+async function convertLeadToOpportunityForSync(
+  leadId: string,
+  integration: any,
+  project: any
+): Promise<{ success: boolean; opportunityId?: string; error?: string }> {
+  try {
+    console.log(`🔄 [SMARTMOVING-LEAD-CONVERT] Converting lead ${leadId} for inventory sync`);
+
+    // First, we need to get the lead details to extract customer info
+    const leadDetailsUrl = `https://api-public.smartmoving.com/v1/api/leads/${leadId}`;
+    const leadResponse = await fetch(leadDetailsUrl, {
+      method: 'GET',
+      headers: {
+        'x-api-key': integration.smartMovingApiKey,
+        'Ocp-Apim-Subscription-Key': integration.smartMovingClientId,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!leadResponse.ok) {
+      const errorText = await leadResponse.text();
+      console.error(`❌ [SMARTMOVING-LEAD-CONVERT] Failed to get lead details: ${leadResponse.status} - ${errorText}`);
+      return { success: false, error: `Failed to get lead details: ${leadResponse.status}` };
+    }
+
+    const lead = await leadResponse.json();
+    console.log(`✅ [SMARTMOVING-LEAD-CONVERT] Lead details retrieved:`, {
+      id: lead.id,
+      customerName: lead.customerName,
+      customerId: lead.customerId
+    });
+
+    // Check if lead already has a customer ID, or create one
+    let customerId = lead.customerId;
+    if (!customerId) {
+      console.log(`🔄 [SMARTMOVING-LEAD-CONVERT] Lead has no customer, creating one...`);
+      const customerResult = await createCustomerFromLead(lead, integration.smartMovingApiKey, integration.smartMovingClientId);
+      if (customerResult.success && customerResult.customerId) {
+        customerId = customerResult.customerId;
+        console.log(`✅ [SMARTMOVING-LEAD-CONVERT] Customer created: ${customerId}`);
+      } else {
+        console.error(`❌ [SMARTMOVING-LEAD-CONVERT] Failed to create customer: ${customerResult.error}`);
+        return { success: false, error: `Failed to create customer: ${customerResult.error}` };
+      }
+    }
+
+    // Build conversion request with required fields from integration defaults
+    const moveDate = project.jobDate
+      ? new Date(project.jobDate).toISOString().split('T')[0]
+      : new Date().toISOString().split('T')[0];
+
+    const conversionData: ConvertLeadRequest = {
+      customerId: customerId,
+      referralSourceId: integration.defaultReferralSourceId || lead.referralSourceId || '',
+      tariffId: integration.defaultTariffId || '',
+      moveDate: moveDate,
+      moveSizeId: integration.defaultMoveSizeId || lead.moveSizeId || '',
+      salesPersonId: integration.defaultSalesPersonId || lead.salesPersonId || '',
+      serviceTypeId: lead.type || 1, // Default to local move (1) if not specified
+      originAddress: lead.originAddressFull ? { fullAddress: lead.originAddressFull } : undefined,
+      destinationAddress: lead.destinationAddressFull ? { fullAddress: lead.destinationAddressFull } : undefined
+    };
+
+    console.log(`🔄 [SMARTMOVING-LEAD-CONVERT] Converting with data:`, {
+      customerId: conversionData.customerId,
+      moveDate: conversionData.moveDate,
+      serviceTypeId: conversionData.serviceTypeId
+    });
+
+    // Convert lead to opportunity
+    const result = await convertLeadToOpportunity(
+      leadId,
+      conversionData,
+      integration.smartMovingApiKey,
+      integration.smartMovingClientId
+    );
+
+    return result;
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-LEAD-CONVERT] Exception during lead conversion:`, error);
+    return { success: false, error: errorMessage };
+  }
 }
 
 export default {
