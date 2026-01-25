@@ -205,24 +205,25 @@ export async function syncInventoryToSmartMoving(
     
     // 4. Send items in batches for better API performance
     console.log(`🌐 [SMARTMOVING-SYNC] Syncing ${smartMovingItems.length} items in batches of ${BATCH_SIZE}`);
-    
+
     let totalSyncedCount = 0;
+    let lastBatchError = ''; // Track actual error for better error messages
     const batches = [];
-    
+
     // Split items into batches
     for (let i = 0; i < smartMovingItems.length; i += BATCH_SIZE) {
       batches.push(smartMovingItems.slice(i, i + BATCH_SIZE));
     }
-    
+
     console.log(`📦 [SMARTMOVING-SYNC] Split into ${batches.length} batches`);
-    
+
     // Process each batch
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
       const batchNumber = batchIndex + 1;
-      
+
       console.log(`🔄 [SMARTMOVING-SYNC] Processing batch ${batchNumber}/${batches.length} (${batch.length} items)`);
-      
+
       const batchResult = await syncToSmartMovingAPI(
         smartMovingOpportunityId,
         batch,
@@ -230,25 +231,26 @@ export async function syncInventoryToSmartMoving(
         smartMovingIntegration.smartMovingClientId,
         roomId // Pass the room ID we found
       );
-      
+
       if (batchResult.success) {
         totalSyncedCount += batchResult.syncedCount;
         console.log(`✅ [SMARTMOVING-SYNC] Batch ${batchNumber}/${batches.length} completed: ${batchResult.syncedCount} items synced`);
       } else {
         console.error(`❌ [SMARTMOVING-SYNC] Batch ${batchNumber}/${batches.length} failed: ${batchResult.error}`);
+        lastBatchError = batchResult.error || 'Unknown batch error'; // Capture actual error
         // Continue with other batches even if one fails
       }
-      
+
       // Small delay between batches to be gentle on the API
       if (batchIndex < batches.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
       }
     }
-    
-    const syncResult = { 
-      success: totalSyncedCount > 0, 
+
+    const syncResult = {
+      success: totalSyncedCount > 0,
       syncedCount: totalSyncedCount,
-      error: totalSyncedCount === 0 ? 'All batches failed' : undefined
+      error: totalSyncedCount === 0 ? (lastBatchError || 'All batches failed - check logs for details') : undefined
     };
     
     console.log(`🔍 [SMARTMOVING-SYNC] API call result:`, {
