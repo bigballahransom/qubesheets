@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Building2,
   Settings,
@@ -20,6 +20,9 @@ import {
   Pencil,
   Trash2,
   X,
+  ChevronDown,
+  ArrowRight,
+  Minus,
 } from 'lucide-react';
 import {
   Dialog,
@@ -41,9 +44,45 @@ interface IArrivalOption {
   label: string;
 }
 
-const settingsNavItems = [
+type DayOfWeek = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+type CrewSize = '1' | '2' | '3' | '4' | '5' | '6' | 'additional';
+
+interface IHourlyRates {
+  [crew: string]: {
+    [day: string]: number;
+  };
+}
+
+const DEFAULT_HOURLY_RATES: IHourlyRates = {
+  '1': { mon: 99, tue: 99, wed: 99, thu: 99, fri: 99, sat: 99, sun: 99 },
+  '2': { mon: 159, tue: 159, wed: 159, thu: 159, fri: 159, sat: 159, sun: 159 },
+  '3': { mon: 229, tue: 229, wed: 229, thu: 229, fri: 229, sat: 229, sun: 229 },
+  '4': { mon: 279, tue: 279, wed: 279, thu: 279, fri: 279, sat: 279, sun: 279 },
+  '5': { mon: 325, tue: 325, wed: 325, thu: 325, fri: 325, sat: 325, sun: 325 },
+  '6': { mon: 375, tue: 375, wed: 375, thu: 375, fri: 375, sat: 375, sun: 375 },
+  'additional': { mon: 70, tue: 70, wed: 70, thu: 70, fri: 70, sat: 70, sun: 70 },
+  'minimum': { mon: 1, tue: 1, wed: 1, thu: 1, fri: 1, sat: 1, sun: 1 },
+};
+
+interface NavItem {
+  id: string;
+  label: string;
+  icon: any;
+  children?: { id: string; label: string; icon: any }[];
+}
+
+const settingsNavItems: NavItem[] = [
   { id: 'organization', label: 'Organization Settings', icon: Settings },
-  { id: 'estimate', label: 'Estimate Settings', icon: Calculator },
+  {
+    id: 'estimate',
+    label: 'Estimate Settings',
+    icon: Calculator,
+    children: [
+      { id: 'estimate-arrival-times', label: 'Arrival Times', icon: Clock },
+      { id: 'estimate-hourly-rates', label: 'Hourly Rates', icon: Calculator },
+      { id: 'estimate-tariffs', label: 'Tariffs', icon: FileText },
+    ],
+  },
   { id: 'long-distance', label: 'Long Distance Settings', icon: Truck },
   { id: 'crew-truck', label: 'Crew and Truck', icon: Users },
   { id: 'integrations', label: 'Integration Settings', icon: Link },
@@ -58,13 +97,24 @@ const settingsNavItems = [
 
 export default function CrmSettingsPage() {
   const [activeSection, setActiveSection] = useState('organization');
+  const [expandedSections, setExpandedSections] = useState<string[]>(['estimate']);
+
+  const toggleExpanded = (id: string) => {
+    setExpandedSections((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
+    );
+  };
 
   const renderContent = () => {
     switch (activeSection) {
       case 'organization':
         return <OrganizationSettingsContent />;
-      case 'estimate':
-        return <EstimateSettingsContent />;
+      case 'estimate-arrival-times':
+        return <EstimateArrivalTimesContent />;
+      case 'estimate-hourly-rates':
+        return <EstimateHourlyRatesContent />;
+      case 'estimate-tariffs':
+        return <EstimateTariffsContent />;
       case 'long-distance':
         return <PlaceholderContent title="Long Distance Settings" description="Configure settings for long distance moves." />;
       case 'crew-truck':
@@ -114,11 +164,21 @@ export default function CrmSettingsPage() {
                   <ul className="space-y-1">
                     {settingsNavItems.map((item) => {
                       const Icon = item.icon;
-                      const isActive = activeSection === item.id;
+                      const hasChildren = item.children && item.children.length > 0;
+                      const isExpanded = expandedSections.includes(item.id);
+                      const isActive = activeSection === item.id ||
+                        (hasChildren && item.children?.some(child => child.id === activeSection));
+
                       return (
                         <li key={item.id}>
                           <button
-                            onClick={() => setActiveSection(item.id)}
+                            onClick={() => {
+                              if (hasChildren) {
+                                toggleExpanded(item.id);
+                              } else {
+                                setActiveSection(item.id);
+                              }
+                            }}
                             className={cn(
                               'flex items-center w-full px-3 py-2.5 rounded-lg text-left text-sm transition-colors',
                               isActive
@@ -127,8 +187,43 @@ export default function CrmSettingsPage() {
                             )}
                           >
                             <Icon size={18} className="mr-3 flex-shrink-0" />
-                            <span>{item.label}</span>
+                            <span className="flex-1">{item.label}</span>
+                            {hasChildren && (
+                              <ChevronDown
+                                size={16}
+                                className={cn(
+                                  'text-slate-400 transition-transform',
+                                  isExpanded && 'rotate-180'
+                                )}
+                              />
+                            )}
                           </button>
+
+                          {/* Children items */}
+                          {hasChildren && isExpanded && (
+                            <ul className="ml-6 mt-1 space-y-1 border-l border-slate-200 pl-3">
+                              {item.children?.map((child) => {
+                                const ChildIcon = child.icon;
+                                const isChildActive = activeSection === child.id;
+                                return (
+                                  <li key={child.id}>
+                                    <button
+                                      onClick={() => setActiveSection(child.id)}
+                                      className={cn(
+                                        'flex items-center w-full px-3 py-2 rounded-lg text-left text-sm transition-colors',
+                                        isChildActive
+                                          ? 'bg-slate-100 text-slate-900 font-medium'
+                                          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+                                      )}
+                                    >
+                                      <ChildIcon size={16} className="mr-2 flex-shrink-0" />
+                                      <span>{child.label}</span>
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
                         </li>
                       );
                     })}
@@ -278,7 +373,7 @@ function OrganizationSettingsContent() {
   );
 }
 
-function EstimateSettingsContent() {
+function EstimateArrivalTimesContent() {
   const [arrivalOptions, setArrivalOptions] = useState<IArrivalOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -404,73 +499,63 @@ function EstimateSettingsContent() {
     <>
       <div className="bg-white rounded-xl border shadow-sm p-6">
         <div className="mb-6">
-          <h2 className="text-xl font-semibold text-gray-900">Estimate Settings</h2>
-          <p className="text-sm text-gray-500 mt-1">Configure settings for your estimates and scheduling</p>
-        </div>
-
-        {/* Arrival Time Options Section */}
-        <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Clock size={18} className="text-gray-400" />
-              <h3 className="text-sm font-medium text-gray-700">Arrival Time Options</h3>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Arrival Times</h2>
+              <p className="text-sm text-gray-500 mt-1">Configure the arrival time options available when scheduling jobs</p>
             </div>
             <button
               onClick={openAddModal}
-              className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium"
+              className="flex items-center gap-1.5 text-sm bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 px-3 rounded-lg transition-colors"
             >
               <Plus size={16} />
               Add Option
             </button>
           </div>
+        </div>
 
-          <p className="text-xs text-gray-500">
-            Configure the arrival time options available when scheduling jobs
-          </p>
-
-          {/* Options List */}
-          <div className="space-y-2">
-            {arrivalOptions.length === 0 ? (
-              <div className="py-8 text-center text-gray-400 border border-dashed rounded-lg">
-                <Clock size={24} className="mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No arrival options configured</p>
-                <p className="text-xs mt-1">Click "Add Option" to create one</p>
-              </div>
-            ) : (
-              arrivalOptions.map((option) => (
-                <div
-                  key={option.id}
-                  className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center justify-center w-8 h-8 bg-white rounded-md border border-slate-200">
-                      <Clock size={14} className="text-slate-500" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{option.label}</p>
-                      <p className="text-xs text-gray-500">
-                        {option.type === 'single' ? 'Single time' : 'Time window'}
-                      </p>
-                    </div>
+        {/* Options List */}
+        <div className="space-y-2">
+          {arrivalOptions.length === 0 ? (
+            <div className="py-12 text-center text-gray-400 border border-dashed rounded-lg">
+              <Clock size={32} className="mx-auto mb-3 opacity-50" />
+              <p className="text-sm font-medium">No arrival options configured</p>
+              <p className="text-xs mt-1">Click "Add Option" to create one</p>
+            </div>
+          ) : (
+            arrivalOptions.map((option) => (
+              <div
+                key={option.id}
+                className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center w-10 h-10 bg-white rounded-md border border-slate-200">
+                    <Clock size={16} className="text-slate-500" />
                   </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => openEditModal(option)}
-                      className="p-2 text-gray-400 hover:text-gray-600 hover:bg-slate-100 rounded-md transition-colors"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteOption(option.id)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{option.label}</p>
+                    <p className="text-xs text-gray-500">
+                      {option.type === 'single' ? 'Single time' : 'Time window'}
+                    </p>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => openEditModal(option)}
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-slate-100 rounded-md transition-colors"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteOption(option.id)}
+                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
         {/* Save Button */}
@@ -593,6 +678,438 @@ function EstimateSettingsContent() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function EstimateHourlyRatesContent() {
+  const [rates, setRates] = useState<IHourlyRates>(DEFAULT_HOURLY_RATES);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const days: { key: DayOfWeek; label: string }[] = [
+    { key: 'mon', label: 'Mon' },
+    { key: 'tue', label: 'Tue' },
+    { key: 'wed', label: 'Wed' },
+    { key: 'thu', label: 'Thu' },
+    { key: 'fri', label: 'Fri' },
+    { key: 'sat', label: 'Sat' },
+    { key: 'sun', label: 'Sun' },
+  ];
+
+  const crewSizes: { key: CrewSize; label: string }[] = [
+    { key: '1', label: '1 Crew' },
+    { key: '2', label: '2 Crew' },
+    { key: '3', label: '3 Crew' },
+    { key: '4', label: '4 Crew' },
+    { key: '5', label: '5 Crew' },
+    { key: '6', label: '6 Crew' },
+    { key: 'additional', label: 'Each Additional' },
+  ];
+
+  useEffect(() => {
+    fetchRates();
+  }, []);
+
+  const fetchRates = async () => {
+    try {
+      const response = await fetch('/api/settings/crm');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.hourlyRates) {
+          setRates(data.hourlyRates);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching rates:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const [editingCell, setEditingCell] = useState<{ crew: string; day: string; value: string } | null>(null);
+
+  const handleRateChange = (crew: string, day: string, value: string) => {
+    // Allow empty string while editing
+    setEditingCell({ crew, day, value });
+  };
+
+  const handleRateBlur = (crew: string, day: string) => {
+    if (editingCell && editingCell.crew === crew && editingCell.day === day) {
+      const numValue = parseFloat(editingCell.value) || 0;
+      setRates((prev) => ({
+        ...prev,
+        [crew]: {
+          ...prev[crew],
+          [day]: numValue,
+        },
+      }));
+      setEditingCell(null);
+    }
+  };
+
+  const handleRateFocus = (crew: string, day: string) => {
+    const currentValue = rates[crew]?.[day] || 0;
+    setEditingCell({ crew, day, value: currentValue.toString() });
+  };
+
+  const getRateDisplayValue = (crew: string, day: string) => {
+    if (editingCell && editingCell.crew === crew && editingCell.day === day) {
+      return editingCell.value;
+    }
+    return rates[crew]?.[day]?.toString() || '0';
+  };
+
+  const handleMinimumChange = (day: string, delta: number) => {
+    setRates((prev) => {
+      const currentValue = prev['minimum']?.[day] || 1;
+      const newValue = Math.max(1, currentValue + delta);
+      return {
+        ...prev,
+        ['minimum']: {
+          ...prev['minimum'],
+          [day]: newValue,
+        },
+      };
+    });
+  };
+
+  const copyRatesToNextDay = (fromDayIndex: number) => {
+    const fromDay = days[fromDayIndex].key;
+    const toDay = days[fromDayIndex + 1].key;
+
+    setRates((prev) => {
+      const newRates = { ...prev };
+      crewSizes.forEach((crew) => {
+        newRates[crew.key] = {
+          ...newRates[crew.key],
+          [toDay]: prev[crew.key]?.[fromDay] || 0,
+        };
+      });
+      return newRates;
+    });
+  };
+
+  const handleSaveAll = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch('/api/settings/crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hourlyRates: rates }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to save rates');
+      }
+    } catch (error) {
+      console.error('Error saving rates:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border shadow-sm p-6">
+        <div className="animate-pulse">
+          <div className="h-6 bg-slate-200 rounded w-1/3 mb-4"></div>
+          <div className="h-4 bg-slate-200 rounded w-1/2 mb-6"></div>
+          <div className="h-64 bg-slate-200 rounded"></div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-6">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold text-gray-900">Hourly Rates</h2>
+        <p className="text-sm text-gray-500 mt-1">Configure hourly rates by day of week and crew size</p>
+      </div>
+
+      {/* Rates Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider p-2 bg-slate-50 border border-slate-200 rounded-tl-lg">
+                # Crew
+              </th>
+              {days.map((day, index) => (
+                <React.Fragment key={day.key}>
+                  <th
+                    className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider p-2 bg-slate-50 border border-slate-200 min-w-[80px]"
+                  >
+                    {day.label}
+                  </th>
+                  {index < days.length - 1 && (
+                    <th className="w-0 p-0 border-0 bg-slate-50 relative">
+                      <button
+                        onClick={() => copyRatesToNextDay(index)}
+                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-6 h-6 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center shadow-md transition-colors"
+                        title={`Copy ${day.label} rates to ${days[index + 1].label}`}
+                      >
+                        <ArrowRight size={12} />
+                      </button>
+                    </th>
+                  )}
+                </React.Fragment>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {crewSizes.map((crew) => (
+              <tr key={crew.key}>
+                <td className="text-sm font-medium text-gray-700 p-2 bg-slate-50 border border-slate-200 whitespace-nowrap">
+                  {crew.label}
+                </td>
+                {days.map((day, index) => (
+                  <React.Fragment key={day.key}>
+                    <td className="p-1 border border-slate-200">
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={getRateDisplayValue(crew.key, day.key)}
+                          onChange={(e) => handleRateChange(crew.key, day.key, e.target.value)}
+                          onFocus={() => handleRateFocus(crew.key, day.key)}
+                          onBlur={() => handleRateBlur(crew.key, day.key)}
+                          className="w-full pl-6 pr-2 py-2 text-sm text-center border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset rounded"
+                        />
+                      </div>
+                    </td>
+                    {index < days.length - 1 && (
+                      <td className="w-0 p-0 border-0" />
+                    )}
+                  </React.Fragment>
+                ))}
+              </tr>
+            ))}
+            {/* Hourly Minimum Row */}
+            <tr>
+              <td className="text-sm font-medium text-gray-700 p-2 bg-slate-100 border border-slate-200 whitespace-nowrap">
+                Hourly Minimum
+              </td>
+              {days.map((day, index) => {
+                const currentValue = rates['minimum']?.[day.key] || 1;
+                return (
+                  <React.Fragment key={day.key}>
+                    <td className="p-1 border border-slate-200 bg-slate-50">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleMinimumChange(day.key, -1)}
+                          disabled={currentValue <= 1}
+                          className="w-6 h-6 rounded-full bg-slate-200 hover:bg-slate-300 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+                        >
+                          <Minus size={12} />
+                        </button>
+                        <span className="w-6 text-center text-sm font-medium">{currentValue}</span>
+                        <button
+                          onClick={() => handleMinimumChange(day.key, 1)}
+                          className="w-6 h-6 rounded-full bg-slate-200 hover:bg-slate-300 flex items-center justify-center transition-colors"
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
+                    </td>
+                    {index < days.length - 1 && (
+                      <td className="w-0 p-0 border-0" />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Save Button */}
+      <div className="pt-6 mt-6 border-t">
+        <button
+          onClick={handleSaveAll}
+          disabled={isSaving}
+          className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
+        >
+          {isSaving ? 'Saving...' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface ITariffItem {
+  id: string;
+  name: string;
+  price: number;
+  unit: string;
+}
+
+const DEFAULT_TARIFFS: ITariffItem[] = [
+  { id: 'travel-time', name: 'Travel Time', price: 50, unit: 'per hour' },
+  { id: 'fuel-surcharge', name: 'Fuel Surcharge', price: 0, unit: 'percentage' },
+  { id: 'stair-carry', name: 'Stair Carry', price: 75, unit: 'per flight' },
+  { id: 'long-carry', name: 'Long Carry (75+ ft)', price: 75, unit: 'flat fee' },
+  { id: 'elevator', name: 'Elevator Fee', price: 75, unit: 'flat fee' },
+  { id: 'packing-materials', name: 'Packing Materials', price: 0, unit: 'at cost' },
+];
+
+function EstimateTariffsContent() {
+  const [tariffs, setTariffs] = useState<ITariffItem[]>(DEFAULT_TARIFFS);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editingCell, setEditingCell] = useState<{ id: string; value: string } | null>(null);
+
+  useEffect(() => {
+    fetchTariffs();
+  }, []);
+
+  const fetchTariffs = async () => {
+    try {
+      const response = await fetch('/api/settings/crm');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.tariffs && data.tariffs.length > 0) {
+          setTariffs(data.tariffs);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching tariffs:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePriceChange = (id: string, value: string) => {
+    setEditingCell({ id, value });
+  };
+
+  const handlePriceBlur = (id: string) => {
+    if (editingCell && editingCell.id === id) {
+      const numValue = parseFloat(editingCell.value) || 0;
+      setTariffs((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, price: numValue } : t))
+      );
+      setEditingCell(null);
+    }
+  };
+
+  const handlePriceFocus = (id: string) => {
+    const tariff = tariffs.find((t) => t.id === id);
+    if (tariff) {
+      setEditingCell({ id, value: tariff.price.toString() });
+    }
+  };
+
+  const getPriceDisplayValue = (id: string) => {
+    if (editingCell && editingCell.id === id) {
+      return editingCell.value;
+    }
+    const tariff = tariffs.find((t) => t.id === id);
+    return tariff?.price.toString() || '0';
+  };
+
+  const handleSaveAll = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch('/api/settings/crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tariffs }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to save tariffs');
+      }
+    } catch (error) {
+      console.error('Error saving tariffs:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border shadow-sm p-6">
+        <div className="animate-pulse">
+          <div className="h-6 bg-slate-200 rounded w-1/3 mb-4"></div>
+          <div className="h-4 bg-slate-200 rounded w-1/2 mb-6"></div>
+          <div className="space-y-3">
+            <div className="h-12 bg-slate-200 rounded"></div>
+            <div className="h-12 bg-slate-200 rounded"></div>
+            <div className="h-12 bg-slate-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-6">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold text-gray-900">Tariffs</h2>
+        <p className="text-sm text-gray-500 mt-1">Configure additional charges and fees for estimates</p>
+      </div>
+
+      {/* Tariffs List */}
+      <div className="space-y-3">
+        {tariffs.map((tariff) => (
+          <div
+            key={tariff.id}
+            className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200"
+          >
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-900">{tariff.name}</p>
+              <p className="text-xs text-gray-500">{tariff.unit}</p>
+            </div>
+            <div className="w-32">
+              <div className="relative">
+                {tariff.unit === 'percentage' ? (
+                  <>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={getPriceDisplayValue(tariff.id)}
+                      onChange={(e) => handlePriceChange(tariff.id, e.target.value)}
+                      onFocus={() => handlePriceFocus(tariff.id)}
+                      onBlur={() => handlePriceBlur(tariff.id)}
+                      className="w-full pl-3 pr-8 py-2 text-sm text-right border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
+                  </>
+                ) : tariff.unit === 'at cost' ? (
+                  <div className="w-full px-3 py-2 text-sm text-right text-gray-500 bg-slate-100 border border-slate-200 rounded-lg">
+                    At Cost
+                  </div>
+                ) : (
+                  <>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={getPriceDisplayValue(tariff.id)}
+                      onChange={(e) => handlePriceChange(tariff.id, e.target.value)}
+                      onFocus={() => handlePriceFocus(tariff.id)}
+                      onBlur={() => handlePriceBlur(tariff.id)}
+                      className="w-full pl-7 pr-3 py-2 text-sm text-right border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Save Button */}
+      <div className="pt-6 mt-6 border-t">
+        <button
+          onClick={handleSaveAll}
+          disabled={isSaving}
+          className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
+        >
+          {isSaving ? 'Saving...' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
   );
 }
 

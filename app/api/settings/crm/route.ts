@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
-import OrganizationSettings, { IArrivalOption } from '@/models/OrganizationSettings';
+import OrganizationSettings, { IArrivalOption, IHourlyRates, DEFAULT_HOURLY_RATES } from '@/models/OrganizationSettings';
 import { getAuthContext } from '@/lib/auth-helpers';
 
 const defaultJobTypes = ['Moving', 'Packing', 'Loading', 'Unloading', 'Storage', 'Junk Removal'];
@@ -10,6 +10,7 @@ const defaultArrivalOptions: IArrivalOption[] = [
   { id: 'default-2', type: 'window', startTime: '10:00', endTime: '12:00', label: '10:00 AM - 12:00 PM' },
   { id: 'default-3', type: 'window', startTime: '13:00', endTime: '15:00', label: '1:00 PM - 3:00 PM' }
 ];
+const defaultHourlyRates: IHourlyRates = DEFAULT_HOURLY_RATES;
 
 // GET /api/settings/crm - Get CRM settings
 export async function GET(request: NextRequest) {
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
         jobTypes: defaultJobTypes,
         opportunityTypes: defaultOpportunityTypes,
         arrivalOptions: defaultArrivalOptions,
+        hourlyRates: defaultHourlyRates,
         defaultArrivalWindowStart: '08:00',
         defaultArrivalWindowEnd: '10:00',
       });
@@ -48,6 +50,7 @@ export async function GET(request: NextRequest) {
       jobTypes: settings.crmJobTypes || defaultJobTypes,
       opportunityTypes: settings.crmOpportunityTypes || defaultOpportunityTypes,
       arrivalOptions: settings.crmArrivalOptions?.length ? settings.crmArrivalOptions : defaultArrivalOptions,
+      hourlyRates: settings.crmHourlyRates || defaultHourlyRates,
       defaultArrivalWindowStart: settings.crmDefaultArrivalWindowStart || '08:00',
       defaultArrivalWindowEnd: settings.crmDefaultArrivalWindowEnd || '10:00',
     });
@@ -100,11 +103,32 @@ export async function POST(request: NextRequest) {
         )
       : defaultArrivalOptions;
 
+    // Validate hourly rates - ensure it's an object with valid structure
+    let hourlyRates = defaultHourlyRates;
+    if (data.hourlyRates && typeof data.hourlyRates === 'object') {
+      hourlyRates = {};
+      const validCrewKeys = ['1', '2', '3', '4', '5', '6', 'additional', 'minimum'];
+      const validDayKeys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+      for (const crewKey of validCrewKeys) {
+        if (data.hourlyRates[crewKey] && typeof data.hourlyRates[crewKey] === 'object') {
+          hourlyRates[crewKey] = {};
+          for (const dayKey of validDayKeys) {
+            const value = data.hourlyRates[crewKey][dayKey];
+            hourlyRates[crewKey][dayKey] = typeof value === 'number' ? value : (defaultHourlyRates[crewKey]?.[dayKey] || 0);
+          }
+        } else {
+          hourlyRates[crewKey] = defaultHourlyRates[crewKey] || {};
+        }
+      }
+    }
+
     const settingsData = {
       organizationId: authContext.organizationId,
       crmJobTypes: jobTypes,
       crmOpportunityTypes: opportunityTypes,
       crmArrivalOptions: arrivalOptions,
+      crmHourlyRates: hourlyRates,
       crmDefaultArrivalWindowStart: data.defaultArrivalWindowStart || '08:00',
       crmDefaultArrivalWindowEnd: data.defaultArrivalWindowEnd || '10:00',
     };
@@ -124,6 +148,7 @@ export async function POST(request: NextRequest) {
       jobTypes: settings.crmJobTypes || defaultJobTypes,
       opportunityTypes: settings.crmOpportunityTypes || defaultOpportunityTypes,
       arrivalOptions: settings.crmArrivalOptions?.length ? settings.crmArrivalOptions : defaultArrivalOptions,
+      hourlyRates: settings.crmHourlyRates || defaultHourlyRates,
       defaultArrivalWindowStart: settings.crmDefaultArrivalWindowStart || '08:00',
       defaultArrivalWindowEnd: settings.crmDefaultArrivalWindowEnd || '10:00',
     });
