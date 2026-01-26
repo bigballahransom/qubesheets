@@ -388,12 +388,11 @@ function normalizeRoomName(roomName: string): string {
 function transformItemToSupermove(item: IInventoryItem): SupermoveInventoryItem {
   // Use going quantity if available, otherwise use total quantity
   const takeCount = item.goingQuantity || item.quantity || 1;
-  
-  // Calculate per-item volume and weight if we have quantities > 1
-  const totalQuantity = item.quantity || 1;
-  const unitVolume = totalQuantity > 0 ? (item.cuft || 0) / totalQuantity : (item.cuft || 0);
-  const unitWeight = totalQuantity > 0 ? (item.weight || 0) / totalQuantity : (item.weight || 0);
-  
+
+  // Database stores per-unit values, send directly to Supermove
+  const unitVolume = item.cuft || 0;
+  const unitWeight = item.weight || 0;
+
   return {
     name: item.name,
     description: item.description || undefined,

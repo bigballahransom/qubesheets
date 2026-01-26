@@ -1430,6 +1430,12 @@ useEffect(() => {
     const statusResponse = await fetch(`/api/smartmoving/sync-from-lead?projectId=${currentProject._id}`);
     const statusData = await statusResponse.json();
 
+    // Block if already synced (one-time sync only - SmartMoving API requires item IDs to delete, which we don't store)
+    if (statusData.status?.syncedAt) {
+      toast.info('This project has already been synced to SmartMoving.');
+      return;
+    }
+
     // Check for phone if this is a new sync (no existing opportunity from webhook)
     if (!statusData.status?.hasOpportunityId && !statusData.status?.hasPhone) {
       toast.error('This project needs a phone number to sync with SmartMoving.');
@@ -2463,7 +2469,7 @@ const ProcessingNotification = () => {
                 <MenubarSeparator />
                 <MenubarItem
                   onClick={handleSmartMovingSync}
-                  disabled={smartMovingLoading}
+                  disabled={smartMovingLoading || smartMovingSyncStatus?.syncedAt}
                 >
                   {smartMovingLoading ? (
                     <>
@@ -2472,8 +2478,8 @@ const ProcessingNotification = () => {
                     </>
                   ) : smartMovingSyncStatus?.syncedAt ? (
                     <>
-                      <RefreshCw size={16} className="mr-1" />
-                      Resync to SmartMoving
+                      <ExternalLink size={16} className="mr-1" />
+                      Synced to SmartMoving
                     </>
                   ) : (
                     <>

@@ -146,20 +146,9 @@ export async function syncInventoryToSmartMoving(
     }
     
     console.log(`🔄 [SMARTMOVING-SYNC] Mapping ${itemsToSync.length} items to SmartMoving format`);
-    
-    // Clear existing inventory first to prevent duplicates on resync
-    console.log(`🧹 [SMARTMOVING-SYNC] Clearing existing inventory before sync...`);
-    const clearResult = await clearOpportunityInventory(
-      smartMovingOpportunityId,
-      smartMovingIntegration.smartMovingApiKey,
-      smartMovingIntegration.smartMovingClientId
-    );
-    if (clearResult.deletedCount > 0) {
-      console.log(`✅ [SMARTMOVING-SYNC] Cleared ${clearResult.deletedCount} existing items`);
-      // Give SmartMoving time to process the deletions before adding new items
-      console.log(`⏳ [SMARTMOVING-SYNC] Waiting 2 seconds for SmartMoving to process deletions...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
+
+    // Note: SmartMoving is one-time sync only. We can't delete items without their IDs,
+    // which we don't store. The UI prevents resyncing for already-synced projects.
 
     // Get existing rooms from the opportunity - this is critical for finding valid room IDs
     console.log(`🔍 [SMARTMOVING-SYNC] Getting existing rooms from opportunity ${smartMovingOpportunityId}`);
