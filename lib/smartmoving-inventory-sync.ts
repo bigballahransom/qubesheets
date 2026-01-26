@@ -156,6 +156,9 @@ export async function syncInventoryToSmartMoving(
     );
     if (clearResult.deletedCount > 0) {
       console.log(`✅ [SMARTMOVING-SYNC] Cleared ${clearResult.deletedCount} existing items`);
+      // Give SmartMoving time to process the deletions before adding new items
+      console.log(`⏳ [SMARTMOVING-SYNC] Waiting 2 seconds for SmartMoving to process deletions...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     // Get existing rooms from the opportunity - this is critical for finding valid room IDs
