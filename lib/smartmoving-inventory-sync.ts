@@ -178,8 +178,9 @@ export async function syncInventoryToSmartMoving(
       // SmartMoving expects per-item volume/weight and multiplies by quantity on their end.
       // Our cuft/weight values are already totals (per-item × quantity from frontend display).
       // So we divide by quantity to get per-item values for SmartMoving.
-      const perItemVolume = quantity > 1 ? (item.cuft || 0) / quantity : (item.cuft || 0);
-      const perItemWeight = quantity > 1 ? (item.weight || 0) / quantity : (item.weight || 0);
+      // Round to 2 decimal places - SmartMoving API rejects values with more precision.
+      const perItemVolume = Math.round((quantity > 1 ? (item.cuft || 0) / quantity : (item.cuft || 0)) * 100) / 100;
+      const perItemWeight = Math.round((quantity > 1 ? (item.weight || 0) / quantity : (item.weight || 0)) * 100) / 100;
 
       const mappedItem = {
         name: item.name,
