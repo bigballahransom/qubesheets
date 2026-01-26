@@ -329,23 +329,9 @@ useEffect(() => {
           })(),
           col2: item.name || '',
           col3: item.quantity?.toString() || '1',
-          col4: (() => {
-            // For all box types, cuft is already total (quantity × unit cuft)
-            // For regular items, we need to multiply by quantity
-            if (isBoxItem(item)) {
-              return (item.cuft || 0).toString();
-            } else {
-              return ((item.cuft || 0) * (item.quantity || 1)).toString();
-            }
-          })(),
-          col5: (() => {
-            // Similarly for weight - all box types store total values
-            if (isBoxItem(item)) {
-              return (item.weight || 0).toString();
-            } else {
-              return ((item.weight || 0) * (item.quantity || 1)).toString();
-            }
-          })(),
+          // All items now store per-unit values, multiply by quantity for display
+          col4: ((item.cuft || 0) * (item.quantity || 1)).toString(),
+          col5: ((item.weight || 0) * (item.quantity || 1)).toString(),
           col6: (() => {
             // Defensive checks for missing or invalid data
             let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
