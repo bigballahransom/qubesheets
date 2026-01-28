@@ -38,6 +38,12 @@ export default function EmbeddableFormPage() {
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Make body transparent for embedding
+  useEffect(() => {
+    document.documentElement.style.background = 'transparent';
+    document.body.style.background = 'transparent';
+  }, []);
+
   // Post height to parent for iframe auto-resize
   const sendHeight = useCallback(() => {
     const height = document.body.scrollHeight;
