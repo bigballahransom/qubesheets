@@ -182,7 +182,7 @@ export default function EmbeddableFormPage() {
 
   return (
     <div className="w-full max-w-lg mx-auto">
-      <form onSubmit={handleSubmit} className="rounded-xl shadow-lg border border-gray-200 p-8">
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-lg border border-gray-200 p-8">
         {/* Branding logo */}
         {branding?.companyLogo && (
           <div className="flex justify-center mb-4">
