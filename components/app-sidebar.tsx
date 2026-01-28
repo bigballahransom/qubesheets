@@ -35,6 +35,7 @@ import { SearchDropdown } from '@/components/SearchDropdown';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import CreateCustomerModal from '@/components/modals/CreateCustomerModal';
 import SettingsSection from '@/components/SettingsSection';
+import { FormNotificationBell } from '@/components/FormNotificationBell';
 
 interface Project {
   _id: string;
@@ -393,7 +394,7 @@ export function AppSidebar() {
             <div className="flex items-center gap-2 sm:gap-3">
               {/* User Button - Left */}
               <div className="flex-shrink-0">
-                <UserButton 
+                <UserButton
                   userProfileMode="modal"
                   appearance={{
                     elements: {
@@ -403,7 +404,10 @@ export function AppSidebar() {
                   }}
                 />
               </div>
-              
+
+              {/* Form submissions notification bell - only for CRM users */}
+              {hasCrmAddOn && <FormNotificationBell />}
+
               {/* Organization Switcher - Right */}
               <div className="flex-1 min-w-0 max-w-[180px] sm:max-w-none">
                 <OrganizationSwitcher

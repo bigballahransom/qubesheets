@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
         phoneNumber: null
       });
     }
-    
+
     return NextResponse.json({
       enableInventoryUpdates: settings.enableInventoryUpdates,
       phoneNumber: settings.phoneNumber

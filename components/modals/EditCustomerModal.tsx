@@ -64,6 +64,12 @@ interface Customer {
   company?: string;
   address?: string;
   notes?: string;
+  userId: string;
+  assignedTo?: {
+    userId: string;
+    name: string;
+    assignedAt: string;
+  };
   createdAt: string;
   updatedAt: string;
 }

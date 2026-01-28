@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import CreateCustomerModal from '@/components/modals/CreateCustomerModal';
 import { SearchDropdown } from '@/components/SearchDropdown';
+import { FormNotificationBell } from '@/components/FormNotificationBell';
 import {
   SignedIn,
   UserButton,
@@ -38,6 +39,9 @@ export function DesktopHeaderBar() {
 
         <div className="flex items-center space-x-4">
           <SignedIn>
+            {/* Form submissions notification bell - only for CRM users */}
+            {hasCrmAddOn && <FormNotificationBell />}
+
             {/* Conditionally show New Customer or New Project button */}
             {hasCrmAddOn ? (
               <CreateCustomerModal onCustomerCreated={handleCustomerCreated}>

@@ -1,5 +1,11 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface IAssignedTo {
+  userId: string;
+  name: string;
+  assignedAt: Date;
+}
+
 export interface ICustomer extends Document {
   firstName: string;
   lastName: string;
@@ -10,6 +16,7 @@ export interface ICustomer extends Document {
   notes?: string;
   userId: string;
   organizationId?: string;
+  assignedTo?: IAssignedTo;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,12 +32,23 @@ const CustomerSchema: Schema = new Schema(
     notes: { type: String, required: false },
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
+    assignedTo: {
+      type: {
+        userId: { type: String, required: true },
+        name: { type: String, required: true },
+        assignedAt: { type: Date, required: true }
+      },
+      required: false
+    },
   },
   { timestamps: true }
 );
 
 // Compound index for efficient org/user queries
 CustomerSchema.index({ organizationId: 1, userId: 1 });
+
+// Index for efficiently finding unclaimed form submissions
+CustomerSchema.index({ organizationId: 1, userId: 1, 'assignedTo': 1 });
 
 // Virtual for full name
 CustomerSchema.virtual('name').get(function() {

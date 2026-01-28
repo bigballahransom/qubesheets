@@ -180,15 +180,18 @@ export default function CustomersPage() {
               <div className="flex items-center gap-2 text-sm">
                 <span className="font-medium text-gray-900">Customers</span>
               </div>
-              <CreateCustomerModal onCustomerCreated={handleCustomerCreated}>
-                <Button
-                  size="sm"
-                  className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 hover:border-blue-300 cursor-pointer transition-colors"
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Customer
-                </Button>
-              </CreateCustomerModal>
+              <div className="flex items-center gap-2">
+                <CreateCustomerModal onCustomerCreated={handleCustomerCreated}>
+                  <Button
+                    size="sm"
+                    className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 hover:border-blue-300 cursor-pointer transition-colors"
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    <span className="hidden sm:inline">Add Customer</span>
+                    <span className="sm:hidden">Add</span>
+                  </Button>
+                </CreateCustomerModal>
+              </div>
             </div>
 
             {/* Spreadsheet Container */}

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useOrganization } from '@clerk/nextjs';
 import {
   Building2,
   Settings,
@@ -23,6 +24,12 @@ import {
   ChevronDown,
   ArrowRight,
   Minus,
+  Copy,
+  Check,
+  Code,
+  Eye,
+  Bell,
+  Loader2,
 } from 'lucide-react';
 import {
   Dialog,
@@ -30,6 +37,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
@@ -73,6 +82,7 @@ interface NavItem {
 
 const settingsNavItems: NavItem[] = [
   { id: 'organization', label: 'Organization Settings', icon: Settings },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
   {
     id: 'estimate',
     label: 'Estimate Settings',
@@ -109,6 +119,8 @@ export default function CrmSettingsPage() {
     switch (activeSection) {
       case 'organization':
         return <OrganizationSettingsContent />;
+      case 'notifications':
+        return <NotificationsContent />;
       case 'estimate-arrival-times':
         return <EstimateArrivalTimesContent />;
       case 'estimate-hourly-rates':
@@ -126,7 +138,7 @@ export default function CrmSettingsPage() {
       case 'valuation':
         return <PlaceholderContent title="Valuation Protection" description="Set up valuation protection options for customers." />;
       case 'website-forms':
-        return <PlaceholderContent title="Website Forms" description="Customize forms for your website." />;
+        return <WebsiteFormsContent />;
       case 'email-templates':
         return <PlaceholderContent title="Email Templates" description="Create and manage email templates." />;
       case 'sms-templates':
@@ -243,6 +255,206 @@ export default function CrmSettingsPage() {
       </SidebarProvider>
       <IntercomChat />
     </>
+  );
+}
+
+interface CrmNotificationSettings {
+  smsNewLead: boolean;
+  phoneNumber: string | null;
+}
+
+// Phone formatting utilities
+const formatPhoneNumber = (value: string, previousValue: string = ''): string => {
+  const digits = value.replace(/\D/g, '');
+  const prevDigits = previousValue.replace(/\D/g, '');
+  const isDeleting = digits.length < prevDigits.length;
+  const limitedDigits = digits.slice(0, 10);
+
+  if (limitedDigits.length === 0) return '';
+  if (isDeleting && limitedDigits.length <= 3) return limitedDigits;
+
+  if (limitedDigits.length >= 7) {
+    return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
+  } else if (limitedDigits.length >= 4) {
+    return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3)}`;
+  } else if (limitedDigits.length >= 1) {
+    return isDeleting ? limitedDigits : `(${limitedDigits}`;
+  }
+  return limitedDigits;
+};
+
+const formatPhoneForDisplay = (twilioPhone: string | null): string => {
+  if (!twilioPhone) return '';
+  const digits = twilioPhone.replace(/^\+1/, '');
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  return twilioPhone;
+};
+
+function NotificationsContent() {
+  const { organization } = useOrganization();
+
+  const [settings, setSettings] = useState<CrmNotificationSettings>({
+    smsNewLead: false,
+    phoneNumber: null
+  });
+  const [phoneInput, setPhoneInput] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+
+  // Fetch CRM notification settings
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await fetch('/api/crm/notification-settings');
+        if (response.ok) {
+          const data = await response.json();
+          setSettings({
+            smsNewLead: data.smsNewLead || false,
+            phoneNumber: data.phoneNumber || null
+          });
+          setPhoneInput(formatPhoneForDisplay(data.phoneNumber));
+        }
+      } catch (error) {
+        console.error('Error fetching CRM notification settings:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (organization) {
+      fetchSettings();
+    } else {
+      setIsLoading(false);
+    }
+  }, [organization]);
+
+  const handleToggle = (enabled: boolean) => {
+    setSettings(prev => ({ ...prev, smsNewLead: enabled }));
+    setHasChanges(true);
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = formatPhoneNumber(e.target.value, phoneInput);
+    setPhoneInput(newValue);
+    setHasChanges(true);
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch('/api/crm/notification-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          smsNewLead: settings.smsNewLead,
+          phoneNumber: phoneInput.trim() || null,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to save settings');
+      }
+      const data = await response.json();
+      setSettings({
+        smsNewLead: data.smsNewLead,
+        phoneNumber: data.phoneNumber
+      });
+      setPhoneInput(formatPhoneForDisplay(data.phoneNumber));
+      setHasChanges(false);
+    } catch (error) {
+      console.error('Error saving CRM notification settings:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border shadow-sm p-6">
+        <div className="animate-pulse">
+          <div className="h-6 bg-slate-200 rounded w-1/3 mb-4"></div>
+          <div className="h-4 bg-slate-200 rounded w-1/2 mb-6"></div>
+          <div className="space-y-3">
+            <div className="h-16 bg-slate-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-6">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold text-gray-900">CRM Notification Settings</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Configure SMS notifications for CRM events
+        </p>
+      </div>
+
+      {/* SMS Notifications Section */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Bell size={18} className="text-slate-500" />
+          <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+            New Lead Notifications
+          </h3>
+        </div>
+
+        <div className="space-y-4">
+          {/* Toggle */}
+          <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-900">SMS for New Leads</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Get an SMS when a new lead is submitted via your website form
+                </p>
+              </div>
+              <Switch
+                checked={settings.smsNewLead}
+                onCheckedChange={handleToggle}
+              />
+            </div>
+          </div>
+
+          {/* Phone Number Input */}
+          {settings.smsNewLead && (
+            <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Phone Number for SMS
+              </label>
+              <input
+                type="tel"
+                value={phoneInput}
+                onChange={handlePhoneChange}
+                placeholder="(555) 123-4567"
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                US phone number required for SMS notifications
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Save Button */}
+      <button
+        onClick={handleSave}
+        disabled={isSaving || !hasChanges}
+        className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
+      >
+        {isSaving ? 'Saving...' : hasChanges ? 'Save Changes' : 'No Changes to Save'}
+      </button>
+
+      {hasChanges && (
+        <p className="text-sm text-orange-600 text-center mt-2">
+          You have unsaved changes
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -1110,6 +1322,452 @@ function EstimateTariffsContent() {
         </button>
       </div>
     </div>
+  );
+}
+
+interface IWebsiteFormField {
+  fieldId: string;
+  label: string;
+  enabled: boolean;
+  required: boolean;
+}
+
+interface IWebsiteFormConfig {
+  formTitle: string;
+  formSubtitle: string;
+  buttonText: string;
+  buttonColor: string;
+  successMessage: string;
+  fields: IWebsiteFormField[];
+  isActive: boolean;
+}
+
+const DEFAULT_FORM_FIELDS: IWebsiteFormField[] = [
+  { fieldId: 'firstName', label: 'First Name', enabled: true, required: true },
+  { fieldId: 'lastName', label: 'Last Name', enabled: true, required: true },
+  { fieldId: 'phone', label: 'Phone Number', enabled: true, required: false },
+  { fieldId: 'email', label: 'Email Address', enabled: true, required: false },
+  { fieldId: 'moveDate', label: 'Preferred Move Date', enabled: true, required: false },
+];
+
+const DEFAULT_FORM_CONFIG: IWebsiteFormConfig = {
+  formTitle: 'Get Your Free Estimate',
+  formSubtitle: 'Fill out the form below',
+  buttonText: 'Get Free Estimate',
+  buttonColor: '#16a34a',
+  successMessage: 'Thank you! We will be in touch shortly.',
+  fields: DEFAULT_FORM_FIELDS,
+  isActive: true,
+};
+
+function WebsiteFormsContent() {
+  const { organization } = useOrganization();
+  const orgId = organization?.id || '';
+
+  const [formConfig, setFormConfig] = useState<IWebsiteFormConfig>(DEFAULT_FORM_CONFIG);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showEmbedDialog, setShowEmbedDialog] = useState(false);
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    try {
+      const response = await fetch('/api/settings/crm');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.websiteFormConfig) {
+          setFormConfig(data.websiteFormConfig);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch('/api/settings/crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ websiteFormConfig: formConfig }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to save');
+      }
+    } catch (error) {
+      console.error('Error saving settings:', error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateField = (fieldId: string, key: 'enabled' | 'required', value: boolean) => {
+    setFormConfig((prev) => ({
+      ...prev,
+      fields: prev.fields.map((f) =>
+        f.fieldId === fieldId ? { ...f, [key]: value } : f
+      ),
+    }));
+  };
+
+  const copyToClipboard = (text: string, type: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedSnippet(type);
+    setTimeout(() => setCopiedSnippet(null), 2000);
+  };
+
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+
+  const jsSnippet = `<script src="${baseUrl}/embed-form.js" data-org-id="${orgId}"></script>`;
+  const iframeSnippet = `<iframe src="${baseUrl}/form/${orgId}" width="100%" height="600" frameborder="0" style="border:none;"></iframe>`;
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border shadow-sm p-6">
+        <div className="animate-pulse">
+          <div className="h-6 bg-slate-200 rounded w-1/3 mb-4"></div>
+          <div className="h-4 bg-slate-200 rounded w-1/2 mb-6"></div>
+          <div className="space-y-3">
+            <div className="h-12 bg-slate-200 rounded"></div>
+            <div className="h-12 bg-slate-200 rounded"></div>
+            <div className="h-12 bg-slate-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Preview: group firstName/lastName
+  const previewFirstName = formConfig.fields.find((f) => f.fieldId === 'firstName');
+  const previewLastName = formConfig.fields.find((f) => f.fieldId === 'lastName');
+  const previewOtherFields = formConfig.fields.filter(
+    (f) => f.fieldId !== 'firstName' && f.fieldId !== 'lastName' && f.enabled
+  );
+
+  return (
+    <>
+      <div className="bg-white rounded-xl border shadow-sm p-6">
+        <div className="mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Website Forms</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Create an embeddable lead capture form for your website
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowEmbedDialog(true)}
+                disabled={!orgId}
+                className="flex items-center gap-1.5 text-sm bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium py-2 px-3 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <Code size={16} />
+                Get Embed Code
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-8">
+          {/* Left Column - Settings */}
+          <div className="flex-1 space-y-5">
+            {/* Active toggle */}
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Form Active</p>
+                <p className="text-xs text-gray-500">When disabled, the form will not be accessible</p>
+              </div>
+              <Switch
+                checked={formConfig.isActive}
+                onCheckedChange={(checked) =>
+                  setFormConfig((prev) => ({ ...prev, isActive: checked }))
+                }
+              />
+            </div>
+
+            {/* Form Title */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Form Title</label>
+              <input
+                type="text"
+                value={formConfig.formTitle}
+                onChange={(e) =>
+                  setFormConfig((prev) => ({ ...prev, formTitle: e.target.value }))
+                }
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Get Your Free Estimate"
+              />
+            </div>
+
+            {/* Form Subtitle */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Form Subtitle</label>
+              <input
+                type="text"
+                value={formConfig.formSubtitle}
+                onChange={(e) =>
+                  setFormConfig((prev) => ({ ...prev, formSubtitle: e.target.value }))
+                }
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Fill out the form below"
+              />
+            </div>
+
+            {/* Button Text */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Button Text</label>
+              <input
+                type="text"
+                value={formConfig.buttonText}
+                onChange={(e) =>
+                  setFormConfig((prev) => ({ ...prev, buttonText: e.target.value }))
+                }
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Get Free Estimate"
+              />
+            </div>
+
+            {/* Button Color */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Button Color</label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={formConfig.buttonColor}
+                  onChange={(e) =>
+                    setFormConfig((prev) => ({ ...prev, buttonColor: e.target.value }))
+                  }
+                  className="w-10 h-10 rounded-lg border border-slate-200 cursor-pointer p-0.5"
+                />
+                <input
+                  type="text"
+                  value={formConfig.buttonColor}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (/^#[0-9a-fA-F]{0,6}$/.test(val)) {
+                      setFormConfig((prev) => ({ ...prev, buttonColor: val }));
+                    }
+                  }}
+                  className="w-28 px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                  placeholder="#16a34a"
+                />
+              </div>
+            </div>
+
+            {/* Success Message */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Success Message</label>
+              <input
+                type="text"
+                value={formConfig.successMessage}
+                onChange={(e) =>
+                  setFormConfig((prev) => ({ ...prev, successMessage: e.target.value }))
+                }
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Thank you! We will be in touch shortly."
+              />
+            </div>
+
+            {/* Fields Configuration */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-3">Form Fields</label>
+              <div className="space-y-2">
+                {formConfig.fields.map((field) => {
+                  const isNameField = field.fieldId === 'firstName' || field.fieldId === 'lastName';
+                  return (
+                    <div
+                      key={field.fieldId}
+                      className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200"
+                    >
+                      <span className="text-sm font-medium text-gray-900">{field.label}</span>
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 text-xs text-gray-500">
+                          <span>Required</span>
+                          <Switch
+                            checked={field.required}
+                            onCheckedChange={(checked) =>
+                              updateField(field.fieldId, 'required', checked)
+                            }
+                            disabled={isNameField}
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-xs text-gray-500">
+                          <span>Enabled</span>
+                          <Switch
+                            checked={field.enabled}
+                            onCheckedChange={(checked) =>
+                              updateField(field.fieldId, 'enabled', checked)
+                            }
+                            disabled={isNameField}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Save Button */}
+            <div className="pt-4">
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
+              >
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+
+          {/* Right Column - Live Preview */}
+          <div className="flex-1">
+            <div className="sticky top-24">
+              <div className="flex items-center gap-2 mb-3">
+                <Eye size={16} className="text-gray-400" />
+                <span className="text-sm font-medium text-gray-500">Live Preview</span>
+              </div>
+              <div className="border border-slate-200 rounded-xl bg-slate-100 p-6">
+                <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6 max-w-sm mx-auto">
+                  <div className="text-center mb-5">
+                    <h3 className="text-lg font-bold text-gray-900">
+                      {formConfig.formTitle || 'Form Title'}
+                    </h3>
+                    {formConfig.formSubtitle && (
+                      <p className="text-gray-500 text-sm mt-1">{formConfig.formSubtitle}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* Name fields row */}
+                    {(previewFirstName?.enabled || previewLastName?.enabled) && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {previewFirstName?.enabled && (
+                          <div className="px-3 py-2.5 border border-gray-300 rounded-lg text-xs text-gray-400">
+                            {previewFirstName.label}{previewFirstName.required ? ' *' : ''}
+                          </div>
+                        )}
+                        {previewLastName?.enabled && (
+                          <div className="px-3 py-2.5 border border-gray-300 rounded-lg text-xs text-gray-400">
+                            {previewLastName.label}{previewLastName.required ? ' *' : ''}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Other fields */}
+                    {previewOtherFields.map((field) => (
+                      <div key={field.fieldId}>
+                        {field.fieldId === 'moveDate' && (
+                          <p className="text-xs font-medium text-gray-700 mb-1 text-center">
+                            {field.label}{field.required ? ' *' : ''}
+                          </p>
+                        )}
+                        <div className="px-3 py-2.5 border border-gray-300 rounded-lg text-xs text-gray-400">
+                          {field.fieldId === 'moveDate'
+                            ? 'mm/dd/yyyy'
+                            : field.fieldId === 'phone'
+                            ? `${field.label}${field.required ? ' *' : ''} (425) 555-1234`
+                            : field.fieldId === 'email'
+                            ? `${field.label}${field.required ? ' *' : ''} john@example.com`
+                            : `${field.label}${field.required ? ' *' : ''}`}
+                        </div>
+                        {field.fieldId === 'moveDate' && (
+                          <p className="text-[10px] text-gray-400 mt-1 text-center">
+                            Select your preferred date. We&apos;ll work with you to find the best time.
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Preview button */}
+                  <button
+                    style={{ backgroundColor: formConfig.buttonColor }}
+                    className="w-full mt-4 text-white font-semibold py-2.5 px-4 rounded-lg text-sm cursor-default"
+                  >
+                    {formConfig.buttonText || 'Submit'}
+                  </button>
+
+                  <p className="text-[10px] text-gray-400 text-center mt-3">
+                    * Required fields &bull; No obligation &bull; Response within 24 hours
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Embed Code Dialog */}
+      <Dialog open={showEmbedDialog} onOpenChange={setShowEmbedDialog}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Embed Your Form</DialogTitle>
+          </DialogHeader>
+
+          <p className="text-sm text-gray-500 mb-4">
+            Copy one of the snippets below and paste it into your website&apos;s HTML.
+          </p>
+
+          <Tabs defaultValue="javascript">
+            <TabsList className="w-full">
+              <TabsTrigger value="javascript" className="flex-1">JavaScript</TabsTrigger>
+              <TabsTrigger value="iframe" className="flex-1">iframe</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="javascript" className="mt-4">
+              <div className="relative">
+                <pre className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs overflow-x-auto font-mono whitespace-pre-wrap break-all">
+                  {jsSnippet}
+                </pre>
+                <button
+                  onClick={() => copyToClipboard(jsSnippet, 'js')}
+                  className="absolute top-2 right-2 p-2 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                >
+                  {copiedSnippet === 'js' ? (
+                    <Check size={14} className="text-green-500" />
+                  ) : (
+                    <Copy size={14} className="text-gray-500" />
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">
+                Paste this where you want the form to appear. The form will auto-resize to fit.
+              </p>
+            </TabsContent>
+
+            <TabsContent value="iframe" className="mt-4">
+              <div className="relative">
+                <pre className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-xs overflow-x-auto font-mono whitespace-pre-wrap break-all">
+                  {iframeSnippet}
+                </pre>
+                <button
+                  onClick={() => copyToClipboard(iframeSnippet, 'iframe')}
+                  className="absolute top-2 right-2 p-2 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                >
+                  {copiedSnippet === 'iframe' ? (
+                    <Check size={14} className="text-green-500" />
+                  ) : (
+                    <Copy size={14} className="text-gray-500" />
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">
+                Paste this directly into your page HTML. Adjust the height as needed.
+              </p>
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

@@ -4,14 +4,14 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface INotificationSettings extends Document {
   // User identification - always required
   userId: string;
-  
+
   // Organization context - optional (for individual settings within org)
   organizationId?: string;
-  
+
   // Notification preferences
   enableInventoryUpdates: boolean;
   phoneNumber?: string; // Formatted as +1XXXXXXXXXX for Twilio
-  
+
   // Metadata
   createdAt: Date;
   updatedAt: Date;

@@ -267,3 +267,22 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;  /* Chrome, Safari and Opera */
 }
+
+/* Notification bell ring animation */
+@keyframes ring {
+  0% { transform: rotate(0deg); }
+  10% { transform: rotate(20deg); }
+  20% { transform: rotate(-18deg); }
+  30% { transform: rotate(15deg); }
+  40% { transform: rotate(-12deg); }
+  50% { transform: rotate(8deg); }
+  60% { transform: rotate(-5deg); }
+  70% { transform: rotate(3deg); }
+  80% { transform: rotate(-1deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.animate-ring {
+  animation: ring 0.8s ease-in-out 3;
+  transform-origin: top center;
+}

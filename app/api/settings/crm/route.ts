@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
-import OrganizationSettings, { IArrivalOption, IHourlyRates, DEFAULT_HOURLY_RATES } from '@/models/OrganizationSettings';
+import OrganizationSettings, { IArrivalOption, IHourlyRates, DEFAULT_HOURLY_RATES, DEFAULT_FORM_CONFIG, DEFAULT_FORM_FIELDS } from '@/models/OrganizationSettings';
 import { getAuthContext } from '@/lib/auth-helpers';
 
 const defaultJobTypes = ['Moving', 'Packing', 'Loading', 'Unloading', 'Storage', 'Junk Removal'];
@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
         hourlyRates: defaultHourlyRates,
         defaultArrivalWindowStart: '08:00',
         defaultArrivalWindowEnd: '10:00',
+        websiteFormConfig: null,
       });
     }
 
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
       hourlyRates: settings.crmHourlyRates || defaultHourlyRates,
       defaultArrivalWindowStart: settings.crmDefaultArrivalWindowStart || '08:00',
       defaultArrivalWindowEnd: settings.crmDefaultArrivalWindowEnd || '10:00',
+      websiteFormConfig: settings.websiteFormConfig || null,
     });
   } catch (error) {
     console.error('Error fetching CRM settings:', error);
@@ -123,7 +125,29 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const settingsData = {
+    // Validate websiteFormConfig if provided
+    let validatedFormConfig = undefined;
+    if (data.websiteFormConfig !== undefined) {
+      const wfc = data.websiteFormConfig;
+      validatedFormConfig = {
+        formTitle: typeof wfc.formTitle === 'string' ? wfc.formTitle.trim() : DEFAULT_FORM_CONFIG.formTitle,
+        formSubtitle: typeof wfc.formSubtitle === 'string' ? wfc.formSubtitle.trim() : DEFAULT_FORM_CONFIG.formSubtitle,
+        buttonText: typeof wfc.buttonText === 'string' ? wfc.buttonText.trim() : DEFAULT_FORM_CONFIG.buttonText,
+        buttonColor: typeof wfc.buttonColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(wfc.buttonColor) ? wfc.buttonColor : DEFAULT_FORM_CONFIG.buttonColor,
+        successMessage: typeof wfc.successMessage === 'string' ? wfc.successMessage.trim() : DEFAULT_FORM_CONFIG.successMessage,
+        isActive: typeof wfc.isActive === 'boolean' ? wfc.isActive : true,
+        fields: Array.isArray(wfc.fields)
+          ? wfc.fields.filter((f: any) => f && typeof f.fieldId === 'string' && typeof f.label === 'string').map((f: any) => ({
+              fieldId: f.fieldId,
+              label: f.label,
+              enabled: typeof f.enabled === 'boolean' ? f.enabled : true,
+              required: typeof f.required === 'boolean' ? f.required : false,
+            }))
+          : DEFAULT_FORM_FIELDS,
+      };
+    }
+
+    const settingsData: any = {
       organizationId: authContext.organizationId,
       crmJobTypes: jobTypes,
       crmOpportunityTypes: opportunityTypes,
@@ -132,6 +156,10 @@ export async function POST(request: NextRequest) {
       crmDefaultArrivalWindowStart: data.defaultArrivalWindowStart || '08:00',
       crmDefaultArrivalWindowEnd: data.defaultArrivalWindowEnd || '10:00',
     };
+
+    if (validatedFormConfig !== undefined) {
+      settingsData.websiteFormConfig = validatedFormConfig;
+    }
 
     // Use findOneAndUpdate with upsert to create or update
     const settings = await OrganizationSettings.findOneAndUpdate(
@@ -151,6 +179,7 @@ export async function POST(request: NextRequest) {
       hourlyRates: settings.crmHourlyRates || defaultHourlyRates,
       defaultArrivalWindowStart: settings.crmDefaultArrivalWindowStart || '08:00',
       defaultArrivalWindowEnd: settings.crmDefaultArrivalWindowEnd || '10:00',
+      websiteFormConfig: settings.websiteFormConfig || null,
     });
   } catch (error) {
     console.error('Error saving CRM settings:', error);

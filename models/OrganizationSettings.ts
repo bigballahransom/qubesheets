@@ -17,6 +17,42 @@ export interface IHourlyRates {
   };
 }
 
+// Website form interfaces
+export interface IWebsiteFormField {
+  fieldId: string;
+  label: string;
+  enabled: boolean;
+  required: boolean;
+}
+
+export interface IWebsiteFormConfig {
+  formTitle: string;
+  formSubtitle: string;
+  buttonText: string;
+  buttonColor: string;
+  successMessage: string;
+  fields: IWebsiteFormField[];
+  isActive: boolean;
+}
+
+export const DEFAULT_FORM_FIELDS: IWebsiteFormField[] = [
+  { fieldId: 'firstName', label: 'First Name', enabled: true, required: true },
+  { fieldId: 'lastName', label: 'Last Name', enabled: true, required: true },
+  { fieldId: 'phone', label: 'Phone Number', enabled: true, required: false },
+  { fieldId: 'email', label: 'Email Address', enabled: true, required: false },
+  { fieldId: 'moveDate', label: 'Preferred Move Date', enabled: true, required: false },
+];
+
+export const DEFAULT_FORM_CONFIG: IWebsiteFormConfig = {
+  formTitle: 'Get Your Free Estimate',
+  formSubtitle: 'Fill out the form below',
+  buttonText: 'Get Free Estimate',
+  buttonColor: '#16a34a',
+  successMessage: 'Thank you! We will be in touch shortly.',
+  fields: DEFAULT_FORM_FIELDS,
+  isActive: true,
+};
+
 const DEFAULT_HOURLY_RATES: IHourlyRates = {
   '1': { mon: 99, tue: 99, wed: 99, thu: 99, fri: 99, sat: 99, sun: 99 },
   '2': { mon: 159, tue: 159, wed: 159, thu: 159, fri: 159, sat: 159, sun: 159 },
@@ -48,6 +84,9 @@ export interface IOrganizationSettings extends Document {
   crmHourlyRates?: IHourlyRates;
   crmDefaultArrivalWindowStart?: string;  // Deprecated - kept for backwards compatibility
   crmDefaultArrivalWindowEnd?: string;    // Deprecated - kept for backwards compatibility
+
+  // Website Form Config
+  websiteFormConfig?: IWebsiteFormConfig;
 
   // Metadata
   createdAt: Date;
@@ -111,6 +150,11 @@ const OrganizationSettingsSchema: Schema = new Schema(
     crmDefaultArrivalWindowEnd: {
       type: String,
       default: '10:00'
+    },
+    // Website Form Config
+    websiteFormConfig: {
+      type: Schema.Types.Mixed,
+      required: false,
     }
   },
   { 

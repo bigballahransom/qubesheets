@@ -52,6 +52,7 @@ import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
 import IntercomChat from '@/components/IntercomChat';
 import EditCustomerModal from '@/components/modals/EditCustomerModal';
 import EditJobDetailsModal from '@/components/modals/EditJobDetailsModal';
+import LeadAssignmentCard from '@/components/LeadAssignmentCard';
 import {
   Menubar,
   MenubarContent,
@@ -60,6 +61,12 @@ import {
   MenubarSeparator,
   MenubarTrigger,
 } from "@/components/ui/menubar";
+
+interface AssignedTo {
+  userId: string;
+  name: string;
+  assignedAt: string;
+}
 
 interface Customer {
   _id: string;
@@ -70,6 +77,8 @@ interface Customer {
   company?: string;
   address?: string;
   notes?: string;
+  userId: string;
+  assignedTo?: AssignedTo;
   createdAt: string;
   updatedAt: string;
 }
@@ -398,6 +407,16 @@ export default function CustomerDetailPage() {
                   <InventoryCard projectId={firstProject?._id} router={router} />
                 </div>
 
+                {/* Mobile: Lead Assignment Card (for form submissions) */}
+                <div className="lg:hidden">
+                  <LeadAssignmentCard
+                    customerId={customer._id}
+                    assignedTo={customer.assignedTo}
+                    isFormSubmission={customer.userId === 'form-submission'}
+                    onAssignmentUpdated={(assignedTo) => setCustomer(prev => prev ? { ...prev, assignedTo } : null)}
+                  />
+                </div>
+
                 {/* Communications Card */}
                 <div className="bg-white rounded-xl border shadow-sm p-6 hover:shadow-md transition-shadow">
                   <div className="flex items-center gap-2 mb-6">
@@ -576,6 +595,12 @@ export default function CustomerDetailPage() {
 
               {/* Right Column - Hidden on mobile (cards appear inline above) */}
               <div className="hidden lg:block space-y-6">
+                <LeadAssignmentCard
+                  customerId={customer._id}
+                  assignedTo={customer.assignedTo}
+                  isFormSubmission={customer.userId === 'form-submission'}
+                  onAssignmentUpdated={(assignedTo) => setCustomer(prev => prev ? { ...prev, assignedTo } : null)}
+                />
                 <InventoryCard projectId={firstProject?._id} router={router} />
                 <EstimateCard />
                 <MaterialsServicesCard />
