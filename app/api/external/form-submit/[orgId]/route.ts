@@ -107,9 +107,21 @@ export async function POST(
       });
 
       if (recipients.length > 0) {
-        const leadName = fullName;
-        const leadContact = data.phone?.trim() || data.email?.trim() || 'No contact info';
-        const smsBody = `📋 New Lead from Website Form\n\n${leadName}\n${leadContact}`;
+        // Format phone for display as (xxx) xxx-xxxx
+        const rawPhone = data.phone?.trim() || '';
+        const phoneDigits = rawPhone.replace(/\D/g, '');
+        const displayPhone = phoneDigits.length === 10
+          ? `(${phoneDigits.slice(0, 3)}) ${phoneDigits.slice(3, 6)}-${phoneDigits.slice(6)}`
+          : rawPhone;
+
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+        const customerLink = `${baseUrl}/customers/${customer._id}`;
+
+        const contactLine = displayPhone
+          ? `${fullName} at ${displayPhone}`
+          : `${fullName}`;
+
+        const smsBody = `A new estimate request received from your website. Please contact ${contactLine} as soon as possible.\n\nView here: ${customerLink}`;
 
         for (const recipient of recipients) {
           try {
