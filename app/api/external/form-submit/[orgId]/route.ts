@@ -130,7 +130,7 @@ export async function POST(
               from: twilioPhoneNumber,
               to: recipient.phoneNumber!
             });
-            console.log(`SMS sent to ${recipient.userId} for new lead: ${leadName}`);
+            console.log(`SMS sent to ${recipient.userId} for new lead: ${fullName}`);
           } catch (smsErr) {
             console.error(`Failed to send new lead SMS to ${recipient.userId}:`, smsErr);
           }
