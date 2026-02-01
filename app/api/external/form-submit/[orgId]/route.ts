@@ -4,7 +4,7 @@ import Customer from '@/models/Customer';
 import Project from '@/models/Project';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import CrmNotificationSettings from '@/models/CrmNotificationSettings';
-import { client, twilioPhoneNumber } from '@/lib/twilio';
+import { sendSmsWithRetry } from '@/lib/twilio';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -103,7 +103,7 @@ export async function POST(
       const recipients = await CrmNotificationSettings.find({
         organizationId: orgId,
         smsNewLead: true,
-        phoneNumber: { $exists: true, $ne: null }
+        phoneNumber: { $regex: /^\+1\d{10}$/ }
       });
 
       if (recipients.length > 0) {
@@ -123,18 +123,37 @@ export async function POST(
 
         const smsBody = `A new estimate request received from your website. Please contact ${contactLine} as soon as possible.\n\nView here: ${customerLink}`;
 
-        for (const recipient of recipients) {
-          try {
-            await client.messages.create({
-              body: smsBody,
-              from: twilioPhoneNumber,
-              to: recipient.phoneNumber!
-            });
-            console.log(`SMS sent to ${recipient.userId} for new lead: ${fullName}`);
-          } catch (smsErr) {
-            console.error(`Failed to send new lead SMS to ${recipient.userId}:`, smsErr);
-          }
-        }
+        // Send SMS in parallel with retry logic
+        const results = await Promise.allSettled(
+          recipients.map(async (recipient) => {
+            const result = await sendSmsWithRetry(smsBody, recipient.phoneNumber!);
+
+            // Track delivery status on the settings document
+            await CrmNotificationSettings.updateOne(
+              { _id: recipient._id },
+              {
+                $set: {
+                  lastSmsStatus: {
+                    status: result.success ? 'delivered' : 'failed',
+                    timestamp: new Date(),
+                    ...(result.errorCode && { errorCode: result.errorCode }),
+                    ...(result.error && { errorMessage: result.error }),
+                  },
+                },
+              }
+            );
+
+            return { userId: recipient.userId, ...result };
+          })
+        );
+
+        const succeeded = results.filter(
+          (r) => r.status === 'fulfilled' && r.value.success
+        ).length;
+        const failed = results.length - succeeded;
+        console.log(
+          `SMS notification summary for lead "${fullName}": ${succeeded} sent, ${failed} failed out of ${results.length} recipients`
+        );
       }
     } catch (notifyErr) {
       // Don't fail the form submission if SMS notifications fail

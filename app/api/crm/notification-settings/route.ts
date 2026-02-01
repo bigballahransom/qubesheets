@@ -37,7 +37,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       smsNewLead: settings.smsNewLead,
-      phoneNumber: settings.phoneNumber || null
+      phoneNumber: settings.phoneNumber || null,
+      lastSmsStatus: settings.lastSmsStatus || null
     });
   } catch (error) {
     console.error('Error fetching CRM notification settings:', error);
@@ -88,7 +89,8 @@ export async function POST(request: NextRequest) {
       userId: authContext.userId,
       organizationId: authContext.organizationId,
       smsNewLead: Boolean(data.smsNewLead),
-      phoneNumber: formattedPhoneNumber
+      phoneNumber: formattedPhoneNumber,
+      lastUpdatedBy: authContext.userId
     };
 
     // Use findOneAndUpdate with upsert to create or update

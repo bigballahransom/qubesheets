@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useOrganization } from '@clerk/nextjs';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useOrganization, useUser } from '@clerk/nextjs';
+import { toast } from 'sonner';
 import {
   Building2,
   Settings,
@@ -30,7 +31,11 @@ import {
   Eye,
   Bell,
   Loader2,
+  Phone,
+  UserCog,
 } from 'lucide-react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -258,9 +263,34 @@ export default function CrmSettingsPage() {
   );
 }
 
-interface CrmNotificationSettings {
+interface CrmNotificationSettingsData {
   smsNewLead: boolean;
   phoneNumber: string | null;
+  lastSmsStatus?: {
+    status: 'delivered' | 'failed' | 'unknown';
+    timestamp: string;
+    errorCode?: string;
+    errorMessage?: string;
+  } | null;
+}
+
+interface TeamMemberSettings {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  imageUrl: string;
+  identifier: string;
+  role: string;
+  smsNewLead: boolean;
+  phoneNumber: string | null;
+  lastSmsStatus?: {
+    status: 'delivered' | 'failed' | 'unknown';
+    timestamp: string;
+  } | null;
+  lastUpdatedBy: string | null;
+  updatedAt: string | null;
+  hasChanges?: boolean;
+  phoneInput?: string;
 }
 
 // Phone formatting utilities
@@ -292,19 +322,51 @@ const formatPhoneForDisplay = (twilioPhone: string | null): string => {
   return twilioPhone;
 };
 
-function NotificationsContent() {
-  const { organization } = useOrganization();
+function SmsStatusDot({ status }: { status?: { status: string } | null }) {
+  if (!status) return null;
+  const color =
+    status.status === 'delivered'
+      ? 'bg-green-500'
+      : status.status === 'failed'
+      ? 'bg-red-500'
+      : 'bg-gray-400';
+  const label =
+    status.status === 'delivered'
+      ? 'Last SMS delivered'
+      : status.status === 'failed'
+      ? 'Last SMS failed'
+      : 'Status unknown';
+  return (
+    <span
+      title={label}
+      className={`inline-block w-2 h-2 rounded-full ${color}`}
+    />
+  );
+}
 
-  const [settings, setSettings] = useState<CrmNotificationSettings>({
+function NotificationsContent() {
+  const { organization, membership } = useOrganization();
+  const isAdmin = membership?.role === 'org:admin';
+
+  return (
+    <div className="space-y-6">
+      <YourNotificationSettings organization={organization} />
+      {isAdmin && <TeamNotificationSettings />}
+    </div>
+  );
+}
+
+function YourNotificationSettings({ organization }: { organization: any }) {
+  const [settings, setSettings] = useState<CrmNotificationSettingsData>({
     smsNewLead: false,
-    phoneNumber: null
+    phoneNumber: null,
+    lastSmsStatus: null,
   });
   const [phoneInput, setPhoneInput] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
 
-  // Fetch CRM notification settings
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -313,7 +375,8 @@ function NotificationsContent() {
           const data = await response.json();
           setSettings({
             smsNewLead: data.smsNewLead || false,
-            phoneNumber: data.phoneNumber || null
+            phoneNumber: data.phoneNumber || null,
+            lastSmsStatus: data.lastSmsStatus || null,
           });
           setPhoneInput(formatPhoneForDisplay(data.phoneNumber));
         }
@@ -332,7 +395,7 @@ function NotificationsContent() {
   }, [organization]);
 
   const handleToggle = (enabled: boolean) => {
-    setSettings(prev => ({ ...prev, smsNewLead: enabled }));
+    setSettings((prev) => ({ ...prev, smsNewLead: enabled }));
     setHasChanges(true);
   };
 
@@ -354,17 +417,20 @@ function NotificationsContent() {
         }),
       });
       if (!response.ok) {
-        throw new Error('Failed to save settings');
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to save settings');
       }
       const data = await response.json();
       setSettings({
         smsNewLead: data.smsNewLead,
-        phoneNumber: data.phoneNumber
+        phoneNumber: data.phoneNumber,
+        lastSmsStatus: data.lastSmsStatus || null,
       });
       setPhoneInput(formatPhoneForDisplay(data.phoneNumber));
       setHasChanges(false);
-    } catch (error) {
-      console.error('Error saving CRM notification settings:', error);
+      toast.success('Notification settings saved');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to save settings');
     } finally {
       setIsSaving(false);
     }
@@ -387,13 +453,12 @@ function NotificationsContent() {
   return (
     <div className="bg-white rounded-xl border shadow-sm p-6">
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900">CRM Notification Settings</h2>
+        <h2 className="text-xl font-semibold text-gray-900">Your Notification Settings</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Configure SMS notifications for CRM events
+          Configure your personal SMS notifications for CRM events
         </p>
       </div>
 
-      {/* SMS Notifications Section */}
       <div className="mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Bell size={18} className="text-slate-500" />
@@ -403,7 +468,6 @@ function NotificationsContent() {
         </div>
 
         <div className="space-y-4">
-          {/* Toggle */}
           <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
             <div className="flex items-center justify-between">
               <div className="flex-1">
@@ -419,19 +483,21 @@ function NotificationsContent() {
             </div>
           </div>
 
-          {/* Phone Number Input */}
           {settings.smsNewLead && (
             <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Phone Number for SMS
               </label>
-              <input
-                type="tel"
-                value={phoneInput}
-                onChange={handlePhoneChange}
-                placeholder="(555) 123-4567"
-                className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="tel"
+                  value={phoneInput}
+                  onChange={handlePhoneChange}
+                  placeholder="(555) 123-4567"
+                  className="flex-1 px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <SmsStatusDot status={settings.lastSmsStatus} />
+              </div>
               <p className="text-xs text-gray-500 mt-2">
                 US phone number required for SMS notifications
               </p>
@@ -440,7 +506,6 @@ function NotificationsContent() {
         </div>
       </div>
 
-      {/* Save Button */}
       <button
         onClick={handleSave}
         disabled={isSaving || !hasChanges}
@@ -454,6 +519,246 @@ function NotificationsContent() {
           You have unsaved changes
         </p>
       )}
+    </div>
+  );
+}
+
+function TeamNotificationSettings() {
+  const [teamSettings, setTeamSettings] = useState<TeamMemberSettings[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const { user } = useUser();
+
+  const fetchTeam = useCallback(async () => {
+    try {
+      const response = await fetch('/api/crm/notification-settings/team');
+      if (response.ok) {
+        const data = await response.json();
+        setTeamSettings(
+          data.map((m: TeamMemberSettings) => ({
+            ...m,
+            phoneInput: formatPhoneForDisplay(m.phoneNumber),
+            hasChanges: false,
+          }))
+        );
+      }
+    } catch (error) {
+      console.error('Error fetching team settings:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTeam();
+  }, [fetchTeam]);
+
+  const handleToggle = (userId: string, enabled: boolean) => {
+    setTeamSettings((prev) =>
+      prev.map((m) =>
+        m.userId === userId
+          ? { ...m, smsNewLead: enabled, hasChanges: true }
+          : m
+      )
+    );
+  };
+
+  const handlePhoneChange = (userId: string, value: string) => {
+    setTeamSettings((prev) =>
+      prev.map((m) => {
+        if (m.userId !== userId) return m;
+        const newPhone = formatPhoneNumber(value, m.phoneInput || '');
+        return { ...m, phoneInput: newPhone, hasChanges: true };
+      })
+    );
+  };
+
+  const handleSaveMember = async (userId: string) => {
+    const member = teamSettings.find((m) => m.userId === userId);
+    if (!member) return;
+
+    setSavingUserId(userId);
+    try {
+      const res = await fetch('/api/crm/notification-settings/team', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUserId: userId,
+          smsNewLead: member.smsNewLead,
+          phoneNumber: member.phoneInput?.trim() || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to save');
+      }
+
+      const data = await res.json();
+      setTeamSettings((prev) =>
+        prev.map((m) =>
+          m.userId === userId
+            ? {
+                ...m,
+                smsNewLead: data.smsNewLead,
+                phoneNumber: data.phoneNumber,
+                phoneInput: formatPhoneForDisplay(data.phoneNumber),
+                lastUpdatedBy: data.lastUpdatedBy,
+                hasChanges: false,
+              }
+            : m
+        )
+      );
+      toast.success(`Settings saved for ${member.firstName || 'member'}`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save settings');
+    } finally {
+      setSavingUserId(null);
+    }
+  };
+
+  const formatRole = (role: string) => {
+    if (role === 'org:admin') return 'Admin';
+    return 'Member';
+  };
+
+  if (isLoading) {
+    return (
+      <div className="bg-white rounded-xl border shadow-sm p-6">
+        <div className="animate-pulse">
+          <div className="h-6 bg-slate-200 rounded w-1/3 mb-4"></div>
+          <div className="h-4 bg-slate-200 rounded w-1/2 mb-6"></div>
+          <div className="space-y-3">
+            <div className="h-20 bg-slate-200 rounded"></div>
+            <div className="h-20 bg-slate-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-6">
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <UserCog size={20} className="text-slate-600" />
+          <h2 className="text-xl font-semibold text-gray-900">
+            Team Notification Settings
+          </h2>
+        </div>
+        <p className="text-sm text-gray-500">
+          Manage SMS notification settings for all team members
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {teamSettings.length === 0 ? (
+          <div className="py-8 text-center text-gray-400">
+            <Users size={32} className="mx-auto mb-3 opacity-50" />
+            <p className="text-sm">No team members found</p>
+          </div>
+        ) : (
+          teamSettings.map((member) => {
+            const isSelf = member.userId === user?.id;
+            const isSaving = savingUserId === member.userId;
+
+            return (
+              <div
+                key={member.userId}
+                className={cn(
+                  'p-4 rounded-lg border transition-colors',
+                  member.hasChanges
+                    ? 'border-blue-300 bg-blue-50/30'
+                    : 'border-slate-200 bg-slate-50'
+                )}
+              >
+                {/* Top row: avatar, name, role, status */}
+                <div className="flex items-center gap-3 mb-3">
+                  <Avatar className="h-9 w-9">
+                    <AvatarImage src={member.imageUrl} alt={member.firstName} />
+                    <AvatarFallback className="text-xs">
+                      {(member.firstName?.[0] || '') +
+                        (member.lastName?.[0] || '')}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {member.firstName} {member.lastName}
+                        {isSelf && (
+                          <span className="text-xs text-gray-400 ml-1">(you)</span>
+                        )}
+                      </p>
+                      <Badge
+                        variant={
+                          member.role === 'org:admin' ? 'default' : 'secondary'
+                        }
+                        className="text-[10px] px-1.5 py-0"
+                      >
+                        {formatRole(member.role)}
+                      </Badge>
+                      <SmsStatusDot status={member.lastSmsStatus} />
+                    </div>
+                    {member.identifier && (
+                      <p className="text-xs text-gray-500 truncate">
+                        {member.identifier}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Controls row: toggle, phone, save */}
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <Switch
+                      checked={member.smsNewLead}
+                      onCheckedChange={(checked) =>
+                        handleToggle(member.userId, checked)
+                      }
+                    />
+                    <span className="text-xs text-gray-600">SMS</span>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="relative">
+                      <Phone
+                        size={14}
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"
+                      />
+                      <input
+                        type="tel"
+                        value={member.phoneInput || ''}
+                        onChange={(e) =>
+                          handlePhoneChange(member.userId, e.target.value)
+                        }
+                        placeholder="(555) 123-4567"
+                        className="w-full pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleSaveMember(member.userId)}
+                    disabled={!member.hasChanges || isSaving}
+                    className={cn(
+                      'flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                      member.hasChanges
+                        ? 'bg-slate-900 hover:bg-slate-800 text-white'
+                        : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                    )}
+                  >
+                    {isSaving ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      'Save'
+                    )}
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

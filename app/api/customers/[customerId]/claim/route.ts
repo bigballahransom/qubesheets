@@ -20,7 +20,9 @@ export async function POST(
     // Get current user's info from Clerk
     const clerk = await clerkClient();
     const user = await clerk.users.getUser(authContext.userId);
-    const userName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Unknown User';
+    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+    const email = user.emailAddresses?.[0]?.emailAddress || '';
+    const userName = fullName || email || 'Unknown User';
 
     await connectMongoDB();
 

@@ -1,18 +1,20 @@
 // models/CrmNotificationSettings.ts
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface ILastSmsStatus {
+  status: 'delivered' | 'failed' | 'unknown';
+  timestamp: Date;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 export interface ICrmNotificationSettings extends Document {
-  // User identification
   userId: string;
-
-  // Organization context - required for CRM (org-only feature)
   organizationId: string;
-
-  // CRM notification preferences
   smsNewLead: boolean;
   phoneNumber?: string; // Formatted as +1XXXXXXXXXX for Twilio
-
-  // Metadata
+  lastUpdatedBy?: string; // userId of who last edited this record
+  lastSmsStatus?: ILastSmsStatus;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -44,6 +46,16 @@ const CrmNotificationSettingsSchema: Schema = new Schema(
         },
         message: 'Phone number must be in format +1XXXXXXXXXX'
       }
+    },
+    lastUpdatedBy: {
+      type: String,
+      required: false
+    },
+    lastSmsStatus: {
+      status: { type: String, enum: ['delivered', 'failed', 'unknown'] },
+      timestamp: { type: Date },
+      errorCode: { type: String },
+      errorMessage: { type: String }
     }
   },
   {
