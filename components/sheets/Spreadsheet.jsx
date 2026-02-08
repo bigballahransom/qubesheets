@@ -75,12 +75,13 @@ const truncateFileName = (fileName, maxLength = 40) => {
   return nameWithoutExt.substring(0, availableLength) + '...' + extension;
 };
 
-export default function Spreadsheet({ 
-  initialRows = [], 
+export default function Spreadsheet({
+  initialRows = [],
   initialColumns = [],
   onRowsChange = () => {},
   onColumnsChange = () => {},
   onDeleteInventoryItem = () => {},
+  onQuantityChange = null,
   refreshSpreadsheet = null,
   onInventoryUpdate = null,
   projectId = null,
@@ -118,7 +119,9 @@ export default function Spreadsheet({
   const [selectedMedia, setSelectedMedia] = useState(null); // Full media data with details
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [selectedRows, setSelectedRows] = useState([]);
-  
+  const [cuftMode, setCuftMode] = useState('total'); // 'total' or 'perUnit' for Cuft display
+  const [weightMode, setWeightMode] = useState('total'); // 'total' or 'perUnit' for Weight display
+
   // Location update dialog state
   const [locationDialog, setLocationDialog] = useState({
     isOpen: false,
@@ -542,27 +545,41 @@ useEffect(() => {
       const { rowId, colId } = activeCell;
       const updatedRows = rows.map(row => {
         if (row.id === rowId) {
+          const newCells = {
+            ...row.cells,
+            [colId]: editingCellContent
+          };
+
+          // If quantity (col3) changed, recalculate cuft (col4) and weight (col5)
+          if (colId === 'col3' && row.perUnitCuft !== undefined) {
+            const newQuantity = Math.max(1, parseInt(editingCellContent) || 1);
+            newCells.col4 = (row.perUnitCuft * newQuantity).toString();
+            newCells.col5 = (row.perUnitWeight * newQuantity).toString();
+
+            // Update the inventory item in the database
+            if (onQuantityChange && row.inventoryItemId) {
+              onQuantityChange(row.inventoryItemId, newQuantity);
+            }
+          }
+
           return {
             ...row,
-            cells: {
-              ...row.cells,
-              [colId]: editingCellContent
-            }
+            cells: newCells
           };
         }
         return row;
       });
-      
+
       setRows(updatedRows);
       setActiveCell(null);
       setSaveStatus('saving');
-      
+
       // Update row and column counts
       setRowCount(`${updatedRows.length}/${updatedRows.length} rows`);
-      
+
       // This will trigger the debounced onRowsChange
     }
-  }, [activeCell, editingCellContent, rows]);
+  }, [activeCell, editingCellContent, rows, onQuantityChange]);
   const handleKeyDown = useCallback((e) => {
     if (!activeCell) return;
     
@@ -1139,7 +1156,19 @@ useEffect(() => {
         />
       );
     }
-    
+
+    // Handle Cuft (col4) display based on cuftMode
+    if (colId === 'col4' && cuftMode === 'perUnit' && row) {
+      const displayValue = row.perUnitCuft !== undefined ? row.perUnitCuft.toFixed(1) : value;
+      return <span className="p-2 text-gray-600">{displayValue}</span>;
+    }
+
+    // Handle Weight (col5) display based on weightMode
+    if (colId === 'col5' && weightMode === 'perUnit' && row) {
+      const displayValue = row.perUnitWeight !== undefined ? row.perUnitWeight.toFixed(1) : value;
+      return <span className="p-2 text-gray-600">{displayValue}</span>;
+    }
+
     // Special handling for item name column (col2) with media preview
     if (column && column.id === 'col2' && row) {
       console.log(`🔍 Checking row "${value}" for source tracking:`, {
@@ -1535,7 +1564,7 @@ useEffect(() => {
       default:
         return <span className="block truncate">{value}</span>;
     }
-  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, onRowsChange, setRows, setSaveStatus]);
+  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, onRowsChange, setRows, setSaveStatus, cuftMode, weightMode]);
   
   // Render loading state
   if (isLoading) {
@@ -1829,41 +1858,82 @@ useEffect(() => {
               onDrop={(e) => handleColumnDrop(column.id, e)}
             >
               <div className="flex-1 p-2 flex items-center gap-2">
-                <span className="text-sm font-medium">{column.type === 'text' ? 'T' : column.type === 'company' ? '🏢' : column.type === 'select' ? '📋' : '🔗'}</span>
+                <span className="text-sm font-medium">
+                  {column.name === 'Count' ? (
+                      <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold">
+                        #
+                      </span>
+                    )
+                    : column.name === 'Cuft' ? (
+                      <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold">
+                        {cuftMode === 'total' ? 'Σ' : '/1'}
+                      </span>
+                    )
+                    : column.name === 'Weight' ? (
+                      <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold">
+                        {weightMode === 'total' ? 'Σ' : '/1'}
+                      </span>
+                    )
+                    : column.type === 'text' ? 'T'
+                    : column.type === 'company' ? '🏢'
+                    : column.type === 'select' ? '📋'
+                    : '🔗'}
+                </span>
                 <span>{column.name}</span>
-                <div className="relative ml-auto">
-                  <button 
+                {/* Dropdown for Cuft and Weight columns to select display mode */}
+                {(column.name === 'Cuft' || column.name === 'Weight') && (
+                <div className="relative ml-auto dropdown-container">
+                  <button
                     className="p-1 rounded hover:bg-gray-100"
-                    onClick={() => setShowDropdown(showDropdown === `column-${column.id}` ? null : `column-${column.id}`)}
+                    onClick={() => {
+                      const dropdownKey = column.name === 'Cuft' ? 'cuftMode' : 'weightMode';
+                      setShowDropdown(showDropdown === dropdownKey ? null : dropdownKey);
+                    }}
                   >
                     <ChevronDown size={14} />
                   </button>
-                  {showDropdown === `column-${column.id}` && (
+                  {showDropdown === (column.name === 'Cuft' ? 'cuftMode' : 'weightMode') && (
                     <div className="absolute top-full right-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-40 w-48">
-                      <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
-                        const newName = prompt('Enter new column name', column.name);
-                        if (newName) {
-                          handleRenameColumn(column.id, newName);
-                        }
-                      }}>
-                        Rename column
+                      <div
+                        className={`p-2 hover:bg-gray-100 cursor-pointer rounded flex items-center gap-2 ${(column.name === 'Cuft' ? cuftMode : weightMode) === 'total' ? 'bg-blue-50' : ''}`}
+                        onClick={() => {
+                          if (column.name === 'Cuft') {
+                            setCuftMode('total');
+                          } else {
+                            setWeightMode('total');
+                          }
+                          setShowDropdown(null);
+                        }}
+                      >
+                        <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold">Σ</span>
+                        <div>
+                          <div className="font-medium text-sm">Show Total</div>
+                          <div className="text-xs text-gray-500">Sum for all items</div>
+                        </div>
                       </div>
-                      <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => handleRemoveColumn(column.id)}>
-                        Remove column
-                      </div>
-                      <div className="p-1 hover:bg-gray-100 cursor-pointer rounded" onClick={() => {
-                        const newType = column.type === 'text' ? 'company' : column.type === 'company' ? 'url' : column.type === 'url' ? 'select' : 'text';
-                        setColumns(prev => prev.map(col => col.id === column.id ? {...col, type: newType} : col));
-                        setShowDropdown(null);
-                        setSaveStatus('saving');
-                      }}>
-                        Change type
+                      <div
+                        className={`p-2 hover:bg-gray-100 cursor-pointer rounded flex items-center gap-2 ${(column.name === 'Cuft' ? cuftMode : weightMode) === 'perUnit' ? 'bg-blue-50' : ''}`}
+                        onClick={() => {
+                          if (column.name === 'Cuft') {
+                            setCuftMode('perUnit');
+                          } else {
+                            setWeightMode('perUnit');
+                          }
+                          setShowDropdown(null);
+                        }}
+                      >
+                        <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold">/1</span>
+                        <div>
+                          <div className="font-medium text-sm">Show Per Unit</div>
+                          <div className="text-xs text-gray-500">Value for 1 item</div>
+                        </div>
                       </div>
                     </div>
                   )}
                 </div>
+                )}
               </div>
-              
+
               {/* Column resize handle */}
               <div 
                 className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-blue-500"
@@ -1872,14 +1942,9 @@ useEffect(() => {
             </div>
           ))}
           
-          {/* Add column button */}
+          {/* Delete column header */}
           <div className="bg-white border-b flex items-center justify-center w-12 min-w-[48px]">
-            <button 
-              className="p-1 rounded-full hover:bg-gray-100 flex items-center justify-center cursor-pointer transition-colors"
-              onClick={handleAddColumn}
-            >
-              <Plus size={16} />
-            </button>
+            <span className="text-gray-400 text-sm">🗑️</span>
           </div>
         </div>
 

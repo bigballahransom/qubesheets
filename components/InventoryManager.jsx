@@ -321,6 +321,8 @@ useEffect(() => {
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
         ai_generated: item.ai_generated, // Preserve AI generated flag
+        perUnitCuft: item.cuft || 0, // Store per-unit cuft for recalculation when quantity changes
+        perUnitWeight: item.weight || 0, // Store per-unit weight for recalculation when quantity changes
         cells: {
           col1: (() => {
             // Prioritize manual room entry from source image/video over AI-generated location
@@ -1163,6 +1165,33 @@ useEffect(() => {
     } catch (error) {
       console.error('❌ Error deleting inventory item:', error);
       // Don't show error to user, just log it - the row will still be removed from spreadsheet
+    }
+  }, [currentProject]);
+
+  // Handle quantity changes from spreadsheet - update the inventory item in the database
+  const handleQuantityChange = useCallback(async (inventoryItemId, newQuantity) => {
+    if (!inventoryItemId || !currentProject) {
+      console.log('❌ Cannot update quantity - missing data:', { inventoryItemId, currentProject: !!currentProject });
+      return;
+    }
+
+    try {
+      console.log('📊 [InventoryManager] Updating quantity for inventory item:', inventoryItemId, 'to', newQuantity);
+
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity: newQuantity })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update inventory item quantity');
+      }
+
+      console.log('✅ Inventory item quantity updated successfully');
+
+    } catch (error) {
+      console.error('❌ Error updating inventory item quantity:', error);
     }
   }, [currentProject]);
 
@@ -2680,6 +2709,7 @@ const ProcessingNotification = () => {
                       onRowsChange={handleSpreadsheetRowsChange}
                       onColumnsChange={handleSpreadsheetColumnsChange}
                       onDeleteInventoryItem={handleDeleteInventoryItem}
+                      onQuantityChange={handleQuantityChange}
                       refreshSpreadsheet={refreshSpreadsheetRows}
                       onInventoryUpdate={handleInventoryUpdate}
                       projectId={projectId}
