@@ -1,7 +1,7 @@
 // components/sheets/Spreadsheet.jsx
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package } from 'lucide-react';
 import {
   Dialog,
@@ -75,6 +75,87 @@ const truncateFileName = (fileName, maxLength = 40) => {
   return nameWithoutExt.substring(0, availableLength) + '...' + extension;
 };
 
+// CountInput component for handling count with +/- buttons
+const CountInput = memo(({ value, rowId, onValueChange, perUnitCuft, perUnitWeight, inventoryItemId }) => {
+  const [localValue, setLocalValue] = useState(value);
+  const [isFocused, setIsFocused] = useState(false);
+
+  // Sync with parent state when not focused
+  useEffect(() => {
+    if (!isFocused) {
+      setLocalValue(value);
+    }
+  }, [value, isFocused]);
+
+  const currentCount = parseInt(localValue) || 1;
+
+  const commitValue = (newCount) => {
+    const validCount = Math.max(1, newCount);
+    setLocalValue(validCount.toString());
+    onValueChange(rowId, validCount, perUnitCuft, perUnitWeight, inventoryItemId);
+  };
+
+  const handleIncrement = (e) => {
+    e.stopPropagation();
+    commitValue(currentCount + 1);
+  };
+
+  const handleDecrement = (e) => {
+    e.stopPropagation();
+    if (currentCount > 1) {
+      commitValue(currentCount - 1);
+    }
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    const newCount = Math.max(1, parseInt(localValue) || 1);
+    if (newCount !== parseInt(value)) {
+      commitValue(newCount);
+    } else {
+      // Reset display to validated value (handles "abc")
+      setLocalValue(newCount.toString());
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between w-full h-full px-1">
+      <button
+        onClick={handleDecrement}
+        className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+          currentCount <= 1
+            ? 'text-gray-200 cursor-not-allowed'
+            : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+        }`}
+        disabled={currentCount <= 1}
+      >
+        <span className="text-sm font-medium">−</span>
+      </button>
+      <input
+        type="text"
+        value={localValue}
+        onClick={(e) => e.stopPropagation()}
+        onFocus={() => setIsFocused(true)}
+        onChange={(e) => setLocalValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.target.blur();
+          }
+        }}
+        onBlur={handleBlur}
+        className="flex-1 w-12 text-center bg-gray-50 border border-gray-200 rounded px-1 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white"
+      />
+      <button
+        onClick={handleIncrement}
+        className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+      >
+        <span className="text-sm font-medium">+</span>
+      </button>
+    </div>
+  );
+});
+
 export default function Spreadsheet({
   initialRows = [],
   initialColumns = [],
@@ -84,6 +165,7 @@ export default function Spreadsheet({
   onQuantityChange = null,
   refreshSpreadsheet = null,
   onInventoryUpdate = null,
+  onPackedByUpdate = null,
   projectId = null,
   inventoryItems = []
 }) {
@@ -99,6 +181,7 @@ export default function Spreadsheet({
         ]
   );
   
+  // Local state for immediate UI updates, synced with parent
   const [rows, setRows] = useState(initialRows);
   const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saving', 'saved', 'error'
@@ -142,6 +225,7 @@ export default function Spreadsheet({
   const cellInputRef = useRef(null);
   const spreadsheetRef = useRef(null);
   const columnRefs = useRef({});
+  const scrollPositionRef = useRef({ top: 0, left: 0 });  // Track scroll position for preservation
   
 
   // Fetch media data on-demand when user clicks with caching and deduplication
@@ -358,48 +442,44 @@ export default function Spreadsheet({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
   
-  // Update rows when initialRows changes
+  // Sync local rows with parent's initialRows when it changes
+  // This ensures external updates (like ToggleGoingBadge) are reflected
   useEffect(() => {
-    if (initialRows) {
-      // Debug: Log sourceImageId/sourceVideoId info in spreadsheet rows
-      console.log('🔍 Spreadsheet received rows with source tracking:');
-      initialRows.forEach((row, index) => {
-        console.log(`  Row ${index + 1}: "${row.cells?.col2 || 'no name'}" - sourceImageId: ${row.sourceImageId || 'null'}, sourceVideoId: ${row.sourceVideoId || 'null'}`);
-      });
-      
-      // More thorough comparison to detect real-time cuft/weight updates
-      const currentRowsData = rows.map(r => ({ 
-        id: r.id, 
-        cells: r.cells,
-        inventoryItemId: r.inventoryItemId 
-      }));
-      const initialRowsData = initialRows.map(r => ({ 
-        id: r.id, 
-        cells: r.cells,
-        inventoryItemId: r.inventoryItemId 
-      }));
-      
-      // Use a more detailed comparison to catch cuft/weight updates
-      const hasChanges = JSON.stringify(currentRowsData) !== JSON.stringify(initialRowsData);
-      
-      if (hasChanges) {
-        console.log('⚡ Spreadsheet updating rows due to changes (including real-time cuft/weight updates)');
-        setRows(initialRows);
-      }
-      
-      setIsLoading(false);
-    } else {
-      // If no initialRows provided, start with a single empty row
-      if (rows.length === 0) {
-        const emptyRow = {
-          id: `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`,
-          cells: {}
+    if (initialRows && initialRows.length > 0) {
+      // Save current scroll position BEFORE updating rows
+      if (spreadsheetRef.current) {
+        scrollPositionRef.current = {
+          top: spreadsheetRef.current.scrollTop,
+          left: spreadsheetRef.current.scrollLeft
         };
-        setRows([emptyRow]);
       }
+      // Always sync with parent data to ensure consistency
+      setRows(initialRows);
+      setIsLoading(false);
+    } else if (!initialRows || initialRows.length === 0) {
+      // If no initialRows provided, create an empty row
+      const emptyRow = {
+        id: `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`,
+        cells: {}
+      };
+      setRows([emptyRow]);
+      onRowsChange([emptyRow]);
       setIsLoading(false);
     }
-  }, [initialRows]);
+  }, [initialRows, onRowsChange]);
+
+  // Restore scroll position after rows update
+  useEffect(() => {
+    if (spreadsheetRef.current && scrollPositionRef.current) {
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        if (spreadsheetRef.current) {
+          spreadsheetRef.current.scrollTop = scrollPositionRef.current.top;
+          spreadsheetRef.current.scrollLeft = scrollPositionRef.current.left;
+        }
+      });
+    }
+  }, [rows]);
   
   // Add this function to handle empty states in render
   const renderEmptyStateIfNeeded = () => {
@@ -426,36 +506,26 @@ export default function Spreadsheet({
   }, [initialColumns]);
 
   
-  // Call the callbacks when data changes
-  // Update the useEffect that calls callbacks
-useEffect(() => {
-  // Don't call the callback on every render, only when rows actually change
-  // This is important to avoid infinite loops
-  const rowsChanged = rows !== initialRows;
-  if (rows.length > 0 && rowsChanged) {
-    setRowCount(`${rows.length}/${rows.length} rows`);
-    
-    // Use a callback ref to avoid infinite loops
-    const timeoutId = setTimeout(() => {
-      onRowsChange(rows);
-    }, 100);
-    
-    return () => clearTimeout(timeoutId);
-  }
-}, [rows, initialRows, onRowsChange]);
+  // Update row count when rows change
+  useEffect(() => {
+    if (rows.length > 0) {
+      setRowCount(`${rows.length}/${rows.length} rows`);
+    }
+  }, [rows]);
 
-useEffect(() => {
-  const columnsChanged = columns !== initialColumns;
-  if (columns.length > 0 && columnsChanged) {
-    setColumnCount(`${columns.length}/6 columns`);
-    
-    const timeoutId = setTimeout(() => {
-      onColumnsChange(columns);
-    }, 100);
-    
-    return () => clearTimeout(timeoutId);
-  }
-}, [columns, initialColumns, onColumnsChange]);
+  // Update column count when columns change
+  useEffect(() => {
+    const columnsChanged = columns !== initialColumns;
+    if (columns.length > 0 && columnsChanged) {
+      setColumnCount(`${columns.length}/6 columns`);
+
+      const timeoutId = setTimeout(() => {
+        onColumnsChange(columns);
+      }, 100);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [columns, initialColumns, onColumnsChange]);
   
   // Focus input when cell becomes active and set initial selection
   useEffect(() => {
@@ -532,6 +602,10 @@ useEffect(() => {
     if (colId === 'col4' || colId === 'col5') {
       return;
     }
+    // Don't set activeCell for Count (col3) - it has its own inline input
+    if (colId === 'col3') {
+      return;
+    }
     setActiveCell({ rowId, colId });
     setEditingCellContent(currentValue || '');
   }, []);
@@ -542,6 +616,14 @@ useEffect(() => {
   
   const handleCellBlur = useCallback(() => {
     if (activeCell) {
+      // Save scroll position before updating rows
+      if (spreadsheetRef.current) {
+        scrollPositionRef.current = {
+          top: spreadsheetRef.current.scrollTop,
+          left: spreadsheetRef.current.scrollLeft
+        };
+      }
+
       const { rowId, colId } = activeCell;
       const updatedRows = rows.map(row => {
         if (row.id === rowId) {
@@ -570,16 +652,143 @@ useEffect(() => {
         return row;
       });
 
-      setRows(updatedRows);
+      setRows(updatedRows);  // Immediate local update
+      onRowsChange(updatedRows);  // Sync with parent
       setActiveCell(null);
       setSaveStatus('saving');
-
-      // Update row and column counts
-      setRowCount(`${updatedRows.length}/${updatedRows.length} rows`);
-
-      // This will trigger the debounced onRowsChange
     }
-  }, [activeCell, editingCellContent, rows, onQuantityChange]);
+  }, [activeCell, editingCellContent, rows, onQuantityChange, onRowsChange]);
+
+  // Handle +/- button clicks for Count column
+  const handleCountChange = useCallback((rowId, delta) => {
+    // Save scroll position before updating rows
+    if (spreadsheetRef.current) {
+      scrollPositionRef.current = {
+        top: spreadsheetRef.current.scrollTop,
+        left: spreadsheetRef.current.scrollLeft
+      };
+    }
+
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+
+    const currentCount = parseInt(row.cells?.col3) || 1;
+    const newCount = Math.max(1, currentCount + delta);
+
+    const updatedRows = rows.map(r => {
+      if (r.id === rowId) {
+        const newCells = {
+          ...r.cells,
+          col3: newCount.toString(),
+          col6: 'going'  // When quantity changes, all items are going
+        };
+
+        // Recalculate cuft and weight if per-unit values exist
+        if (r.perUnitCuft !== undefined) {
+          newCells.col4 = (r.perUnitCuft * newCount).toString();
+          newCells.col5 = (r.perUnitWeight * newCount).toString();
+        }
+
+        // Update quantity and going status in parent inventory state and DB
+        // handleInventoryUpdate now handles both in one PATCH call
+        if (onInventoryUpdate && r.inventoryItemId) {
+          onInventoryUpdate(r.inventoryItemId, newCount, newCount);  // goingQty=newCount, qty=newCount
+        }
+
+        return { ...r, cells: newCells };
+      }
+      return r;
+    });
+
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
+    setSaveStatus('saving');
+  }, [rows, onRowsChange, onInventoryUpdate]);
+
+  // Set count to an absolute value (for input field - avoids delta timing issues)
+  const setCountAbsolute = useCallback((rowId, newCount) => {
+    // Save scroll position before updating rows
+    if (spreadsheetRef.current) {
+      scrollPositionRef.current = {
+        top: spreadsheetRef.current.scrollTop,
+        left: spreadsheetRef.current.scrollLeft
+      };
+    }
+
+    const validCount = Math.max(1, parseInt(newCount) || 1);
+
+    const updatedRows = rows.map(r => {
+      if (r.id === rowId) {
+        const newCells = {
+          ...r.cells,
+          col3: validCount.toString(),
+          col6: 'going'  // When quantity changes, all items are going
+        };
+
+        // Recalculate cuft and weight
+        if (r.perUnitCuft !== undefined) {
+          newCells.col4 = (r.perUnitCuft * validCount).toString();
+          newCells.col5 = (r.perUnitWeight * validCount).toString();
+        }
+
+        // Update quantity and going status in parent inventory state and DB
+        // handleInventoryUpdate now handles both in one PATCH call
+        if (onInventoryUpdate && r.inventoryItemId) {
+          onInventoryUpdate(r.inventoryItemId, validCount, validCount);  // goingQty=validCount, qty=validCount
+        }
+
+        return { ...r, cells: newCells };
+      }
+      return r;
+    });
+
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
+    setSaveStatus('saving');
+  }, [rows, onRowsChange, onInventoryUpdate]);
+
+  // Callback for CountInput component - handles count changes with cuft/weight recalculation
+  const handleCountInputChange = useCallback((rowId, newCount, perUnitCuft, perUnitWeight, inventoryItemId) => {
+    // Save scroll position before updating rows
+    if (spreadsheetRef.current) {
+      scrollPositionRef.current = {
+        top: spreadsheetRef.current.scrollTop,
+        left: spreadsheetRef.current.scrollLeft
+      };
+    }
+
+    const validCount = Math.max(1, parseInt(newCount) || 1);
+
+    const updatedRows = rows.map(r => {
+      if (r.id === rowId) {
+        const newCells = {
+          ...r.cells,
+          col3: validCount.toString(),
+          col6: 'going'  // When quantity changes, all items are going
+        };
+
+        // Recalculate cuft and weight
+        if (perUnitCuft !== undefined) {
+          newCells.col4 = (perUnitCuft * validCount).toString();
+          newCells.col5 = (perUnitWeight * validCount).toString();
+        }
+
+        return { ...r, cells: newCells };
+      }
+      return r;
+    });
+
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
+    setSaveStatus('saving');
+
+    // Update going status in parent inventory state and DB (pass quantity as 3rd param)
+    // This handles both quantity and goingQuantity in one call
+    if (onInventoryUpdate && inventoryItemId) {
+      onInventoryUpdate(inventoryItemId, validCount, validCount);  // goingQty=validCount, qty=validCount
+    }
+  }, [rows, onRowsChange, onQuantityChange, onInventoryUpdate]);
+
   const handleKeyDown = useCallback((e) => {
     if (!activeCell) return;
     
@@ -677,43 +886,38 @@ useEffect(() => {
         [newColumnId]: ''
       }
     }));
-    setRows(updatedRows);
-    
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
+
     // Update column count
     setColumnCount(`${updatedColumns.length}/5 columns`);
     setSaveStatus('saving');
-    
-    // This will trigger the useEffect to call onColumnsChange and onRowsChange
-  }, [columns, rows]);
-  
+  }, [columns, rows, onRowsChange]);
+
   // Handle adding rows
   const handleAddRow = useCallback(() => {
     const newRowId = generateId();
     const newCells = {};
-    
+
     // Initialize cells for all columns
     columns.forEach(col => {
       newCells[col.id] = '';
     });
-    
+
     const newRow = { id: newRowId, cells: newCells };
     const updatedRows = [...rows, newRow];
-    setRows(updatedRows);
-    
-    // Update row count
-    setRowCount(`${updatedRows.length}/${updatedRows.length} rows`);
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
-    
-    // This will trigger the useEffect to call onRowsChange
-  }, [columns, rows]);
-  
+  }, [columns, rows, onRowsChange]);
+
   // Handle removing columns
   const handleRemoveColumn = useCallback((columnId) => {
     if (columns.length <= 1) return; // Keep at least one column
-    
+
     const updatedColumns = columns.filter(col => col.id !== columnId);
     setColumns(updatedColumns);
-    
+
     // Remove column from all rows
     const updatedRows = rows.map(row => {
       const newCells = { ...row.cells };
@@ -723,42 +927,38 @@ useEffect(() => {
         cells: newCells
       };
     });
-    setRows(updatedRows);
-    
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
+
     // Update column count
     setColumnCount(`${updatedColumns.length}/5 columns`);
     setShowDropdown(null);
     setSaveStatus('saving');
-    
-    // This will trigger the useEffect to call onColumnsChange and onRowsChange
-  }, [columns, rows]);
-  
+  }, [columns, rows, onRowsChange]);
+
   // Handle removing rows
   const handleRemoveRow = useCallback((rowId) => {
     if (rows.length <= 1) return; // Keep at least one row
-    
+
     // Find the row being deleted
     const rowToDelete = rows.find(row => row.id === rowId);
-    
+
     // If the row has an inventoryItemId, call the delete callback
     if (rowToDelete && rowToDelete.inventoryItemId) {
       onDeleteInventoryItem(rowToDelete.inventoryItemId);
     }
-    
+
     const updatedRows = rows.filter(row => row.id !== rowId);
-    setRows(updatedRows);
-    
-    // Update row count
-    setRowCount(`${updatedRows.length}/${updatedRows.length} rows`);
-    
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
+
     // Clear selection if removed row was selected
     if (selectedRows.includes(rowId)) {
       setSelectedRows(prev => prev.filter(id => id !== rowId));
     }
-    
+
     setSaveStatus('saving');
-    // This will trigger the useEffect to call onRowsChange
-  }, [rows, selectedRows, onDeleteInventoryItem]);
+  }, [rows, selectedRows, onDeleteInventoryItem, onRowsChange]);
   
   // Handle column renaming
   const handleRenameColumn = useCallback((columnId, newName) => {
@@ -1072,6 +1272,14 @@ useEffect(() => {
   // Render cell content based on column type
   // Handle location updates with user choice
   const handleLocationUpdate = useCallback((newLocation, currentRowId, currentColumn, updateAllFromMedia = true) => {
+    // Save scroll position before updating rows
+    if (spreadsheetRef.current) {
+      scrollPositionRef.current = {
+        top: spreadsheetRef.current.scrollTop,
+        left: spreadsheetRef.current.scrollLeft
+      };
+    }
+
     const currentRow = rows.find(r => r.id === currentRowId);
     const itemName = currentRow?.cells?.col2 || 'Item';
     const colId = currentColumn.id;
@@ -1122,12 +1330,13 @@ useEffect(() => {
       });
     }
     
-    setRows(updatedRows);
+    setRows(updatedRows);  // Immediate local update
+    onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
-    
+
     // Show appropriate toast notification
     toast.success(
-      affectedItemCount > 1 
+      affectedItemCount > 1
         ? `${affectedItemCount} items from this ${currentRow?.sourceImageId ? 'photo' : 'video'} moved to ${newLocation}`
         : `${itemName} moved to ${newLocation}`,
       {
@@ -1135,14 +1344,11 @@ useEffect(() => {
         duration: 2000,
       }
     );
-    
-    setTimeout(() => {
-      onRowsChange(updatedRows);
-    }, 100);
-  }, [rows, setRows, setSaveStatus, onRowsChange]);
+  }, [rows, setSaveStatus, onRowsChange]);
 
   const renderCellContent = useCallback((colType, value, rowId, colId, row, column) => {
-    if (activeCell && activeCell.rowId === rowId && activeCell.colId === colId) {
+    // Skip activeCell editing mode for col3 - it has its own inline input with +/- buttons
+    if (activeCell && activeCell.rowId === rowId && activeCell.colId === colId && colId !== 'col3') {
       return (
         <input
           ref={cellInputRef}
@@ -1467,6 +1673,15 @@ useEffect(() => {
               value={displayValue}
               onChange={(e) => {
                 e.stopPropagation();
+
+                // Save scroll position before updating rows
+                if (spreadsheetRef.current) {
+                  scrollPositionRef.current = {
+                    top: spreadsheetRef.current.scrollTop,
+                    left: spreadsheetRef.current.scrollLeft
+                  };
+                }
+
                 const newValue = e.target.value;
                 const currentRow = rows.find(r => r.id === rowId);
                 
@@ -1512,9 +1727,10 @@ useEffect(() => {
                   return r;
                 });
                 
-                setRows(updatedRows);
+                setRows(updatedRows);  // Immediate local update
+                onRowsChange(updatedRows);  // Sync with parent
                 setSaveStatus('saving');
-                
+
                 // Show toast notification for other columns
                 toast.success(
                   `${itemName} marked as ${newValue}`,
@@ -1524,12 +1740,12 @@ useEffect(() => {
                   }
                 );
 
-                // If we have inventory item ID, update the parent inventory state immediately
-                if (currentRow?.inventoryItemId && onInventoryUpdate) {
+                // If this is the Going column (col6) and we have inventory item ID, update the parent inventory state
+                if (colId === 'col6' && currentRow?.inventoryItemId && onInventoryUpdate) {
                   // Convert the selected value to goingQuantity for inventory update
                   const quantity = currentRow?.quantity || parseInt(currentRow?.cells?.col3) || 1;
                   let goingQuantity = 0;
-                  
+
                   if (newValue === 'not going') {
                     goingQuantity = 0;
                   } else if (newValue === 'going') {
@@ -1539,14 +1755,15 @@ useEffect(() => {
                     const match = newValue.match(/going \((\d+)\/\d+\)/);
                     goingQuantity = match ? parseInt(match[1]) : 0;
                   }
-                  
+
                   onInventoryUpdate(currentRow.inventoryItemId, goingQuantity);
                 }
-                
-                // Trigger the save callback
-                setTimeout(() => {
-                  onRowsChange(updatedRows);
-                }, 100);
+
+                // For CP/PBO column, update the packed_by field in the inventory item
+                if ((column.name === 'PBO/CP' || column.name === 'Packed By') &&
+                    currentRow?.inventoryItemId && onPackedByUpdate) {
+                  onPackedByUpdate(currentRow.inventoryItemId, newValue);
+                }
               }}
               onClick={(e) => e.stopPropagation()}
               className="w-full h-full bg-transparent border-none outline-none appearance-none cursor-pointer"
@@ -1562,9 +1779,22 @@ useEffect(() => {
           </div>
         );
       default:
+        // Special rendering for Count column (col3) with CountInput component
+        if (colId === 'col3') {
+          return (
+            <CountInput
+              value={value}
+              rowId={rowId}
+              onValueChange={handleCountInputChange}
+              perUnitCuft={row?.perUnitCuft}
+              perUnitWeight={row?.perUnitWeight}
+              inventoryItemId={row?.inventoryItemId}
+            />
+          );
+        }
         return <span className="block truncate">{value}</span>;
     }
-  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, onRowsChange, setRows, setSaveStatus, cuftMode, weightMode]);
+  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, setRows, onRowsChange, setSaveStatus, cuftMode, weightMode, handleCountInputChange]);
   
   // Render loading state
   if (isLoading) {
@@ -1787,28 +2017,22 @@ useEffect(() => {
                       console.log('⚠️ No inventory items to delete - all rows are manual entries');
                     }
                     
-                    // Remove the rows from the UI immediately for better UX
+                    // Remove the rows from the UI
                     const newRows = rows.filter(row => !selectedRows.includes(row.id));
-                    setRows(newRows);
+                    setRows(newRows);  // Immediate local update
+                    onRowsChange(newRows);  // Sync with parent
                     setSelectedRows([]);
-                    setRowCount(`${newRows.length}/${newRows.length} rows`);
                     setSaveStatus('saving');
-                    
-                    // Call onRowsChange to save the updated data
-                    onRowsChange(newRows);
-                    
+
                     console.log(`✅ Successfully removed ${rowsToDelete.length} rows from spreadsheet`);
                   } catch (error) {
                     console.error('❌ Error during bulk deletion:', error);
                     // Even if there's an error with inventory deletion, we should still remove from UI
                     const newRows = rows.filter(row => !selectedRows.includes(row.id));
-                    setRows(newRows);
+                    setRows(newRows);  // Immediate local update
+                    onRowsChange(newRows);  // Sync with parent
                     setSelectedRows([]);
-                    setRowCount(`${newRows.length}/${newRows.length} rows`);
                     setSaveStatus('error');
-                    
-                    // Call onRowsChange to save the updated data even if inventory deletion failed
-                    onRowsChange(newRows);
                   }
                 }}
               >

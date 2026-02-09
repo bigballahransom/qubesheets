@@ -1264,50 +1264,93 @@ useEffect(() => {
   }, [currentProject, convertItemsToRows, spreadsheetColumns, inventoryItems]);
 
   // Function to immediately update inventory item status for real-time stat updates
-  const handleInventoryUpdate = useCallback(async (inventoryItemId, newGoingQuantity) => {
-    console.log(`🔄 Immediately updating inventory item ${inventoryItemId} goingQuantity to ${newGoingQuantity}`);
-    
+  // When newQuantity is provided, it updates both quantity and goingQuantity together
+  const handleInventoryUpdate = useCallback(async (inventoryItemId, newGoingQuantity, newQuantity = null) => {
+    console.log(`🔄 Immediately updating inventory item ${inventoryItemId} goingQuantity to ${newGoingQuantity}${newQuantity ? `, quantity to ${newQuantity}` : ''}`);
+
     // First, update the local state immediately for instant UI feedback
     setInventoryItems(prev => {
       const updated = prev.map(item => {
         if (item._id === inventoryItemId) {
-          const quantity = item.quantity || 1;
-          const going = newGoingQuantity === 0 ? 'not going' : 
+          const quantity = newQuantity !== null ? newQuantity : (item.quantity || 1);
+          const going = newGoingQuantity === 0 ? 'not going' :
                         newGoingQuantity === quantity ? 'going' : 'partial';
-          return { ...item, goingQuantity: newGoingQuantity, going };
+          return {
+            ...item,
+            goingQuantity: newGoingQuantity,
+            going,
+            ...(newQuantity !== null && { quantity: newQuantity })
+          };
         }
         return item;
       });
-      
+
       // Immediately update spreadsheet rows with the new data
       const updatedRows = convertItemsToRows(updated);
       setSpreadsheetRows(updatedRows);
       previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
-      
+
       return updated;
     });
 
     // Then, persist the change to the server to ensure it's saved
     try {
+      // Build the update payload - include quantity if provided
+      const updatePayload = { goingQuantity: newGoingQuantity };
+      if (newQuantity !== null) {
+        updatePayload.quantity = newQuantity;
+      }
+
       const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ goingQuantity: newGoingQuantity }),
+        body: JSON.stringify(updatePayload),
       });
-      
+
       if (!response.ok) {
         console.error(`Failed to persist inventory update for item ${inventoryItemId}`);
         // Note: We don't revert the local state here to avoid UI flicker
         // The local state will be corrected on next data refresh if needed
       } else {
-        console.log(`✅ Successfully persisted goingQuantity ${newGoingQuantity} for item ${inventoryItemId}`);
+        console.log(`✅ Successfully persisted goingQuantity ${newGoingQuantity}${newQuantity ? ` and quantity ${newQuantity}` : ''} for item ${inventoryItemId}`);
       }
     } catch (error) {
       console.error('Error persisting inventory update:', error);
     }
   }, [convertItemsToRows, currentProject]);
+
+  // Handle packed_by (CP/PBO) updates from Spreadsheet
+  const handlePackedByUpdate = useCallback(async (inventoryItemId, newPackedBy) => {
+    console.log(`🔄 Updating inventory item ${inventoryItemId} packed_by to ${newPackedBy}`);
+
+    // Update local inventory state (don't regenerate rows - the spreadsheet already updated its display)
+    setInventoryItems(prev =>
+      prev.map(item =>
+        item._id === inventoryItemId
+          ? { ...item, packed_by: newPackedBy }
+          : item
+      )
+    );
+
+    // Persist to database
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packed_by: newPackedBy }),
+      });
+
+      if (!response.ok) {
+        console.error(`Failed to persist packed_by update for item ${inventoryItemId}`);
+      } else {
+        console.log(`✅ Successfully persisted packed_by ${newPackedBy} for item ${inventoryItemId}`);
+      }
+    } catch (error) {
+      console.error('Error persisting packed_by update:', error);
+    }
+  }, [currentProject]);
 
   // Supermove Integration Functions
   const checkSupermoveIntegration = useCallback(async () => {
@@ -2712,6 +2755,7 @@ const ProcessingNotification = () => {
                       onQuantityChange={handleQuantityChange}
                       refreshSpreadsheet={refreshSpreadsheetRows}
                       onInventoryUpdate={handleInventoryUpdate}
+                      onPackedByUpdate={handlePackedByUpdate}
                       projectId={projectId}
                       inventoryItems={inventoryItems}
                     />
