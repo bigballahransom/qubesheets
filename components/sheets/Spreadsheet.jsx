@@ -462,13 +462,8 @@ export default function Spreadsheet({
       setRows(initialRows);
       setIsLoading(false);
     } else if (!initialRows || initialRows.length === 0) {
-      // If no initialRows provided, create an empty row
-      const emptyRow = {
-        id: `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`,
-        cells: {}
-      };
-      setRows([emptyRow]);
-      onRowsChange([emptyRow]);
+      // No rows - start with empty spreadsheet
+      setRows([]);
       setIsLoading(false);
     }
   }, [initialRows, onRowsChange]);
