@@ -318,6 +318,7 @@ useEffect(() => {
         inventoryItemId: item._id, // Preserve inventory item ID for deletion
         sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
         sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
+        stockItemId: item.stockItemId, // Reference to stock inventory item
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
         ai_generated: item.ai_generated, // Preserve AI generated flag
@@ -1351,6 +1352,120 @@ useEffect(() => {
       console.error('Error persisting packed_by update:', error);
     }
   }, [currentProject]);
+
+  // Handle stock inventory changes - PATCH existing items, POST new ones, DELETE removed ones
+  const handleAddStockItems = useCallback(async (changedItems) => {
+    if (!currentProject?._id) {
+      toast.error('No project selected');
+      return;
+    }
+
+    if (!changedItems || changedItems.length === 0) {
+      return;
+    }
+
+    console.log(`📦 Processing ${changedItems.length} inventory changes`);
+
+    // Separate into updates, creates, and deletes
+    const updates = [];
+    const creates = [];
+    const deletes = [];
+
+    changedItems.forEach(({ item, quantity, previousQuantity, isAiItem, inventoryItemId, location }) => {
+      if (isAiItem) {
+        // AI item - update existing inventory item directly
+        if (quantity === 0 && previousQuantity > 0) {
+          // Delete the AI item
+          deletes.push({ inventoryItemId });
+        } else if (quantity !== previousQuantity) {
+          // Update the AI item quantity
+          updates.push({ inventoryItemId, quantity, goingQuantity: quantity });
+        }
+      } else {
+        // Stock library item
+        if (previousQuantity > 0 && quantity === 0) {
+          // Find and delete the inventory item(s) with this stockItemId
+          const existing = inventoryItems.find(i => i.stockItemId === item._id);
+          if (existing) {
+            deletes.push({ inventoryItemId: existing._id });
+          }
+        } else if (previousQuantity > 0 && quantity > 0) {
+          // Update existing item
+          const existing = inventoryItems.find(i => i.stockItemId === item._id);
+          if (existing) {
+            updates.push({ inventoryItemId: existing._id, quantity, goingQuantity: quantity });
+          }
+        } else if (previousQuantity === 0 && quantity > 0) {
+          // Create new item with location
+          creates.push({ item, quantity, location });
+        }
+      }
+    });
+
+    try {
+      // Handle deletes
+      for (const del of deletes) {
+        console.log(`🗑️ Deleting inventory item ${del.inventoryItemId}`);
+        await fetch(`/api/projects/${currentProject._id}/inventory/${del.inventoryItemId}`, {
+          method: 'DELETE',
+        });
+      }
+
+      // Handle updates (PATCH existing items)
+      for (const update of updates) {
+        console.log(`📝 Updating inventory item ${update.inventoryItemId} to quantity ${update.quantity}`);
+        await fetch(`/api/projects/${currentProject._id}/inventory/${update.inventoryItemId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            quantity: update.quantity,
+            goingQuantity: update.goingQuantity,
+          }),
+        });
+      }
+
+      // Handle creates (POST new items)
+      if (creates.length > 0) {
+        const newItems = creates.map(({ item, quantity, location }) => ({
+          name: item.name,
+          category: item.parent_class,
+          weight: item.weight || 0,
+          cuft: item.cubic_feet || 0,
+          quantity: quantity,
+          going: 'going',
+          goingQuantity: quantity,
+          packed_by: 'N/A',
+          stockItemId: item._id,
+          location: location || '', // Set location/room if specified
+        }));
+
+        console.log(`➕ Creating ${newItems.length} new inventory items`);
+        const response = await fetch(`/api/projects/${currentProject._id}/inventory`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newItems),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to create items');
+        }
+      }
+
+      // Refresh inventory to get updated state (this also updates spreadsheet rows)
+      await reloadInventoryItems();
+
+      // Show success message
+      const actions = [];
+      if (creates.length > 0) actions.push(`${creates.length} added`);
+      if (updates.length > 0) actions.push(`${updates.length} updated`);
+      if (deletes.length > 0) actions.push(`${deletes.length} removed`);
+
+      toast.success(`Inventory: ${actions.join(', ')}`);
+    } catch (error) {
+      console.error('Error processing inventory changes:', error);
+      toast.error('Failed to save inventory changes');
+    }
+  }, [currentProject, inventoryItems, reloadInventoryItems]);
 
   // Supermove Integration Functions
   const checkSupermoveIntegration = useCallback(async () => {
@@ -2756,6 +2871,7 @@ const ProcessingNotification = () => {
                       refreshSpreadsheet={refreshSpreadsheetRows}
                       onInventoryUpdate={handleInventoryUpdate}
                       onPackedByUpdate={handlePackedByUpdate}
+                      onAddStockItem={handleAddStockItems}
                       projectId={projectId}
                       inventoryItems={inventoryItems}
                     />

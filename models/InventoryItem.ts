@@ -42,6 +42,7 @@ export interface IInventoryItem extends Document {
   organizationId?: string;
   sourceImageId?: mongoose.Types.ObjectId | string;
   sourceVideoId?: mongoose.Types.ObjectId | string;
+  stockItemId?: mongoose.Types.ObjectId | string; // Reference to stock inventory item
   createdAt: Date;
   updatedAt: Date;
 }
@@ -110,9 +111,15 @@ const InventoryItemSchema: Schema = new Schema(
       required: false,
       index: true
     },
-    sourceVideoId: { 
-      type: mongoose.Schema.Types.ObjectId, 
+    sourceVideoId: {
+      type: mongoose.Schema.Types.ObjectId,
       ref: 'Video',
+      required: false,
+      index: true
+    },
+    stockItemId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'StockInventory',
       required: false,
       index: true
     },

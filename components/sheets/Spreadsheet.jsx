@@ -19,6 +19,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
 import { toast } from 'sonner';
+import StockInventoryPickerModal from '@/components/modals/StockInventoryPickerModal';
 
 // Column type definitions
 const columnTypes = {
@@ -166,6 +167,7 @@ export default function Spreadsheet({
   refreshSpreadsheet = null,
   onInventoryUpdate = null,
   onPackedByUpdate = null,
+  onAddStockItem = null,
   projectId = null,
   inventoryItems = []
 }) {
@@ -215,8 +217,11 @@ export default function Spreadsheet({
     currentRow: null,
     isAddingNewRoom: false
   });
-  
-  
+
+  // Stock inventory picker modal state
+  const [stockPickerOpen, setStockPickerOpen] = useState(false);
+
+
   // Media caching to prevent duplicate requests
   const [mediaCache, setMediaCache] = useState(new Map());
   const [ongoingRequests, setOngoingRequests] = useState(new Set());
@@ -486,12 +491,12 @@ export default function Spreadsheet({
     if (rows.length === 0 && !isLoading) {
       return (
         <div className="flex justify-center items-center h-40 text-gray-500">
-          <button 
+          <button
             className="flex items-center justify-center text-blue-500 hover:bg-gray-100 p-2 rounded-md"
-            onClick={handleAddRow}
+            onClick={() => setStockPickerOpen(true)}
           >
             <Plus size={16} />
-            <span className="ml-1">Add a row to start</span>
+            <span className="ml-1">Add inventory to start</span>
           </button>
         </div>
       );
@@ -1623,6 +1628,18 @@ export default function Spreadsheet({
                 </Tooltip>
               </TooltipProvider>
             )}
+            {row?.stockItemId && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-[10px] font-bold text-green-700 bg-green-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">S</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Stock Library Item</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
         );
       case 'url':
@@ -2396,14 +2413,14 @@ export default function Spreadsheet({
             );
           })}
           
-          {/* Add row button */}
+          {/* Add inventory button */}
           <div className="flex items-center border-b h-10 pl-8">
-            <button 
+            <button
               className="flex items-center justify-center text-blue-500 hover:bg-gray-100 p-2 rounded-md cursor-pointer transition-colors"
-              onClick={handleAddRow}
+              onClick={() => setStockPickerOpen(true)}
             >
               <Plus size={16} />
-              <span className="ml-1">New row</span>
+              <span className="ml-1">Inventory</span>
             </button>
           </div>
         </div>
@@ -2914,6 +2931,18 @@ export default function Spreadsheet({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Stock Inventory Picker Modal */}
+      <StockInventoryPickerModal
+        isOpen={stockPickerOpen}
+        onClose={() => setStockPickerOpen(false)}
+        onAddItems={(items) => {
+          if (onAddStockItem && items.length > 0) {
+            onAddStockItem(items);
+          }
+        }}
+        existingInventory={inventoryItems}
+      />
     </div>
   );
 }
