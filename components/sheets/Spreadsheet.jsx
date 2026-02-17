@@ -169,7 +169,9 @@ export default function Spreadsheet({
   onPackedByUpdate = null,
   onAddStockItem = null,
   projectId = null,
-  inventoryItems = []
+  inventoryItems = [],
+  weightConfig = { weightMode: 'actual', customWeightMultiplier: 7 },
+  onWeightConfigChange = null
 }) {
   // State for spreadsheet data
   const [columns, setColumns] = useState(
@@ -2106,8 +2108,8 @@ export default function Spreadsheet({
                       </span>
                     )
                     : column.name === 'Weight' ? (
-                      <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold">
-                        {weightMode === 'total' ? 'Σ' : '/1'}
+                      <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${weightConfig.weightMode === 'custom' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                        {weightConfig.weightMode === 'custom' ? `×${weightConfig.customWeightMultiplier}` : (weightMode === 'total' ? 'Σ' : '/1')}
                       </span>
                     )
                     : column.type === 'text' ? 'T'
@@ -2129,7 +2131,9 @@ export default function Spreadsheet({
                     <ChevronDown size={14} />
                   </button>
                   {showDropdown === (column.name === 'Cuft' ? 'cuftMode' : 'weightMode') && (
-                    <div className="absolute top-full right-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-40 w-48">
+                    <div className="absolute top-full right-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-40 w-56">
+                      {/* Display Mode Section */}
+                      <div className="text-xs font-medium text-gray-500 px-2 mb-1">Display Mode</div>
                       <div
                         className={`p-2 hover:bg-gray-100 cursor-pointer rounded flex items-center gap-2 ${(column.name === 'Cuft' ? cuftMode : weightMode) === 'total' ? 'bg-blue-50' : ''}`}
                         onClick={() => {
@@ -2164,6 +2168,43 @@ export default function Spreadsheet({
                           <div className="text-xs text-gray-500">Value for 1 item</div>
                         </div>
                       </div>
+
+                      {/* Transform Weight Section - Only for Weight column */}
+                      {column.name === 'Weight' && onWeightConfigChange && (
+                        <>
+                          <div className="border-t my-2" />
+                          <div className="text-xs font-medium text-gray-500 px-2 mb-1">Transform Weight</div>
+                          <div
+                            className={`p-2 hover:bg-gray-100 cursor-pointer rounded flex items-center gap-2 ${weightConfig.weightMode === 'actual' ? 'bg-blue-50' : ''}`}
+                            onClick={() => {
+                              onWeightConfigChange('actual', null);
+                              setShowDropdown(null);
+                            }}
+                          >
+                            <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-semibold">AI</span>
+                            <div>
+                              <div className="font-medium text-sm">Actual (AI Weight)</div>
+                              <div className="text-xs text-gray-500">Use AI-assigned weight</div>
+                            </div>
+                          </div>
+                          {[4, 5, 6, 7, 8].map((multiplier) => (
+                            <div
+                              key={multiplier}
+                              className={`p-2 hover:bg-gray-100 cursor-pointer rounded flex items-center gap-2 ${weightConfig.weightMode === 'custom' && weightConfig.customWeightMultiplier === multiplier ? 'bg-blue-50' : ''}`}
+                              onClick={() => {
+                                onWeightConfigChange('custom', multiplier);
+                                setShowDropdown(null);
+                              }}
+                            >
+                              <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-semibold">×{multiplier}</span>
+                              <div>
+                                <div className="font-medium text-sm">×{multiplier} Multiplier</div>
+                                <div className="text-xs text-gray-500">Weight = Cuft × {multiplier}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

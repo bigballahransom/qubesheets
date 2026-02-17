@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useOrganization } from '@clerk/nextjs';
-import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key, Building2 } from 'lucide-react';
+import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key, Building2, Scale } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SettingsItem {
@@ -39,6 +39,11 @@ const settingsItems: SettingsItem[] = [
     title: 'Integrations',
     icon: Plug,
     href: '/settings/integrations',
+  },
+  {
+    title: 'Weight Configuration',
+    icon: Scale,
+    href: '/settings/weight-configuration',
   },
   {
     title: 'API Keys',

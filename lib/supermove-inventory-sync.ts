@@ -2,8 +2,14 @@
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import SupermoveIntegration from '@/models/SupermoveIntegration';
+import OrganizationSettings from '@/models/OrganizationSettings';
 import { IInventoryItem } from '@/models/InventoryItem';
 import { logActivity } from '@/lib/activity-logger';
+
+interface WeightConfig {
+  weightMode: 'actual' | 'custom';
+  customWeightMultiplier: number;
+}
 
 interface SupermoveInventoryItem {
   name: string;
@@ -85,7 +91,33 @@ export async function syncInventoryToSupermove(
       webhookUrl: supermoveIntegration.webhookUrl?.substring(0, 50) + '...',
       enabled: supermoveIntegration.enabled
     });
-    
+
+    // 2.5. Get weight configuration (project-level overrides org-level)
+    const orgSettings = await OrganizationSettings.findOne({
+      organizationId: project.organizationId
+    });
+
+    const weightConfig: WeightConfig = (() => {
+      // Project-level override takes precedence
+      if (project.weightMode) {
+        return {
+          weightMode: project.weightMode as 'actual' | 'custom',
+          customWeightMultiplier: project.customWeightMultiplier || 7
+        };
+      }
+      // Fall back to org settings
+      if (orgSettings?.weightMode) {
+        return {
+          weightMode: orgSettings.weightMode as 'actual' | 'custom',
+          customWeightMultiplier: orgSettings.customWeightMultiplier || 7
+        };
+      }
+      // Default
+      return { weightMode: 'actual', customWeightMultiplier: 7 };
+    })();
+
+    console.log(`⚖️ [SUPERMOVE-SYNC] Weight config: ${weightConfig.weightMode === 'custom' ? `×${weightConfig.customWeightMultiplier}` : 'actual'}`);
+
     // 3. Check if project is already synced
     if (project.metadata?.supermoveSync?.synced) {
       console.log(`⚠️ [SUPERMOVE-SYNC] Project ${projectId} already synced to Supermove`);
@@ -142,7 +174,7 @@ export async function syncInventoryToSupermove(
     const survey: SupermoveCollection[] = Object.entries(groupedItems).map(([roomName, items]) => ({
       name: roomName,
       description: `Items from ${roomName.toLowerCase()}`,
-      items: items.map(item => transformItemToSupermove(item))
+      items: items.map(item => transformItemToSupermove(item, weightConfig))
     }));
     
     console.log(`🏠 [SUPERMOVE-SYNC] Grouped items into ${survey.length} rooms:`, 
@@ -385,13 +417,19 @@ function normalizeRoomName(roomName: string): string {
 /**
  * Transforms QubeSheets item to Supermove format
  */
-function transformItemToSupermove(item: IInventoryItem): SupermoveInventoryItem {
+function transformItemToSupermove(item: IInventoryItem, weightConfig: WeightConfig): SupermoveInventoryItem {
   // Use going quantity if available, otherwise use total quantity
   const takeCount = item.goingQuantity || item.quantity || 1;
 
-  // Database stores per-unit values, send directly to Supermove
+  // Database stores per-unit values
   const unitVolume = item.cuft || 0;
-  const unitWeight = item.weight || 0;
+
+  // Calculate weight based on weight config
+  // When custom mode: weight = cuft × multiplier
+  // When actual mode: weight = AI-assigned weight
+  const unitWeight = weightConfig.weightMode === 'custom'
+    ? unitVolume * weightConfig.customWeightMultiplier
+    : (item.weight || 0);
 
   return {
     name: item.name,

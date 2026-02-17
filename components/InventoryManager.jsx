@@ -138,6 +138,13 @@ const [smartMovingSyncResult, setSmartMovingSyncResult] = useState(null);
 const [editProjectModalOpen, setEditProjectModalOpen] = useState(false);
 const [refreshTrigger, setRefreshTrigger] = useState(0); // For cross-device inventory refresh
 const [notesCount, setNotesCount] = useState(0);
+// Weight configuration state
+const [weightConfig, setWeightConfig] = useState({
+  weightMode: 'actual',
+  customWeightMultiplier: 7,
+  source: 'default' // 'default', 'organization', 'project'
+});
+const [weightConfigLoaded, setWeightConfigLoaded] = useState(false);
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const sseRetryTimeoutRef = useRef(null);
@@ -310,9 +317,18 @@ useEffect(() => {
   // Function to convert inventory items to spreadsheet rows
   const convertItemsToRows = useCallback((items) => {
     // PERFORMANCE: Only log summary, not individual items
-    console.log(`🔄 Converting ${items.length} items to rows`);
+    console.log(`🔄 Converting ${items.length} items to rows (weightMode: ${weightConfig.weightMode})`);
     return items.map(item => {
       const quantity = item.quantity || 1;
+
+      // Calculate weight based on weight config mode
+      // When custom mode: weight = cuft × multiplier
+      // When actual mode: weight = AI-assigned weight
+      const perUnitCuft = item.cuft || 0;
+      const perUnitWeight = weightConfig.weightMode === 'custom'
+        ? perUnitCuft * weightConfig.customWeightMultiplier
+        : (item.weight || 0);
+
       const row = {
         id: generateId(),
         inventoryItemId: item._id, // Preserve inventory item ID for deletion
@@ -322,8 +338,9 @@ useEffect(() => {
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
         ai_generated: item.ai_generated, // Preserve AI generated flag
-        perUnitCuft: item.cuft || 0, // Store per-unit cuft for recalculation when quantity changes
-        perUnitWeight: item.weight || 0, // Store per-unit weight for recalculation when quantity changes
+        perUnitCuft: perUnitCuft, // Store per-unit cuft for recalculation when quantity changes
+        perUnitWeight: perUnitWeight, // Store per-unit weight (calculated based on weight mode)
+        originalAiWeight: item.weight || 0, // Preserve original AI weight for reference
         cells: {
           col1: (() => {
             // Prioritize manual room entry from source image/video over AI-generated location
@@ -333,8 +350,8 @@ useEffect(() => {
           col2: item.name || '',
           col3: item.quantity?.toString() || '1',
           // All items now store per-unit values, multiply by quantity for display
-          col4: ((item.cuft || 0) * (item.quantity || 1)).toString(),
-          col5: ((item.weight || 0) * (item.quantity || 1)).toString(),
+          col4: (perUnitCuft * quantity).toString(),
+          col5: (perUnitWeight * quantity).toString(),
           col6: (() => {
             // Defensive checks for missing or invalid data
             let safeQuantity = Math.max(1, quantity); // Ensure quantity is at least 1
@@ -371,7 +388,7 @@ useEffect(() => {
       };
       return row;
     });
-  }, []);
+  }, [weightConfig.weightMode, weightConfig.customWeightMultiplier]);
 
   // Helper to refresh inventory items
   const fetchInventoryItems = useCallback(async () => {
@@ -382,12 +399,11 @@ useEffect(() => {
       if (response.ok) {
         const items = await response.json();
         setInventoryItems(items);
-        
-        // Update spreadsheet
-        const updatedRows = convertItemsToRows(items);
-        setSpreadsheetRows(updatedRows);
-        
-        console.log(`📦 Refreshed: ${items.length} items, ${updatedRows.length} rows`);
+
+        // Note: Spreadsheet rows are updated via useEffect that waits for weightConfigLoaded
+        // to prevent flickering when custom weight mode is set
+
+        console.log(`📦 Refreshed: ${items.length} items`);
       }
     } catch (error) {
       console.error('Error fetching inventory:', error);
@@ -608,7 +624,61 @@ useEffect(() => {
     window.addEventListener('customerUploadProcessing', handleCustomerUploadProcessing);
     return () => window.removeEventListener('customerUploadProcessing', handleCustomerUploadProcessing);
   }, [currentProject]);
-  
+
+  // Fetch weight configuration when project loads
+  useEffect(() => {
+    const fetchWeightConfig = async () => {
+      if (!currentProject?._id) return;
+
+      try {
+        // Fetch both org settings and project-specific settings in parallel
+        const [orgResponse, projectResponse] = await Promise.all([
+          fetch('/api/settings/weight-configuration'),
+          fetch(`/api/projects/${currentProject._id}/weight-config`)
+        ]);
+
+        let orgConfig = { weightMode: 'actual', customWeightMultiplier: 7 };
+        let projectConfig = { weightMode: null, customWeightMultiplier: null };
+
+        if (orgResponse.ok) {
+          orgConfig = await orgResponse.json();
+        }
+
+        if (projectResponse.ok) {
+          projectConfig = await projectResponse.json();
+        }
+
+        // Resolve effective weight config: project -> org -> default
+        if (projectConfig.weightMode) {
+          setWeightConfig({
+            weightMode: projectConfig.weightMode,
+            customWeightMultiplier: projectConfig.customWeightMultiplier || 7,
+            source: 'project'
+          });
+        } else if (orgConfig.weightMode) {
+          setWeightConfig({
+            weightMode: orgConfig.weightMode,
+            customWeightMultiplier: orgConfig.customWeightMultiplier || 7,
+            source: 'organization'
+          });
+        } else {
+          setWeightConfig({
+            weightMode: 'actual',
+            customWeightMultiplier: 7,
+            source: 'default'
+          });
+        }
+        setWeightConfigLoaded(true);
+      } catch (error) {
+        console.error('Error fetching weight config:', error);
+        // Keep default values on error
+        setWeightConfigLoaded(true); // Still mark as loaded to allow rendering
+      }
+    };
+
+    fetchWeightConfig();
+  }, [currentProject?._id]);
+
   // Function to fetch project details
   const fetchProject = async (id) => {
     setLoading(true);
@@ -1263,6 +1333,46 @@ useEffect(() => {
       console.error('Error refreshing spreadsheet rows:', error);
     }
   }, [currentProject, convertItemsToRows, spreadsheetColumns, inventoryItems]);
+
+  // Handler for weight config changes from Spreadsheet component
+  const handleWeightConfigChange = useCallback(async (newWeightMode, newMultiplier) => {
+    if (!currentProject?._id) return;
+
+    try {
+      // Update local state immediately for instant UI feedback
+      const newConfig = {
+        weightMode: newWeightMode,
+        customWeightMultiplier: newMultiplier || 7,
+        source: 'project'
+      };
+      setWeightConfig(newConfig);
+
+      // Save to database
+      await fetch(`/api/projects/${currentProject._id}/weight-config`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weightMode: newWeightMode,
+          customWeightMultiplier: newMultiplier
+        })
+      });
+
+      toast.success(`Weight mode updated to ${newWeightMode === 'actual' ? 'Actual (AI)' : `×${newMultiplier} Multiplier`}`);
+    } catch (error) {
+      console.error('Error updating weight config:', error);
+      toast.error('Failed to update weight configuration');
+    }
+  }, [currentProject?._id]);
+
+  // Recalculate spreadsheet rows when weight config changes
+  // Only recalculate after weight config is loaded to prevent flickering
+  useEffect(() => {
+    if (inventoryItems.length > 0 && currentProject && weightConfigLoaded) {
+      console.log('🔄 Weight config changed, recalculating rows...');
+      const updatedRows = convertItemsToRows(inventoryItems);
+      setSpreadsheetRows(updatedRows);
+    }
+  }, [weightConfig.weightMode, weightConfig.customWeightMultiplier, inventoryItems, convertItemsToRows, currentProject, weightConfigLoaded]);
 
   // Function to immediately update inventory item status for real-time stat updates
   // When newQuantity is provided, it updates both quantity and goingQuantity together
@@ -2874,6 +2984,8 @@ const ProcessingNotification = () => {
                       onAddStockItem={handleAddStockItems}
                       projectId={projectId}
                       inventoryItems={inventoryItems}
+                      weightConfig={weightConfig}
+                      onWeightConfigChange={handleWeightConfigChange}
                     />
                   )}
                 </div>

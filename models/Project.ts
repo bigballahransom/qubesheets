@@ -58,6 +58,9 @@ export interface IProject extends Document {
     };
     [key: string]: any;
   };
+  // Weight configuration (per-project override)
+  weightMode?: 'actual' | 'custom';
+  customWeightMultiplier?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -123,6 +126,18 @@ const ProjectSchema: Schema = new Schema(
       createdViaApi: { type: Boolean, default: false },
       apiKeyId: { type: String },
       type: mongoose.Schema.Types.Mixed
+    },
+    // Weight configuration (per-project override)
+    weightMode: {
+      type: String,
+      enum: ['actual', 'custom'],
+      required: false
+    },
+    customWeightMultiplier: {
+      type: Number,
+      min: 4,
+      max: 8,
+      required: false
     }
   },
   { timestamps: true }

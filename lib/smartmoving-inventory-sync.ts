@@ -2,8 +2,14 @@
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
+import OrganizationSettings from '@/models/OrganizationSettings';
 import { IInventoryItem } from '@/models/InventoryItem';
 import { logActivity } from '@/lib/activity-logger';
+
+interface WeightConfig {
+  weightMode: 'actual' | 'custom';
+  customWeightMultiplier: number;
+}
 
 interface SmartMovingInventoryItem {
   id?: string;
@@ -85,6 +91,32 @@ export async function syncInventoryToSmartMoving(
       hasApiKey: !!smartMovingIntegration.smartMovingApiKey,
       apiKeyLength: smartMovingIntegration.smartMovingApiKey?.length
     });
+
+    // 2.5. Get weight configuration (project-level overrides org-level)
+    const orgSettings = await OrganizationSettings.findOne({
+      organizationId: project.organizationId
+    });
+
+    const weightConfig: WeightConfig = (() => {
+      // Project-level override takes precedence
+      if (project.weightMode) {
+        return {
+          weightMode: project.weightMode as 'actual' | 'custom',
+          customWeightMultiplier: project.customWeightMultiplier || 7
+        };
+      }
+      // Fall back to org settings
+      if (orgSettings?.weightMode) {
+        return {
+          weightMode: orgSettings.weightMode as 'actual' | 'custom',
+          customWeightMultiplier: orgSettings.customWeightMultiplier || 7
+        };
+      }
+      // Default
+      return { weightMode: 'actual', customWeightMultiplier: 7 };
+    })();
+
+    console.log(`⚖️ [SMARTMOVING-SYNC] Weight config: ${weightConfig.weightMode === 'custom' ? `×${weightConfig.customWeightMultiplier}` : 'actual'}`);
 
     // 3. Get or create SmartMoving opportunity ID
     let smartMovingOpportunityId = project.metadata?.smartMovingOpportunityId;
@@ -171,7 +203,14 @@ export async function syncInventoryToSmartMoving(
       // SmartMoving expects per-item values, so send directly without division.
       // Round to 2 decimal places - SmartMoving API rejects values with more precision.
       const perItemVolume = Math.round((item.cuft || 0) * 100) / 100;
-      const perItemWeight = Math.round((item.weight || 0) * 100) / 100;
+
+      // Calculate weight based on weight config
+      // When custom mode: weight = cuft × multiplier
+      // When actual mode: weight = AI-assigned weight
+      const rawWeight = weightConfig.weightMode === 'custom'
+        ? (item.cuft || 0) * weightConfig.customWeightMultiplier
+        : (item.weight || 0);
+      const perItemWeight = Math.round(rawWeight * 100) / 100;
 
       const mappedItem = {
         name: item.name,
@@ -186,6 +225,7 @@ export async function syncInventoryToSmartMoving(
 
       console.log(`📦 [SMARTMOVING-SYNC] Mapped item:`, {
         original: { name: item.name, cuft: item.cuft, weight: item.weight, quantity: item.quantity },
+        weightMode: weightConfig.weightMode,
         perItem: { volume: perItemVolume, weight: perItemWeight },
         mapped: mappedItem
       });

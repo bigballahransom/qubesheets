@@ -88,6 +88,10 @@ export interface IOrganizationSettings extends Document {
   // Website Form Config
   websiteFormConfig?: IWebsiteFormConfig;
 
+  // Weight Configuration
+  weightMode?: 'actual' | 'custom';
+  customWeightMultiplier?: number;
+
   // Metadata
   createdAt: Date;
   updatedAt: Date;
@@ -155,6 +159,18 @@ const OrganizationSettingsSchema: Schema = new Schema(
     websiteFormConfig: {
       type: Schema.Types.Mixed,
       required: false,
+    },
+    // Weight Configuration
+    weightMode: {
+      type: String,
+      enum: ['actual', 'custom'],
+      default: 'actual'
+    },
+    customWeightMultiplier: {
+      type: Number,
+      default: 7,
+      min: 4,
+      max: 8
     }
   },
   { 
