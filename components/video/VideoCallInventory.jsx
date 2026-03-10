@@ -422,42 +422,59 @@ function useAdvancedCameraSwitching() {
   const [currentFacingMode, setCurrentFacingMode] = useState('user');
 
   const switchCamera = useCallback(async () => {
-    if (!localParticipant || !room || isSwitching) {
+    if (!localParticipant || isSwitching) {
       console.log('📹 Camera switching not available');
       return;
     }
 
     setIsSwitching(true);
+    const newFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    console.log('📹 Switching camera from', currentFacingMode, 'to', newFacingMode);
 
     try {
       // Get current camera track
       const currentPublication = localParticipant.getTrackPublication(Track.Source.Camera);
       const currentTrack = currentPublication?.track;
 
-      // Determine new facing mode (toggle between front and back)
-      const newFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-      console.log('📹 Switching camera from', currentFacingMode, 'to', newFacingMode);
-
-      // Stop current track first
+      // Stop current track completely
       if (currentTrack) {
+        console.log('📹 Stopping current track');
         currentTrack.stop();
         await localParticipant.unpublishTrack(currentTrack);
       }
 
-      // Small delay for Android to release camera
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // Wait for Android to release camera (500ms - critical for Android)
+      console.log('📹 Waiting 500ms for camera release');
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Create new track with opposite facing mode
-      const newTrack = await createLocalVideoTrack({
-        facingMode: newFacingMode,
-        resolution: { width: 640, height: 480 },
-      });
+      // Try progressive constraint levels (like pre-join does)
+      const constraints = [
+        { facingMode: newFacingMode, resolution: { width: 640, height: 480 } },
+        { facingMode: newFacingMode, resolution: { width: 480, height: 360 } },
+        { facingMode: newFacingMode, resolution: { width: 320, height: 240 } },
+        { facingMode: newFacingMode }, // Unconstrained - last resort
+      ];
 
-      // Publish new track
-      await localParticipant.publishTrack(newTrack);
+      let newTrack = null;
+      for (const constraint of constraints) {
+        try {
+          console.log('📹 Trying constraint:', constraint);
+          newTrack = await createLocalVideoTrack(constraint);
+          console.log('📹 Success with constraint:', constraint);
+          break; // Success - exit loop
+        } catch (e) {
+          console.log('📹 Constraint failed:', constraint, e.message);
+          // Continue to next constraint
+        }
+      }
 
-      setCurrentFacingMode(newFacingMode);
-      console.log('📹 Camera switched successfully to', newFacingMode);
+      if (newTrack) {
+        await localParticipant.publishTrack(newTrack);
+        setCurrentFacingMode(newFacingMode);
+        console.log('📹 Camera switched successfully to', newFacingMode);
+      } else {
+        throw new Error('All camera constraints failed');
+      }
 
     } catch (error) {
       console.error('📹 Camera switch failed:', error);
@@ -465,18 +482,20 @@ function useAdvancedCameraSwitching() {
 
       // Try to restore camera if switch failed
       try {
+        console.log('📹 Attempting to restore original camera');
         const restoreTrack = await createLocalVideoTrack({
           facingMode: currentFacingMode,
-          resolution: { width: 640, height: 480 },
         });
         await localParticipant.publishTrack(restoreTrack);
+        console.log('📹 Camera restored');
       } catch (restoreError) {
         console.error('📹 Failed to restore camera:', restoreError);
+        toast.error('Camera error. Please rejoin the call.');
       }
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, room, isSwitching, currentFacingMode]);
+  }, [localParticipant, isSwitching, currentFacingMode]);
 
   return {
     switchCamera,
@@ -713,6 +732,52 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   );
   const isCameraReady = !!localCameraTrack?.publication?.track;
 
+  // Get remote video track (agent's camera)
+  const remoteCameraTrack = tracks.find(
+    t => !t.participant?.isLocal && t.source === Track.Source.Camera && t.publication?.track
+  );
+
+  // Refs for manual video elements (Android only)
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+
+  // Detect mobile for camera flip button
+  const isMobile = isSmallScreen;
+
+  // Manual track attachment for Android - bypasses GridLayout issues
+  useEffect(() => {
+    if (!isAndroid) return;
+
+    const localTrack = localCameraTrack?.publication?.track;
+    const videoElement = localVideoRef.current;
+
+    if (localTrack && videoElement) {
+      console.log('🤖 Attaching local track to video element');
+      localTrack.attach(videoElement);
+      return () => {
+        console.log('🤖 Detaching local track');
+        localTrack.detach(videoElement);
+      };
+    }
+  }, [isAndroid, localCameraTrack?.publication?.track]);
+
+  // Manual remote track attachment for Android
+  useEffect(() => {
+    if (!isAndroid) return;
+
+    const remoteTrack = remoteCameraTrack?.publication?.track;
+    const videoElement = remoteVideoRef.current;
+
+    if (remoteTrack && videoElement) {
+      console.log('🤖 Attaching remote track to video element');
+      remoteTrack.attach(videoElement);
+      return () => {
+        console.log('🤖 Detaching remote track');
+        remoteTrack.detach(videoElement);
+      };
+    }
+  }, [isAndroid, remoteCameraTrack?.publication?.track]);
+
   // Sync control states with localParticipant
   useEffect(() => {
     if (!localParticipant) return;
@@ -820,44 +885,68 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
       </div>
 
       {/* Video area - Full screen for both participants */}
-      <div
-        className="absolute inset-0 z-10"
-        style={{
-          // Fix for Android where GridLayout doesn't fill properly
-          ...(isAndroid && {
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: '100vh',
-            height: '100dvh',
-          })
-        }}
-      >
-        <GridLayout
-          tracks={tracks}
-          style={{
-            height: '100%',
-            width: '100%',
-            // Force minimum height on Android
-            ...(isAndroid && { minHeight: '100vh', minHeight: '100dvh' })
-          }}
-        >
-          <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
-        </GridLayout>
+      <div className="absolute inset-0 z-10">
+        {isAndroid ? (
+          // Android: Bypass GridLayout entirely - use manual video elements like pre-join
+          <div className="absolute inset-0 flex flex-col bg-black">
+            {/* Remote video (agent) - full screen background */}
+            <div className="flex-1 relative">
+              {remoteCameraTrack?.publication?.track ? (
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900">
+                  <div className="text-center">
+                    <Loader2 className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
+                    <p className="text-white/80">Waiting for agent to connect...</p>
+                  </div>
+                </div>
+              )}
+            </div>
 
-        {/* Explicit self-view for mobile customers - fixes Android rendering issues */}
-        {localCameraTrack && isCameraReady && (
-          <div
-            className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30"
-            style={{ transform: 'scaleX(-1)' }}
-          >
-            <VideoTrack
-              trackRef={localCameraTrack}
-              className={`w-full h-full object-cover ${isAndroid ? 'android-video-fix' : ''}`}
-            />
+            {/* Local video (self) - small overlay in corner */}
+            {localCameraTrack?.publication?.track && (
+              <div
+                className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30 bg-black"
+              >
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                  style={{ transform: 'scaleX(-1)' }}
+                />
+              </div>
+            )}
           </div>
+        ) : (
+          // Non-Android: use GridLayout as before
+          <>
+            <GridLayout
+              tracks={tracks}
+              style={{ height: '100%', width: '100%' }}
+            >
+              <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
+            </GridLayout>
+
+            {/* Self-view overlay for non-Android */}
+            {localCameraTrack && isCameraReady && (
+              <div
+                className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30"
+                style={{ transform: 'scaleX(-1)' }}
+              >
+                <VideoTrack
+                  trackRef={localCameraTrack}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            )}
+          </>
         )}
 
         {/* Loading overlay when camera isn't ready */}
@@ -947,8 +1036,8 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
               <PhoneOff className="w-9 h-9 text-white" />
             </button>
 
-            {/* Camera Flip - only show if device supports it */}
-            {canSwitchCamera && (
+            {/* Camera Flip - always show on mobile */}
+            {isMobile && (
               <button
                 onClick={switchCamera}
                 disabled={isCameraSwitching}
