@@ -418,6 +418,9 @@ function useAdvancedCameraSwitching() {
     detectCameras();
   }, [isMobile]);
 
+  // Track current facing mode
+  const [currentFacingMode, setCurrentFacingMode] = useState('user');
+
   const switchCamera = useCallback(async () => {
     if (!localParticipant || !room || isSwitching) {
       console.log('📹 Camera switching not available');
@@ -427,55 +430,53 @@ function useAdvancedCameraSwitching() {
     setIsSwitching(true);
 
     try {
-      // Get all video devices
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-      console.log('📹 Available cameras:', videoDevices.map(d => ({ id: d.deviceId, label: d.label })));
-
-      if (videoDevices.length < 2) {
-        console.log('📹 Only one camera available');
-        toast.info('Only one camera detected');
-        setIsSwitching(false);
-        return;
-      }
-
-      // Get current device ID
+      // Get current camera track
       const currentPublication = localParticipant.getTrackPublication(Track.Source.Camera);
       const currentTrack = currentPublication?.track;
-      const currentDeviceId = currentTrack?.mediaStreamTrack?.getSettings()?.deviceId;
 
-      console.log('📹 Current device ID:', currentDeviceId);
+      // Determine new facing mode (toggle between front and back)
+      const newFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+      console.log('📹 Switching camera from', currentFacingMode, 'to', newFacingMode);
 
-      // Find a different camera
-      const otherDevice = videoDevices.find(d => d.deviceId !== currentDeviceId);
-
-      if (!otherDevice) {
-        console.log('📹 No other camera found');
-        toast.info('Could not find another camera');
-        setIsSwitching(false);
-        return;
+      // Stop current track first
+      if (currentTrack) {
+        currentTrack.stop();
+        await localParticipant.unpublishTrack(currentTrack);
       }
 
-      console.log('📹 Switching to:', otherDevice.label || otherDevice.deviceId);
+      // Small delay for Android to release camera
+      await new Promise(resolve => setTimeout(resolve, 300));
 
-      // Use Room.switchActiveDevice with timeout
-      const switchPromise = room.switchActiveDevice('videoinput', otherDevice.deviceId);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Camera switch timeout')), 10000)
-      );
+      // Create new track with opposite facing mode
+      const newTrack = await createLocalVideoTrack({
+        facingMode: newFacingMode,
+        resolution: { width: 640, height: 480 },
+      });
 
-      await Promise.race([switchPromise, timeoutPromise]);
+      // Publish new track
+      await localParticipant.publishTrack(newTrack);
 
-      console.log('📹 Camera switched successfully');
+      setCurrentFacingMode(newFacingMode);
+      console.log('📹 Camera switched successfully to', newFacingMode);
 
     } catch (error) {
       console.error('📹 Camera switch failed:', error);
       toast.error('Could not switch camera. Try again.');
+
+      // Try to restore camera if switch failed
+      try {
+        const restoreTrack = await createLocalVideoTrack({
+          facingMode: currentFacingMode,
+          resolution: { width: 640, height: 480 },
+        });
+        await localParticipant.publishTrack(restoreTrack);
+      } catch (restoreError) {
+        console.error('📹 Failed to restore camera:', restoreError);
+      }
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, room, isSwitching]);
+  }, [localParticipant, room, isSwitching, currentFacingMode]);
 
   return {
     switchCamera,
