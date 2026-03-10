@@ -235,7 +235,7 @@ export default function VideoCallPage() {
       onCallEnd={handleCallEnd}
       isAgentUser={isAgent}
       backgroundSettings={backgroundSettings as any}
-      customerSettings={customerSettings}
+      customerSettings={customerSettings as any}
     />
   );
 }

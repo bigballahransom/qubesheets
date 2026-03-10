@@ -110,7 +110,7 @@ export async function logUploadLinkSent(
       customerName,
       customerPhone,
       linkToken,
-      expiresAt
+      expiresAt: expiresAt || undefined
     }
   });
 }
