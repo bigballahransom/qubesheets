@@ -71,6 +71,10 @@ export interface UseAndroidCompatibleVideoTrackReturn {
   stop: () => void;
   /** Switch camera facing mode */
   switchCamera: () => Promise<void>;
+  /** Whether camera switching is supported on this device */
+  canSwitchCamera: boolean;
+  /** Current facing mode */
+  facingMode: 'user' | 'environment';
 }
 
 // ============================================================================
@@ -98,11 +102,47 @@ export function useAndroidCompatibleVideoTrack(
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
   const [suggestAudioOnly, setSuggestAudioOnly] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>(initialFacingMode);
+  const [canSwitchCamera, setCanSwitchCamera] = useState(false);
+  const [videoDeviceCount, setVideoDeviceCount] = useState(0);
 
   // Refs
   const attemptedConstraints = useRef<VideoConstraintLevel[]>([]);
   const mounted = useRef(true);
   const initializingRef = useRef(false);
+  const autoRestartRef = useRef(true); // Track if we should auto-restart on track end
+
+  /**
+   * Check if camera switching is supported and count video devices
+   */
+  const detectCameraCapabilities = useCallback(async () => {
+    try {
+      // Check if facingMode constraint is supported
+      const supportedConstraints = navigator.mediaDevices?.getSupportedConstraints?.();
+      const supportsFacingMode = supportedConstraints?.facingMode ?? false;
+
+      // Try to enumerate devices to count cameras
+      let deviceCount = 0;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        deviceCount = videoDevices.length;
+        setVideoDeviceCount(deviceCount);
+      } catch (e) {
+        console.warn('[VideoTrack] Could not enumerate devices:', e);
+      }
+
+      // Can switch if: supports facingMode OR has multiple cameras
+      const canSwitch = supportsFacingMode || deviceCount > 1;
+      setCanSwitchCamera(canSwitch);
+
+      console.log(`[VideoTrack] Camera capabilities: facingMode=${supportsFacingMode}, devices=${deviceCount}, canSwitch=${canSwitch}`);
+      return canSwitch;
+    } catch (e) {
+      console.warn('[VideoTrack] Camera capability detection failed:', e);
+      setCanSwitchCamera(false);
+      return false;
+    }
+  }, []);
 
   /**
    * Initialize video track with progressive fallback
@@ -178,8 +218,28 @@ export function useAndroidCompatibleVideoTrack(
             return;
           }
 
+          // Add track health monitoring - auto-restart if track ends unexpectedly
+          const mediaStreamTrack = track.mediaStreamTrack;
+          if (mediaStreamTrack) {
+            mediaStreamTrack.onended = () => {
+              console.warn('[VideoTrack] Track ended unexpectedly');
+              if (mounted.current && autoRestartRef.current) {
+                console.log('[VideoTrack] Attempting auto-restart...');
+                // Small delay to avoid rapid restart loops
+                setTimeout(() => {
+                  if (mounted.current && autoRestartRef.current) {
+                    initializeWithFallback(currentFacingMode);
+                  }
+                }, 500);
+              }
+            };
+          }
+
           setVideoTrack(track);
           setActiveConstraintLevel(level.name);
+
+          // Detect camera switching capabilities after successful init
+          detectCameraCapabilities();
 
           // Notify about fallback
           if (previousLevel && onConstraintFallback) {
@@ -329,6 +389,22 @@ export function useAndroidCompatibleVideoTrack(
     };
   }, [videoTrack, audioTrack]);
 
+  // Disable auto-restart when stopping manually
+  const stopWithoutRestart = useCallback(() => {
+    autoRestartRef.current = false;
+    if (videoTrack) {
+      videoTrack.stop();
+      setVideoTrack(null);
+    }
+    if (audioTrack) {
+      audioTrack.stop();
+      setAudioTrack(null);
+    }
+    setActiveConstraintLevel('');
+    setError(null);
+    setSuggestAudioOnly(false);
+  }, [videoTrack, audioTrack]);
+
   return {
     videoTrack,
     audioTrack,
@@ -339,8 +415,10 @@ export function useAndroidCompatibleVideoTrack(
     deviceInfo,
     suggestAudioOnly,
     retry,
-    stop,
+    stop: stopWithoutRestart,
     switchCamera,
+    canSwitchCamera,
+    facingMode,
   };
 }
 

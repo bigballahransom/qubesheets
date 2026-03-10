@@ -389,6 +389,31 @@ function useAdvancedCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
   const room = useRoomContext();
   const [isSwitching, setIsSwitching] = useState(false);
+  const [canSwitchCamera, setCanSwitchCamera] = useState(true); // Optimistic default
+
+  // Detect camera switching capability on mount
+  useEffect(() => {
+    const detectCameras = async () => {
+      try {
+        // Check if facingMode constraint is supported
+        const supportedConstraints = navigator.mediaDevices?.getSupportedConstraints?.();
+        const supportsFacingMode = supportedConstraints?.facingMode ?? false;
+
+        // Try to count cameras
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        // Can switch if: supports facingMode OR has multiple cameras
+        const canSwitch = supportsFacingMode || videoDevices.length > 1;
+        setCanSwitchCamera(canSwitch);
+        console.log(`📹 Camera switch support: facingMode=${supportsFacingMode}, devices=${videoDevices.length}, canSwitch=${canSwitch}`);
+      } catch (e) {
+        console.warn('📹 Could not detect camera capabilities:', e);
+        setCanSwitchCamera(false);
+      }
+    };
+    detectCameras();
+  }, []);
 
   const switchCamera = useCallback(async () => {
     if (!localParticipant || !room || isSwitching) {
@@ -407,6 +432,7 @@ function useAdvancedCameraSwitching() {
 
       if (videoDevices.length < 2) {
         console.log('📹 Only one camera available');
+        toast.info('Only one camera detected');
         setIsSwitching(false);
         return;
       }
@@ -423,19 +449,26 @@ function useAdvancedCameraSwitching() {
 
       if (!otherDevice) {
         console.log('📹 No other camera found');
+        toast.info('Could not find another camera');
         setIsSwitching(false);
         return;
       }
 
       console.log('📹 Switching to:', otherDevice.label || otherDevice.deviceId);
 
-      // Use Room.switchActiveDevice - this is the official LiveKit way
-      await room.switchActiveDevice('videoinput', otherDevice.deviceId);
+      // Use Room.switchActiveDevice with timeout
+      const switchPromise = room.switchActiveDevice('videoinput', otherDevice.deviceId);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Camera switch timeout')), 10000)
+      );
+
+      await Promise.race([switchPromise, timeoutPromise]);
 
       console.log('📹 Camera switched successfully');
 
     } catch (error) {
       console.error('📹 Camera switch failed:', error);
+      toast.error('Could not switch camera. Try again.');
     } finally {
       setIsSwitching(false);
     }
@@ -444,6 +477,7 @@ function useAdvancedCameraSwitching() {
   return {
     switchCamera,
     isSwitching,
+    canSwitchCamera,
   };
 }
 
@@ -581,7 +615,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   // Custom control states
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isCameraEnabled, setIsCameraEnabled] = useState(true);
-  const { switchCamera, isSwitching: isCameraSwitching } = useAdvancedCameraSwitching();
+  const { switchCamera, isSwitching: isCameraSwitching, canSwitchCamera } = useAdvancedCameraSwitching();
 
   // Show loading screen while connecting
   const isConnecting = connectionState === ConnectionState.Connecting || connectionState === ConnectionState.Reconnecting;
@@ -877,18 +911,20 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
               <PhoneOff className="w-9 h-9 text-white" />
             </button>
 
-            {/* Camera Flip */}
-            <button
-              onClick={switchCamera}
-              disabled={isCameraSwitching}
-              className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-lg border border-white/20 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-50"
-            >
-              {isCameraSwitching ? (
-                <Loader2 className="w-6 h-6 text-white animate-spin" />
-              ) : (
-                <SwitchCamera className="w-6 h-6 text-white" />
-              )}
-            </button>
+            {/* Camera Flip - only show if device supports it */}
+            {canSwitchCamera && (
+              <button
+                onClick={switchCamera}
+                disabled={isCameraSwitching}
+                className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-lg border border-white/20 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-50"
+              >
+                {isCameraSwitching ? (
+                  <Loader2 className="w-6 h-6 text-white animate-spin" />
+                ) : (
+                  <SwitchCamera className="w-6 h-6 text-white" />
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -948,7 +984,7 @@ const AgentView = React.memo(({
   }, []);
 
   const remoteParticipants = useRemoteParticipants();
-  const { switchCamera, isSwitching } = useAdvancedCameraSwitching();
+  const { switchCamera, isSwitching, canSwitchCamera: canSwitchCameraCustomer } = useAdvancedCameraSwitching();
 
   // Sync control states with localParticipant
   useEffect(() => {
@@ -1194,18 +1230,20 @@ const AgentView = React.memo(({
                 <PhoneOff className="w-9 h-9 text-white" />
               </button>
 
-              {/* Camera Flip */}
-              <button
-                onClick={switchCamera}
-                disabled={isSwitching}
-                className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-lg border border-white/20 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-50"
-              >
-                {isSwitching ? (
-                  <Loader2 className="w-6 h-6 text-white animate-spin" />
-                ) : (
-                  <SwitchCamera className="w-6 h-6 text-white" />
-                )}
-              </button>
+              {/* Camera Flip - only show if device supports it */}
+              {canSwitchCameraCustomer && (
+                <button
+                  onClick={switchCamera}
+                  disabled={isSwitching}
+                  className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-lg border border-white/20 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-50"
+                >
+                  {isSwitching ? (
+                    <Loader2 className="w-6 h-6 text-white animate-spin" />
+                  ) : (
+                    <SwitchCamera className="w-6 h-6 text-white" />
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1757,6 +1795,10 @@ export default function VideoCallInventory({
               { width: 640, height: 360, encoding: { maxBitrate: 500_000, maxFramerate: 20 } },
               { width: 320, height: 180, encoding: { maxBitrate: 150_000, maxFramerate: 15 } },
             ],
+        // Audio settings optimized for Android
+        audioPreset: deviceInfo.isAndroid ? 'speech' : 'music',
+        dtx: true, // Discontinuous transmission - saves bandwidth when not speaking
+        red: !deviceInfo.isLegacyAndroid, // Redundant encoding for packet loss resilience
       },
       adaptiveStream: true,
       dynacast: true,
@@ -1771,6 +1813,14 @@ export default function VideoCallInventory({
           ? { width: recommended.width || 640, height: recommended.height || 480 }
           : { width: 1280, height: 720 },
         frameRate: isSmallScreen ? (recommended.frameRate || 24) : 30,
+      },
+      // Audio capture defaults optimized for Android
+      audioCaptureDefaults: {
+        echoCancellation: true,
+        noiseSuppression: !deviceInfo.isLegacyAndroid, // Disable on legacy Android
+        autoGainControl: true,
+        // Force mono for Android to avoid stereo issues
+        channelCount: deviceInfo.isAndroid ? 1 : undefined,
       },
       // Improve permissions handling
       e2eeOptions: undefined, // Disable E2EE for better compatibility

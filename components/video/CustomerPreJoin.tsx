@@ -12,6 +12,9 @@ import {
   SwitchCamera,
   RefreshCw,
   PhoneCall,
+  ShieldAlert,
+  Camera,
+  WifiOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { LocalVideoTrack, LocalAudioTrack } from 'livekit-client';
@@ -50,6 +53,7 @@ export default function CustomerPreJoin({ onJoin, participantName, isLoading = f
     suggestAudioOnly,
     retry: retryCamera,
     switchCamera,
+    canSwitchCamera,
   } = useAndroidCompatibleVideoTrack({
     facingMode: 'user',
     enableAudio: false,  // Don't create audio track in preview - it breaks video playback
@@ -112,13 +116,19 @@ export default function CustomerPreJoin({ onJoin, participantName, isLoading = f
   }, [audioEnabled]);
 
   // Handle join
-  const handleJoin = useCallback(() => {
-    // Clean up tracks before joining
+  const handleJoin = useCallback(async () => {
+    // Clean up tracks before joining - important for Android camera release
     if (videoTrack) {
       videoTrack.stop();
     }
     if (audioTrack) {
       audioTrack.stop();
+    }
+
+    // Give Android cameras time to release before LiveKit creates new tracks
+    // This prevents the "camera in use" issue on some Android devices
+    if (deviceInfo?.isAndroid) {
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     onJoin({
@@ -127,7 +137,7 @@ export default function CustomerPreJoin({ onJoin, participantName, isLoading = f
       facingMode: 'user',
       audioOnly: joinAudioOnly,
     });
-  }, [onJoin, videoEnabled, audioEnabled, videoTrack, audioTrack, joinAudioOnly]);
+  }, [onJoin, videoEnabled, audioEnabled, videoTrack, audioTrack, joinAudioOnly, deviceInfo]);
 
   // Handle audio-only join
   const handleJoinAudioOnly = useCallback(() => {
@@ -185,14 +195,49 @@ export default function CustomerPreJoin({ onJoin, participantName, isLoading = f
             )}
 
             {!isInitializing && cameraError && (
-              <div className="absolute inset-0 flex items-center justify-center text-white/60 bg-black/60">
-                <div className="text-center p-4">
-                  <VideoOff className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p className="text-sm mb-4">{cameraError.message}</p>
-                  <div className="flex flex-col gap-2">
+              <div className="absolute inset-0 flex items-center justify-center text-white bg-gradient-to-b from-black/70 to-black/80">
+                <div className="text-center p-6 max-w-xs">
+                  {/* Error-type specific icon */}
+                  <div className={`w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center ${
+                    cameraError.type === 'PERMISSION_DENIED' || cameraError.type === 'PERMISSION_DISMISSED'
+                      ? 'bg-yellow-500/20'
+                      : cameraError.type === 'CAMERA_IN_USE'
+                      ? 'bg-orange-500/20'
+                      : cameraError.type === 'NO_CAMERA'
+                      ? 'bg-red-500/20'
+                      : 'bg-red-500/20'
+                  }`}>
+                    {cameraError.type === 'PERMISSION_DENIED' || cameraError.type === 'PERMISSION_DISMISSED' ? (
+                      <ShieldAlert className="w-8 h-8 text-yellow-400" />
+                    ) : cameraError.type === 'CAMERA_IN_USE' ? (
+                      <Camera className="w-8 h-8 text-orange-400" />
+                    ) : cameraError.type === 'NO_CAMERA' ? (
+                      <VideoOff className="w-8 h-8 text-red-400" />
+                    ) : cameraError.type === 'HARDWARE_ERROR' ? (
+                      <WifiOff className="w-8 h-8 text-red-400" />
+                    ) : (
+                      <VideoOff className="w-8 h-8 text-red-400" />
+                    )}
+                  </div>
+
+                  {/* Error title */}
+                  <h3 className="text-lg font-semibold mb-2">
+                    {cameraError.type === 'PERMISSION_DENIED' ? 'Camera Access Needed' :
+                     cameraError.type === 'PERMISSION_DISMISSED' ? 'Please Allow Camera' :
+                     cameraError.type === 'CAMERA_IN_USE' ? 'Camera Busy' :
+                     cameraError.type === 'NO_CAMERA' ? 'No Camera Found' :
+                     cameraError.type === 'HARDWARE_ERROR' ? 'Camera Problem' :
+                     'Camera Issue'}
+                  </h3>
+
+                  {/* Error message */}
+                  <p className="text-sm text-white/80 mb-5 leading-relaxed">{cameraError.message}</p>
+
+                  {/* Action buttons */}
+                  <div className="flex flex-col gap-3">
                     <button
                       onClick={retryCamera}
-                      className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 mx-auto"
+                      className="w-full px-4 py-3 bg-white/20 hover:bg-white/30 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 active:scale-95"
                     >
                       <RefreshCw className="w-4 h-4" />
                       Try Again
@@ -200,13 +245,20 @@ export default function CustomerPreJoin({ onJoin, participantName, isLoading = f
                     {suggestAudioOnly && !joinAudioOnly && (
                       <button
                         onClick={handleJoinAudioOnly}
-                        className="px-4 py-2 bg-blue-500/80 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 mx-auto text-white"
+                        className="w-full px-4 py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-500/30 active:scale-95"
                       >
                         <PhoneCall className="w-4 h-4" />
-                        Continue with Audio Only
+                        Join with Audio Only
                       </button>
                     )}
                   </div>
+
+                  {/* Helpful hint for permission errors */}
+                  {(cameraError.type === 'PERMISSION_DENIED' || cameraError.type === 'PERMISSION_DISMISSED') && (
+                    <p className="mt-4 text-xs text-white/50">
+                      Check your browser settings or tap the camera icon in the address bar
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -220,8 +272,8 @@ export default function CustomerPreJoin({ onJoin, participantName, isLoading = f
               </div>
             )}
 
-            {/* Camera flip button (only on mobile) */}
-            {isMobile && videoEnabled && !cameraError && (
+            {/* Camera flip button (only on mobile with multiple cameras) */}
+            {isMobile && videoEnabled && !cameraError && canSwitchCamera && (
               <button
                 onClick={handleSwitchCamera}
                 disabled={isSwitchingCamera}

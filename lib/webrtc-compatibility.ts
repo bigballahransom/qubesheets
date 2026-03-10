@@ -49,6 +49,16 @@ export type CameraErrorType =
   | 'HARDWARE_ERROR'
   | 'UNKNOWN';
 
+export interface AudioConstraintLevel {
+  name: string;
+  sampleRate?: number;
+  channelCount?: number;
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+  priority: number;
+}
+
 // ============================================================================
 // Constraint Levels (from high to low quality)
 // ============================================================================
@@ -61,6 +71,52 @@ export const CONSTRAINT_LEVELS: VideoConstraintLevel[] = [
   { name: 'VeryLow', width: 320, height: 240, frameRate: 15, priority: 5 },
   { name: 'Minimal', width: 240, height: 180, frameRate: 12, priority: 6 },
   { name: 'Unconstrained', width: 0, height: 0, frameRate: 0, priority: 7 },
+];
+
+// Audio constraint levels (from full processing to minimal)
+export const AUDIO_CONSTRAINT_LEVELS: AudioConstraintLevel[] = [
+  {
+    name: 'Full',
+    sampleRate: 48000,
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    priority: 1,
+  },
+  {
+    name: 'Standard',
+    sampleRate: 44100,
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    priority: 2,
+  },
+  {
+    name: 'Reduced',
+    sampleRate: 22050,
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: false,
+    autoGainControl: true,
+    priority: 3,
+  },
+  {
+    name: 'Minimal',
+    channelCount: 1,
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    priority: 4,
+  },
+  {
+    name: 'Unconstrained',
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    priority: 5,
+  },
 ];
 
 // ============================================================================
@@ -415,6 +471,50 @@ export function getRecommendedCodec(deviceInfo: DeviceInfo): 'h264' | 'vp8' | 'v
   return 'vp8';
 }
 
+/**
+ * Gets appropriate audio constraint levels for the device
+ * Android devices may have issues with certain audio processing features
+ */
+export function getAudioConstraintLevels(deviceInfo: DeviceInfo): AudioConstraintLevel[] {
+  // Legacy Android: Skip advanced processing that may fail
+  if (deviceInfo.isLegacyAndroid) {
+    return AUDIO_CONSTRAINT_LEVELS.filter((l) => l.priority >= 3);
+  }
+
+  // Samsung Browser often has audio processing issues
+  if (deviceInfo.browserName === 'Samsung Browser') {
+    return AUDIO_CONSTRAINT_LEVELS.filter((l) => l.priority >= 2);
+  }
+
+  // All levels available for modern devices
+  return AUDIO_CONSTRAINT_LEVELS;
+}
+
+/**
+ * Gets the recommended audio constraints for the device
+ */
+export function getRecommendedAudioConstraints(deviceInfo: DeviceInfo): MediaTrackConstraints {
+  const levels = getAudioConstraintLevels(deviceInfo);
+  const recommended = levels[0];
+
+  const constraints: MediaTrackConstraints = {
+    echoCancellation: recommended.echoCancellation,
+    noiseSuppression: recommended.noiseSuppression,
+    autoGainControl: recommended.autoGainControl,
+  };
+
+  // Only add sample rate if specified and not on problematic devices
+  if (recommended.sampleRate && !deviceInfo.isLegacyAndroid) {
+    constraints.sampleRate = recommended.sampleRate;
+  }
+
+  if (recommended.channelCount) {
+    constraints.channelCount = recommended.channelCount;
+  }
+
+  return constraints;
+}
+
 // ============================================================================
 // Room Options Helper
 // ============================================================================
@@ -426,8 +526,10 @@ export function getOptimizedRoomOptions(deviceInfo: DeviceInfo) {
   const codec = getRecommendedCodec(deviceInfo);
   const constraints = getVideoConstraintLevels(deviceInfo);
   const recommended = constraints[0];
+  const audioConstraints = getRecommendedAudioConstraints(deviceInfo);
 
   const isLegacy = deviceInfo.isLegacyAndroid;
+  const isAndroid = deviceInfo.isAndroid;
 
   return {
     publishDefaults: {
@@ -458,6 +560,10 @@ export function getOptimizedRoomOptions(deviceInfo: DeviceInfo) {
               encoding: { maxBitrate: 150_000, maxFramerate: 15 },
             },
           ],
+      // Audio settings - use OPUS codec which has best Android support
+      audioPreset: isAndroid ? 'speech' : 'music',
+      dtx: true, // Discontinuous transmission - saves bandwidth when not speaking
+      red: !isLegacy, // Redundant audio encoding for packet loss resilience
     },
     videoCaptureDefaults: {
       resolution: {
@@ -466,5 +572,68 @@ export function getOptimizedRoomOptions(deviceInfo: DeviceInfo) {
       },
       frameRate: recommended.frameRate || 24,
     },
+    audioCaptureDefaults: {
+      ...audioConstraints,
+      // For Android, explicitly request mono to avoid stereo issues
+      channelCount: isAndroid ? 1 : undefined,
+    },
   };
+}
+
+/**
+ * Creates audio track with progressive fallback (similar to video)
+ * Returns the track and the constraint level that succeeded
+ */
+export async function createAudioTrackWithFallback(
+  deviceInfo: DeviceInfo,
+  onFallback?: (from: string, to: string) => void
+): Promise<{ stream: MediaStream; constraintLevel: string } | null> {
+  const levels = getAudioConstraintLevels(deviceInfo);
+  let previousLevel: string | null = null;
+
+  for (const level of levels) {
+    try {
+      console.log(`[Audio] Attempting ${level.name} constraints`);
+
+      const constraints: MediaTrackConstraints = {
+        echoCancellation: level.echoCancellation,
+        noiseSuppression: level.noiseSuppression,
+        autoGainControl: level.autoGainControl,
+      };
+
+      if (level.sampleRate && !deviceInfo.isLegacyAndroid) {
+        constraints.sampleRate = level.sampleRate;
+      }
+
+      if (level.channelCount) {
+        constraints.channelCount = level.channelCount;
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: constraints,
+        video: false,
+      });
+
+      if (previousLevel && onFallback) {
+        onFallback(previousLevel, level.name);
+      }
+
+      console.log(`[Audio] Success at ${level.name}`);
+      return { stream, constraintLevel: level.name };
+    } catch (error) {
+      console.warn(`[Audio] Failed at ${level.name}:`, error);
+      previousLevel = level.name;
+
+      // Stop on permission errors - no point trying other constraints
+      if (error instanceof Error) {
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+          return null;
+        }
+      }
+    }
+  }
+
+  // All levels failed
+  console.error('[Audio] All constraint levels failed');
+  return null;
 }
