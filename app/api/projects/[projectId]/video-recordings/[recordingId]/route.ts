@@ -137,7 +137,7 @@ export async function DELETE(
       console.log(`🗑️ Deleting LiveKit recording: ${recording.roomId}`);
 
       // Delete associated inventory items first
-      const orConditions = [
+      const orConditions: any[] = [
         { sourceVideoRecordingId: recordingId }
       ];
       if (recording.sessionId) orConditions.push({ sourceRecordingSessionId: recording.sessionId });
