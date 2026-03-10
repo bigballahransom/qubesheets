@@ -43,19 +43,14 @@ export async function POST(
 
     // Generate unique upload token
     const uploadToken = crypto.randomBytes(32).toString('hex');
-    
-    // Set expiration to 7 days from now
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
 
-    // Create customer upload record
+    // Create customer upload record (no expiration - links never expire)
     const customerUploadData: any = {
       projectId,
       userId,
       customerName,
       customerPhone,
       uploadToken,
-      expiresAt,
       isActive: true,
     };
     

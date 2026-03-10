@@ -15,6 +15,7 @@ export interface IProject extends Document {
   name: string;
   customerName: string;
   customerEmail?: string;
+  customerCompanyName?: string;
   phone?: string;
   customerId?: string;
   userId: string;
@@ -70,6 +71,7 @@ const ProjectSchema: Schema = new Schema(
     name: { type: String, required: true },
     customerName: { type: String, required: true },
     customerEmail: { type: String, required: false },
+    customerCompanyName: { type: String, required: false },
     phone: { type: String, required: false },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: false, index: true },
     userId: { type: String, required: true, index: true },

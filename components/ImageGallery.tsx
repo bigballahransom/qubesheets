@@ -43,7 +43,18 @@ import {
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Input } from '@/components/ui/input';
+
+// Helper to group items by location/room
+const groupByRoom = (items: any[]) => {
+  return items.reduce((acc: Record<string, any[]>, item) => {
+    const room = item.location || 'Unassigned';
+    if (!acc[room]) acc[room] = [];
+    acc[room].push(item);
+    return acc;
+  }, {});
+};
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 
@@ -91,6 +102,7 @@ interface VideoData {
 
 interface ImageGalleryProps {
   projectId: string;
+  projectName?: string;
   onUploadClick: () => void;
   refreshSpreadsheet?: () => Promise<void>;
   inventoryItems?: any[];
@@ -103,7 +115,7 @@ const isVideo = (item: MediaItem): item is VideoData => {
   return item.mimeType.startsWith('video/') || 'duration' in item;
 };
 
-export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate }: ImageGalleryProps) {
+export default function ImageGallery({ projectId, projectName, onUploadClick, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate }: ImageGalleryProps) {
   const [images, setImages] = useState<ImageData[]>([]);
   const [videos, setVideos] = useState<VideoData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,6 +136,7 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
     hasPrevPage: false
   });
   const [deletingAll, setDeletingAll] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
 
   // Fetch only images (videos are handled by VideoGallery in separate tab)
   const fetchMedia = async (page = 1) => {
@@ -277,6 +290,69 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
     }
   };
 
+  const handleDownloadAll = async () => {
+    if (pagination.totalItems === 0) return;
+
+    setDownloadingAll(true);
+
+    try {
+      // Dynamic import to avoid SSR issues with buffer polyfill
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+
+      // Fetch all pages
+      let allImages: ImageData[] = [];
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await fetch(`/api/projects/${projectId}/images/all?page=${page}&limit=50`);
+        const data = await response.json();
+        allImages = [...allImages, ...data.images];
+        hasMore = data.pagination.hasNextPage;
+        page++;
+      }
+
+      toast(`Preparing ${allImages.length} images for download...`);
+
+      // Fetch each image and add to zip
+      for (let index = 0; index < allImages.length; index++) {
+        const image = allImages[index];
+        try {
+          const response = await fetch(`/api/projects/${projectId}/images/${image._id}`);
+          if (response.ok) {
+            const blob = await response.blob();
+            // Use index to ensure unique filenames
+            const ext = image.originalName.split('.').pop() || 'jpg';
+            const baseName = image.originalName.replace(/\.[^/.]+$/, '');
+            const uniqueName = `${index + 1}-${baseName}.${ext}`;
+            zip.file(uniqueName, blob);
+          }
+        } catch (err) {
+          console.error(`Failed to add ${image.originalName}:`, err);
+        }
+      }
+
+      // Generate and download zip
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = window.URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName || 'project'}-images-${new Date().toISOString().split('T')[0]}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success(`Downloaded ${allImages.length} images as zip`);
+    } catch (error) {
+      console.error('Download all failed:', error);
+      toast.error('Failed to download images');
+    } finally {
+      setDownloadingAll(false);
+    }
+  };
+
   // Update media description
   const handleUpdateDescription = async (item: MediaItem) => {
     setUpdating(true);
@@ -417,7 +493,7 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-        <span className="ml-2 text-gray-600">Loading media...</span>
+        <span className="ml-2 text-gray-600">Loading images...</span>
       </div>
     );
   }
@@ -434,25 +510,46 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
         </div>
         <div className="flex items-center gap-2">
           {pagination.totalItems > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDeleteAll}
-              disabled={deletingAll}
-              className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-            >
-              {deletingAll ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Deleting All...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="w-4 h-4" />
-                  Delete All Images
-                </>
-              )}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadAll}
+                disabled={downloadingAll || pagination.totalItems === 0}
+                className="flex items-center gap-2"
+              >
+                {downloadingAll ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Downloading...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    Download All
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+              >
+                {deletingAll ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deleting All...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Delete All Images
+                  </>
+                )}
+              </Button>
+            </>
           )}
           {/* <Button onClick={onUploadClick} className="flex items-center gap-2">
             <Camera size={16} />
@@ -816,104 +913,126 @@ export default function ImageGallery({ projectId, onUploadClick, refreshSpreadsh
                 )}
               </div>
               
-              {/* Items, Boxes, and Recommended Boxes from this image */}
+              {/* Items, Boxes, and Recommended Boxes from this image - Grouped by Room */}
               {(() => {
                 const allItems = inventoryItems.filter(item => {
                   const imageId = item.sourceImageId?._id || item.sourceImageId;
                   return imageId === selectedItem._id;
                 });
-                
-                // Separate items by type
-                const regularItems = allItems.filter(item => 
-                  item.itemType === 'regular_item' || 
-                  item.itemType === 'furniture' || 
-                  (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                );
-                const existingBoxes = allItems.filter(item => 
-                  item.itemType === 'existing_box' || 
-                  item.itemType === 'packed_box'
-                );
-                const recommendedBoxes = allItems.filter(item => item.itemType === 'boxes_needed');
-                
+
                 if (allItems.length === 0) return null;
-                
+
+                // Group all items by room first
+                const roomGroups = groupByRoom(allItems);
+
                 return (
                   <div className="mb-4">
-                    {/* Regular Items Section */}
-                    {regularItems.length > 0 && (
-                      <div className="mb-4">
-                        <h4 className="font-medium text-gray-900 mb-2">Items</h4>
-                        <div className="flex flex-wrap gap-1">
-                          {regularItems.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Existing Boxes Section */}
-                    {existingBoxes.length > 0 && (
-                      <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h4 className="font-medium text-gray-900">Boxes</h4>
-                          <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                            B
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {existingBoxes.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Recommended Boxes Section */}
-                    {recommendedBoxes.length > 0 && (
-                      <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h4 className="font-medium text-gray-900">Recommended Boxes</h4>
-                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                            R
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {recommendedBoxes.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
+                    <Accordion type="multiple" className="w-full">
+                      {Object.entries(roomGroups).map(([room, roomItems]) => {
+                        // Separate items within this room by type
+                        const roomRegularItems = (roomItems as any[]).filter(item =>
+                          item.itemType === 'furniture' ||
+                          item.itemType === 'regular_item' ||
+                          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                        );
+                        const roomExistingBoxes = (roomItems as any[]).filter(item =>
+                          item.itemType === 'existing_box' ||
+                          item.itemType === 'packed_box'
+                        );
+                        const roomRecommendedBoxes = (roomItems as any[]).filter(item =>
+                          item.itemType === 'boxes_needed'
+                        );
+
+                        const totalCount = (roomItems as any[]).reduce((sum, i) => sum + (i.quantity || 1), 0);
+
+                        return (
+                          <AccordionItem key={room} value={room}>
+                            <AccordionTrigger className="py-2 text-sm font-medium">
+                              {room} ({totalCount})
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-3">
+                                {/* Regular Items in this room */}
+                                {roomRegularItems.length > 0 && (
+                                  <div>
+                                    <h5 className="text-xs font-medium text-gray-600 mb-1">Items</h5>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomRegularItems.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Existing Boxes in this room */}
+                                {roomExistingBoxes.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <h5 className="text-xs font-medium text-gray-600">Boxes</h5>
+                                      <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                        B
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomExistingBoxes.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Recommended Boxes in this room */}
+                                {roomRecommendedBoxes.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <h5 className="text-xs font-medium text-gray-600">Recommended Boxes</h5>
+                                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                        R
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomRecommendedBoxes.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
+                    </Accordion>
                   </div>
                 );
               })()}

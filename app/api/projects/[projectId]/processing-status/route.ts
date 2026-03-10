@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
+import VideoRecording from '@/models/VideoRecording';
 
 // GET: Get all currently processing items from database
 export async function GET(
@@ -20,16 +21,33 @@ export async function GET(
     
     // Query database for all items that are currently processing
     // Check analysisResult.status as this is what railway services actually update
-    const [processingImages, processingVideos] = await Promise.all([
-      Image.find({ 
-        projectId, 
-        'analysisResult.status': { $ne: 'completed' } 
+    const [processingImages, processingVideos, processingCalls] = await Promise.all([
+      Image.find({
+        projectId,
+        'analysisResult.status': { $ne: 'completed' }
       }).select('_id name originalName processingStatus analysisResult createdAt').lean(),
-      
-      Video.find({ 
-        projectId, 
-        'analysisResult.status': { $ne: 'completed' } 
-      }).select('_id name originalName processingStatus analysisResult createdAt source').lean()
+
+      Video.find({
+        projectId,
+        'analysisResult.status': { $ne: 'completed' }
+      }).select('_id name originalName processingStatus analysisResult createdAt source').lean(),
+
+      // Video call recordings being recorded OR analyzed
+      VideoRecording.find({
+        projectId,
+        $or: [
+          // Customer egress is active (starting or recording)
+          { customerEgressStatus: { $in: ['starting', 'recording'] } },
+          // Analysis is pending or in progress
+          { 'analysisResult.status': { $in: ['pending', 'processing'] } },
+          // Customer egress completed but analysis not done yet (catches undefined status)
+          // This matches calls where egress finished but railway hasn't marked complete/failed
+          {
+            customerEgressStatus: 'completed',
+            'analysisResult.status': { $nin: ['completed', 'failed'] }
+          }
+        ]
+      }).select('_id roomId analysisResult customerEgressStatus createdAt').lean()
     ]);
     
     // Format for consistent response
@@ -49,10 +67,18 @@ export async function GET(
         status: vid.analysisResult?.status || vid.processingStatus || 'processing',
         startTime: new Date(vid.createdAt).getTime(),
         source: vid.source || 'video_upload'
+      })),
+      ...processingCalls.map((call: any) => ({
+        id: call._id.toString(),
+        name: `Call ${call.roomId?.split('-').pop() || 'Recording'}`,
+        type: 'call' as const,
+        status: 'processing',
+        startTime: new Date(call.createdAt).getTime(),
+        source: 'video_call'
       }))
     ];
-    
-    console.log(`📊 Database result: ${processingItems.length} items processing (${processingImages.length} images, ${processingVideos.length} videos)`);
+
+    console.log(`📊 Database result: ${processingItems.length} items processing (${processingImages.length} images, ${processingVideos.length} videos, ${processingCalls.length} calls)`);
     
     return NextResponse.json({ 
       success: true,

@@ -24,6 +24,8 @@ import VideoProcessingStatus from './VideoProcessingStatus';
 import ShareVideoLinkModal from './video/ShareVideoLinkModal';
 import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
+import ShareInventoryReviewLinkModal from './modals/ShareInventoryReviewLinkModal';
+import ShareCrewLinkModal from './modals/ShareCrewLinkModal';
 import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import SupermoveSyncModal from './modals/SupermoveSyncModal';
@@ -116,9 +118,12 @@ export default function InventoryManager() {
   const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
   const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of image gallery
   const [videoGalleryKey, setVideoGalleryKey] = useState(0); // Force re-render of video gallery
+  const [videoRecordingsKey, setVideoRecordingsKey] = useState(0); // Force re-render of video recordings tab
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [videoRoomId, setVideoRoomId] = useState(null);
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
+const [isReviewLinkModalOpen, setIsReviewLinkModalOpen] = useState(false);
+const [isCrewLinkModalOpen, setIsCrewLinkModalOpen] = useState(false);
 const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
@@ -147,6 +152,9 @@ const [weightConfig, setWeightConfig] = useState({
 const [weightConfigLoaded, setWeightConfigLoaded] = useState(false);
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
+const prevProcessingCountRef = useRef(0); // Track previous processing count for change detection
+const prevVideoCountRef = useRef(0); // Track previous video count for change detection
+const prevCallCountRef = useRef(0); // Track previous video call count for change detection
 const sseRetryTimeoutRef = useRef(null);
 const isVideoPlayingRef = useRef(false);
 
@@ -154,6 +162,28 @@ const isVideoPlayingRef = useRef(false);
 useEffect(() => {
   isVideoPlayingRef.current = isVideoPlaying;
 }, [isVideoPlaying]);
+
+// Helper to check if inventory data actually changed (prevents unnecessary re-renders)
+const inventoryDataChanged = (oldItems, newItems) => {
+  if (!oldItems || !newItems) return true;
+  if (oldItems.length !== newItems.length) return true;
+
+  // Create a map of old items by ID for O(1) lookup
+  const oldMap = new Map(oldItems.map(item => [item._id, item]));
+
+  for (const newItem of newItems) {
+    const oldItem = oldMap.get(newItem._id);
+    if (!oldItem) return true; // New item added
+
+    // Check key fields that affect video cards
+    if (oldItem.goingQuantity !== newItem.goingQuantity ||
+        oldItem.quantity !== newItem.quantity ||
+        oldItem.updatedAt !== newItem.updatedAt) {
+      return true;
+    }
+  }
+  return false;
+};
 
 // No longer need to refresh spreadsheet - using on-demand loading
   
@@ -178,33 +208,70 @@ useEffect(() => {
   // DATABASE-DRIVEN PROCESSING STATE: Simple, bulletproof reliability
   useEffect(() => {
     if (!currentProject) return;
-    
+
     console.log('📊 Setting up database-driven processing status for:', currentProject._id);
-    
-    // Handle processing status updates
+
+    // Handle processing status updates - only update state if data actually changed
     const handleProcessingUpdate = (event) => {
       console.log('📊 Processing status update:', event);
-      setProcessingStatus(event.items);
-      setShowProcessingNotification(event.items.length > 0);
-      
-      // Refresh inventory when processing completes
-      if (event.count === 0 && processingStatus.length > 0) {
-        console.log('🔄 All processing complete, refreshing inventory...');
+
+      // Only update processingStatus if items actually changed (prevents unnecessary re-renders)
+      setProcessingStatus(prev => {
+        if (prev.length === event.items.length &&
+            prev.every((item, i) => item.id === event.items[i]?.id)) {
+          return prev; // Same reference, no re-render
+        }
+        return event.items;
+      });
+
+      // Only update notification if value actually changed
+      setShowProcessingNotification(prev => {
+        const newValue = event.items.length > 0;
+        return prev === newValue ? prev : newValue;
+      });
+
+      // Count videos and calls in current event
+      const currentVideoCount = event.items.filter(item => item.type === 'video').length;
+      const currentCallCount = event.items.filter(item => item.type === 'call').length;
+      const prevVideoCount = prevVideoCountRef.current || 0;
+      const prevCallCount = prevCallCountRef.current || 0;
+
+      // Refresh inventory when ALL processing completes (use ref to avoid stale closure)
+      if (event.count === 0 && prevProcessingCountRef.current > 0) {
+        console.log('🔄 All processing complete, refreshing galleries...');
         setTimeout(() => {
           fetchInventoryItems();
           setImageGalleryKey(prev => prev + 1);
           setVideoGalleryKey(prev => prev + 1);
+          setVideoRecordingsKey(prev => prev + 1);
         }, 1000);
       }
+
+      // Refresh video gallery when video count changes (new videos added or completed)
+      if (currentVideoCount !== prevVideoCount) {
+        console.log(`🎬 Video processing count changed: ${prevVideoCount} → ${currentVideoCount}`);
+        setVideoGalleryKey(prev => prev + 1);
+      }
+
+      // Refresh video recordings tab when call count changes (new calls added or completed)
+      if (currentCallCount !== prevCallCount) {
+        console.log(`📹 Video call processing count changed: ${prevCallCount} → ${currentCallCount}`);
+        setVideoRecordingsKey(prev => prev + 1);
+      }
+
+      // Update refs with current counts for next comparison
+      prevProcessingCountRef.current = event.count;
+      prevVideoCountRef.current = currentVideoCount;
+      prevCallCountRef.current = currentCallCount;
     };
-    
+
     // Start polling database for processing status
     simpleRealTimeDatabase.addListener(currentProject._id, handleProcessingUpdate);
-    
+
     return () => {
       simpleRealTimeDatabase.removeListener(currentProject._id, handleProcessingUpdate);
     };
-  }, [currentProject?._id, processingStatus.length]);
+  }, [currentProject?._id]); // Removed processingStatus.length - use ref instead
 
   // SSE FOR REAL-TIME COMPLETION NOTIFICATIONS: Simple completion events only
   useEffect(() => {
@@ -334,6 +401,8 @@ useEffect(() => {
         inventoryItemId: item._id, // Preserve inventory item ID for deletion
         sourceImageId: item.sourceImageId?._id || item.sourceImageId, // Handle both populated and unpopulated
         sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
+        sourceVideoRecordingId: item.sourceVideoRecordingId?._id || item.sourceVideoRecordingId, // Handle both populated and unpopulated
+        sourceRecordingSessionId: item.sourceRecordingSessionId, // Legacy: kept for backwards compat
         stockItemId: item.stockItemId, // Reference to stock inventory item
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
@@ -341,6 +410,7 @@ useEffect(() => {
         perUnitCuft: perUnitCuft, // Store per-unit cuft for recalculation when quantity changes
         perUnitWeight: perUnitWeight, // Store per-unit weight (calculated based on weight mode)
         originalAiWeight: item.weight || 0, // Preserve original AI weight for reference
+        special_handling: item.special_handling || '', // Preserve special handling notes
         cells: {
           col1: (() => {
             // Prioritize manual room entry from source image/video over AI-generated location
@@ -436,9 +506,18 @@ useEffect(() => {
         if (response.ok) {
           const syncData = await response.json();
           
-          // Update processing status immediately for better UX
-          setProcessingStatus(syncData.processingStatus || []);
-          setShowProcessingNotification((syncData.processingImages > 0) || (syncData.processingVideos > 0));
+          // Update processing status only if changed (prevents unnecessary re-renders)
+          const newProcessingStatus = syncData.processingStatus || [];
+          setProcessingStatus(prev => {
+            if (prev.length === newProcessingStatus.length &&
+                prev.every((item, i) => item.id === newProcessingStatus[i]?.id)) {
+              return prev; // Same reference, no re-render
+            }
+            return newProcessingStatus;
+          });
+
+          const newShowNotification = (syncData.processingImages > 0) || (syncData.processingVideos > 0) || (syncData.processingCalls > 0);
+          setShowProcessingNotification(prev => prev === newShowNotification ? prev : newShowNotification);
           
           // If there are updates, reload the project data
           if (syncData.hasUpdates) {
@@ -476,22 +555,28 @@ useEffect(() => {
               clearTimeout(itemsTimeoutId);
               
               if (itemsResponse.ok) {
-                const items = await itemsResponse.json();
-                setInventoryItems(items);
-                
-                // Regenerate spreadsheet rows from updated inventory items to preserve source tracking
-                const updatedRows = convertItemsToRows(items);
-                setSpreadsheetRows(updatedRows);
-                
-                // Also save the updated spreadsheet data to ensure persistence
-                await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
-                
-                // Refresh image and video galleries
-                setImageGalleryKey(prev => prev + 1);
-                // Only refresh video gallery if no video is playing
-                if (!isVideoPlaying) {
-                  setVideoGalleryKey(prev => prev + 1);
-                }
+                const newItems = await itemsResponse.json();
+
+                // Only update state if inventory data actually changed (prevents video card flickering)
+                setInventoryItems(prevItems => {
+                  if (inventoryDataChanged(prevItems, newItems)) {
+                    console.log('📦 Inventory data changed, updating state');
+
+                    // Regenerate spreadsheet rows from updated inventory items
+                    const updatedRows = convertItemsToRows(newItems);
+                    setSpreadsheetRows(updatedRows);
+
+                    // Save the updated spreadsheet data
+                    saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
+
+                    // Refresh image gallery (video gallery doesn't need refresh - cards use SSE)
+                    setImageGalleryKey(prev => prev + 1);
+
+                    return newItems;
+                  }
+                  console.log('📦 Inventory unchanged, skipping update');
+                  return prevItems; // Return same reference - no re-render cascade
+                });
               }
             } catch (dataError) {
               console.error('Error reloading project data:', dataError);
@@ -1023,10 +1108,10 @@ useEffect(() => {
           : img
       ));
       
-      // Refresh galleries
+      // Refresh galleries - key={} prop forces remount for immediate update
       setImageGalleryKey(prev => prev + 1);
       setVideoGalleryKey(prev => prev + 1);
-      
+
       console.log('✅ File uploaded successfully - real-time processing already added');
       
     } catch (err) {
@@ -1794,6 +1879,15 @@ useEffect(() => {
     }
   }, [smartMovingEnabled, fetchSmartMovingSyncStatus]);
 
+  // Memoize filtered inventory for galleries to prevent re-renders when parent state changes
+  const imageInventoryItems = useMemo(() => {
+    return inventoryItems.filter(item => item.sourceImageId);
+  }, [inventoryItems]);
+
+  const videoInventoryItems = useMemo(() => {
+    return inventoryItems.filter(item => item.sourceVideoId);
+  }, [inventoryItems]);
+
   // Calculate stats based on what's displayed in the spreadsheet (source of truth)
   const totalItems = useMemo(() => {
     return spreadsheetRows.reduce((total, row) => {
@@ -2330,7 +2424,7 @@ useEffect(() => {
     yPosition += 10;
     
     // Prepare table data
-    const tableHeaders = spreadsheetColumns.map(col => col.header);
+    const tableHeaders = spreadsheetColumns.map(col => col.name);
     const tableRows = spreadsheetRows.map(row => {
       return spreadsheetColumns.map(col => {
         const value = row.cells[col.id] || '';
@@ -2470,28 +2564,15 @@ useEffect(() => {
             // Add new page for notes
             doc.addPage();
             let notesY = 20;
-            
+
             // Notes header
             doc.setFontSize(16);
             doc.setTextColor(...primaryColor);
             doc.text('Project Notes', 20, notesY);
             notesY += 15;
-            
+
             // Add each note
             notes.forEach((note, index) => {
-              // Check if we need a new page
-              if (notesY > doc.internal.pageSize.height - 60) {
-                doc.addPage();
-                notesY = 20;
-                doc.setFontSize(16);
-                doc.setTextColor(...primaryColor);
-                doc.text('Project Notes (continued)', 20, notesY);
-                notesY += 15;
-              }
-              
-              // Note box
-              const noteBoxHeight = 40;
-              
               // Priority color
               const priorityColors = {
                 urgent: [254, 226, 226], // red-100
@@ -2499,42 +2580,114 @@ useEffect(() => {
                 normal: [243, 244, 246], // gray-100
                 low: [219, 234, 254] // blue-100
               };
-              
-              doc.setFillColor(...(priorityColors[note.priority] || priorityColors.normal));
-              doc.roundedRect(20, notesY - 8, 170, noteBoxHeight, 2, 2, 'F');
-              
-              // Note title
+              const noteColor = priorityColors[note.priority] || priorityColors.normal;
+
+              // Calculate content lines first
+              doc.setFontSize(10);
+              const contentLines = doc.splitTextToSize(note.content || '', 160);
+              const lineHeight = 5;
+              const titleHeight = 14;
+              // Only show badge row if there's priority or pinned status (category is now the header)
+              const badgeHeight = (note.priority && note.priority !== 'normal') || note.isPinned ? 10 : 0;
+              const headerHeight = titleHeight + badgeHeight;
+              const pageHeight = doc.internal.pageSize.height;
+              const maxContentPerPage = Math.floor((pageHeight - 50) / lineHeight);
+
+              // Check if we need a new page before starting this note
+              if (notesY + headerHeight + 30 > pageHeight - 20) {
+                doc.addPage();
+                notesY = 20;
+                doc.setFontSize(16);
+                doc.setTextColor(...primaryColor);
+                doc.text('Project Notes (continued)', 20, notesY);
+                notesY += 15;
+              }
+
+              // Note header - use category as title if no title exists
               doc.setFontSize(12);
               doc.setFont('helvetica', 'bold');
               doc.setTextColor(0, 0, 0);
-              doc.text(note.title, 25, notesY);
-              
-              // Category and priority badges
-              doc.setFontSize(8);
-              doc.setFont('helvetica', 'normal');
-              doc.setTextColor(...textColor);
+
+              // Draw title background
+              doc.setFillColor(...noteColor);
+              doc.roundedRect(20, notesY - 8, 170, headerHeight, 2, 2, 'F');
+
+              // Format category for display (capitalize words, replace hyphens)
+              const formatCategory = (cat) => {
+                if (!cat) return 'General';
+                return cat.split('-').map(word =>
+                  word.charAt(0).toUpperCase() + word.slice(1)
+                ).join(' ');
+              };
+
+              // Use title if exists, otherwise use formatted category
+              const headerText = note.title || formatCategory(note.category);
+              doc.text(headerText, 25, notesY);
+
+              // Priority and pinned badges (show below header)
+              let contentStartY = notesY + 10;
               const badges = [];
-              if (note.category && note.category !== 'general') badges.push(note.category);
               if (note.priority && note.priority !== 'normal') badges.push(note.priority);
+              if (note.isPinned) badges.push('pinned');
               if (badges.length > 0) {
+                doc.setFontSize(8);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(...textColor);
                 doc.text(badges.join(' • ').toUpperCase(), 25, notesY + 6);
+                contentStartY = notesY + 14;
               }
-              
-              // Note content (truncated)
+
+              notesY += headerHeight;
+
+              // Note content (full content, wrapped, handles page breaks)
               doc.setFontSize(10);
-              doc.setTextColor(...textColor);
-              const maxContentLength = 180;
-              const content = note.content.length > maxContentLength 
-                ? note.content.substring(0, maxContentLength) + '...' 
-                : note.content;
-              
-              // Split content into lines that fit within the box width
-              const lines = doc.splitTextToSize(content, 160);
-              lines.slice(0, 3).forEach((line, i) => {
-                doc.text(line, 25, notesY + 14 + (i * 5));
-              });
-              
-              notesY += noteBoxHeight + 5;
+              doc.setFont('helvetica', 'normal');
+
+              let lineIndex = 0;
+              while (lineIndex < contentLines.length) {
+                // Calculate how many lines fit on current page
+                const remainingPageSpace = pageHeight - 25 - notesY;
+                const linesOnThisPage = Math.floor(remainingPageSpace / lineHeight);
+                const linesToDraw = Math.min(linesOnThisPage, contentLines.length - lineIndex);
+
+                if (linesToDraw <= 0) {
+                  // Need new page
+                  doc.addPage();
+                  notesY = 20;
+                  doc.setFontSize(16);
+                  doc.setTextColor(...primaryColor);
+                  doc.text('Project Notes (continued)', 20, notesY);
+                  notesY += 15;
+                  continue;
+                }
+
+                // Draw content background for this chunk
+                const chunkHeight = linesToDraw * lineHeight + 8;
+                doc.setFillColor(...noteColor);
+                doc.rect(20, notesY - 4, 170, chunkHeight, 'F');
+
+                // Draw content lines
+                doc.setTextColor(...textColor);
+                doc.setFontSize(10);
+                for (let i = 0; i < linesToDraw; i++) {
+                  doc.text(contentLines[lineIndex + i], 25, notesY + (i * lineHeight) + 2);
+                }
+
+                lineIndex += linesToDraw;
+                notesY += chunkHeight;
+
+                // If more content remains, add page break
+                if (lineIndex < contentLines.length) {
+                  doc.addPage();
+                  notesY = 20;
+                  doc.setFontSize(16);
+                  doc.setTextColor(...primaryColor);
+                  doc.text('Project Notes (continued)', 20, notesY);
+                  notesY += 15;
+                }
+              }
+
+              notesY += 10; // Space between notes
             });
           }
         }
@@ -2568,45 +2721,48 @@ useEffect(() => {
   // Add this component to show processing status in the header
 const ProcessingNotification = () => {
   if (!showProcessingNotification || processingStatus.length === 0) return null;
-  
+
   const customerUploads = processingStatus.filter(item => item.isCustomerUpload);
-  const regularUploads = processingStatus.filter(item => !item.isCustomerUpload);
-  
+
   // Separate by media type
   const images = processingStatus.filter(item => item.type === 'image');
   const videos = processingStatus.filter(item => item.type === 'video');
-  const total = processingStatus.length;
-  
-  let message;
-  if (customerUploads.length > 0 && regularUploads.length > 0) {
-    // Mixed uploads - show media breakdown
-    if (images.length > 0 && videos.length > 0) {
-      message = `Processing ${images.length} image${images.length > 1 ? 's' : ''} and ${videos.length} video${videos.length > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
-    } else if (images.length > 0) {
-      message = `Processing ${total} image${total > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
+  const calls = processingStatus.filter(item => item.type === 'call');
+
+  // Build message parts
+  const parts = [];
+
+  if (images.length > 0) {
+    const customerImageCount = images.filter(i => customerUploads.some(c => c.id === i.id)).length;
+    if (customerImageCount > 0 && customerImageCount < images.length) {
+      parts.push(`${images.length} image${images.length > 1 ? 's' : ''} (${customerImageCount} customer)`);
+    } else if (customerImageCount === images.length) {
+      parts.push(`${images.length} image${images.length > 1 ? 's' : ''} (customer upload${images.length > 1 ? 's' : ''})`);
     } else {
-      message = `Processing ${total} video${total > 1 ? 's' : ''} (${customerUploads.length} customer upload${customerUploads.length > 1 ? 's' : ''})...`;
-    }
-  } else if (customerUploads.length > 0) {
-    // Only customer uploads - show media type
-    if (images.length > 0 && videos.length > 0) {
-      message = `Processing ${images.length} image${images.length > 1 ? 's' : ''} and ${videos.length} video${videos.length > 1 ? 's' : ''} (customer uploads)...`;
-    } else if (images.length > 0) {
-      message = `Processing ${customerUploads.length} image${customerUploads.length > 1 ? 's' : ''} (customer upload${customerUploads.length > 1 ? 's' : ''})...`;
-    } else {
-      message = `Processing ${customerUploads.length} video${customerUploads.length > 1 ? 's' : ''} (customer upload${customerUploads.length > 1 ? 's' : ''})...`;
-    }
-  } else {
-    // Only regular uploads - show media type
-    if (images.length > 0 && videos.length > 0) {
-      message = `Processing ${images.length} image${images.length > 1 ? 's' : ''} and ${videos.length} video${videos.length > 1 ? 's' : ''}...`;
-    } else if (images.length > 0) {
-      message = `Processing ${regularUploads.length} image${regularUploads.length > 1 ? 's' : ''}...`;
-    } else {
-      message = `Processing ${regularUploads.length} video${regularUploads.length > 1 ? 's' : ''}...`;
+      parts.push(`${images.length} image${images.length > 1 ? 's' : ''}`);
     }
   }
-  
+
+  if (videos.length > 0) {
+    const customerVideoCount = videos.filter(v => customerUploads.some(c => c.id === v.id)).length;
+    if (customerVideoCount > 0 && customerVideoCount < videos.length) {
+      parts.push(`${videos.length} video${videos.length > 1 ? 's' : ''} (${customerVideoCount} customer)`);
+    } else if (customerVideoCount === videos.length) {
+      parts.push(`${videos.length} video${videos.length > 1 ? 's' : ''} (customer upload${videos.length > 1 ? 's' : ''})`);
+    } else {
+      parts.push(`${videos.length} video${videos.length > 1 ? 's' : ''}`);
+    }
+  }
+
+  if (calls.length > 0) {
+    // Show as "call" to abstract away segmentation - user sees it as one unit
+    parts.push(`${calls.length} call${calls.length > 1 ? 's' : ''}`);
+  }
+
+  if (parts.length === 0) return null;
+
+  const message = `Processing ${parts.join(' and ')}...`;
+
   return (
     <div className="ml-4 flex items-center px-3 py-1 bg-blue-50 border border-blue-200 rounded-lg">
       <Loader2 className="w-4 h-4 mr-2 animate-spin text-blue-500" />
@@ -2714,7 +2870,8 @@ const ProcessingNotification = () => {
             Actions
           </MenubarTrigger>
           <MenubarContent>
-            <MenubarItem 
+            <div className="px-2 py-1.5 text-xs font-semibold text-slate-500">Take Inventory</div>
+            <MenubarItem
               onClick={() => {
                 const roomId = generateVideoRoomId(currentProject._id);
                 setVideoRoomId(roomId);
@@ -2729,6 +2886,16 @@ const ProcessingNotification = () => {
             <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
               <MessageSquare size={16} className="mr-1" />
               Send Customer Upload Link
+            </MenubarItem>
+            <MenubarSeparator />
+            <div className="px-2 py-1.5 text-xs font-semibold text-slate-500">Review Inventory</div>
+            <MenubarItem onClick={() => setIsReviewLinkModalOpen(true)}>
+              <Package size={16} className="mr-1" />
+              Send Inventory Review Link
+            </MenubarItem>
+            <MenubarItem onClick={() => setIsCrewLinkModalOpen(true)}>
+              <Users size={16} className="mr-1" />
+              Share Crew Link
             </MenubarItem>
             <MenubarSeparator />
             <MenubarItem onClick={() => setIsActivityLogOpen(true)}>
@@ -2895,12 +3062,13 @@ const ProcessingNotification = () => {
 {/* Video Processing Status - Hidden from users but still handles completion events */}
           {currentProject && (
             <div style={{ display: 'none' }}>
-              <VideoProcessingStatus 
+              <VideoProcessingStatus
                 projectId={currentProject._id}
                 onProcessingComplete={(completedVideos) => {
-                  // Refresh the image gallery when video processing completes
+                  // Refresh both galleries when video processing completes
                   setImageGalleryKey(prev => prev + 1);
-                  
+                  setVideoGalleryKey(prev => prev + 1);
+
                   // Show notification about completed videos
                   if (typeof window !== 'undefined' && window.sonner && completedVideos.length > 0) {
                     window.sonner.toast.success(
@@ -2997,12 +3165,13 @@ const ProcessingNotification = () => {
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6">
                   {currentProject && (
-                    <ImageGallery 
+                    <ImageGallery
                       key={imageGalleryKey}
                       projectId={currentProject._id}
+                      projectName={currentProject.name}
                       onUploadClick={() => setIsUploaderOpen(true)}
                       refreshSpreadsheet={reloadInventoryItems}
-                      inventoryItems={inventoryItems.filter(item => item.sourceImageId)}
+                      inventoryItems={imageInventoryItems}
                       onInventoryUpdate={handleInventoryUpdate}
                     />
                   )}
@@ -3014,15 +3183,17 @@ const ProcessingNotification = () => {
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6">
                   {currentProject && (
-                    <VideoGallery 
+                    <VideoGallery
+                      key={videoGalleryKey}
                       projectId={currentProject._id}
+                      projectName={currentProject.name}
                       refreshTrigger={videoGalleryKey}
                       onVideoSelect={(video) => {
                         console.log('Video selected:', video);
                       }}
                       onPlayingStateChange={setIsVideoPlaying}
                       refreshSpreadsheet={reloadInventoryItems}
-                      inventoryItems={inventoryItems.filter(item => item.sourceVideoId)}
+                      inventoryItems={videoInventoryItems}
                       onInventoryUpdate={handleInventoryUpdate}
                     />
                   )}
@@ -3072,7 +3243,12 @@ const ProcessingNotification = () => {
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm">
                 <div className="p-6">
                   {currentProject ? (
-                    <VideoRecordingsTab projectId={currentProject._id} />
+                    <VideoRecordingsTab
+                      projectId={currentProject._id}
+                      projectName={currentProject.name}
+                      refreshTrigger={videoRecordingsKey}
+                      refreshSpreadsheet={reloadInventoryItems}
+                    />
                   ) : (
                     <div>No current project loaded</div>
                   )}
@@ -3130,6 +3306,29 @@ const ProcessingNotification = () => {
   />
 )}
 
+{/* Share Inventory Review Link Modal */}
+{isReviewLinkModalOpen && currentProject && (
+  <ShareInventoryReviewLinkModal
+    isOpen={isReviewLinkModalOpen}
+    onClose={() => setIsReviewLinkModalOpen(false)}
+    projectId={currentProject._id}
+    projectName={currentProject.name}
+    customerName={currentProject.customerName}
+    customerPhone={currentProject.phone}
+  />
+)}
+
+{/* Share Crew Link Modal */}
+{isCrewLinkModalOpen && currentProject && (
+  <ShareCrewLinkModal
+    isOpen={isCrewLinkModalOpen}
+    onClose={() => setIsCrewLinkModalOpen(false)}
+    projectId={currentProject._id}
+    projectName={currentProject.name}
+    customerPhone={currentProject.phone}
+  />
+)}
+
 {/* Supermove Sync Modal */}
 <SupermoveSyncModal
   open={supermoveSyncModalOpen}
@@ -3160,7 +3359,6 @@ const ProcessingNotification = () => {
     onProjectUpdated={(updatedProject) => {
       setCurrentProject(updatedProject);
     }}
-    showEmail={supermoveEnabled}
   />
 )}
 

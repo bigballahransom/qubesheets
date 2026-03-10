@@ -1,7 +1,7 @@
 // components/VideoGallery.jsx - Display videos with playback capability
 'use client';
 
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo, useMemo, useCallback } from 'react';
 import { 
   Play, 
   Pause, 
@@ -40,8 +40,314 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { toast } from 'sonner';
 
-export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger, onPlayingStateChange, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate }) {
+// Helper to group items by location/room
+const groupByRoom = (items) => {
+  return items.reduce((acc, item) => {
+    const room = item.location || 'Unassigned';
+    if (!acc[room]) acc[room] = [];
+    acc[room].push(item);
+    return acc;
+  }, {});
+};
+
+// Helper functions - defined outside component to prevent recreation
+const formatDuration = (seconds) => {
+  if (!seconds) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
+const formatFileSize = (bytes) => {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const formatDate = (dateString) => {
+  if (!dateString) return 'Unknown date';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return 'Unknown date';
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+// VideoCard component - defined OUTSIDE VideoGallery to prevent recreation on parent re-renders
+const VideoCard = memo(({
+  video,
+  videoInventory = [],
+  isPlaying,
+  streamUrl,
+  onPlayToggle,
+  onSelectVideo,
+  onDownload,
+  onDelete,
+  onLoadStreamUrl,
+  onStopPlaying
+}) => {
+  const [thumbnailLoaded, setThumbnailLoaded] = useState(false);
+  const [showVideoPreview, setShowVideoPreview] = useState(false);
+
+  const hasS3Video = video.s3RawFile?.key;
+
+  // Load video thumbnail on mount
+  useEffect(() => {
+    const loadThumbnail = async () => {
+      if (hasS3Video && !streamUrl) {
+        const url = await onLoadStreamUrl(video._id);
+        if (url) {
+          setShowVideoPreview(true);
+        }
+      } else if (streamUrl) {
+        setShowVideoPreview(true);
+      }
+    };
+    loadThumbnail();
+  }, [video._id, hasS3Video, streamUrl, onLoadStreamUrl]);
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow relative">
+      {/* 3-dot menu */}
+      <div className="absolute top-2 right-2 z-50">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="secondary" className="h-8 w-8 p-0 relative z-50">
+              <MoreVertical size={16} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="z-50">
+            <DropdownMenuItem onClick={async () => {
+              if (video.s3RawFile && !streamUrl) {
+                await onLoadStreamUrl(video._id);
+              }
+              onSelectVideo(video);
+            }}>
+              <Eye size={16} className="mr-2" />
+              View
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onDownload(video)}>
+              <Download size={16} className="mr-2" />
+              Download
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => onDelete(video)}
+              className="text-red-600 focus:text-red-600"
+            >
+              <Trash2 size={16} className="mr-2" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Video Preview Area */}
+      <div className="aspect-video bg-gray-100 flex items-center justify-center relative">
+        {isPlaying && streamUrl ? (
+          <video
+            src={streamUrl}
+            autoPlay
+            loop={false}
+            muted
+            preload="metadata"
+            controls
+            className="w-full h-full object-contain"
+            onError={(e) => {
+              console.error('🎬 Video playback error:', e);
+              onStopPlaying();
+            }}
+          />
+        ) : (
+          <>
+            {showVideoPreview && streamUrl ? (
+              <video
+                src={streamUrl}
+                preload="metadata"
+                muted
+                className="w-full h-full object-contain"
+                onLoadedMetadata={(e) => {
+                  e.target.currentTime = 0;
+                  setThumbnailLoaded(true);
+                }}
+                onError={(e) => {
+                  console.error('🎬 Thumbnail load error for video:', video.originalName);
+                  setShowVideoPreview(false);
+                }}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                {!thumbnailLoaded && showVideoPreview ? (
+                  <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <VideoIcon className="w-12 h-12 text-gray-400" />
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Play/Pause overlay */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <button
+            onClick={() => onPlayToggle(video._id)}
+            className="bg-black bg-opacity-50 text-white p-3 rounded-full hover:bg-opacity-70 transition-all pointer-events-auto"
+            disabled={!streamUrl && isPlaying}
+          >
+            {!streamUrl && isPlaying ? (
+              <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : isPlaying ? (
+              <Pause size={24} fill="white" />
+            ) : (
+              <Play size={24} fill="white" />
+            )}
+          </button>
+        </div>
+
+        {/* Duration badge */}
+        {video.duration > 0 && (
+          <div className="absolute bottom-2 left-2 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-xs">
+            {formatDuration(video.duration)}
+          </div>
+        )}
+      </div>
+
+      {/* Video Info */}
+      <div className="p-3 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => onSelectVideo(video)}>
+        <div className="space-y-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <VideoIcon size={14} className="text-blue-500" />
+              <h4 className="font-medium text-gray-900 truncate" title={video.originalName}>
+                {video.originalName}
+              </h4>
+            </div>
+            <p className="text-xs text-gray-500 flex items-center gap-1">
+              <Calendar size={12} />
+              {formatDate(video.createdAt)}
+            </p>
+          </div>
+
+          <div>
+            {video.description ? (
+              <p className="text-sm text-gray-600 line-clamp-2">{video.description}</p>
+            ) : (
+              <p className="text-sm text-gray-400 italic">No description</p>
+            )}
+          </div>
+
+          {/* Analysis Status with badges */}
+          <div className="flex flex-wrap gap-1">
+            {video.analysisResult?.status === 'processing' ? (
+              <Badge variant="secondary" className="text-xs animate-pulse">
+                <Loader2 size={10} className="mr-1 animate-spin" />
+                Processing...
+              </Badge>
+            ) : video.analysisResult?.status === 'failed' ? (
+              <Badge variant="destructive" className="text-xs">
+                <X size={10} className="mr-1" />
+                Analysis failed
+              </Badge>
+            ) : video.analysisResult?.status === 'completed' ? (
+              <>
+                {(() => {
+                  const regularItems = videoInventory.filter(item =>
+                    item.itemType === 'regular_item' ||
+                    item.itemType === 'furniture' ||
+                    (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                  );
+                  const existingBoxes = videoInventory.filter(item =>
+                    item.itemType === 'existing_box' || item.itemType === 'packed_box'
+                  );
+                  const recommendedBoxes = videoInventory.filter(item => item.itemType === 'boxes_needed');
+
+                  const regularItemsCount = regularItems.reduce((total, item) => total + (item.quantity || 1), 0);
+                  const boxesCount = existingBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
+                  const recommendedBoxesCount = recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
+
+                  return (
+                    <>
+                      {regularItemsCount > 0 && (
+                        <Badge variant="secondary" className="text-xs">
+                          <Package size={10} className="mr-1" />
+                          {regularItemsCount} items
+                        </Badge>
+                      )}
+                      {boxesCount > 0 && (
+                        <Badge className="text-xs bg-orange-100 text-orange-800 border-orange-200">
+                          {boxesCount} boxes
+                        </Badge>
+                      )}
+                      {recommendedBoxesCount > 0 && (
+                        <Badge className="text-xs bg-purple-100 text-purple-800 border-purple-200">
+                          {recommendedBoxesCount} recommended
+                        </Badge>
+                      )}
+                      {regularItemsCount === 0 && boxesCount === 0 && recommendedBoxesCount === 0 && video.analysisResult.itemsCount > 0 && (
+                        <Badge variant="secondary" className="text-xs">
+                          <Package size={10} className="mr-1" />
+                          {video.analysisResult.itemsCount} items
+                        </Badge>
+                      )}
+                    </>
+                  );
+                })()}
+              </>
+            ) : (
+              <Badge variant="outline" className="text-xs">
+                <Loader2 size={10} className="mr-1 animate-spin" />
+                Analyzing...
+              </Badge>
+            )}
+          </div>
+
+          {/* File info */}
+          <div className="text-xs text-gray-500 flex items-center justify-between">
+            <span>{formatFileSize(video.size)}</span>
+            {video.duration > 0 && (
+              <span className="flex items-center gap-1">
+                <VideoIcon size={10} />
+                {formatDuration(video.duration)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}, (prevProps, nextProps) => {
+  // Only re-render if meaningful properties change
+  if (prevProps.video._id !== nextProps.video._id) return false;
+  if (prevProps.video.originalName !== nextProps.video.originalName) return false;
+  if (prevProps.video.s3RawFile?.key !== nextProps.video.s3RawFile?.key) return false;
+  if (prevProps.video.analysisResult?.status !== nextProps.video.analysisResult?.status) return false;
+  if (prevProps.isPlaying !== nextProps.isPlaying) return false;
+  if (prevProps.streamUrl !== nextProps.streamUrl) return false;
+
+  // Deep compare videoInventory
+  const prevInv = prevProps.videoInventory || [];
+  const nextInv = nextProps.videoInventory || [];
+  if (prevInv.length !== nextInv.length) return false;
+  for (let i = 0; i < prevInv.length; i++) {
+    if (prevInv[i]._id !== nextInv[i]._id || prevInv[i].goingQuantity !== nextInv[i].goingQuantity) {
+      return false;
+    }
+  }
+
+  return true;
+});
+
+VideoCard.displayName = 'VideoCard';
+
+export default function VideoGallery({ projectId, projectName, onVideoSelect, refreshTrigger, onPlayingStateChange, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -69,6 +375,7 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     hasPrevPage: false
   });
   const [deletingAll, setDeletingAll] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   
   // Operation states to prevent polling interference
   const [operationStates, setOperationStates] = useState({
@@ -345,99 +652,16 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     fetchVideos(1);
   }, [projectId]);
 
-  // Handle refresh trigger without interrupting playback
-  useEffect(() => {
-    if (!projectId || !refreshTrigger || refreshTrigger === 0) return;
-    
-    // Only refresh if no video is playing
-    if (!playingVideoId && !selectedVideo) {
-      console.log('🔄 Refresh triggered, fetching videos...');
-      fetchVideos(currentPage);
-    } else {
-      console.log('⏸️ Skipping refresh - video is playing');
-    }
-  }, [refreshTrigger]);
+  // NOTE: refreshTrigger effect REMOVED for performance
+  // Videos now load ONCE on mount and don't re-fetch on every refreshTrigger change
+  // New videos appear via SSE notifications when processing completes
+  // This prevents constant flickering and re-loading of video cards
 
-  // Refetch inventory items periodically with smart polling
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Only fetch if:
-      // 1. Page is visible (tab is active)
-      // 2. No video is currently playing (either in gallery or modal)
-      // 3. No active operations (downloads, deletes, open menus)
-      const activeOps = hasActiveOperations();
-      if (isPageVisible && !playingVideoId && !selectedVideo && !activeOps) {
-        console.log(`🔄 Smart inventory refresh (interval: ${inventoryPollInterval}ms)`);
-        
-        // Create new AbortController for this fetch
-        const abortController = new AbortController();
-        inventoryAbortControllerRef.current = abortController;
-        
-        fetchInventoryItems(abortController.signal).catch(error => {
-          if (error.name === 'AbortError') {
-            console.log('⏸️ Inventory fetch aborted due to user operation');
-          } else {
-            console.error('Inventory fetch error:', error);
-          }
-        });
-      } else {
-        // If we have active operations, cancel any ongoing inventory fetch
-        if (inventoryAbortControllerRef.current) {
-          console.log('🛑 Cancelling ongoing inventory fetch due to active operations');
-          inventoryAbortControllerRef.current.abort();
-          inventoryAbortControllerRef.current = null;
-        }
-        
-        const activeOpsList = getActiveOperationsList();
-        console.log('⏸️ Skipping inventory refresh:', {
-          pageVisible: isPageVisible,
-          playingVideoId: !!playingVideoId,
-          selectedVideo: !!selectedVideo,
-          activeOperations: activeOpsList.length > 0 ? activeOpsList.join(', ') : 'none',
-          nextCheckIn: `${inventoryPollInterval}ms`
-        });
-      }
-    }, inventoryPollInterval); // Use dynamic interval
+  // NOTE: Inventory polling removed - inventoryItems prop is already managed by InventoryManager
+  // This component receives inventoryItems as a prop, so internal polling was redundant
 
-    return () => {
-      clearInterval(interval);
-      // Clean up any ongoing fetch when component unmounts or dependencies change
-      if (inventoryAbortControllerRef.current) {
-        inventoryAbortControllerRef.current.abort();
-        inventoryAbortControllerRef.current = null;
-      }
-    };
-  }, [projectId, playingVideoId, selectedVideo, isPageVisible, inventoryPollInterval]);
-
-
-  const formatDuration = (seconds) => {
-    if (!seconds) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  // Format date to match ImageGallery
-  const formatDate = (dateString) => {
-    if (!dateString) return 'Unknown date';
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) return 'Unknown date';
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  // NOTE: Updates are handled via key={videoGalleryKey} prop from parent
+  // When key changes, component remounts and fetches fresh data (same pattern as ImageGallery)
 
   // Fetch streaming URL for S3 videos with enhanced caching and deduplication
   const getStreamUrl = async (videoId) => {
@@ -738,6 +962,76 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     }
   };
 
+  const handleDownloadAll = async () => {
+    if (pagination.totalItems === 0) return;
+
+    setDownloadingAll(true);
+
+    try {
+      // Dynamic import to avoid SSR issues with buffer polyfill
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+
+      // Fetch all pages
+      let allVideos = [];
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await fetch(`/api/projects/${projectId}/videos/all?page=${page}&limit=50`);
+        const data = await response.json();
+        allVideos = [...allVideos, ...data.videos];
+        hasMore = data.pagination.hasNextPage;
+        page++;
+      }
+
+      toast(`Preparing ${allVideos.length} videos for download...`);
+
+      // Fetch each video and add to zip
+      for (let index = 0; index < allVideos.length; index++) {
+        const video = allVideos[index];
+        try {
+          let streamUrl = streamUrls[video._id]?.url;
+          if (!streamUrl && video.s3RawFile) {
+            streamUrl = await getStreamUrl(video._id);
+          }
+
+          if (streamUrl) {
+            const response = await fetch(streamUrl);
+            if (response.ok) {
+              const blob = await response.blob();
+              // Use index to ensure unique filenames
+              const ext = video.originalName.split('.').pop() || 'mp4';
+              const baseName = video.originalName.replace(/\.[^/.]+$/, '');
+              const uniqueName = `${index + 1}-${baseName}.${ext}`;
+              zip.file(uniqueName, blob);
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to add ${video.originalName}:`, err);
+        }
+      }
+
+      // Generate and download zip
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = window.URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName || 'project'}-videos-${new Date().toISOString().split('T')[0]}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success(`Downloaded ${allVideos.length} videos as zip`);
+    } catch (error) {
+      console.error('Download all failed:', error);
+      toast.error('Failed to download videos');
+    } finally {
+      setDownloadingAll(false);
+    }
+  };
+
   const handleEditDescription = (video) => {
     setEditingVideo(video);
     setEditDescription(video.description || '');
@@ -789,270 +1083,24 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
     }
   };
 
-  const VideoCard = memo(({ video }) => {
-    const isPlaying = playingVideoId === video._id;
-    const [thumbnailLoaded, setThumbnailLoaded] = useState(false);
-    const [showVideoPreview, setShowVideoPreview] = useState(false);
-    
-    // Only use S3 for videos
-    const hasS3Video = video.s3RawFile?.key;
-
-    // Use S3 streaming URL
-    const videoUrl = hasS3Video ? streamUrls[video._id]?.url : null;
-    
-    // Load video thumbnail on mount
-    useEffect(() => {
-      const loadThumbnail = async () => {
-        if (hasS3Video && !streamUrls[video._id]?.url) {
-          const url = await getStreamUrl(video._id);
-          if (url) {
-            setShowVideoPreview(true);
-          }
-        } else if (streamUrls[video._id]?.url) {
-          setShowVideoPreview(true);
-        }
-      };
-      loadThumbnail();
-    }, [video._id]); // Only depend on video ID, not hasS3Video to prevent re-runs
-    
-    return (
-      <div className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow relative">
-        {/* 3-dot menu */}
-        <div className="absolute top-2 right-2 z-50">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="secondary" className="h-8 w-8 p-0 relative z-50">
-                <MoreVertical size={16} />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="z-50">
-              <DropdownMenuItem onClick={async () => {
-                if (video.s3RawFile && !streamUrls[video._id]?.url) {
-                  await getStreamUrl(video._id);
-                }
-                setSelectedVideo(video);
-              }}>
-                <Eye size={16} className="mr-2" />
-                View
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleDownload(video)}>
-                <Download size={16} className="mr-2" />
-                Download
-              </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => handleDelete(video)}
-                className="text-red-600 focus:text-red-600"
-              >
-                <Trash2 size={16} className="mr-2" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* Video Preview Area */}
-        <div className="aspect-video bg-gray-100 flex items-center justify-center relative">
-          {isPlaying && videoUrl ? (
-            <video
-              src={videoUrl}
-              autoPlay
-              loop={false}
-              muted
-              preload="metadata"
-              controls
-              className="w-full h-full object-contain"
-              onError={(e) => {
-                console.error('🎬 Video playback error:', e);
-                setPlayingVideoId(null);
-              }}
-            />
-          ) : (
-            <>
-              {showVideoPreview && videoUrl ? (
-                // Show video element paused at first frame as thumbnail
-                <video
-                  src={videoUrl}
-                  preload="metadata"
-                  muted
-                  className="w-full h-full object-contain"
-                  onLoadedMetadata={(e) => {
-                    e.target.currentTime = 0;
-                    setThumbnailLoaded(true);
-                  }}
-                  onError={(e) => {
-                    console.error('🎬 Thumbnail load error for video:', video.originalName, 'Error:', e.target?.error || 'Unknown error');
-                    setShowVideoPreview(false);
-                  }}
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  {!thumbnailLoaded && showVideoPreview ? (
-                    <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <VideoIcon className="w-12 h-12 text-gray-400" />
-                  )}
-                </div>
-              )}
-            </>
-          )}
-          
-          {/* Play/Pause overlay */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <button
-              onClick={() => handlePlayToggle(video._id)}
-              className="bg-black bg-opacity-50 text-white p-3 rounded-full hover:bg-opacity-70 transition-all pointer-events-auto"
-              disabled={!streamUrls[video._id]?.url && isPlaying}
-            >
-              {!streamUrls[video._id]?.url && playingVideoId === video._id ? (
-                <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : isPlaying ? (
-                <Pause size={24} fill="white" />
-              ) : (
-                <Play size={24} fill="white" />
-              )}
-            </button>
-          </div>
-          
-          {/* Duration badge */}
-          {video.duration > 0 && (
-            <div className="absolute bottom-2 left-2 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-xs">
-              {formatDuration(video.duration)}
-            </div>
-          )}
-        </div>
-        
-        {/* Video Info - Match ImageGallery layout */}
-        <div className="p-3 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setSelectedVideo(video)}>
-          <div className="space-y-3">
-            {/* Video title and date */}
-            <div>
-              <div className="flex items-center gap-2">
-                <VideoIcon size={14} className="text-blue-500" />
-                <h4 className="font-medium text-gray-900 truncate" title={video.originalName}>
-                  {video.originalName}
-                </h4>
-              </div>
-              <p className="text-xs text-gray-500 flex items-center gap-1">
-                <Calendar size={12} />
-                {formatDate(video.createdAt)}
-              </p>
-            </div>
-
-            {/* Description */}
-            <div>
-              {video.description ? (
-                <p className="text-sm text-gray-600 line-clamp-2">
-                  {video.description}
-                </p>
-              ) : (
-                <p className="text-sm text-gray-400 italic">
-                  No description
-                </p>
-              )}
-            </div>
-
-            {/* Analysis Status with badges */}
-            <div className="flex flex-wrap gap-1">
-              {video.analysisResult?.status === 'processing' ? (
-                <Badge variant="secondary" className="text-xs animate-pulse">
-                  <Loader2 size={10} className="mr-1 animate-spin" />
-                  Processing...
-                </Badge>
-              ) : video.analysisResult?.status === 'failed' ? (
-                <Badge variant="destructive" className="text-xs">
-                  <X size={10} className="mr-1" />
-                  Analysis failed
-                </Badge>
-              ) : video.analysisResult?.status === 'completed' ? (
-                <>
-                  {(() => {
-                    const videoInventoryItems = inventoryItems.filter(item => {
-                      const videoId = item.sourceVideoId?._id || item.sourceVideoId;
-                      return videoId === video._id;
-                    });
-                    
-                    // Separate items by type
-                    const regularItems = videoInventoryItems.filter(item => 
-                      item.itemType === 'regular_item' || 
-                      item.itemType === 'furniture' || 
-                      (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                    );
-                    const existingBoxes = videoInventoryItems.filter(item => 
-                      item.itemType === 'existing_box' || 
-                      item.itemType === 'packed_box'
-                    );
-                    const recommendedBoxes = videoInventoryItems.filter(item => item.itemType === 'boxes_needed');
-                    
-                    const regularItemsCount = regularItems.reduce((total, item) => total + (item.quantity || 1), 0);
-                    const boxesCount = existingBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
-                    const recommendedBoxesCount = recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
-                    
-                    return (
-                      <>
-                        {regularItemsCount > 0 && (
-                          <Badge variant="secondary" className="text-xs">
-                            <Package size={10} className="mr-1" />
-                            {regularItemsCount} items
-                          </Badge>
-                        )}
-                        {boxesCount > 0 && (
-                          <Badge className="text-xs bg-orange-100 text-orange-800 border-orange-200">
-                            {boxesCount} boxes
-                          </Badge>
-                        )}
-                        {recommendedBoxesCount > 0 && (
-                          <Badge className="text-xs bg-purple-100 text-purple-800 border-purple-200">
-                            {recommendedBoxesCount} recommended
-                          </Badge>
-                        )}
-                        {regularItemsCount === 0 && boxesCount === 0 && recommendedBoxesCount === 0 && video.analysisResult.itemsCount > 0 && (
-                          <Badge variant="secondary" className="text-xs">
-                            <Package size={10} className="mr-1" />
-                            {video.analysisResult.itemsCount} items
-                          </Badge>
-                        )}
-                      </>
-                    );
-                  })()}
-                </>
-              ) : (
-                <Badge variant="outline" className="text-xs">
-                  <Loader2 size={10} className="mr-1 animate-spin" />
-                  Analyzing...
-                </Badge>
-              )}
-            </div>
-
-            {/* File info */}
-            <div className="text-xs text-gray-500 flex items-center justify-between">
-              <span>{formatFileSize(video.size)}</span>
-              {video.duration > 0 && (
-                <span className="flex items-center gap-1">
-                  <VideoIcon size={10} />
-                  {formatDuration(video.duration)}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }, (prevProps, nextProps) => {
-    // Only re-render if video ID or key properties change
-    return prevProps.video._id === nextProps.video._id &&
-           prevProps.video.originalName === nextProps.video.originalName &&
-           prevProps.video.s3RawFile?.key === nextProps.video.s3RawFile?.key;
-  });
-  
-  VideoCard.displayName = 'VideoCard';
+  // Pre-compute inventory items grouped by video ID to avoid filtering in each card
+  const inventoryByVideoId = useMemo(() => {
+    const map = {};
+    inventoryItems.forEach(item => {
+      const videoId = item.sourceVideoId?._id || item.sourceVideoId;
+      if (videoId) {
+        if (!map[videoId]) map[videoId] = [];
+        map[videoId].push(item);
+      }
+    });
+    return map;
+  }, [inventoryItems]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-8">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-2"></div>
-          <p className="text-gray-600">Loading videos...</p>
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+        <span className="ml-2 text-gray-600">Loading videos...</span>
       </div>
     );
   }
@@ -1100,32 +1148,65 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
             </p>
           </div>
           {pagination.totalItems > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDeleteAll}
-              disabled={deletingAll}
-              className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-            >
-              {deletingAll ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Deleting All...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="w-4 h-4" />
-                  Delete All Videos
-                </>
-              )}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadAll}
+                disabled={downloadingAll || pagination.totalItems === 0}
+                className="flex items-center gap-2"
+              >
+                {downloadingAll ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Downloading...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    Download All
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+              >
+                {deletingAll ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deleting All...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Delete All Videos
+                  </>
+                )}
+              </Button>
+            </div>
           )}
         </div>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {videos.map((video) => (
-          <VideoCard key={video._id} video={video} />
+          <VideoCard
+            key={video._id}
+            video={video}
+            videoInventory={inventoryByVideoId[video._id] || []}
+            isPlaying={playingVideoId === video._id}
+            streamUrl={streamUrls[video._id]?.url}
+            onPlayToggle={handlePlayToggle}
+            onSelectVideo={setSelectedVideo}
+            onDownload={handleDownload}
+            onDelete={handleDelete}
+            onLoadStreamUrl={getStreamUrl}
+            onStopPlaying={() => setPlayingVideoId(null)}
+          />
         ))}
       </div>
       
@@ -1206,104 +1287,126 @@ export default function VideoGallery({ projectId, onVideoSelect, refreshTrigger,
                   )}
                 </div>
               
-              {/* Items, Boxes, and Recommended Boxes from this video */}
+              {/* Items, Boxes, and Recommended Boxes from this video - Grouped by Room */}
               {(() => {
                 const allItems = inventoryItems.filter(item => {
                   const videoId = item.sourceVideoId?._id || item.sourceVideoId;
                   return videoId === selectedVideo._id;
                 });
-                
-                // Separate items by type
-                const regularItems = allItems.filter(item => 
-                  item.itemType === 'regular_item' || 
-                  item.itemType === 'furniture' || 
-                  (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                );
-                const existingBoxes = allItems.filter(item => 
-                  item.itemType === 'existing_box' || 
-                  item.itemType === 'packed_box'
-                );
-                const recommendedBoxes = allItems.filter(item => item.itemType === 'boxes_needed');
-                
+
                 if (allItems.length === 0) return null;
-                
+
+                // Group all items by room first
+                const roomGroups = groupByRoom(allItems);
+
                 return (
                   <div className="mb-4">
-                    {/* Regular Items Section */}
-                    {regularItems.length > 0 && (
-                      <div className="mb-4">
-                        <h4 className="font-medium text-gray-900 mb-2">Items</h4>
-                        <div className="flex flex-wrap gap-1">
-                          {regularItems.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Existing Boxes Section */}
-                    {existingBoxes.length > 0 && (
-                      <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h4 className="font-medium text-gray-900">Boxes</h4>
-                          <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                            B
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {existingBoxes.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Recommended Boxes Section */}
-                    {recommendedBoxes.length > 0 && (
-                      <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h4 className="font-medium text-gray-900">Recommended Boxes</h4>
-                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                            R
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {recommendedBoxes.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
+                    <Accordion type="multiple" className="w-full">
+                      {Object.entries(roomGroups).map(([room, roomItems]) => {
+                        // Separate items within this room by type
+                        const roomRegularItems = roomItems.filter(item =>
+                          item.itemType === 'furniture' ||
+                          item.itemType === 'regular_item' ||
+                          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                        );
+                        const roomExistingBoxes = roomItems.filter(item =>
+                          item.itemType === 'existing_box' ||
+                          item.itemType === 'packed_box'
+                        );
+                        const roomRecommendedBoxes = roomItems.filter(item =>
+                          item.itemType === 'boxes_needed'
+                        );
+
+                        const totalCount = roomItems.reduce((sum, i) => sum + (i.quantity || 1), 0);
+
+                        return (
+                          <AccordionItem key={room} value={room}>
+                            <AccordionTrigger className="py-2 text-sm font-medium">
+                              {room} ({totalCount})
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-3">
+                                {/* Regular Items in this room */}
+                                {roomRegularItems.length > 0 && (
+                                  <div>
+                                    <h5 className="text-xs font-medium text-gray-600 mb-1">Items</h5>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomRegularItems.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Existing Boxes in this room */}
+                                {roomExistingBoxes.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <h5 className="text-xs font-medium text-gray-600">Boxes</h5>
+                                      <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                        B
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomExistingBoxes.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Recommended Boxes in this room */}
+                                {roomRecommendedBoxes.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <h5 className="text-xs font-medium text-gray-600">Recommended Boxes</h5>
+                                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                        R
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomRecommendedBoxes.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
+                    </Accordion>
                   </div>
                 );
               })()}

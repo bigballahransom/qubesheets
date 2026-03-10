@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import VideoRecording from '@/models/VideoRecording';
+import mongoose from 'mongoose';
+// VideoRecordingSession removed - now using LiveKit Egress (server-side) recording only
 
 export async function GET(
   request: NextRequest,
@@ -21,41 +23,149 @@ export async function GET(
     await connectMongoDB();
 
     const { searchParams } = new URL(request.url);
+
+    // Check if requesting a specific recording by egressId
+    const egressId = searchParams.get('egressId');
+    if (egressId) {
+      console.log('🔍 Fetching recording by egressId:', egressId);
+      const recording = await VideoRecording.findOne({
+        projectId,
+        $or: [
+          { egressId: egressId },
+          { customerEgressId: egressId }
+        ]
+      }).lean();
+
+      if (!recording) {
+        return NextResponse.json({ recording: null });
+      }
+
+      // Transform recording with download URL
+      const transformedRecording = {
+        ...recording,
+        source: 'livekit',
+        downloadUrl: (recording as any).s3Url || `https://${process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${(recording as any).s3Key}`,
+        formattedDuration: formatDuration((recording as any).duration),
+        formattedFileSize: formatFileSize((recording as any).fileSize)
+      };
+
+      console.log('✅ Found recording by egressId:', (recording as any)._id);
+      return NextResponse.json({ recording: transformedRecording });
+    }
+
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
     const status = searchParams.get('status');
     const sortBy = searchParams.get('sortBy') || 'createdAt';
     const sortOrder = searchParams.get('sortOrder') === 'asc' ? 1 : -1;
 
-    // Build query
-    const query: any = {
+    // Build base match criteria
+    const matchCriteria: any = {
       projectId: projectId
     };
 
     // Filter by status if provided
     if (status && status !== 'all') {
-      query.status = status;
+      matchCriteria.status = status;
     }
 
-    // Build sort object
-    const sort: any = {};
-    sort[sortBy] = sortOrder;
+    console.log('🔍 Video recordings query:', { projectId, status, sortBy, sortOrder });
 
-    // Execute query with pagination
-    const skip = (page - 1) * limit;
-    
-    const [recordings, totalCount] = await Promise.all([
-      VideoRecording.find(query)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      VideoRecording.countDocuments(query)
+    // Use aggregation to group recordings by roomId and return only the best one per call
+    // This prevents duplicate entries when a call has multiple recording attempts (e.g., failed + succeeded)
+    const aggregationPipeline: any[] = [
+      { $match: matchCriteria },
+      // Add computed fields for sorting:
+      // - statusPriority: completed=1, processing=2, recording=3, others=4+
+      // - hasAgentName: true if there's an agent participant with a non-empty name
+      {
+        $addFields: {
+          statusPriority: {
+            $switch: {
+              branches: [
+                { case: { $eq: ['$status', 'completed'] }, then: 1 },
+                { case: { $eq: ['$status', 'processing'] }, then: 2 },
+                { case: { $eq: ['$status', 'recording'] }, then: 3 },
+                { case: { $eq: ['$status', 'starting'] }, then: 4 },
+                { case: { $eq: ['$status', 'waiting'] }, then: 5 },
+              ],
+              default: 6 // failed and others
+            }
+          },
+          // Check if recording has an agent participant with a non-empty name
+          hasAgentName: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$participants', []] },
+                    as: 'p',
+                    cond: {
+                      $and: [
+                        { $eq: ['$$p.type', 'agent'] },
+                        { $gt: [{ $strLenCP: { $ifNull: ['$$p.name', ''] } }, 0] }
+                      ]
+                    }
+                  }
+                }
+              },
+              0
+            ]
+          }
+        }
+      },
+      // Sort by: hasAgentName DESC (prefer recordings with agent names),
+      // then statusPriority ASC (prefer better status), then createdAt DESC (most recent)
+      { $sort: { hasAgentName: -1, statusPriority: 1, createdAt: -1 } },
+      // Group by roomId and keep only the best recording per room
+      {
+        $group: {
+          _id: '$roomId',
+          recording: { $first: '$$ROOT' },
+          totalAttempts: { $sum: 1 }
+        }
+      },
+      // Flatten the result back to recording documents
+      {
+        $replaceRoot: {
+          newRoot: {
+            $mergeObjects: ['$recording', { totalAttempts: '$totalAttempts' }]
+          }
+        }
+      },
+      // Remove the temporary computed fields
+      { $unset: ['statusPriority', 'hasAgentName'] }
+    ];
+
+    // Add final sort based on user preference
+    const finalSort: any = {};
+    finalSort[sortBy] = sortOrder;
+    aggregationPipeline.push({ $sort: finalSort });
+
+    // Get total count of unique rooms (for pagination)
+    const countPipeline = [
+      { $match: matchCriteria },
+      { $group: { _id: '$roomId' } },
+      { $count: 'total' }
+    ];
+
+    const [recordings, countResult] = await Promise.all([
+      VideoRecording.aggregate([
+        ...aggregationPipeline,
+        { $skip: (page - 1) * limit },
+        { $limit: limit }
+      ]),
+      VideoRecording.aggregate(countPipeline)
     ]);
 
-    // Transform recordings to include computed fields
-    const transformedRecordings = recordings.map(recording => ({
+    const totalCount = countResult[0]?.total || 0;
+
+    console.log('📊 Query results:', { totalCount, returnedCount: recordings.length });
+
+    // Transform recordings with download URLs
+    const transformedRecordings = recordings.map((recording: any) => ({
       ...recording,
+      source: 'livekit',
       downloadUrl: recording.s3Url || `https://${process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${recording.s3Key}`,
       formattedDuration: formatDuration(recording.duration),
       formattedFileSize: formatFileSize(recording.fileSize)
@@ -73,7 +183,7 @@ export async function GET(
       }
     };
 
-    console.log(`✅ Found ${recordings.length} recordings (${totalCount} total)`);
+    console.log(`✅ Found ${transformedRecordings.length} recordings (${totalCount} total)`);
     return NextResponse.json(response);
 
   } catch (error) {

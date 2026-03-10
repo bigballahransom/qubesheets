@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Send, Phone, User, MessageSquare, Check, AlertCircle } from 'lucide-react';
+import { X, Send, Phone, User, MessageSquare, Check, AlertCircle, Link, Copy, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface SendUploadLinkModalProps {
@@ -14,52 +14,79 @@ interface SendUploadLinkModalProps {
   customerPhone?: string;
 }
 
-export default function SendUploadLinkModal({ 
-  isOpen, 
-  onClose, 
-  projectId, 
+export default function SendUploadLinkModal({
+  isOpen,
+  onClose,
+  projectId,
   projectName,
   customerName: initialCustomerName = '',
-  customerPhone: initialCustomerPhone = '' 
+  customerPhone: initialCustomerPhone = ''
 }: SendUploadLinkModalProps) {
   const [customerName, setCustomerName] = useState(initialCustomerName);
   const [customerPhone, setCustomerPhone] = useState(initialCustomerPhone);
   const [phoneError, setPhoneError] = useState('');
   const [sending, setSending] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [success, setSuccess] = useState(false);
   const [uploadUrl, setUploadUrl] = useState('');
+  const [existingLink, setExistingLink] = useState<any>(null);
+  const [loadingExisting, setLoadingExisting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Update state when initial props change
   useEffect(() => {
     setCustomerName(initialCustomerName);
-    // Convert Twilio format to display format for prefilling
     setCustomerPhone(formatTwilioToDisplay(initialCustomerPhone));
   }, [initialCustomerName, initialCustomerPhone]);
 
+  // Check for existing link when modal opens
+  useEffect(() => {
+    if (isOpen && projectId) {
+      checkExistingLink();
+    }
+  }, [isOpen, projectId]);
+
+  const checkExistingLink = async () => {
+    setLoadingExisting(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/upload-link`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.exists) {
+          setExistingLink(data);
+          setUploadUrl(data.uploadUrl);
+          if (data.customerName) {
+            setCustomerName(data.customerName);
+          }
+          if (data.customerPhone) {
+            setCustomerPhone(formatTwilioToDisplay(data.customerPhone));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking existing link:', error);
+    } finally {
+      setLoadingExisting(false);
+    }
+  };
+
   if (!isOpen) return null;
 
-  // Phone formatting utilities (same as CreateProjectModal)
+  // Phone formatting utilities
   const formatPhoneNumber = (value: string, previousValue: string = ''): string => {
-    // Remove all non-digits
     const digits = value.replace(/\D/g, '');
-    
-    // If user is deleting and we have fewer digits than before, don't add formatting yet
     const prevDigits = previousValue.replace(/\D/g, '');
     const isDeleting = digits.length < prevDigits.length;
-    
-    // Limit to 10 digits
     const limitedDigits = digits.slice(0, 10);
-    
-    // If empty or deleting and less than 4 digits, return just the digits
+
     if (limitedDigits.length === 0) {
       return '';
     }
-    
+
     if (isDeleting && limitedDigits.length <= 3) {
       return limitedDigits;
     }
-    
-    // Format as (xxx) xxx-xxxx
+
     if (limitedDigits.length >= 7) {
       return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
     } else if (limitedDigits.length >= 4) {
@@ -67,36 +94,70 @@ export default function SendUploadLinkModal({
     } else if (limitedDigits.length >= 1) {
       return isDeleting ? limitedDigits : `(${limitedDigits}`;
     }
-    
+
     return limitedDigits;
   };
 
   const formatPhoneForTwilio = (formattedPhone: string): string => {
-    // Extract digits only
     const digits = formattedPhone.replace(/\D/g, '');
-    // Return in Twilio format +1xxxxxxxxxx if we have 10 digits
     return digits.length === 10 ? `+1${digits}` : '';
   };
-  
+
   const formatTwilioToDisplay = (twilioPhone: string): string => {
-    // Convert +1xxxxxxxxxx back to (xxx) xxx-xxxx format
     if (twilioPhone && twilioPhone.startsWith('+1') && twilioPhone.length === 12) {
-      const digits = twilioPhone.slice(2); // Remove +1
+      const digits = twilioPhone.slice(2);
       return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
     }
     return twilioPhone || '';
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleGenerateLink = async () => {
+    if (!customerName.trim()) {
+      toast.error('Please enter customer name');
+      return;
+    }
+
+    setGenerating(true);
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/upload-link`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          customerName: customerName.trim(),
+          customerPhone: customerPhone ? formatPhoneForTwilio(customerPhone) : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to generate upload link');
+      }
+
+      const result = await response.json();
+      setUploadUrl(result.uploadUrl);
+      setExistingLink(result);
+      toast.success('Upload link generated successfully!');
+    } catch (error) {
+      console.error('Error generating upload link:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to generate upload link');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleSendSMS = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!customerName.trim() || !customerPhone.trim()) {
-      toast.error('Please fill in all fields');
+      toast.error('Please fill in customer name and phone number');
       return;
     }
 
     setSending(true);
-    
+
     try {
       const response = await fetch(`/api/projects/${projectId}/send-upload-link`, {
         method: 'POST',
@@ -126,18 +187,33 @@ export default function SendUploadLinkModal({
     }
   };
 
+  const handleCopyLink = async () => {
+    if (!uploadUrl) return;
+
+    try {
+      await navigator.clipboard.writeText(uploadUrl);
+      setCopied(true);
+      toast.success('Link copied to clipboard!');
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      toast.error('Failed to copy link');
+    }
+  };
+
   const handleClose = () => {
     setCustomerName(initialCustomerName);
     setCustomerPhone(formatTwilioToDisplay(initialCustomerPhone));
     setPhoneError('');
     setSuccess(false);
     setUploadUrl('');
+    setExistingLink(null);
+    setCopied(false);
     onClose();
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="p-6 border-b">
           <div className="flex items-center justify-between">
@@ -147,7 +223,7 @@ export default function SendUploadLinkModal({
             </h2>
             <button
               onClick={handleClose}
-              className="p-1 hover:bg-gray-100 rounded-md cursor-pointer transition-colors focus:ring-2 focus:ring-gray-500 focus:outline-none"
+              className="p-1 hover:bg-gray-100 rounded-md cursor-pointer transition-colors"
             >
               <X size={20} />
             </button>
@@ -156,7 +232,12 @@ export default function SendUploadLinkModal({
 
         {/* Content */}
         <div className="p-6">
-          {success ? (
+          {loadingExisting ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+              <span className="ml-2 text-slate-600">Loading...</span>
+            </div>
+          ) : success ? (
             <div className="text-center space-y-4">
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
                 <Check className="w-8 h-8 text-green-600" />
@@ -170,22 +251,18 @@ export default function SendUploadLinkModal({
                 </p>
               </div>
               <div className="bg-blue-50 p-4 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  <strong>Upload URL:</strong>
-                </p>
-                <p className="text-xs text-blue-600 break-all mt-1">
-                  {uploadUrl}
-                </p>
+                <p className="text-sm text-blue-800 font-medium">Upload URL:</p>
+                <p className="text-xs text-blue-600 break-all mt-1">{uploadUrl}</p>
               </div>
               <button
                 onClick={handleClose}
-                className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg cursor-pointer transition-colors focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg cursor-pointer transition-colors"
               >
                 Done
               </button>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-4">
               <div className="bg-blue-50 p-4 rounded-lg mb-4">
                 <p className="text-sm text-blue-800">
                   <strong>Project:</strong> {projectName}
@@ -195,91 +272,169 @@ export default function SendUploadLinkModal({
                 </p>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <User className="inline w-4 h-4 mr-1" />
-                  Customer Name
-                </label>
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Enter customer's full name"
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                  disabled={sending}
-                />
-              </div>
+              {/* Existing link info */}
+              {existingLink && (
+                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                  <p className="text-sm text-slate-700 font-medium">Active Link</p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Link is active and ready to use
+                  </p>
+                </div>
+              )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Phone className="inline w-4 h-4 mr-1" />
-                  Phone Number
-                </label>
-                <input
-                  type="tel"
-                  value={customerPhone}
-                  onChange={(e) => {
-                    const formatted = formatPhoneNumber(e.target.value, customerPhone);
-                    setCustomerPhone(formatted);
-                    
-                    // Validate phone number
-                    const digits = formatted.replace(/\D/g, '');
-                    if (formatted && digits.length > 0 && digits.length !== 10) {
-                      setPhoneError('Phone number must be 10 digits');
-                    } else {
-                      setPhoneError('');
-                    }
-                  }}
-                  placeholder="(555) 123-4567"
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                    phoneError ? 'border-red-500' : ''
-                  }`}
-                  required
-                  disabled={sending}
-                />
-                {phoneError && (
-                  <p className="text-sm text-red-500 mt-1">{phoneError}</p>
+              {/* Form */}
+              <form onSubmit={handleSendSMS} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <User className="inline w-4 h-4 mr-1" />
+                    Customer Name
+                  </label>
+                  <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="Enter customer's full name"
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                    disabled={sending || generating}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Phone className="inline w-4 h-4 mr-1" />
+                    Phone Number (optional for copy link)
+                  </label>
+                  <input
+                    type="tel"
+                    value={customerPhone}
+                    onChange={(e) => {
+                      const formatted = formatPhoneNumber(e.target.value, customerPhone);
+                      setCustomerPhone(formatted);
+                      const digits = formatted.replace(/\D/g, '');
+                      if (formatted && digits.length > 0 && digits.length !== 10) {
+                        setPhoneError('Phone number must be 10 digits');
+                      } else {
+                        setPhoneError('');
+                      }
+                    }}
+                    placeholder="(555) 123-4567"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                      phoneError ? 'border-red-500' : ''
+                    }`}
+                    disabled={sending || generating}
+                  />
+                  {phoneError && (
+                    <p className="text-sm text-red-500 mt-1">{phoneError}</p>
+                  )}
+                </div>
+
+                {/* Link display */}
+                {uploadUrl && (
+                  <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-medium text-slate-700 flex items-center gap-1">
+                        <Link className="w-4 h-4" />
+                        Upload Link
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleCopyLink}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-white border rounded hover:bg-slate-100 transition-colors"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="w-3 h-3 text-green-500" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-600 break-all">{uploadUrl}</p>
+                  </div>
                 )}
-                <p className="text-xs text-gray-500 mt-1">
-                  Include area code. We'll format it automatically.
-                </p>
-              </div>
 
-              <div className="bg-yellow-50 p-4 rounded-lg">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-yellow-800">
-                      <strong>SMS will include:</strong>
-                    </p>
-                    <ul className="text-xs text-yellow-700 mt-1 space-y-1">
-                      <li>• Personalized greeting with customer name</li>
-                      <li>• Secure upload link (expires in 7 days)</li>
-                      <li>• Instructions for photo upload</li>
-                    </ul>
+                <div className="bg-yellow-50 p-4 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5" />
+                    <div>
+                      <p className="text-sm text-yellow-800">
+                        <strong>Link will include:</strong>
+                      </p>
+                      <ul className="text-xs text-yellow-700 mt-1 space-y-1">
+                        <li>• Secure upload link</li>
+                        <li>• Instructions for photo upload</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <button
-                type="submit"
-                disabled={sending || !customerName.trim() || !customerPhone.trim()}
-                className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
-              >
-                {sending ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Sending SMS...
-                  </>
-                ) : (
-                  <>
-                    <Send size={16} />
-                    Send Upload Link
-                  </>
-                )}
-              </button>
-            </form>
+                {/* Action buttons */}
+                <div className="flex flex-col gap-2">
+                  {!uploadUrl ? (
+                    <button
+                      type="button"
+                      onClick={handleGenerateLink}
+                      disabled={generating || !customerName.trim()}
+                      className="w-full bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-700 py-3 rounded-lg font-medium flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                    >
+                      {generating ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Link size={16} />
+                          Generate Link (Copy Only)
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-lg font-medium flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-4 h-4 text-green-500" />
+                          Link Copied!
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={16} />
+                          Copy Link
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={sending || !customerName.trim() || !customerPhone.trim() || !!phoneError}
+                    className="w-full bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  >
+                    {sending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Sending SMS...
+                      </>
+                    ) : (
+                      <>
+                        <Send size={16} />
+                        Send via SMS
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
           )}
         </div>
       </div>

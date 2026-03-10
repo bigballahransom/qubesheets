@@ -7,6 +7,7 @@ import './globals.css'
 import '@livekit/components-styles'
 import { OrganizationDataProvider } from '@/components/providers/OrganizationDataProvider'
 import { SearchProvider } from '@/components/providers/SearchProvider'
+import { FeatureAnnouncementProvider } from '@/components/providers/FeatureAnnouncementProvider'
 import { Toaster } from 'sonner';
 import EmergencyCleanup from '@/components/EmergencyCleanup';
 
@@ -37,12 +38,14 @@ export default function RootLayout({
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
           <EmergencyCleanup />
           <OrganizationDataProvider>
-            <SearchProvider>
-              <main>
-                {children}
-              </main>
-              <Toaster />
-            </SearchProvider>
+            <FeatureAnnouncementProvider>
+              <SearchProvider>
+                <main>
+                  {children}
+                </main>
+                <Toaster />
+              </SearchProvider>
+            </FeatureAnnouncementProvider>
           </OrganizationDataProvider>
         </body>
       </html>

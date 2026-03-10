@@ -9,8 +9,8 @@ export async function POST(request: NextRequest) {
   console.log('🎟️ =================================');
   
   try {
-    // Get room name and participant name from request
-    const { roomName, participantName } = await request.json();
+    // Get room name, participant name, and agent status from request
+    const { roomName, participantName, isAgent: isAgentParam } = await request.json();
     
     console.log('🎫 Token request details:', {
       roomName,
@@ -26,9 +26,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if this is an agent (agents need authentication)
-    const isAgent = participantName.toLowerCase().includes('agent');
-    console.log(`🏷️ Participant type detection: ${isAgent ? 'AGENT' : 'CUSTOMER'}`);
+    // Check if this is an agent - use explicit param if provided, fallback to name check for backwards compatibility
+    const isAgent = isAgentParam === true || participantName.toLowerCase().includes('agent');
+    console.log(`🏷️ Participant type detection: ${isAgent ? 'AGENT' : 'CUSTOMER'} (explicit param: ${isAgentParam})`);
     
     if (isAgent) {
       // Agents must be authenticated
@@ -72,6 +72,8 @@ export async function POST(request: NextRequest) {
       name: participantName,
       // Token expires in 4 hours (plenty of time for inventory session)
       ttl: '4h',
+      // Store name in metadata as backup (some LiveKit versions don't pass name in webhook)
+      metadata: JSON.stringify({ displayName: participantName }),
     });
 
     // Grant permissions

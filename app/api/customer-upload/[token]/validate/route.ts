@@ -33,47 +33,16 @@ export async function GET(
     
     // Ensure models are registered by referencing them
     console.log('Ensuring models are registered:', !!Project, !!CustomerUpload);
-    
-    // First try to find active, non-expired token
-    let customerUpload = await CustomerUpload.findOne({
+
+    // Find active upload link (no expiration check - links never expire)
+    const customerUpload = await CustomerUpload.findOne({
       uploadToken: token,
-      isActive: true,
-      expiresAt: { $gt: new Date() }
+      isActive: true
     });
 
     console.log('Customer upload found (active):', !!customerUpload);
 
-    // If not found, try to find any token (even expired) and potentially extend it
-    if (!customerUpload) {
-      const expiredUpload = await CustomerUpload.findOne({
-        uploadToken: token,
-        isActive: true // Must still be active, just potentially expired
-      });
-      
-      if (expiredUpload) {
-        const now = new Date();
-        const hoursSinceExpiry = (now.getTime() - expiredUpload.expiresAt.getTime()) / (1000 * 60 * 60);
-        
-        // Auto-extend token if expired less than 7 days ago (grace period for customers)
-        if (hoursSinceExpiry <= 24 * 7) { // 7 days grace period
-          console.log(`Auto-extending expired token by 7 days (was expired ${hoursSinceExpiry.toFixed(1)} hours ago)`);
-          
-          // Extend expiration by 7 more days
-          expiredUpload.expiresAt = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000));
-          await expiredUpload.save();
-          
-          customerUpload = expiredUpload;
-        } else {
-          // Too old to auto-extend
-          return NextResponse.json(
-            { error: 'This upload link has expired. Please request a new link from your moving company.' },
-            { status: 410 } // 410 Gone - more appropriate than 404
-          );
-        }
-      }
-    }
-
-    // Final check - if still no valid upload found
+    // If no valid upload found
     if (!customerUpload) {
       console.log('Customer upload not found - invalid token');
       return NextResponse.json(

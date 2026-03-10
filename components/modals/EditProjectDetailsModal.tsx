@@ -61,6 +61,9 @@ interface Project {
   phone?: string;
   email?: string;
   customerEmail?: string;
+  customerCompanyName?: string;
+  origin?: { address?: string; unit?: string };
+  destination?: { address?: string; unit?: string };
 }
 
 interface EditProjectDetailsModalProps {
@@ -68,7 +71,6 @@ interface EditProjectDetailsModalProps {
   onOpenChange: (open: boolean) => void;
   project: Project;
   onProjectUpdated: (project: Project) => void;
-  showEmail?: boolean;
 }
 
 export default function EditProjectDetailsModal({
@@ -76,12 +78,14 @@ export default function EditProjectDetailsModal({
   onOpenChange,
   project,
   onProjectUpdated,
-  showEmail = false,
 }: EditProjectDetailsModalProps) {
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [movingFrom, setMovingFrom] = useState('');
+  const [movingTo, setMovingTo] = useState('');
   const [phoneError, setPhoneError] = useState('');
 
   useEffect(() => {
@@ -89,6 +93,9 @@ export default function EditProjectDetailsModal({
       setName(project.name || '');
       setPhone(formatPhoneForDisplay(project.phone));
       setEmail(project.customerEmail || project.email || '');
+      setCompanyName(project.customerCompanyName || '');
+      setMovingFrom(project.origin?.address || '');
+      setMovingTo(project.destination?.address || '');
       setPhoneError('');
     }
   }, [open, project]);
@@ -113,11 +120,17 @@ export default function EditProjectDetailsModal({
       const updateData: any = {
         name: name.trim(),
         phone: phone.trim() ? formatPhoneForAPI(phone.trim()) : '',
+        customerEmail: email.trim() || '',
+        customerCompanyName: companyName.trim() || '',
+        origin: {
+          ...project.origin,
+          address: movingFrom.trim() || '',
+        },
+        destination: {
+          ...project.destination,
+          address: movingTo.trim() || '',
+        },
       };
-
-      if (showEmail) {
-        updateData.customerEmail = email.trim() || '';
-      }
 
       const response = await fetch(`/api/projects/${project._id}`, {
         method: 'PATCH',
@@ -197,19 +210,46 @@ export default function EditProjectDetailsModal({
               )}
             </div>
 
-            {showEmail && (
-              <div className="grid gap-2">
-                <Label htmlFor="edit-email">Email</Label>
-                <Input
-                  id="edit-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="customer@example.com"
-                  disabled={loading}
-                />
-              </div>
-            )}
+            <div className="grid gap-2">
+              <Label htmlFor="edit-email">Email</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="edit-company">Company Name</Label>
+              <Input
+                id="edit-company"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="edit-moving-from">Moving From</Label>
+              <Input
+                id="edit-moving-from"
+                value={movingFrom}
+                onChange={(e) => setMovingFrom(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="edit-moving-to">Moving To</Label>
+              <Input
+                id="edit-moving-to"
+                value={movingTo}
+                onChange={(e) => setMovingTo(e.target.value)}
+                disabled={loading}
+              />
+            </div>
           </div>
 
           <DialogFooter>

@@ -39,7 +39,39 @@ export interface VideoProcessingMessage {
   originalMimeType?: string; // Keep original MIME type for reference
   fileSize: number;
   uploadedAt: string;
-  source: 'video-upload';
+  source: 'video-upload' | 'video-call-capture';
+  // Video call capture fields
+  recordingSessionId?: string;
+  chunkIndex?: number;
+  isVideoCallCapture?: boolean;
+  roomLabel?: string;
+}
+
+export interface VideoMergeMessage {
+  type: 'video-merge';
+  sessionId: string;
+  projectId: string;
+  chunks: Array<{
+    chunkIndex: number;
+    videoId: string;
+    s3Key: string;
+    s3Bucket: string;
+  }>;
+  outputS3Key: string;
+  outputS3Bucket: string;
+}
+
+export interface CallSegmentProcessingMessage {
+  type: 'call-segment';
+  segmentId: string;
+  videoRecordingId: string;
+  projectId: string;
+  segmentIndex: number;
+  s3Key: string;
+  s3Bucket: string;
+  participantIdentity: string;  // Customer identity
+  roomName: string;
+  duration?: number;  // Segment duration in seconds
 }
 
 /**
@@ -107,6 +139,141 @@ export async function sendVideoProcessingMessage(message: VideoProcessingMessage
     }
     
     throw new Error(`SQS video send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Send video merge message to SQS video queue
+ */
+export async function sendVideoMergeMessage(message: VideoMergeMessage): Promise<string> {
+  const queueUrl = process.env.AWS_SQS_VIDEO_QUEUE_URL;
+
+  if (!queueUrl) {
+    throw new Error('AWS_SQS_VIDEO_QUEUE_URL environment variable is not configured');
+  }
+
+  console.log('📤 Sending video merge message to SQS:', {
+    queueUrl,
+    sessionId: message.sessionId,
+    chunkCount: message.chunks.length
+  });
+
+  try {
+    const result = await sqs.sendMessage({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(message),
+      MessageAttributes: {
+        'sessionId': {
+          DataType: 'String',
+          StringValue: message.sessionId
+        },
+        'projectId': {
+          DataType: 'String',
+          StringValue: message.projectId
+        },
+        'messageType': {
+          DataType: 'String',
+          StringValue: 'video-merge'
+        },
+        'chunkCount': {
+          DataType: 'Number',
+          StringValue: message.chunks.length.toString()
+        }
+      }
+    }).promise();
+
+    console.log('✅ SQS video merge message sent successfully:', {
+      messageId: result.MessageId,
+      sequenceNumber: result.SequenceNumber
+    });
+
+    return result.MessageId || 'unknown';
+
+  } catch (error) {
+    console.error('❌ Failed to send SQS video merge message:', error);
+
+    if (error instanceof Error) {
+      if (error.message.includes('InvalidParameterValue')) {
+        throw new Error('Invalid SQS video merge message parameters. Check message format.');
+      } else if (error.message.includes('AccessDenied')) {
+        throw new Error('Access denied to SQS video queue. Check IAM permissions.');
+      } else if (error.message.includes('QueueDoesNotExist')) {
+        throw new Error('SQS video queue does not exist. Check queue URL.');
+      }
+    }
+
+    throw new Error(`SQS video merge send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Send call segment processing message to SQS call queue
+ * Used for processing video call recording segments with Gemini
+ */
+export async function sendCallSegmentProcessingMessage(message: CallSegmentProcessingMessage): Promise<string> {
+  const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+
+  if (!queueUrl) {
+    throw new Error('AWS_SQS_CALL_QUEUE_URL environment variable is not configured');
+  }
+
+  console.log('📤 Sending call segment message to SQS:', {
+    queueUrl,
+    segmentId: message.segmentId,
+    videoRecordingId: message.videoRecordingId,
+    segmentIndex: message.segmentIndex,
+    s3Key: message.s3Key
+  });
+
+  try {
+    const result = await sqs.sendMessage({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(message),
+      MessageAttributes: {
+        'segmentId': {
+          DataType: 'String',
+          StringValue: message.segmentId
+        },
+        'videoRecordingId': {
+          DataType: 'String',
+          StringValue: message.videoRecordingId
+        },
+        'projectId': {
+          DataType: 'String',
+          StringValue: message.projectId
+        },
+        'messageType': {
+          DataType: 'String',
+          StringValue: 'call-segment'
+        },
+        'segmentIndex': {
+          DataType: 'Number',
+          StringValue: message.segmentIndex.toString()
+        }
+      }
+    }).promise();
+
+    console.log('✅ SQS call segment message sent successfully:', {
+      messageId: result.MessageId,
+      sequenceNumber: result.SequenceNumber
+    });
+
+    return result.MessageId || 'unknown';
+
+  } catch (error) {
+    console.error('❌ Failed to send SQS call segment message:', error);
+
+    if (error instanceof Error) {
+      if (error.message.includes('InvalidParameterValue')) {
+        throw new Error('Invalid SQS call segment message parameters. Check message format.');
+      } else if (error.message.includes('AccessDenied')) {
+        throw new Error('Access denied to SQS call queue. Check IAM permissions.');
+      } else if (error.message.includes('QueueDoesNotExist')) {
+        throw new Error('SQS call queue does not exist. Check queue URL.');
+      }
+    }
+
+    throw new Error(`SQS call segment send failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 

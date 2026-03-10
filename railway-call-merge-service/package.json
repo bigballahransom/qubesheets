@@ -1,0 +1,21 @@
+{
+  "name": "railway-call-merge-service",
+  "version": "1.0.0",
+  "description": "Railway service for merging video call recording chunks (FFmpeg only, no Gemini)",
+  "main": "call-merge-processor.js",
+  "scripts": {
+    "start": "node call-merge-processor.js",
+    "dev": "nodemon call-merge-processor.js"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1472.0",
+    "dotenv": "^16.3.1",
+    "fluent-ffmpeg": "^2.1.2",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "mongoose": "^7.5.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

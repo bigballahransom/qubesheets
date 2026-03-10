@@ -6,6 +6,8 @@ const isPublicRoute = createRouteMatcher([
   '/video-call(.*)',
   '/call-complete(.*)',
   '/customer-upload(.*)',
+  '/inventory-review(.*)',
+  '/crew-review(.*)',
   '/form(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
@@ -14,6 +16,8 @@ const isPublicRoute = createRouteMatcher([
 
 const isPublicApiRoute = createRouteMatcher([
   '/api/customer-upload/(.*)',
+  '/api/inventory-review/(.*)',
+  '/api/crew-review/(.*)',
   '/api/livekit/token(.*)',
   '/api/livekit/webhook(.*)',  // LiveKit webhook endpoint
   '/api/projects/(.*)/public-info',
@@ -21,7 +25,10 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/processing-complete(.*)',  // Webhook endpoint and SSE for Railway services
   '/api/generate-video-upload-url',  // Video upload pre-signed URL generation
   '/api/confirm-video-upload',  // Video upload confirmation
-  '/api/test-webhook(.*)'  // Test webhook endpoint
+  '/api/test-webhook(.*)',  // Test webhook endpoint
+  '/api/user/(.*)',  // User profile/settings APIs - auth checked internally
+  '/api/projects/(.*)/consolidate-inventory',  // Railway call service post-processing
+  '/api/projects/(.*)/finalize-inventory'  // Railway call service post-processing
 ]);
 
 // Routes that require organization context

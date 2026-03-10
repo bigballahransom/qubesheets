@@ -3,6 +3,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import Project from '@/models/Project';
 import CustomerUpload from '@/models/CustomerUpload';
+// VideoRecordingSession removed - now using LiveKit Egress (server-side) recording only
 import { sendVideoProcessingMessage } from '@/lib/sqsUtils';
 import { getS3SignedUrl } from '@/lib/s3Upload';
 import AWS from 'aws-sdk';
@@ -40,8 +41,24 @@ export async function POST(request: NextRequest) {
       fileSize,
       isCustomerUpload,
       customerToken,
-      manualRoomEntry
+      manualRoomEntry,
+      source: uploadSource
     } = metadata;
+
+    // Debug: Log metadata received
+    console.log('📥 Confirm upload metadata received:', {
+      source: uploadSource,
+      projectId,
+      hasMetadata: !!metadata
+    });
+
+    // Reject video_call_capture requests - now using LiveKit Egress (server-side) recording
+    if (uploadSource === 'video_call_capture') {
+      console.log('⚠️ video_call_capture source rejected - client-side recording is deprecated');
+      return NextResponse.json({
+        error: 'Client-side video recording is no longer supported. Video calls are now recorded server-side via LiveKit.',
+      }, { status: 400 });
+    }
 
     // Skip user validation since no authentication required
 
@@ -132,9 +149,11 @@ export async function POST(request: NextRequest) {
       normalizedMimeType = 'video/mov';
     }
 
-    // Create unique video name
+    // ===== REGULAR VIDEO UPLOAD: Create Video document and send to Gemini =====
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const videoName = `video_${timestamp}`;
+
+    const videoSource = isCustomerUpload ? 'customer_upload' : 'admin_upload';
 
     // Create Video document in MongoDB
     const videoDoc = new Video({
@@ -153,7 +172,7 @@ export async function POST(request: NextRequest) {
         url: signedUrl
       },
       uploadedAt: new Date(),
-      source: isCustomerUpload ? 'customer_upload' : 'admin_upload',
+      source: videoSource,
       analysisResult: {
         status: 'pending',
         summary: null,
@@ -164,7 +183,7 @@ export async function POST(request: NextRequest) {
 
     const savedVideo = await videoDoc.save();
 
-    // Send SQS message for processing
+    // Send SQS message for Gemini processing - clean message format (no video call fields)
     const sqsMessage = {
       videoId: savedVideo._id.toString(),
       projectId: project._id.toString(),

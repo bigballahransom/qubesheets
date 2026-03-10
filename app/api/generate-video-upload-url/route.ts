@@ -36,10 +36,14 @@ export async function POST(request: NextRequest) {
     const allowedVideoTypes = [
       'video/mp4', 'video/mov', 'video/quicktime', 'video/avi',
       'video/webm', 'video/mkv', 'video/x-flv', 'video/mpeg',
-      'video/x-ms-wmv', 'video/3gpp'
+      'video/x-ms-wmv', 'video/3gpp', 'video/x-matroska'
     ];
 
-    if (!allowedVideoTypes.includes(mimeType.toLowerCase())) {
+    // Extract base MIME type (handle codecs like 'video/webm;codecs=vp8,opus')
+    const baseMimeType = mimeType.toLowerCase().split(';')[0].trim();
+
+    if (!allowedVideoTypes.includes(baseMimeType)) {
+      console.log('❌ Invalid video type:', { mimeType, baseMimeType, allowedVideoTypes });
       return NextResponse.json(
         { error: 'Invalid file type. Please upload a supported video format.' },
         { status: 400 }

@@ -12,8 +12,18 @@ import {
   useTracks,
   useLocalParticipant,
   useRemoteParticipants,
+  useConnectionState,
+  useRoomContext,
+  VideoTrack,
+  AudioTrack,
+  TrackRefContext,
+  useTrackRefContext,
+  ParticipantContext,
+  useParticipantContext,
+  FocusLayout,
+  CarouselLayout,
 } from '@livekit/components-react';
-import { Track, LocalVideoTrack, RemoteVideoTrack } from 'livekit-client';
+import { Track, LocalVideoTrack, RemoteVideoTrack, createLocalVideoTrack, ConnectionState, facingModeFromLocalTrack } from 'livekit-client';
 import '@livekit/components-styles';
 import { 
   Camera, 
@@ -39,7 +49,6 @@ import {
   Target,
   Layers,
   Activity,
-  Scan,
   Plus,
   ArrowRight,
   CheckCircle,
@@ -51,60 +60,215 @@ import {
   Save,
   MessageSquare,
   Radio,
+  FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
+import TranscriptDisplay from './TranscriptDisplay';
 import Logo from '../../public/logo';
 import { Button } from '../ui/button';
+// Client-side recording removed - using LiveKit Egress (server-side) recording
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 import VideoCallNotes from '../VideoCallNotes';
+import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimizedRoomOptions } from '@/lib/webrtc-compatibility';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
 const darkGlassStyle = "backdrop-blur-xl bg-black/20 border border-white/10 shadow-2xl";
 
-// Hook for tracking recording status
-function useRecordingStatus(roomName) {
-  const [recordingStatus, setRecordingStatus] = useState('not_started'); // 'not_started' | 'starting' | 'recording' | 'stopping' | 'completed' | 'failed'
+// Helper function to flip an image horizontally
+// This is used for virtual backgrounds so text appears correct in the agent's mirrored selfie view
+async function flipImageHorizontally(imageUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+
+      // Flip horizontally
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, 0, 0);
+
+      // Convert to blob URL for better performance
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(URL.createObjectURL(blob));
+        } else {
+          // Fallback to data URL
+          resolve(canvas.toDataURL('image/png'));
+        }
+      }, 'image/png');
+    };
+    img.onerror = reject;
+    img.src = imageUrl;
+  });
+}
+
+// Component to apply background effects to local video track
+const BackgroundApplier = React.memo(({ backgroundSettings }) => {
+  const { localParticipant } = useLocalParticipant();
+  const processorRef = useRef(null);
+  const [isApplied, setIsApplied] = useState(false);
+
+  useEffect(() => {
+    if (!backgroundSettings || backgroundSettings.mode === 'none') return;
+    if (!localParticipant) return;
+
+    let cancelled = false;
+    let retryCount = 0;
+    const maxRetries = 30; // 30 attempts × 100ms = 3 seconds max
+    let flippedImageUrl = null;
+
+    const applyBackground = async () => {
+      try {
+        const { BackgroundProcessor, supportsBackgroundProcessors } = await import('@livekit/track-processors');
+
+        if (!supportsBackgroundProcessors || !supportsBackgroundProcessors()) {
+          console.log('Background processors not supported');
+          return;
+        }
+
+        // Pre-flip the virtual background image so text reads correctly in mirrored view
+        if (backgroundSettings.mode === 'virtual' && backgroundSettings.imageUrl) {
+          try {
+            console.log('Flipping background image for mirrored view...');
+            flippedImageUrl = await flipImageHorizontally(backgroundSettings.imageUrl);
+            console.log('Background image flipped successfully');
+          } catch (err) {
+            console.warn('Could not flip image, using original:', err);
+            flippedImageUrl = backgroundSettings.imageUrl;
+          }
+        }
+
+        // Poll for video track with small intervals
+        const checkAndApply = async () => {
+          if (cancelled) return;
+
+          const videoTrack = localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+
+          if (videoTrack && videoTrack instanceof LocalVideoTrack) {
+            // Track is ready - apply processor
+            let processorConfig;
+            if (backgroundSettings.mode === 'blur') {
+              processorConfig = {
+                mode: 'background-blur',
+                blurRadius: backgroundSettings.blurRadius || 10
+              };
+            } else if (backgroundSettings.mode === 'virtual' && flippedImageUrl) {
+              processorConfig = {
+                mode: 'virtual-background',
+                imagePath: flippedImageUrl
+              };
+            } else {
+              return;
+            }
+
+            console.log('Applying background to call:', processorConfig);
+            processorRef.current = BackgroundProcessor(processorConfig);
+            await videoTrack.setProcessor(processorRef.current);
+            setIsApplied(true);
+            console.log('Background applied successfully');
+          } else if (retryCount < maxRetries) {
+            // Track not ready yet - retry after short delay
+            retryCount++;
+            setTimeout(checkAndApply, 100); // Check every 100ms
+          } else {
+            console.log('Could not find video track after max retries');
+          }
+        };
+
+        checkAndApply();
+      } catch (error) {
+        console.error('Failed to apply background:', error);
+      }
+    };
+
+    applyBackground();
+
+    return () => {
+      cancelled = true;
+      // Clean up blob URL if created
+      if (flippedImageUrl && flippedImageUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(flippedImageUrl);
+      }
+    };
+  }, [backgroundSettings, localParticipant]);
+
+  return null;
+});
+
+// Hook for manual recording control (agent only)
+function useRecordingControl(projectId, roomId) {
+  const [recordingStatus, setRecordingStatus] = useState('idle'); // 'idle' | 'starting' | 'recording' | 'stopping'
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [startTime, setStartTime] = useState(null);
+  const [error, setError] = useState(null);
 
-  const remoteParticipants = useRemoteParticipants();
-  const { localParticipant } = useLocalParticipant();
-  
-  // Check if both agent and customer are present
-  const bothParticipantsPresent = useMemo(() => {
-    const allParticipants = [localParticipant, ...remoteParticipants].filter(Boolean);
-    console.log('🎯 [CLIENT] Checking participants:', {
-      totalCount: allParticipants.length,
-      localIdentity: localParticipant?.identity,
-      remoteIdentities: remoteParticipants.map(p => p.identity),
-      roomName
-    });
-    
-    const hasAgent = allParticipants.some(p => p.identity.startsWith('agent-'));
-    const hasCustomer = allParticipants.some(p => p.identity.startsWith('customer-'));
-    
-    console.log('🎯 [CLIENT] Participant check result:', {
-      hasAgent,
-      hasCustomer,
-      bothPresent: hasAgent && hasCustomer
-    });
-    
-    return hasAgent && hasCustomer;
-  }, [localParticipant, remoteParticipants, roomName]);
+  // Start recording
+  const startRecording = useCallback(async () => {
+    if (recordingStatus !== 'idle') return;
 
-  // Update recording status when participants change
-  useEffect(() => {
-    if (bothParticipantsPresent && recordingStatus === 'not_started') {
-      setRecordingStatus('starting');
-      setStartTime(new Date());
-      console.log('🎥 Recording should start - both participants present');
-    } else if (!bothParticipantsPresent && (recordingStatus === 'recording' || recordingStatus === 'starting')) {
-      setRecordingStatus('stopping');
-      console.log('🛑 Recording should stop - participant left');
+    setRecordingStatus('starting');
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/video-recordings/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setRecordingStatus('recording');
+        setStartTime(new Date());
+        toast.success('Recording started');
+      } else {
+        setRecordingStatus('idle');
+        setError(data.error || 'Failed to start recording');
+        toast.error(data.error || 'Failed to start recording');
+      }
+    } catch (err) {
+      setRecordingStatus('idle');
+      setError('Failed to start recording');
+      toast.error('Failed to start recording');
     }
-  }, [bothParticipantsPresent, recordingStatus]);
+  }, [projectId, roomId, recordingStatus]);
+
+  // Stop recording
+  const stopRecording = useCallback(async () => {
+    if (recordingStatus !== 'recording') return;
+
+    setRecordingStatus('stopping');
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/video-recordings/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setRecordingStatus('idle');
+        setRecordingDuration(0);
+        setStartTime(null);
+        toast.success('Recording stopped');
+      } else {
+        setRecordingStatus('recording'); // Revert
+        toast.error(data.error || 'Failed to stop recording');
+      }
+    } catch (err) {
+      setRecordingStatus('recording'); // Revert
+      toast.error('Failed to stop recording');
+    }
+  }, [projectId, roomId, recordingStatus]);
 
   // Update duration timer
   useEffect(() => {
@@ -114,21 +278,10 @@ function useRecordingStatus(roomName) {
         const duration = Math.floor((now - startTime) / 1000);
         setRecordingDuration(duration);
       }, 1000);
-      
+
       return () => clearInterval(interval);
     }
   }, [recordingStatus, startTime]);
-
-  // Auto-transition from starting to recording after a brief delay
-  useEffect(() => {
-    if (recordingStatus === 'starting') {
-      const timer = setTimeout(() => {
-        setRecordingStatus('recording');
-      }, 3000); // 3 seconds delay to simulate recording start
-      
-      return () => clearTimeout(timer);
-    }
-  }, [recordingStatus]);
 
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -140,11 +293,54 @@ function useRecordingStatus(roomName) {
     recordingStatus,
     recordingDuration,
     formattedDuration: formatDuration(recordingDuration),
-    bothParticipantsPresent
+    startRecording,
+    stopRecording,
+    error,
+    isRecording: recordingStatus === 'recording',
+    isStarting: recordingStatus === 'starting',
+    isStopping: recordingStatus === 'stopping',
   };
 }
 
-// Recording Status Indicator Component
+// Recording Button Component (agent only)
+const RecordingButton = React.memo(({
+  isRecording,
+  isStarting,
+  isStopping,
+  formattedDuration,
+  onStart,
+  onStop
+}) => {
+  if (isRecording) {
+    return (
+      <button
+        onClick={onStop}
+        disabled={isStopping}
+        className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
+      >
+        <div className="w-3 h-3 bg-white rounded-full animate-pulse" />
+        <span className="text-sm font-medium">
+          {isStopping ? 'Stopping...' : formattedDuration}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={onStart}
+      disabled={isStarting}
+      className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50"
+    >
+      <div className="w-3 h-3 bg-red-500 rounded-full" />
+      <span className="text-sm font-medium">
+        {isStarting ? 'Starting...' : 'Record'}
+      </span>
+    </button>
+  );
+});
+
+// Recording Status Indicator Component (legacy - kept for reference)
 const RecordingIndicator = React.memo(({ recordingStatus, formattedDuration, className = "" }) => {
   const getStatusDisplay = () => {
     switch (recordingStatus) {
@@ -191,175 +387,63 @@ const RecordingIndicator = React.memo(({ recordingStatus, formattedDuration, cla
 // components/video/VideoCallInventory.jsx
 function useAdvancedCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
-  const [currentFacingMode, setCurrentFacingMode] = useState(() => {
-    const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
-    const isAgent = typeof window !== 'undefined' && 
-      window.location.search.includes('name=') && 
-      window.location.search.toLowerCase().includes('agent');
-    return (isSmallScreen && isAgent) ? 'user' : 'environment';
-  });
-  const [availableCameras, setAvailableCameras] = useState([]);
+  const room = useRoomContext();
   const [isSwitching, setIsSwitching] = useState(false);
-  const [hasBackCamera, setHasBackCamera] = useState(false);
-  const [hasFrontCamera, setHasFrontCamera] = useState(false);
-
-  // Detect mobile devices
-  const isIOS = useMemo(() => {
-    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  }, []);
-
-  const isAndroid = useMemo(() => {
-    return /Android/i.test(navigator.userAgent);
-  }, []);
-
-  useEffect(() => {
-    const detectCameras = async () => {
-      try {
-        // Request camera permissions
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(track => track.stop());
-
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
-        setAvailableCameras(videoDevices);
-
-        let backCameraFound = false;
-        let frontCameraFound = false;
-
-        // Check for camera labels
-        for (const device of videoDevices) {
-          const label = device.label.toLowerCase();
-          if (label.includes('back') || label.includes('rear') || label.includes('environment')) {
-            backCameraFound = true;
-          }
-          if (label.includes('front') || label.includes('user') || label.includes('face')) {
-            frontCameraFound = true;
-          }
-        }
-
-        // Fallback for iOS: Try accessing cameras with facingMode
-        if (!backCameraFound || !frontCameraFound) {
-          try {
-            const backStream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: 'environment' }
-            });
-            backStream.getTracks().forEach(track => track.stop());
-            backCameraFound = true;
-          } catch (e) {
-            console.log('📹 No back camera detected via facingMode:', e);
-          }
-
-          try {
-            const frontStream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: 'user' }
-            });
-            frontStream.getTracks().forEach(track => track.stop());
-            frontCameraFound = true;
-          } catch (e) {
-            console.log('📹 No front camera detected via facingMode:', e);
-          }
-        }
-
-        // Assume multiple cameras if enumeration shows multiple devices
-        if (videoDevices.length >= 2) {
-          backCameraFound = true;
-          frontCameraFound = true;
-        }
-
-        setHasBackCamera(backCameraFound);
-        setHasFrontCamera(frontCameraFound);
-
-      } catch (error) {
-        console.error('📹 Error detecting cameras:', error);
-        toast.error('Failed to detect cameras');
-      }
-    };
-
-    detectCameras();
-  }, []);
 
   const switchCamera = useCallback(async () => {
-    if (!localParticipant || isSwitching || (!hasBackCamera && !hasFrontCamera)) {
-      toast.error('Camera switching not available');
+    if (!localParticipant || !room || isSwitching) {
+      console.log('📹 Camera switching not available');
       return;
     }
 
     setIsSwitching(true);
-    const targetFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
 
     try {
-      // Stop all existing video tracks
-      const videoTracks = localParticipant.videoTrackPublications;
-      for (const [, publication] of videoTracks) {
-        if (publication.track) {
-          await publication.track.stop();
-          await localParticipant.unpublishTrack(publication.track);
-        }
+      // Get all video devices
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+      console.log('📹 Available cameras:', videoDevices.map(d => ({ id: d.deviceId, label: d.label })));
+
+      if (videoDevices.length < 2) {
+        console.log('📹 Only one camera available');
+        setIsSwitching(false);
+        return;
       }
 
-      // Wait for tracks to fully stop - Android needs longer delay
-      await new Promise(resolve => setTimeout(resolve, isIOS ? 1000 : isAndroid ? 1500 : 500));
+      // Get current device ID
+      const currentPublication = localParticipant.getTrackPublication(Track.Source.Camera);
+      const currentTrack = currentPublication?.track;
+      const currentDeviceId = currentTrack?.mediaStreamTrack?.getSettings()?.deviceId;
 
-      // Request new camera with specific deviceId if available, otherwise use facingMode
-      const videoDevices = await navigator.mediaDevices.enumerateDevices();
-      const targetDevice = videoDevices.find(device => {
-        const label = device.label.toLowerCase();
-        return device.kind === 'videoinput' && (
-          (targetFacingMode === 'environment' && (label.includes('back') || label.includes('rear') || label.includes('environment'))) ||
-          (targetFacingMode === 'user' && (label.includes('front') || label.includes('user') || label.includes('face')))
-        );
-      });
+      console.log('📹 Current device ID:', currentDeviceId);
 
-      const constraints = {
-        video: {
-          facingMode: { ideal: targetFacingMode },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          ...(targetDevice ? { deviceId: { exact: targetDevice.deviceId } } : {}),
-        },
-      };
+      // Find a different camera
+      const otherDevice = videoDevices.find(d => d.deviceId !== currentDeviceId);
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      const videoTrack = stream.getVideoTracks()[0];
-      const localVideoTrack = new LocalVideoTrack(videoTrack);
+      if (!otherDevice) {
+        console.log('📹 No other camera found');
+        setIsSwitching(false);
+        return;
+      }
 
-      await localParticipant.publishTrack(localVideoTrack);
+      console.log('📹 Switching to:', otherDevice.label || otherDevice.deviceId);
 
-      setCurrentFacingMode(targetFacingMode);
-      toast.success(`📹 Switched to ${targetFacingMode === 'user' ? 'front' : 'back'} camera`);
+      // Use Room.switchActiveDevice - this is the official LiveKit way
+      await room.switchActiveDevice('videoinput', otherDevice.deviceId);
 
-      // Clean up the temporary stream
-      stream.getTracks().forEach(track => track.stop());
+      console.log('📹 Camera switched successfully');
 
     } catch (error) {
       console.error('📹 Camera switch failed:', error);
-      toast.error('Failed to switch camera');
-
-      // Attempt to restore the previous camera
-      try {
-        await localParticipant.setCameraEnabled(true, {
-          facingMode: currentFacingMode,
-          resolution: { width: 1280, height: 720 }
-        });
-      } catch (restoreError) {
-        console.error('📹 Failed to restore camera:', restoreError);
-        toast.error('Failed to restore camera');
-      }
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, isSwitching, currentFacingMode, hasBackCamera, hasFrontCamera, isIOS]);
-
-  const canSwitchCamera = (hasBackCamera && hasFrontCamera) || availableCameras.length > 1;
+  }, [localParticipant, room, isSwitching]);
 
   return {
     switchCamera,
-    currentFacingMode,
-    canSwitchCamera,
     isSwitching,
-    availableCameras,
-    hasBackCamera,
-    hasFrontCamera
   };
 }
 
@@ -492,9 +576,15 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   const [isSmallScreen, setIsSmallScreen] = useState(true); // Default to true to avoid flash of content
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
-  
-  // Recording status tracking
-  const recordingStatus = useRecordingStatus(roomId);
+  const connectionState = useConnectionState();
+
+  // Custom control states
+  const [isMicEnabled, setIsMicEnabled] = useState(true);
+  const [isCameraEnabled, setIsCameraEnabled] = useState(true);
+  const { switchCamera, isSwitching: isCameraSwitching } = useAdvancedCameraSwitching();
+
+  // Show loading screen while connecting
+  const isConnecting = connectionState === ConnectionState.Connecting || connectionState === ConnectionState.Reconnecting;
 
   // Detect Android for specific fixes
   const isAndroid = useMemo(() => {
@@ -539,77 +629,8 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   }, [isAndroid, isSmallScreen, localParticipant, remoteParticipants.length]);
 
 
-  // Auto-enable video track on mount with retry logic
-  useEffect(() => {
-    if (!isSmallScreen || !localParticipant) return;
-
-    const enableCamera = async () => {
-      try {
-        if (!localParticipant.isCameraEnabled) {
-          console.log('📹 Attempting to enable camera for local participant...');
-          
-          // Android-specific camera constraints
-          await localParticipant.setCameraEnabled(true, {
-            resolution: { width: 1280, height: 720 },
-            ...(isAndroid && {
-              facingMode: 'environment',
-              frameRate: { ideal: 15, max: 30 } // Lower frame rate for Android
-            })
-          });
-          console.log('📹 Camera enabled successfully:', localParticipant.isCameraEnabled);
-        } else {
-          console.log('📹 Camera already enabled:', localParticipant.isCameraEnabled);
-        }
-      } catch (error) {
-        console.error('📹 Failed to enable camera:', error);
-        
-        // Android-specific error handling
-        if (isAndroid && error.name === 'NotAllowedError') {
-          toast.error('Camera permission denied. Please allow camera access in browser settings.');
-        } else if (isAndroid && error.name === 'NotFoundError') {
-          toast.error('No camera found. Please check your device camera.');
-        } else {
-          toast.error('Failed to start camera. Please enable it manually.');
-        }
-        
-        // Retry with longer delay for Android
-        setTimeout(() => {
-          if (!localParticipant.isCameraEnabled) {
-            console.log('📹 Retrying to enable camera...');
-            enableCamera();
-          }
-        }, isAndroid ? 5000 : 2000);
-      }
-    };
-
-    enableCamera();
-  }, [localParticipant, isSmallScreen]);
-
-  // Sync video track state with ControlBar
-  useEffect(() => {
-    if (!localParticipant) return;
-
-    const checkAndSyncVideo = async () => {
-      const videoTrack = localParticipant.getTrackPublication(Track.Source.Camera);
-      if (videoTrack && videoTrack.isEnabled && !videoTrack.isMuted) {
-        console.log('📹 Video track is active and unmuted, syncing with ControlBar');
-      } else if (localParticipant.isCameraEnabled && (!videoTrack || videoTrack.isMuted)) {
-        console.log('📹 Video track out of sync, attempting to fix...');
-        try {
-          await localParticipant.setCameraEnabled(true, {
-            resolution: { width: 1280, height: 720 }
-          });
-          console.log('📹 Video track synced:', localParticipant.isCameraEnabled);
-        } catch (error) {
-          console.error('📹 Failed to sync video track:', error);
-        }
-      }
-    };
-
-    checkAndSyncVideo();
-    const interval = setInterval(checkAndSyncVideo, 1000); // Check every second
-    return () => clearInterval(interval);
-  }, [localParticipant]);
+  // Camera is managed by LiveKit via roomOptions.videoCaptureDefaults
+  // No need for manual camera management here
 
   // Auto-hide controls after 6 seconds of inactivity (only if on small screen)
   useEffect(() => {
@@ -648,8 +669,69 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
     { onlySubscribed: false }
   );
 
+  // Check if local camera track is ready (not just a placeholder)
+  const localCameraTrack = tracks.find(
+    t => t.participant?.isLocal && t.source === Track.Source.Camera && t.publication?.track
+  );
+  const isCameraReady = !!localCameraTrack?.publication?.track;
+
+  // Sync control states with localParticipant
+  useEffect(() => {
+    if (!localParticipant) return;
+    setIsMicEnabled(localParticipant.isMicrophoneEnabled);
+    setIsCameraEnabled(localParticipant.isCameraEnabled);
+  }, [localParticipant?.isMicrophoneEnabled, localParticipant?.isCameraEnabled]);
+
+  // Toggle mic
+  const toggleMic = useCallback(async () => {
+    if (!localParticipant) return;
+    try {
+      await localParticipant.setMicrophoneEnabled(!isMicEnabled);
+      setIsMicEnabled(!isMicEnabled);
+    } catch (error) {
+      console.error('Failed to toggle microphone:', error);
+    }
+  }, [localParticipant, isMicEnabled]);
+
+  // Toggle camera
+  const toggleCamera = useCallback(async () => {
+    if (!localParticipant) return;
+    try {
+      await localParticipant.setCameraEnabled(!isCameraEnabled);
+      setIsCameraEnabled(!isCameraEnabled);
+    } catch (error) {
+      console.error('Failed to toggle camera:', error);
+    }
+  }, [localParticipant, isCameraEnabled]);
+
+  // Leave call
+  const leaveCall = useCallback(() => {
+    if (onCallEnd) {
+      onCallEnd();
+    }
+  }, [onCallEnd]);
+
   const hasAgent = remoteParticipants.some(p => isAgent(p.identity));
   const agentName = remoteParticipants.find(p => isAgent(p.identity))?.name || 'Moving Agent';
+
+  // Show loading screen while connecting
+  if (isConnecting) {
+    return (
+      <div className="h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col items-center justify-center relative overflow-hidden">
+        {/* Animated background elements */}
+        <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500/30 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500/30 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
+        </div>
+
+        <div className={`p-8 rounded-3xl text-center max-w-md ${glassStyle} z-10`}>
+          <Loader2 className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
+          <h3 className="text-2xl font-bold text-white mb-2">Connecting...</h3>
+          <p className="text-white/70">Setting up your video call</p>
+        </div>
+      </div>
+    );
+  }
 
   // Render message for large screens
   if (!isSmallScreen) {
@@ -701,12 +783,23 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
 
       {/* Video area - Full screen for both participants */}
       <div className="absolute inset-0 z-10">
-        <GridLayout 
+        <GridLayout
           tracks={tracks}
           style={{ height: '100%', width: '100%' }}
         >
           <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
         </GridLayout>
+
+        {/* Loading overlay when camera isn't ready */}
+        {!isCameraReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900/90 via-purple-900/90 to-pink-900/90 backdrop-blur-sm">
+            <div className={`p-8 rounded-3xl text-center ${glassStyle}`}>
+              <Loader2 className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
+              <h3 className="text-xl font-bold text-white mb-2">Starting Camera...</h3>
+              <p className="text-white/70 text-sm">Please wait while we set up your video</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Top overlay - Agent info and connection status */}
@@ -740,19 +833,63 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
         </div>
       )}
 
-      {/* Control Bar - Using LiveKit's ControlBar for camera control */}
+      {/* Custom Mobile-Friendly Controls */}
       <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
-        <div className="bg-gradient-to-t from-black/60 to-transparent p-6 pb-safe-or-6">
-          <ControlBar 
-            variation="minimal"
-            controls={{
-              microphone: true,
-              camera: true, // Rely on ControlBar for camera toggle and switching
-              chat: false,
-              screenShare: false,
-              leave: true,
-            }}
-          />
+        <div className="bg-gradient-to-t from-black/80 to-transparent p-6 pb-safe-or-8">
+          <div className="flex items-center justify-center gap-5">
+            {/* Mic Toggle */}
+            <button
+              onClick={toggleMic}
+              className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95 ${
+                isMicEnabled
+                  ? 'bg-white/20 backdrop-blur-lg border border-white/30'
+                  : 'bg-red-500/80 backdrop-blur-lg border border-red-400/50'
+              }`}
+            >
+              {isMicEnabled ? (
+                <Mic className="w-7 h-7 text-white" />
+              ) : (
+                <MicOff className="w-7 h-7 text-white" />
+              )}
+            </button>
+
+            {/* Camera Toggle */}
+            <button
+              onClick={toggleCamera}
+              className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95 ${
+                isCameraEnabled
+                  ? 'bg-white/20 backdrop-blur-lg border border-white/30'
+                  : 'bg-red-500/80 backdrop-blur-lg border border-red-400/50'
+              }`}
+            >
+              {isCameraEnabled ? (
+                <Video className="w-7 h-7 text-white" />
+              ) : (
+                <VideoOff className="w-7 h-7 text-white" />
+              )}
+            </button>
+
+            {/* End Call - Larger and prominent */}
+            <button
+              onClick={leaveCall}
+              className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg shadow-red-500/30 transition-all duration-200 active:scale-95"
+            >
+              <PhoneOff className="w-9 h-9 text-white" />
+            </button>
+
+            {/* Camera Flip */}
+            <button
+              onClick={switchCamera}
+              disabled={isCameraSwitching}
+              className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-lg border border-white/20 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-50"
+            >
+              {isCameraSwitching ? (
+                <Loader2 className="w-6 h-6 text-white animate-spin" />
+              ) : (
+                <SwitchCamera className="w-6 h-6 text-white" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -771,12 +908,13 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
 });
 
 
-const AgentView = React.memo(({ 
-  projectId, 
+const AgentView = React.memo(({
+  projectId,
   currentRoom,
   setCurrentRoom,
   participantName,
-  roomId
+  roomId,
+  onCallEnd
 }) => {
   const [isSmallScreen, setIsSmallScreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -785,24 +923,71 @@ const AgentView = React.memo(({
   const [isInventoryActive, setIsInventoryActive] = useState(false);
   const [captureMode, setCaptureMode] = useState('paused');
   const [captureCount, setCaptureCount] = useState(0);
-  
-  // SSE for real-time inventory updates
-  const sseRef = useRef(null);
-  const sseRetryTimeoutRef = useRef(null);
-  const prevProcessingCount = useRef(0);
-  
+
   // Real inventory data (replaces detectedItems)
   const [inventoryItems, setInventoryItems] = useState([]);
   const [inventoryLoading, setInventoryLoading] = useState(false);
-  const [capturedImages, setCapturedImages] = useState([]);
-  const [imagesLoading, setImagesLoading] = useState(false);
-  const [processingStatus, setProcessingStatus] = useState([]);
-  
+
+  // Custom control states for mobile
+  const [isMicEnabled, setIsMicEnabled] = useState(true);
+  const [isCameraEnabled, setIsCameraEnabled] = useState(true);
+
+  // Get participant identity for audio processor
+  const { localParticipant } = useLocalParticipant();
+  const participantIdentity = localParticipant?.identity || '';
+
+  // Handler for when a new transcript segment is received
+  const handleTranscriptReceived = useCallback((segment) => {
+    setLiveTranscriptSegments(prev => {
+      // Check if segment already exists
+      const exists = prev.some(s => s._id === segment._id);
+      if (exists) return prev;
+      // Add new segment and sort by startTime
+      return [...prev, segment].sort((a, b) => a.startTime - b.startTime);
+    });
+  }, []);
+
   const remoteParticipants = useRemoteParticipants();
-  const { switchCamera, currentFacingMode, canSwitchCamera, isSwitching } = useAdvancedCameraSwitching();
-  
-  // Recording status tracking
-  const recordingStatus = useRecordingStatus(roomId);
+  const { switchCamera, isSwitching } = useAdvancedCameraSwitching();
+
+  // Sync control states with localParticipant
+  useEffect(() => {
+    if (!localParticipant) return;
+    setIsMicEnabled(localParticipant.isMicrophoneEnabled);
+    setIsCameraEnabled(localParticipant.isCameraEnabled);
+  }, [localParticipant?.isMicrophoneEnabled, localParticipant?.isCameraEnabled]);
+
+  // Toggle mic
+  const toggleMic = useCallback(async () => {
+    if (!localParticipant) return;
+    try {
+      await localParticipant.setMicrophoneEnabled(!isMicEnabled);
+      setIsMicEnabled(!isMicEnabled);
+    } catch (error) {
+      console.error('Failed to toggle microphone:', error);
+    }
+  }, [localParticipant, isMicEnabled]);
+
+  // Toggle camera
+  const toggleCamera = useCallback(async () => {
+    if (!localParticipant) return;
+    try {
+      await localParticipant.setCameraEnabled(!isCameraEnabled);
+      setIsCameraEnabled(!isCameraEnabled);
+    } catch (error) {
+      console.error('Failed to toggle camera:', error);
+    }
+  }, [localParticipant, isCameraEnabled]);
+
+  // Leave call
+  const leaveCall = useCallback(() => {
+    if (onCallEnd) {
+      onCallEnd();
+    }
+  }, [onCallEnd]);
+
+  // Recording is now automatic - starts when both join, stops when either leaves
+  // No manual recording control needed
 
   const tracks = useTracks(
     [
@@ -877,12 +1062,6 @@ const AgentView = React.memo(({
 
   const toggleSidebar = () => {
     setShowInventory(!showInventory);
-    
-    // Load inventory when sidebar opens
-    if (!showInventory && inventoryItems.length === 0) {
-      fetchInventoryItems();
-      fetchCapturedImages();
-    }
   };
   
   // Centralized inventory update function - matches InventoryManager pattern
@@ -913,237 +1092,8 @@ const AgentView = React.memo(({
       console.log(`📦 Video call inventory item updated: ${inventoryItemId} -> goingQuantity: ${newGoingQuantity}`);
     } catch (error) {
       console.error('Error persisting inventory update:', error);
-      // Revert local state on error
-      await fetchInventoryItems();
     }
   }, [projectId]);
-
-  // Fetch real inventory items from database
-  const fetchInventoryItems = async () => {
-    setInventoryLoading(true);
-    try {
-      const response = await fetch(`/api/projects/${projectId}/inventory`);
-      if (response.ok) {
-        const items = await response.json();
-        setInventoryItems(items);
-        console.log(`📦 Loaded ${items.length} inventory items for video call`);
-      } else {
-        console.error('Failed to fetch inventory items');
-      }
-    } catch (error) {
-      console.error('Error fetching inventory items:', error);
-    } finally {
-      setInventoryLoading(false);
-    }
-  };
-
-  // Fetch all project images from database
-  const fetchCapturedImages = async (force = false) => {
-    if (!force) setImagesLoading(true);
-    try {
-      const response = await fetch(`/api/projects/${projectId}/images`);
-      if (response.ok) {
-        const images = await response.json();
-        // Show all project images, sorted by most recent
-        const allImages = images.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        
-        // Only update state if data actually changed (prevent unnecessary re-renders)
-        setCapturedImages(prevImages => {
-          const hasChanged = JSON.stringify(prevImages) !== JSON.stringify(allImages);
-          if (hasChanged) {
-            console.log(`📸 Updated ${allImages.length} project images for video call`);
-            return allImages;
-          }
-          console.log('📸 No changes in images, skipping update');
-          return prevImages;
-        });
-      } else {
-        console.error('Failed to fetch project images');
-      }
-    } catch (error) {
-      console.error('Error fetching project images:', error);
-    } finally {
-      if (!force) setImagesLoading(false);
-    }
-  };
-  
-  // Load images and inventory on mount
-  useEffect(() => {
-    if (projectId) {
-      fetchInventoryItems();
-      fetchCapturedImages();
-    }
-  }, [projectId]);
-
-  // Poll database for processing status and refresh image data when processing completes
-  useEffect(() => {
-    if (!projectId) return;
-
-    const checkProcessingStatus = async () => {
-      try {
-        const response = await fetch(`/api/projects/${projectId}/processing-status`);
-        if (response.ok) {
-          const data = await response.json();
-          const currentCount = data.items.length;
-          
-          // Detect when processing completes (count goes to 0) or new processing starts
-          if (prevProcessingCount.current > 0 && currentCount === 0) {
-            console.log('📸 Video call processing completed, refreshing image data to show analysis results');
-            fetchCapturedImages(true); // Force refresh to get updated analysis results
-            fetchInventoryItems();     // Refresh inventory to show new detected items
-          } else if (currentCount > prevProcessingCount.current) {
-            console.log('📸 Video call new processing started, refreshing image data');
-            fetchCapturedImages(true); // Refresh to ensure we have latest data
-            fetchInventoryItems();     // Refresh inventory when new processing starts
-          }
-          
-          prevProcessingCount.current = currentCount;
-          setProcessingStatus(data.items || []);
-        }
-      } catch (error) {
-        console.error('Error fetching processing status for video call:', error);
-      }
-    };
-
-    // Initial check
-    checkProcessingStatus();
-    
-    // Poll every 3 seconds
-    const interval = setInterval(checkProcessingStatus, 3000);
-    
-    return () => clearInterval(interval);
-  }, [projectId]);
-
-  // Refresh images when SSE updates occur (not on timer to avoid glitching)
-  // Removed periodic refresh to prevent UI glitching
-
-  // SSE setup for real-time updates
-  useEffect(() => {
-    if (!projectId) return;
-
-    console.log('🔌 Setting up Video Call SSE connection for project:', projectId);
-    
-    const setupSSE = () => {
-      const eventSource = new EventSource(`/api/processing-complete-simple?projectId=${projectId}`);
-      sseRef.current = eventSource;
-
-      eventSource.onopen = () => {
-        console.log('📡 Video Call SSE connection established');
-      };
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('📨 Video Call SSE message received:', data);
-          
-          // Refresh both images and inventory on updates
-          fetchCapturedImages();
-          
-          if (data.success && data.itemsProcessed > 0) {
-            toast.success(`🎯 AI Analysis Complete! Found ${data.itemsProcessed} items${data.totalBoxes > 0 ? ` (${data.totalBoxes} boxes recommended)` : ''}`);
-            fetchInventoryItems();
-          }
-        } catch (error) {
-          console.error('❌ Error parsing Video Call SSE message:', error);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        console.error('❌ Video Call SSE connection error:', error);
-      };
-
-      return eventSource;
-    };
-
-    const eventSource = setupSSE();
-
-    return () => {
-      if (sseRef.current) {
-        sseRef.current.close();
-        console.log('🔌 Video Call SSE connection closed');
-      }
-    };
-  }, [projectId]);
-
-  const takeScreenshot = async () => {
-    if (isProcessing) {
-      toast.warning('⏳ Please wait for current analysis to complete');
-      return;
-    }
-
-    const customerTrack = remoteParticipants.find(participant => 
-      !isAgent(participant.identity) && participant.videoTrackPublications.size > 0
-    )?.videoTrackPublications.values().next().value?.track;
-
-    if (!customerTrack || !(customerTrack instanceof RemoteVideoTrack)) {
-      toast.error('📹 No customer video feed available');
-      return;
-    }
-
-    setIsProcessing(true);
-    
-    try {
-      const frameBlob = await extractFrameFromRemoteTrack(customerTrack);
-      
-      if (!frameBlob) {
-        throw new Error('Failed to capture video frame');
-      }
-
-      // STEP 1: Upload raw file to S3 for backup
-      const s3FormData = new FormData();
-      s3FormData.append('file', frameBlob, `video-capture-${currentRoom}-${Date.now()}.jpg`);
-      s3FormData.append('projectId', projectId);
-      s3FormData.append('fileIndex', '0');
-
-      const s3Response = await fetch('/api/upload-to-s3', {
-        method: 'POST',
-        body: s3FormData,
-      });
-
-      if (!s3Response.ok) {
-        console.warn('S3 upload failed, but continuing with analysis');
-        // Continue even if S3 fails - we have the image in MongoDB
-      }
-
-      // STEP 2: Save image and queue for analysis using SQS
-      const sqsResponse = await fetch('/api/projects/' + projectId + '/save-image-metadata', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fileName: `video-capture-${currentRoom}-${Date.now()}.jpg`,
-          fileSize: frameBlob.size,
-          fileType: 'image/jpeg',
-          cloudinaryResult: null,
-          userName: 'Video Call Agent',
-          imageBuffer: await blobToBase64(frameBlob),
-          s3RawFile: s3Response.ok ? (await s3Response.json()).s3Result : null
-        }),
-      });
-
-      if (!sqsResponse.ok) {
-        throw new Error('Failed to save and queue image for analysis');
-      }
-
-      const savedImageResult = await sqsResponse.json();
-      console.log(`✅ Video capture saved and queued: ${savedImageResult.imageId}`);
-
-      setCaptureCount(prev => prev + 1);
-      toast.success(`📸 Frame captured from ${currentRoom}! Processing with AI...`);
-      
-      // Refresh captured images list immediately
-      fetchCapturedImages();
-      
-      // The SSE connection will handle real-time updates when analysis completes
-
-    } catch (error) {
-      console.error('Screenshot error:', error);
-      toast.error('❌ Failed to capture frame: ' + error.message);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
 
   const hasCustomer = remoteParticipants.some(p => !isAgent(p.identity));
 
@@ -1183,28 +1133,6 @@ const AgentView = React.memo(({
               )}
             </div>
 
-            {/* Room Selector */}
-            <div className="mb-3">
-              <RoomSelector 
-                currentRoom={currentRoom} 
-                onChange={setCurrentRoom}
-                isSmallScreen={true}
-              />
-            </div>
-
-            {/* Stats Row - Simplified */}
-            {isInventoryActive && inventoryItems.length > 0 && (
-              <div className="grid grid-cols-2 gap-2">
-                <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
-                  <p className="text-white/70 text-xs">Items</p>
-                  <p className="text-white font-bold">{inventoryItems.length}</p>
-                </div>
-                <div className={`px-3 py-2 rounded-2xl ${glassStyle} text-center`}>
-                  <p className="text-white/70 text-xs">Captures</p>
-                  <p className="text-white font-bold">{captureCount}</p>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -1212,49 +1140,73 @@ const AgentView = React.memo(({
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
 
-            {/* AI Capture - Updated Icon */}
-            {hasCustomer && (
-              <button
-                onClick={takeScreenshot}
-                disabled={isProcessing}
-                className={`p-4 rounded-2xl ${glassStyle} bg-purple-600/30 border-purple-400/50 text-white shadow-2xl disabled:opacity-50 transition-all duration-300 transform hover:scale-110 active:scale-95`}
-              >
-                {isProcessing ? (
-                  <Loader2 size={24} className="animate-spin" />
-                ) : (
-                  <Camera size={24} />
-                )}
-              </button>
-            )}
-
-            {/* Inventory Toggle */}
+            {/* Notes Toggle */}
             <button
               onClick={toggleSidebar}
               className={`relative p-4 rounded-2xl ${glassStyle} bg-indigo-600/30 border-indigo-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95`}
             >
-              {showInventory ? <EyeOff size={24} /> : <Package size={24} />}
-              {!showInventory && inventoryItems.length > 0 && (
-                <span className="absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs rounded-full w-6 h-6 flex items-center justify-center font-bold animate-pulse shadow-lg">
-                  {inventoryItems.length}
-                </span>
-              )}
+              {showInventory ? <EyeOff size={24} /> : <MessageSquare size={24} />}
             </button>
           </div>
         )}
 
-        {/* Bottom Control Bar */}
+        {/* Custom Mobile Controls - Same as Customer View */}
         <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
-          <div className="bg-gradient-to-t from-black/60 to-transparent p-6 pb-safe-or-6">
-            <ControlBar 
-              variation="minimal"
-              controls={{
-                microphone: true,
-                camera: true,
-                chat: false,
-                screenShare: false,
-                leave: true,
-              }}
-            />
+          <div className="bg-gradient-to-t from-black/80 to-transparent p-6 pb-safe-or-8">
+            <div className="flex items-center justify-center gap-5">
+              {/* Mic Toggle */}
+              <button
+                onClick={toggleMic}
+                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95 ${
+                  isMicEnabled
+                    ? 'bg-white/20 backdrop-blur-lg border border-white/30'
+                    : 'bg-red-500/80 backdrop-blur-lg border border-red-400/50'
+                }`}
+              >
+                {isMicEnabled ? (
+                  <Mic className="w-7 h-7 text-white" />
+                ) : (
+                  <MicOff className="w-7 h-7 text-white" />
+                )}
+              </button>
+
+              {/* Camera Toggle */}
+              <button
+                onClick={toggleCamera}
+                className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95 ${
+                  isCameraEnabled
+                    ? 'bg-white/20 backdrop-blur-lg border border-white/30'
+                    : 'bg-red-500/80 backdrop-blur-lg border border-red-400/50'
+                }`}
+              >
+                {isCameraEnabled ? (
+                  <Video className="w-7 h-7 text-white" />
+                ) : (
+                  <VideoOff className="w-7 h-7 text-white" />
+                )}
+              </button>
+
+              {/* End Call - Larger and prominent */}
+              <button
+                onClick={leaveCall}
+                className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg shadow-red-500/30 transition-all duration-200 active:scale-95"
+              >
+                <PhoneOff className="w-9 h-9 text-white" />
+              </button>
+
+              {/* Camera Flip */}
+              <button
+                onClick={switchCamera}
+                disabled={isSwitching}
+                className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-lg border border-white/20 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-50"
+              >
+                {isSwitching ? (
+                  <Loader2 className="w-6 h-6 text-white animate-spin" />
+                ) : (
+                  <SwitchCamera className="w-6 h-6 text-white" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1297,7 +1249,7 @@ const AgentView = React.memo(({
         )}
 
         {/* Frame Processor - COMMENTED OUT FOR RAILWAY INTEGRATION */}
-        {/* 
+        {/*
         {isInventoryActive && captureMode === 'auto' && (
           <FrameProcessor
             projectId={projectId}
@@ -1323,12 +1275,8 @@ const AgentView = React.memo(({
               <InventorySidebar
                 items={inventoryItems}
                 loading={inventoryLoading}
-                capturedImages={capturedImages}
-                imagesLoading={imagesLoading}
                 projectId={projectId}
-                fetchCapturedImages={fetchCapturedImages}
                 onInventoryUpdate={handleInventoryUpdate}
-                processingStatus={processingStatus}
                 participantName={participantName}
                 roomId={roomId}
                 onRemoveItem={async (id) => {
@@ -1362,7 +1310,7 @@ const AgentView = React.memo(({
 
   // Desktop view - Compact layout with controls
   return (
-    <div className="h-screen max-h-screen flex flex-col bg-gray-50 overflow-hidden">
+    <div className="h-full flex flex-col bg-gray-50 overflow-hidden">
       {/* Recording Indicator - Hidden
       <RecordingIndicator 
         recordingStatus={recordingStatus.recordingStatus}
@@ -1383,26 +1331,6 @@ const AgentView = React.memo(({
           </div>
           
           <div className="flex items-center gap-3">
-            {/* AI Capture button */}
-            <button
-              onClick={takeScreenshot}
-              disabled={isProcessing || !hasCustomer}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg font-medium flex items-center gap-2 transition-colors"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Analyzing...
-                </>
-              ) : (
-                <>
-                  <Target size={16} />
-                  AI Capture
-                </>
-              )}
-            </button>
-            
-            
             {/* Room selector */}
             {isInventoryActive && (
               <RoomSelector 
@@ -1430,9 +1358,9 @@ const AgentView = React.memo(({
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-row min-h-0 overflow-hidden">
+      <div className="flex-1 h-full flex flex-row min-h-0 overflow-hidden">
         {/* Video Area with integrated controls */}
-        <div className="flex-1 flex flex-col bg-gray-900">
+        <div className="flex-1 h-full flex flex-col bg-gray-900">
           {/* Video Grid */}
           <div className="flex-1 flex items-center justify-center p-4 min-h-0">
             <div className="w-full h-full flex items-center justify-center">
@@ -1461,7 +1389,8 @@ const AgentView = React.memo(({
           
           {/* Video Controls Bar - Right under video frames */}
           <div className="bg-gray-800 p-2 border-t border-gray-700 flex-shrink-0">
-            <div className="flex justify-center">
+            <div className="flex justify-center items-center gap-4">
+              {/* Recording is now automatic - starts when both join, stops when either leaves */}
               <ControlBar />
             </div>
           </div>
@@ -1473,12 +1402,8 @@ const AgentView = React.memo(({
             <InventorySidebar
               items={inventoryItems}
               loading={inventoryLoading}
-              capturedImages={capturedImages}
-              imagesLoading={imagesLoading}
               projectId={projectId}
-              fetchCapturedImages={fetchCapturedImages}
               onInventoryUpdate={handleInventoryUpdate}
-              processingStatus={processingStatus}
               participantName={participantName}
               roomId={roomId}
               onRemoveItem={async (id) => {
@@ -1506,7 +1431,7 @@ const AgentView = React.memo(({
       </div>
 
         {/* Enhanced Frame Processor - COMMENTED OUT FOR RAILWAY INTEGRATION */}
-        {/* 
+        {/*
         {isInventoryActive && captureMode === 'auto' && (
           <FrameProcessor
             projectId={projectId}
@@ -1520,7 +1445,6 @@ const AgentView = React.memo(({
         )}
         */}
 
-
         {/* Enhanced Inventory Sidebar */}
       <RoomAudioRenderer />
     </div>
@@ -1528,11 +1452,21 @@ const AgentView = React.memo(({
 });
 
 // Enhanced InventorySidebar component - Updated for real database items
-const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, capturedImages, imagesLoading, projectId, onInventoryUpdate, processingStatus, participantName, roomId }) => {
+const InventorySidebar = ({
+  items,
+  loading,
+  onRemoveItem,
+  onSaveItems,
+  onClose,
+  projectId,
+  onInventoryUpdate,
+  participantName,
+  roomId,
+}) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [isSmallScreen, setIsSmallScreen] = useState(false);
-  const [activeTab, setActiveTab] = useState('photos');
+  const [activeTab, setActiveTab] = useState('notes');
   
 
   useEffect(() => {
@@ -1580,7 +1514,7 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
   };
 
   return (
-    <div className="h-screen max-h-screen flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-white">
       {/* Enhanced Header */}
       <div className="bg-white border-b border-gray-200">
         <div className="p-4 md:p-6 border-b border-blue-500/30">
@@ -1597,9 +1531,9 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
               <div className="flex items-center gap-3">
                 <Logo />
               </div>
-              <div className="px-3 md:px-4 py-1 md:py-2 bg-blue-500 text-white rounded-xl md:rounded-2xl font-bold">
-                {capturedImages.length}
-              </div>
+              {/* <div className="px-3 md:px-4 py-1 md:py-2 bg-purple-500 text-white rounded-xl md:rounded-2xl font-bold">
+                {items.reduce((total, item) => total + (item.quantity || 1), 0)}
+              </div> */}
             </div>
             {!isSmallScreen && (
               <button
@@ -1617,44 +1551,6 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
       <div className="bg-gray-50 border-b border-gray-200">
         <div className="flex">
           <button
-            onClick={() => setActiveTab('photos')}
-            className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
-              activeTab === 'photos'
-                ? 'text-blue-600 bg-white border-b-2 border-blue-600'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <Camera className="w-4 h-4" />
-            <span className="hidden sm:inline">Photos</span>
-            <span className="sm:hidden">Photos</span>
-            {capturedImages.length > 0 && (
-              <span className={`px-1.5 sm:px-2 py-0.5 text-xs rounded-full font-bold ${
-                activeTab === 'photos' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'
-              }`}>
-                {capturedImages.length}
-              </span>
-            )}
-          </button>
-          {/* <button
-            onClick={() => setActiveTab('inventory')}
-            className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
-              activeTab === 'inventory'
-                ? 'text-blue-600 bg-white border-b-2 border-blue-600'
-                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-            }`}
-          >
-            <Package className="w-4 h-4" />
-            <span className="hidden sm:inline">Items</span>
-            <span className="sm:hidden">Items</span>
-            {items.length > 0 && (
-              <span className={`px-1.5 sm:px-2 py-0.5 text-xs rounded-full font-bold ${
-                activeTab === 'inventory' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'
-              }`}>
-                {items.reduce((total, item) => total + (item.quantity || 1), 0)}
-              </span>
-            )}
-          </button> */}
-          <button
             onClick={() => setActiveTab('notes')}
             className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
               activeTab === 'notes'
@@ -1668,63 +1564,6 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
           </button>
         </div>
       </div>
-
-      {/* Item Stats - Only show on photos tab */}
-      {activeTab === 'photos' && (() => {
-        // Categorize all items by type
-        const regularItems = items.filter(item => 
-          item.itemType === 'regular_item' || 
-          item.itemType === 'furniture' || 
-          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-        );
-        
-        const existingBoxes = items.filter(item => 
-          item.itemType === 'existing_box' || 
-          item.itemType === 'packed_box'
-        );
-        
-        const recommendedBoxes = items.filter(item => 
-          item.itemType === 'boxes_needed'
-        );
-        
-        return (
-          <div className="bg-white px-3 py-2 border-b border-gray-200">
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-gray-50 rounded-lg p-2 text-center border border-gray-200">
-                <div className="flex items-center justify-center mb-1">
-                  <Package className="w-3 h-3 text-gray-500" />
-                </div>
-                <p className="text-xs text-gray-600 mb-1">Items</p>
-                <p className="text-sm font-semibold text-gray-900">
-                  {regularItems.reduce((total, item) => total + (item.quantity || 1), 0)}
-                </p>
-              </div>
-              <div className="bg-orange-50 rounded-lg p-2 text-center border border-orange-200">
-                <div className="flex items-center justify-center mb-1">
-                  <span className="text-[10px] font-bold text-orange-700 bg-orange-200 w-3 h-3 rounded-full inline-flex items-center justify-center">
-                    B
-                  </span>
-                </div>
-                <p className="text-xs text-orange-700 mb-1">Boxes</p>
-                <p className="text-sm font-semibold text-orange-800">
-                  {existingBoxes.reduce((total, item) => total + (item.quantity || 1), 0)}
-                </p>
-              </div>
-              <div className="bg-purple-50 rounded-lg p-2 text-center border border-purple-200">
-                <div className="flex items-center justify-center mb-1">
-                  <span className="text-[10px] font-bold text-purple-700 bg-purple-200 w-3 h-3 rounded-full inline-flex items-center justify-center">
-                    R
-                  </span>
-                </div>
-                <p className="text-xs text-purple-700 mb-1">Recommended</p>
-                <p className="text-sm font-semibold text-purple-800">
-                  {recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0)}
-                </p>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Inventory Items Section */}
       {/* {activeTab === 'inventory' && (
@@ -1776,266 +1615,13 @@ const InventorySidebar = ({ items, loading, onRemoveItem, onSaveItems, onClose, 
 
       {/* Notes Section - Video Call Specific UI */}
       <div className={`flex-1 min-h-0 overflow-y-auto bg-white ${activeTab === 'notes' ? '' : 'hidden'}`}>
-        <VideoCallNotes 
-          projectId={projectId} 
+        <VideoCallNotes
+          projectId={projectId}
           roomId={roomId}
         />
       </div>
 
-      {/* Photos Gallery - Scrollable - Only show on photos tab */}
-      <div className={`flex-1 min-h-0 overflow-y-auto bg-gray-50 ${activeTab === 'photos' ? '' : 'hidden'}`}>
-        {imagesLoading ? (
-          <div className="flex flex-col items-center justify-center h-full p-8">
-            <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
-            <p className="text-gray-600">Loading captured photos...</p>
-          </div>
-        ) : capturedImages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full p-8">
-            <div className="w-20 md:w-24 h-20 md:h-24 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-2xl md:rounded-3xl flex items-center justify-center mb-4 md:mb-6">
-              <Camera size={40} className="text-blue-400 md:w-12 md:h-12" />
-            </div>
-            <h4 className="text-lg md:text-xl font-bold text-gray-900 mb-2 md:mb-3">No Photos Captured Yet</h4>
-            <p className="text-sm md:text-base text-gray-600 text-center leading-relaxed max-w-sm">
-              Use the 'AI Capture' button to take photos during the video call
-            </p>
-            <div className="mt-4 md:mt-6 flex items-center gap-2">
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-            </div>
-          </div>
-        ) : (
-          <div className="p-3 md:p-4 grid grid-cols-1 gap-3 md:gap-4">
-            {capturedImages.map((image) => (
-              <div key={image._id} className="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100">
-                {/* Image Preview */}
-                <div className="relative aspect-video bg-gray-100">
-                  <img
-                    src={`/api/projects/${projectId}/images/${image._id}`}
-                    alt={image.originalName}
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      // If image fails to load, show a placeholder
-                      e.target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iY3VycmVudENvbG9yIiB2aWV3Qm94PSIwIDAgMjQgMjQiPjxwYXRoIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgc3Ryb2tlLXdpZHRoPSIyIiBkPSJtOSAxMiAyIDIgNC00bTYgMkE1IDUgMCAxIDEgOS43IDJhNS4xIDUuMSAwIDAgMSAyIDEwWiIvPjwvc3ZnPg==';
-                      e.target.className = 'w-full h-full object-contain p-8 opacity-50';
-                    }}
-                  />
-                  {/* Status Overlay */}
-                  <div className="absolute top-2 right-2">
-                    {(() => {
-                      // Check if image is in processing status (database-driven)
-                      const isProcessing = processingStatus.some(p => p.id === image._id);
-                      
-                      if (isProcessing) {
-                        return (
-                          <div className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <Loader2 size={12} className="animate-spin" />
-                            Processing
-                          </div>
-                        );
-                      } else if (image.analysisResult?.status === 'failed') {
-                        return (
-                          <div className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <AlertCircle size={12} />
-                            Failed
-                          </div>
-                        );
-                      } else {
-                        return (
-                          <div className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-lg flex items-center gap-1">
-                            <CheckCircle size={12} />
-                            Analyzed
-                          </div>
-                        );
-                      }
-                    })()}
-                  </div>
-                </div>
 
-                {/* Image Details */}
-                <div className="p-3 md:p-4">
-                  <div className="flex items-start justify-between mb-2">
-                    <h5 className="font-medium text-gray-900 text-sm md:text-base truncate">
-                      {image.originalName || image.name}
-                    </h5>
-                    <span className="text-xs text-gray-500 ml-2">
-                      {new Date(image.createdAt).toLocaleTimeString()}
-                    </span>
-                  </div>
-
-                  {/* Analysis Results - Item Type Differentiation */}
-                  {(() => {
-                    const imageInventoryItems = items.filter(item => {
-                      const imageId = item.sourceImageId?._id || item.sourceImageId;
-                      return imageId === image._id;
-                    });
-                    
-                    if (imageInventoryItems.length === 0) return null;
-                    
-                    // Categorize items by type
-                    const regularItems = imageInventoryItems.filter(item => 
-                      item.itemType === 'regular_item' || 
-                      item.itemType === 'furniture' || 
-                      (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                    );
-                    
-                    const existingBoxes = imageInventoryItems.filter(item => 
-                      item.itemType === 'existing_box' || 
-                      item.itemType === 'packed_box'
-                    );
-                    
-                    const recommendedBoxes = imageInventoryItems.filter(item => 
-                      item.itemType === 'boxes_needed'
-                    );
-                    
-                    return (
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        {regularItems.length > 0 && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-gray-100 text-gray-800">
-                            <Package size={10} className="mr-1" />
-                            {regularItems.reduce((total, item) => total + (item.quantity || 1), 0)} items
-                          </span>
-                        )}
-                        {existingBoxes.length > 0 && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-orange-100 text-orange-800 border-orange-200">
-                            {existingBoxes.reduce((total, item) => total + (item.quantity || 1), 0)} boxes
-                          </span>
-                        )}
-                        {recommendedBoxes.length > 0 && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-purple-100 text-purple-800 border-purple-200">
-                            {recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0)} recommended
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Summary */}
-                  {image.analysisResult?.summary && (
-                    <p className="text-xs text-gray-600 line-clamp-2">
-                      {image.analysisResult.summary}
-                    </p>
-                  )}
-
-                  {/* Inventory Items from this image - Separated by Type */}
-                  {(() => {
-                    const imageInventoryItems = items.filter(item => {
-                      const imageId = item.sourceImageId?._id || item.sourceImageId;
-                      return imageId === image._id;
-                    });
-                    
-                    if (imageInventoryItems.length === 0) return null;
-                    
-                    // Categorize items by type
-                    const regularItems = imageInventoryItems.filter(item => 
-                      item.itemType === 'regular_item' || 
-                      item.itemType === 'furniture' || 
-                      (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                    );
-                    
-                    const existingBoxes = imageInventoryItems.filter(item => 
-                      item.itemType === 'existing_box' || 
-                      item.itemType === 'packed_box'
-                    );
-                    
-                    const recommendedBoxes = imageInventoryItems.filter(item => 
-                      item.itemType === 'boxes_needed'
-                    );
-                    
-                    return (
-                      <div className="mt-2 space-y-2">
-                        {/* Regular Items Section */}
-                        {regularItems.length > 0 && (
-                          <div>
-                            <h5 className="text-xs font-medium text-gray-700 mb-1">Items</h5>
-                            <div className="flex flex-wrap gap-1">
-                              {regularItems.map((invItem) => {
-                                const quantity = invItem.quantity || 1;
-                                return Array.from({ length: quantity }, (_, index) => (
-                                  <ToggleGoingBadge 
-                                    key={`${invItem._id}-${index}`}
-                                    inventoryItem={invItem}
-                                    quantityIndex={index}
-                                    projectId={projectId}
-                                    onInventoryUpdate={onInventoryUpdate}
-                                    showItemName={true}
-                                    className="text-xs"
-                                  />
-                                ));
-                              }).flat()}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Existing Boxes Section */}
-                        {existingBoxes.length > 0 && (
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <h5 className="text-xs font-medium text-gray-700">Boxes</h5>
-                              <span className="text-[8px] font-bold text-orange-700 bg-orange-100 w-3 h-3 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                B
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                              {existingBoxes.map((invItem) => {
-                                const quantity = invItem.quantity || 1;
-                                return Array.from({ length: quantity }, (_, index) => (
-                                  <ToggleGoingBadge 
-                                    key={`${invItem._id}-${index}`}
-                                    inventoryItem={invItem}
-                                    quantityIndex={index}
-                                    projectId={projectId}
-                                    onInventoryUpdate={onInventoryUpdate}
-                                    showItemName={true}
-                                    className="text-xs"
-                                  />
-                                ));
-                              }).flat()}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Recommended Boxes Section */}
-                        {recommendedBoxes.length > 0 && (
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <h5 className="text-xs font-medium text-gray-700">Recommended</h5>
-                              <span className="text-[8px] font-bold text-purple-700 bg-purple-100 w-3 h-3 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                R
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                              {recommendedBoxes.map((invItem) => {
-                                const quantity = invItem.quantity || 1;
-                                return Array.from({ length: quantity }, (_, index) => (
-                                  <ToggleGoingBadge 
-                                    key={`${invItem._id}-${index}`}
-                                    inventoryItem={invItem}
-                                    quantityIndex={index}
-                                    projectId={projectId}
-                                    onInventoryUpdate={onInventoryUpdate}
-                                    showItemName={true}
-                                    className="text-xs"
-                                  />
-                                ));
-                              }).flat()}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  
-                  {/* File Size */}
-                  <div className="mt-2 text-xs text-gray-500">
-                    {(image.size / (1024 * 1024)).toFixed(1)}MB
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 };
@@ -2046,12 +1632,42 @@ export default function VideoCallInventory({
   roomId,
   participantName,
   onCallEnd,
+  isAgentUser = false, // Explicitly indicates if user is an agent (from pre-join)
+  backgroundSettings = null, // { mode: 'none' | 'blur' | 'virtual', blurRadius?: number, imageUrl?: string }
+  customerSettings = null, // { videoEnabled: boolean, audioEnabled: boolean, facingMode: 'user' | 'environment' }
 }) {
+  // Determine if current user is agent - either by explicit prop or legacy name check
+  const isCurrentUserAgent = isAgentUser || participantName.toLowerCase().includes('agent');
   const [token, setToken] = useState('');
   const [serverUrl, setServerUrl] = useState('');
   const [isConnecting, setIsConnecting] = useState(true);
   // Removed detectedItems - now using real inventory data via Railway system
   const [currentRoom, setCurrentRoom] = useState('Living Room');
+
+  // Ref to track last error toast for debouncing
+  const lastErrorToast = useRef(null);
+
+  // Refs for connection state tracking - to suppress transient errors
+  const connectionSucceeded = useRef(false);
+  const pendingErrors = useRef([]);
+
+  // Helper to show error toast with debouncing (prevents duplicate toasts)
+  const showErrorToast = (message) => {
+    const now = Date.now();
+    if (lastErrorToast.current && now - lastErrorToast.current.time < 3000 &&
+        lastErrorToast.current.message === message) {
+      return; // Skip duplicate toast within 3 seconds
+    }
+    lastErrorToast.current = { message, time: now };
+    toast.error(message);
+  };
+
+  // Clean up pending error timeouts on unmount
+  useEffect(() => {
+    return () => {
+      pendingErrors.current.forEach(clearTimeout);
+    };
+  }, []);
 
   // Fetch LiveKit token on mount
   useEffect(() => {
@@ -2063,6 +1679,7 @@ export default function VideoCallInventory({
           body: JSON.stringify({
             roomName: roomId,
             participantName,
+            isAgent: isAgentUser,  // Pass explicit agent status for correct identity
           }),
         });
 
@@ -2082,7 +1699,7 @@ export default function VideoCallInventory({
     };
 
     fetchToken();
-  }, [roomId, participantName]);
+  }, [roomId, participantName, isAgentUser]);
 
   // Save items to inventory
   // Items are now saved automatically via Railway system - no manual save needed
@@ -2093,69 +1710,78 @@ export default function VideoCallInventory({
     }
   }, [onCallEnd]);
 
-  // Enhanced LiveKit room options with mobile camera optimization and better permissions
-  const roomOptions = {
-    publishDefaults: {
-      videoCodec: 'h264',
-      videoResolution: {
-        width: 1280,
-        height: 720
-      },
-      videoSimulcast: false,
-      frameRate: 30,
-    },
-    adaptiveStream: true,
-    dynacast: true,
-    autoSubscribe: true,
-    disconnectOnPageLeave: true,
-    reconnectPolicy: {
-      nextRetryDelayInMs: (context) => Math.min((context.retryCount || 0) * 2000, 10000)
-    },
-    videoCaptureDefaults: {
-      facingMode: (() => {
-        const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
-        const isAgent = participantName.toLowerCase().includes('agent');
-        return (isSmallScreen && isAgent) ? 'user' : 'environment';
-      })(),
-      resolution: {
-        width: 1280,
-        height: 720
-      },
-      frameRate: 30,
-    },
-    // Improve permissions handling
-    e2eeOptions: undefined, // Disable E2EE for better compatibility
-    expWebAudioMix: false, // Disable experimental features that might cause issues
-  };
-  
-  // Pre-request camera permissions before LiveKit connection
-  useEffect(() => {
-    const requestPermissions = async () => {
-      try {
-        console.log('🎥 Requesting camera and microphone permissions...');
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: {
-            facingMode: roomOptions.videoCaptureDefaults.facingMode,
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 30 }
-          }, 
-          audio: true 
-        });
-        console.log('✅ Camera and microphone permissions granted');
-        // Stop the test stream immediately
-        stream.getTracks().forEach(track => track.stop());
-      } catch (error) {
-        console.error('❌ Failed to get media permissions:', error);
-        toast.error('Camera/microphone access required for video calls');
-      }
-    };
-    
-    // Only request permissions once when component mounts
-    if (token && serverUrl) {
-      requestPermissions();
+  // Get device info for Android/compatibility optimizations
+  const deviceInfo = useMemo(() => getDeviceInfo(), []);
+
+  // Enhanced LiveKit room options with mobile camera optimization, Android compatibility, and better permissions
+  const roomOptions = useMemo(() => {
+    const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
+    const optimizedOptions = getOptimizedRoomOptions(deviceInfo);
+    const codec = getRecommendedCodec(deviceInfo);
+    const constraints = getVideoConstraintLevels(deviceInfo);
+    const recommended = constraints[0];
+
+    // Log device-specific configuration
+    if (deviceInfo.isAndroid) {
+      console.log('[VideoCallInventory] Android device configuration:', {
+        version: deviceInfo.androidVersion,
+        isLegacy: deviceInfo.isLegacyAndroid,
+        codec,
+        resolution: `${recommended.width}x${recommended.height}`,
+        simulcast: !deviceInfo.isLegacyAndroid,
+      });
     }
-  }, [token, serverUrl]);
+
+    // Determine facing mode
+    let facingMode = 'user'; // Default to front camera
+    if (customerSettings?.facingMode) {
+      facingMode = customerSettings.facingMode;
+    } else if (!isSmallScreen && isCurrentUserAgent) {
+      facingMode = 'environment'; // Desktop agents use back camera
+    }
+
+    return {
+      publishDefaults: {
+        videoCodec: codec, // Dynamic: VP8 for legacy Android, H.264 for modern
+        videoSimulcast: !deviceInfo.isLegacyAndroid, // Disable simulcast on legacy Android
+        videoEncoding: {
+          maxBitrate: deviceInfo.isLegacyAndroid ? 800_000 : 1_500_000,
+          maxFramerate: deviceInfo.isLegacyAndroid ? 20 : 30,
+        },
+        videoSimulcastLayers: deviceInfo.isLegacyAndroid
+          ? [
+              // Single low layer for legacy Android
+              { width: 320, height: 180, encoding: { maxBitrate: 100_000, maxFramerate: 12 } },
+            ]
+          : [
+              { width: 640, height: 360, encoding: { maxBitrate: 500_000, maxFramerate: 20 } },
+              { width: 320, height: 180, encoding: { maxBitrate: 150_000, maxFramerate: 15 } },
+            ],
+      },
+      adaptiveStream: true,
+      dynacast: true,
+      autoSubscribe: true,
+      disconnectOnPageLeave: true,
+      reconnectPolicy: {
+        nextRetryDelayInMs: (context) => Math.min((context.retryCount || 0) * 2000, 10000)
+      },
+      videoCaptureDefaults: {
+        facingMode,
+        resolution: isSmallScreen
+          ? { width: recommended.width || 640, height: recommended.height || 480 }
+          : { width: 1280, height: 720 },
+        frameRate: isSmallScreen ? (recommended.frameRate || 24) : 30,
+      },
+      // Improve permissions handling
+      e2eeOptions: undefined, // Disable E2EE for better compatibility
+      expWebAudioMix: false, // Disable experimental features that might cause issues
+    };
+  }, [deviceInfo, customerSettings, isCurrentUserAgent]);
+  
+  // Note: We removed the pre-request camera permissions useEffect because:
+  // 1. LiveKit handles permission requests internally when connecting
+  // 2. The duplicate request was causing confusing error toast sequences
+  // 3. Permissions are already requested in the AgentPreJoin screen if using it
 
   if (isConnecting) {
     return (
@@ -2206,7 +1832,7 @@ export default function VideoCallInventory({
   }
 
   return (
-    <div className="h-screen">
+    <div className="fixed inset-0 overflow-hidden">
       {/* Custom CSS for better desktop video layout */}
       <style jsx>{`
         @media (min-width: 768px) {
@@ -2227,8 +1853,8 @@ export default function VideoCallInventory({
       `}</style>
       
       <LiveKitRoom
-        video={true}
-        audio={true}
+        video={customerSettings?.videoEnabled ?? true}
+        audio={customerSettings?.audioEnabled ?? true}
         token={token}
         serverUrl={serverUrl}
         onDisconnected={handleDisconnect}
@@ -2237,32 +1863,69 @@ export default function VideoCallInventory({
         options={roomOptions}
         connect={true}
         onError={(error) => {
-          console.error('LiveKit room error:', error.message || error);
-          if (error.message && error.message.includes('camera')) {
-            toast.error('Camera access denied. Please enable camera permissions.');
-          } else if (error.message && error.message.includes('microphone')) {
-            toast.error('Microphone access denied. Please enable microphone permissions.');
-          } else {
-            toast.error('Connection failed. Please check your internet connection.');
+          const errorMsg = error.message || String(error);
+          console.error('LiveKit room error:', errorMsg);
+
+          // Skip permission errors - handled by onMediaDeviceFailure
+          if (errorMsg.toLowerCase().includes('permission') ||
+              errorMsg.toLowerCase().includes('notallowed') ||
+              errorMsg.toLowerCase().includes('not allowed')) {
+            return;
           }
+
+          // Queue non-permission errors - only show if connection doesn't succeed
+          const errorTimeout = setTimeout(() => {
+            if (connectionSucceeded.current) return;
+
+            if (errorMsg.includes('camera')) {
+              showErrorToast('Camera access denied.');
+            } else if (errorMsg.includes('microphone')) {
+              showErrorToast('Microphone access denied.');
+            } else {
+              showErrorToast('Connection failed. Please check your internet connection.');
+            }
+          }, 5000);
+
+          pendingErrors.current.push(errorTimeout);
         }}
         onConnected={() => {
           console.log('✅ Successfully connected to LiveKit room');
-          toast.success('Connected to video call!');
+          connectionSucceeded.current = true;
+          // Clear any pending error timeouts
+          pendingErrors.current.forEach(clearTimeout);
+          pendingErrors.current = [];
         }}
         onMediaDeviceFailure={(failure) => {
           console.error('Media device failure:', failure);
-          toast.error(`${failure.kind} device failed. Please check your permissions.`);
+
+          // Queue error - only show if connection doesn't succeed in 5 seconds
+          const errorTimeout = setTimeout(() => {
+            if (connectionSucceeded.current) return;
+
+            const failureStr = typeof failure === 'string' ? failure : (failure?.message || failure?.kind || '');
+            if (failureStr.toLowerCase().includes('permission')) {
+              showErrorToast('Camera/microphone permission denied. Please enable permissions.');
+            } else {
+              const deviceType = failure?.kind || 'Media';
+              showErrorToast(`${deviceType} device failed. Please check your permissions.`);
+            }
+          }, 5000);
+
+          pendingErrors.current.push(errorTimeout);
         }}
       >
+        {/* Apply background effects if settings provided */}
+        {backgroundSettings && <BackgroundApplier backgroundSettings={backgroundSettings} />}
+
         {/* Render different views based on participant type */}
-        {isAgent(participantName) ? (
+        {isCurrentUserAgent ? (
           <AgentView
             projectId={projectId}
             currentRoom={currentRoom}
             setCurrentRoom={setCurrentRoom}
             participantName={participantName}
             roomId={roomId}
+            onCallEnd={onCallEnd}
           />
         ) : (
           <CustomerView onCallEnd={onCallEnd} roomId={roomId} />

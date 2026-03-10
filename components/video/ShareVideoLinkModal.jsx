@@ -165,7 +165,7 @@ export default function ShareVideoLinkModal({ isOpen, onClose, roomId, projectId
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    const roomUrl = `/video-call/${roomId}?projectId=${projectId}&name=Agent`;
+                    const roomUrl = `/video-call/${roomId}?projectId=${projectId}&isAgent=true`;
                     window.open(roomUrl, '_blank');
                   }}
                   className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 rounded-lg cursor-pointer transition-colors focus:ring-2 focus:ring-green-500 focus:outline-none"

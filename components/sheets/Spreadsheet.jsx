@@ -2,7 +2,8 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
-import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package } from 'lucide-react';
+import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info } from 'lucide-react';
+import VideoRecordingModal from '../VideoRecordingModal';
 import {
   Dialog,
   DialogContent,
@@ -18,8 +19,19 @@ import {
 } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { toast } from 'sonner';
 import StockInventoryPickerModal from '@/components/modals/StockInventoryPickerModal';
+
+// Helper to group items by location/room
+const groupByRoom = (items) => {
+  return items.reduce((acc, item) => {
+    const room = item.location || 'Unassigned';
+    if (!acc[room]) acc[room] = [];
+    acc[room].push(item);
+    return acc;
+  }, {});
+};
 
 // Column type definitions
 const columnTypes = {
@@ -205,6 +217,10 @@ export default function Spreadsheet({
   const [previewMedia, setPreviewMedia] = useState(null); // For media preview modal
   const [selectedMedia, setSelectedMedia] = useState(null); // Full media data with details
   const [loadingMedia, setLoadingMedia] = useState(false);
+  const [videoCallModalOpen, setVideoCallModalOpen] = useState(false); // For video call recording modal
+  const [selectedVideoRecording, setSelectedVideoRecording] = useState(null);
+  const [loadingVideoCall, setLoadingVideoCall] = useState(false);
+  const [clickedInventoryItem, setClickedInventoryItem] = useState(null); // For auto-seek when opening video modal
   const [selectedRows, setSelectedRows] = useState([]);
   const [cuftMode, setCuftMode] = useState('total'); // 'total' or 'perUnit' for Cuft display
   const [weightMode, setWeightMode] = useState('total'); // 'total' or 'perUnit' for Weight display
@@ -417,6 +433,32 @@ export default function Spreadsheet({
       });
     } finally {
       setLoadingMedia(false);
+    }
+  };
+
+  // Handle video call preview - fetches recording by ObjectId and opens modal
+  // clickedItem is the inventory item that was clicked (for auto-seek to timestamp)
+  const handleVideoCallPreview = async (recordingId, itemName, clickedItem = null) => {
+    setLoadingVideoCall(true);
+    try {
+      console.log('🎥 Loading video call recording for:', recordingId);
+      const response = await fetch(
+        `/api/projects/${projectId}/video-recordings/${recordingId}`
+      );
+      const data = await response.json();
+
+      if (data) {
+        setSelectedVideoRecording(data);
+        setClickedInventoryItem(clickedItem); // Store clicked item for auto-seek
+        setVideoCallModalOpen(true);
+      } else {
+        toast.error('Video call recording not found');
+      }
+    } catch (error) {
+      console.error('Error loading video call:', error);
+      toast.error('Failed to load video call recording');
+    } finally {
+      setLoadingVideoCall(false);
     }
   };
 
@@ -1120,7 +1162,7 @@ export default function Spreadsheet({
     // Sort by source image/video, then by category within each group
     filteredRows = [...filteredRows].sort((a, b) => {
       const getMediaId = (row) => {
-        return row.sourceImageId || row.sourceVideoId || 'no-source';
+        return row.sourceImageId || row.sourceVideoId || row.sourceVideoRecordingId || 'no-source';
       };
       
       const getItemTypePriority = (row) => {
@@ -1237,6 +1279,13 @@ export default function Spreadsheet({
       );
     });
   }
+
+  // Always keep analyzing rows at the bottom
+  filteredRows = [...filteredRows].sort((a, b) => {
+    if (a.isAnalyzing && !b.isAnalyzing) return 1;
+    if (!a.isAnalyzing && b.isAnalyzing) return -1;
+    return 0; // Preserve existing order for non-analyzing rows
+  });
 
   // Calculate "not going" items count
   const notGoingCount = rows.filter(row => {
@@ -1383,13 +1432,17 @@ export default function Spreadsheet({
         hasRow: !!row,
         sourceImageId: row.sourceImageId,
         sourceVideoId: row.sourceVideoId,
+        sourceVideoRecordingId: row.sourceVideoRecordingId,
+        videoTimestamp: row.videoTimestamp,
+        segmentIndex: row.segmentIndex,
         sourceImageIdTruthy: !!row.sourceImageId,
         sourceVideoIdTruthy: !!row.sourceVideoId,
-        shouldBeClickable: !!(row.sourceImageId || row.sourceVideoId)
+        sourceVideoRecordingIdTruthy: !!row.sourceVideoRecordingId,
+        shouldBeClickable: !!(row.sourceImageId || row.sourceVideoId || row.sourceVideoRecordingId)
       });
     }
-    
-    if (column && column.id === 'col2' && row && (row.sourceImageId || row.sourceVideoId)) {
+
+    if (column && column.id === 'col2' && row && (row.sourceImageId || row.sourceVideoId || row.sourceVideoRecordingId)) {
       // Check if this is a recommended box (purple highlighted)
       const isRecommendedBoxes = row.itemType === 'boxes_needed' ||
                                (row.itemType === 'regular_item' && value && 
@@ -1435,12 +1488,17 @@ export default function Spreadsheet({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              const mediaType = row.sourceImageId ? 'image' : 'video';
-              const mediaId = row.sourceImageId || row.sourceVideoId;
-              handleMediaPreview(mediaType, mediaId, value);
+              // Handle video call items differently (use proper ObjectId reference)
+              if (row.sourceVideoRecordingId) {
+                handleVideoCallPreview(row.sourceVideoRecordingId, value, row); // Pass row for auto-seek
+              } else if (row.sourceImageId) {
+                handleMediaPreview('image', row.sourceImageId, value);
+              } else {
+                handleMediaPreview('video', row.sourceVideoId, value);
+              }
             }}
             className="text-blue-600 hover:text-blue-800 underline text-left truncate flex-1"
-            title="Click to view source media"
+            title={row.sourceVideoRecordingId ? "Click to view video call" : "Click to view source media"}
           >
             {value}
           </button>
@@ -1504,7 +1562,27 @@ export default function Spreadsheet({
               </Tooltip>
             </TooltipProvider>
           )}
-          {row.sourceImageId ? (
+          {row.special_handling && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">
+                    <Info size={14} className="text-blue-500" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-medium text-xs mb-1">Special Handling:</p>
+                  <p className="text-xs">{row.special_handling}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {row.videoTimestamp && row.sourceVideoRecordingId && (
+            <span className="text-xs text-gray-500 flex-shrink-0">{row.videoTimestamp}</span>
+          )}
+          {row.sourceVideoRecordingId ? (
+            <Phone size={14} className="text-green-500 flex-shrink-0" />
+          ) : row.sourceImageId ? (
             <Camera size={14} className="text-blue-500 flex-shrink-0" />
           ) : (
             <Video size={14} className="text-purple-500 flex-shrink-0" />
@@ -1621,6 +1699,21 @@ export default function Spreadsheet({
                   </TooltipTrigger>
                   <TooltipContent>
                     <p>Fragile Item</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {row?.special_handling && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">
+                      <Info size={14} className="text-blue-500" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="font-medium text-xs mb-1">Special Handling:</p>
+                    <p className="text-xs">{row.special_handling}</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -2231,9 +2324,9 @@ export default function Spreadsheet({
             // Check if we need a separator before this row
             const needsSeparator = rowIndex > 0 && (() => {
               if (viewMode === 'By Media') {
-                // Separator between different media sources
-                const currentMediaId = row.sourceImageId || row.sourceVideoId || 'no-source';
-                const prevMediaId = filteredRows[rowIndex - 1]?.sourceImageId || filteredRows[rowIndex - 1]?.sourceVideoId || 'no-source';
+                // Separator between different media sources (images, videos, and video calls)
+                const currentMediaId = row.sourceImageId || row.sourceVideoId || row.sourceVideoRecordingId || 'no-source';
+                const prevMediaId = filteredRows[rowIndex - 1]?.sourceImageId || filteredRows[rowIndex - 1]?.sourceVideoId || filteredRows[rowIndex - 1]?.sourceVideoRecordingId || 'no-source';
                 return currentMediaId !== prevMediaId;
               } else if (viewMode === 'By Category') {
                 // Separator between different item type categories
@@ -2619,104 +2712,126 @@ export default function Spreadsheet({
                 )}
               </div>
               
-              {/* Items, Boxes, and Recommended Boxes from this media */}
+              {/* Items, Boxes, and Recommended Boxes from this media - Grouped by Room */}
               {(() => {
                 const allItems = inventoryItems.filter(item => {
                   const mediaId = item.sourceImageId?._id || item.sourceImageId || item.sourceVideoId?._id || item.sourceVideoId;
                   return mediaId === selectedMedia._id;
                 });
-                
-                // Separate items by type
-                const regularItems = allItems.filter(item => 
-                  item.itemType === 'regular_item' || 
-                  item.itemType === 'furniture' || 
-                  (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                );
-                const existingBoxes = allItems.filter(item => 
-                  item.itemType === 'existing_box' || 
-                  item.itemType === 'packed_box'
-                );
-                const recommendedBoxes = allItems.filter(item => item.itemType === 'boxes_needed');
-                
+
                 if (allItems.length === 0) return null;
-                
+
+                // Group all items by room first
+                const roomGroups = groupByRoom(allItems);
+
                 return (
                   <div className="mb-4">
-                    {/* Regular Items Section */}
-                    {regularItems.length > 0 && (
-                      <div className="mb-4">
-                        <h4 className="font-medium text-gray-900 mb-2">Items</h4>
-                        <div className="flex flex-wrap gap-1">
-                          {regularItems.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Existing Boxes Section */}
-                    {existingBoxes.length > 0 && (
-                      <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h4 className="font-medium text-gray-900">Boxes</h4>
-                          <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                            B
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {existingBoxes.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Recommended Boxes Section */}
-                    {recommendedBoxes.length > 0 && (
-                      <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h4 className="font-medium text-gray-900">Recommended Boxes</h4>
-                          <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                            R
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {recommendedBoxes.map((invItem) => {
-                            const quantity = invItem.quantity || 1;
-                            return Array.from({ length: quantity }, (_, index) => (
-                              <ToggleGoingBadge 
-                                key={`${invItem._id}-${index}`}
-                                inventoryItem={invItem}
-                                quantityIndex={index}
-                                projectId={projectId}
-                                onInventoryUpdate={onInventoryUpdate}
-                                showItemName={true}
-                              />
-                            ));
-                          }).flat()}
-                        </div>
-                      </div>
-                    )}
+                    <Accordion type="multiple" className="w-full">
+                      {Object.entries(roomGroups).map(([room, roomItems]) => {
+                        // Separate items within this room by type
+                        const roomRegularItems = roomItems.filter(item =>
+                          item.itemType === 'furniture' ||
+                          item.itemType === 'regular_item' ||
+                          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
+                        );
+                        const roomExistingBoxes = roomItems.filter(item =>
+                          item.itemType === 'existing_box' ||
+                          item.itemType === 'packed_box'
+                        );
+                        const roomRecommendedBoxes = roomItems.filter(item =>
+                          item.itemType === 'boxes_needed'
+                        );
+
+                        const totalCount = roomItems.reduce((sum, i) => sum + (i.quantity || 1), 0);
+
+                        return (
+                          <AccordionItem key={room} value={room}>
+                            <AccordionTrigger className="py-2 text-sm font-medium">
+                              {room} ({totalCount})
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-3">
+                                {/* Regular Items in this room */}
+                                {roomRegularItems.length > 0 && (
+                                  <div>
+                                    <h5 className="text-xs font-medium text-gray-600 mb-1">Items</h5>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomRegularItems.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Existing Boxes in this room */}
+                                {roomExistingBoxes.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <h5 className="text-xs font-medium text-gray-600">Boxes</h5>
+                                      <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                        B
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomExistingBoxes.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Recommended Boxes in this room */}
+                                {roomRecommendedBoxes.length > 0 && (
+                                  <div>
+                                    <div className="flex items-center gap-1 mb-1">
+                                      <h5 className="text-xs font-medium text-gray-600">Recommended Boxes</h5>
+                                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
+                                        R
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {roomRecommendedBoxes.map((invItem) => {
+                                        const quantity = invItem.quantity || 1;
+                                        return Array.from({ length: quantity }, (_, index) => (
+                                          <ToggleGoingBadge
+                                            key={`${invItem._id}-${index}`}
+                                            inventoryItem={invItem}
+                                            quantityIndex={index}
+                                            projectId={projectId}
+                                            onInventoryUpdate={onInventoryUpdate}
+                                            showItemName={true}
+                                          />
+                                        ));
+                                      }).flat()}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        );
+                      })}
+                    </Accordion>
                   </div>
                 );
               })()}
@@ -2816,6 +2931,21 @@ export default function Spreadsheet({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Video Call Recording Modal */}
+      <VideoRecordingModal
+        recording={selectedVideoRecording}
+        projectId={projectId}
+        isOpen={videoCallModalOpen}
+        onClose={() => {
+          setVideoCallModalOpen(false);
+          setSelectedVideoRecording(null);
+          setClickedInventoryItem(null);
+        }}
+        inventoryItems={inventoryItems}
+        onInventoryUpdate={onInventoryUpdate}
+        initialItem={clickedInventoryItem}
+      />
 
       {/* Location Update Choice Dialog */}
       <Dialog 

@@ -6,9 +6,9 @@ export interface ICustomerUpload extends Document {
   userId: string; // The business owner
   organizationId?: string;
   customerName: string;
-  customerPhone: string;
+  customerPhone?: string;
   uploadToken: string; // Unique token for customer access
-  expiresAt: Date;
+  expiresAt?: Date;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -25,9 +25,9 @@ const CustomerUploadSchema: Schema = new Schema(
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
     customerName: { type: String, required: true },
-    customerPhone: { type: String, required: true },
+    customerPhone: { type: String, required: false },
     uploadToken: { type: String, required: true, unique: true, index: true },
-    expiresAt: { type: Date, required: true, index: true },
+    expiresAt: { type: Date, required: false, index: true },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }

@@ -63,8 +63,22 @@ const VideoSchema = new mongoose.Schema({
   },
   source: {
     type: String,
-    enum: ['admin_upload', 'customer_upload', 'video_call', 'inventory_upload'],
+    enum: ['admin_upload', 'customer_upload', 'video_call', 'video_call_capture', 'inventory_upload'],
     default: 'admin_upload'
+  },
+  // Video call capture fields for chunked recording
+  recordingSessionId: {
+    type: String,
+    required: false,
+    index: true
+  },
+  chunkIndex: {
+    type: Number,
+    required: false
+  },
+  isVideoCallCapture: {
+    type: Boolean,
+    default: false
   },
   processingStatus: {
     type: String,

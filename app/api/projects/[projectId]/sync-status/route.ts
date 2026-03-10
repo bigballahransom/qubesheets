@@ -7,6 +7,7 @@ import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
+import VideoRecording from '@/models/VideoRecording';
 
 export async function GET(
   request: NextRequest,
@@ -138,6 +139,22 @@ export async function GET(
     
     const processingVideos = await Video.find(processingVideoFilter).select('_id originalName analysisResult source').sort({ createdAt: -1 });
 
+    // Check for video calls currently being processed (recording OR analyzed)
+    const processingCalls = await VideoRecording.find({
+      projectId: new mongoose.Types.ObjectId(projectId),
+      $or: [
+        // Customer egress is active (starting or recording)
+        { customerEgressStatus: { $in: ['starting', 'recording'] } },
+        // Analysis is pending or in progress
+        { 'analysisResult.status': { $in: ['pending', 'processing'] } },
+        // Customer egress completed but analysis not done yet (catches undefined status)
+        {
+          customerEgressStatus: 'completed',
+          'analysisResult.status': { $nin: ['completed', 'failed'] }
+        }
+      ]
+    }).select('_id roomId analysisResult customerEgressStatus').sort({ createdAt: -1 });
+
     // Calculate totals (include customer uploads)
     const totalItems = await InventoryItem.countDocuments(getProjectFilter(authContext, projectId));
     
@@ -170,6 +187,7 @@ export async function GET(
       recentVideos: recentVideos.length,
       processingImages: processingImages.length,
       processingVideos: processingVideos.length,
+      processingCalls: processingCalls.length,
       totals: {
         items: totalItems,
         images: totalImages,
@@ -192,6 +210,14 @@ export async function GET(
           source: video.source || 'project_upload',
           type: 'video',
           isCustomerUpload: video.source === 'customer_upload'
+        })),
+        ...processingCalls.map(call => ({
+          id: call._id,
+          name: `Call ${call.roomId?.split('-').pop() || 'Recording'}`,
+          status: call.analysisResult?.status || 'processing',
+          source: 'video_call',
+          type: 'call',
+          isCustomerUpload: false
         }))
       ]
     });

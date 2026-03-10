@@ -19,6 +19,14 @@ export interface IPackedBoxDetails {
   label?: string;
 }
 
+export interface IGoingUpdateSource {
+  updatedBy: 'manual' | 'transcript_analysis';
+  videoRecordingId?: mongoose.Types.ObjectId | string;
+  customerQuote?: string;      // The exact statement that triggered the update
+  timestamp?: number;          // When in the call (ms from start)
+  updatedAt?: Date;
+}
+
 export interface IInventoryItem extends Document {
   name: string;
   description?: string;
@@ -29,6 +37,7 @@ export interface IInventoryItem extends Document {
   weight?: number;
   going?: string; // "going" or "not going" - defaults to "going" if null
   goingQuantity?: number; // How many of this item are going (0 to quantity)
+  goingUpdateSource?: IGoingUpdateSource; // Tracks source of going status changes
   packed_by?: string; // "N/A", "PBO", or "CP" - who packed the item
   fragile?: boolean;
   special_handling?: string;
@@ -42,6 +51,14 @@ export interface IInventoryItem extends Document {
   organizationId?: string;
   sourceImageId?: mongoose.Types.ObjectId | string;
   sourceVideoId?: mongoose.Types.ObjectId | string;
+  sourceVideoRecordingId?: mongoose.Types.ObjectId | string; // Links to VideoRecording for video call items
+  sourceRecordingSessionId?: string; // Legacy: egress ID string (kept for backwards compatibility)
+  videoTimestamp?: string; // "MM:SS" - timestamp within segment when item was first seen
+  segmentIndex?: number; // Which segment (0, 1, 2...) the item was seen in
+  // For consolidated items (created by finalize-inventory from multiple segment detections)
+  sourceSegmentIndices?: number[]; // All segments where this item was seen
+  videoTimestamps?: string[]; // All timestamps where this item was seen
+  consolidatedFromCount?: number; // How many raw detections merged into this
   stockItemId?: mongoose.Types.ObjectId | string; // Reference to stock inventory item
   createdAt: Date;
   updatedAt: Date;
@@ -74,6 +91,24 @@ const PackedBoxDetailsSchema: Schema = new Schema(
   { _id: false }
 );
 
+const GoingUpdateSourceSchema: Schema = new Schema(
+  {
+    updatedBy: {
+      type: String,
+      required: true,
+      enum: ['manual', 'transcript_analysis']
+    },
+    videoRecordingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'VideoRecording'
+    },
+    customerQuote: { type: String },
+    timestamp: { type: Number },
+    updatedAt: { type: Date }
+  },
+  { _id: false }
+);
+
 const InventoryItemSchema: Schema = new Schema(
   {
     name: { type: String, required: true },
@@ -85,6 +120,7 @@ const InventoryItemSchema: Schema = new Schema(
     weight: { type: Number },
     going: { type: String, enum: ['going', 'not going', 'partial'], default: 'going' },
     goingQuantity: { type: Number, min: 0 },
+    goingUpdateSource: { type: GoingUpdateSourceSchema },
     packed_by: { type: String, enum: ['N/A', 'PBO', 'CP'], default: 'N/A' },
     fragile: { type: Boolean, default: false },
     special_handling: { type: String },
@@ -116,6 +152,35 @@ const InventoryItemSchema: Schema = new Schema(
       ref: 'Video',
       required: false,
       index: true
+    },
+    sourceVideoRecordingId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'VideoRecording',
+      required: false,
+      index: true
+    },
+    sourceRecordingSessionId: {
+      type: String,
+      required: false,
+      index: true
+    },
+    videoTimestamp: {
+      type: String,  // "MM:SS" format
+      required: false
+    },
+    segmentIndex: {
+      type: Number,  // 0, 1, 2... which segment
+      required: false
+    },
+    // For consolidated items (created by finalize-inventory from multiple segment detections)
+    sourceSegmentIndices: [{
+      type: Number
+    }],
+    videoTimestamps: [{
+      type: String
+    }],
+    consolidatedFromCount: {
+      type: Number
     },
     stockItemId: {
       type: mongoose.Schema.Types.ObjectId,
