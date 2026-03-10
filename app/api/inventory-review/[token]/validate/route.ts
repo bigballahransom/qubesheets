@@ -10,16 +10,16 @@ import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
 
+interface GroupedItems {
+  [room: string]: any[];
+}
+
 interface MediaSection {
   type: 'image' | 'video' | 'videoRecording';
   mediaId: string;
   mediaName: string;
   roomEntry?: string;
-  items: any[];
-}
-
-interface GroupedItems {
-  [room: string]: any[];
+  items: GroupedItems;
 }
 
 // Helper to group items by room/location and consolidate same-named items
