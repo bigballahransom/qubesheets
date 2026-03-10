@@ -824,6 +824,19 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
           <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
         </GridLayout>
 
+        {/* Explicit self-view for mobile customers - fixes Android rendering issues */}
+        {localCameraTrack && isCameraReady && (
+          <div
+            className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30"
+            style={{ transform: 'scaleX(-1)' }}
+          >
+            <VideoTrack
+              trackRef={localCameraTrack}
+              className={`w-full h-full object-cover ${isAndroid ? 'android-video-fix' : ''}`}
+            />
+          </div>
+        )}
+
         {/* Loading overlay when camera isn't ready */}
         {!isCameraReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900/90 via-purple-900/90 to-pink-900/90 backdrop-blur-sm">
