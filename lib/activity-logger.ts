@@ -100,7 +100,7 @@ export async function logUploadLinkSent(
   customerName: string,
   customerPhone: string,
   linkToken: string,
-  expiresAt: Date
+  expiresAt?: Date | null
 ) {
   return logActivity({
     projectId,

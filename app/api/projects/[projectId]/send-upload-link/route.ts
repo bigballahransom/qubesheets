@@ -115,7 +115,7 @@ export async function POST(
         customerName,
         customerPhone,
         uploadToken,
-        expiresAt
+        null // Links never expire
       );
 
       // Update project with upload link tracking info
@@ -142,7 +142,6 @@ export async function POST(
         success: true,
         uploadToken,
         uploadUrl,
-        expiresAt,
         message: 'SMS sent successfully'
       });
     } catch (twilioError) {
