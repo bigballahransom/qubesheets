@@ -389,9 +389,11 @@ function useAdvancedCameraSwitching() {
   const { localParticipant } = useLocalParticipant();
   const room = useRoomContext();
   const [isSwitching, setIsSwitching] = useState(false);
-  const [canSwitchCamera, setCanSwitchCamera] = useState(true); // Optimistic default
+  // Always show camera flip on mobile - be optimistic, handle failures gracefully
+  const isMobile = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const [canSwitchCamera, setCanSwitchCamera] = useState(isMobile); // Show on mobile by default
 
-  // Detect camera switching capability on mount
+  // Detect camera switching capability on mount (but stay optimistic on mobile)
   useEffect(() => {
     const detectCameras = async () => {
       try {
@@ -403,17 +405,18 @@ function useAdvancedCameraSwitching() {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-        // Can switch if: supports facingMode OR has multiple cameras
-        const canSwitch = supportsFacingMode || videoDevices.length > 1;
+        // Can switch if: supports facingMode OR has multiple cameras OR is mobile (be optimistic)
+        const canSwitch = supportsFacingMode || videoDevices.length > 1 || isMobile;
         setCanSwitchCamera(canSwitch);
-        console.log(`📹 Camera switch support: facingMode=${supportsFacingMode}, devices=${videoDevices.length}, canSwitch=${canSwitch}`);
+        console.log(`📹 Camera switch support: facingMode=${supportsFacingMode}, devices=${videoDevices.length}, isMobile=${isMobile}, canSwitch=${canSwitch}`);
       } catch (e) {
         console.warn('📹 Could not detect camera capabilities:', e);
-        setCanSwitchCamera(false);
+        // On mobile, still allow camera flip attempt even if detection fails
+        setCanSwitchCamera(isMobile);
       }
     };
     detectCameras();
-  }, []);
+  }, [isMobile]);
 
   const switchCamera = useCallback(async () => {
     if (!localParticipant || !room || isSwitching) {
@@ -816,10 +819,29 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
       </div>
 
       {/* Video area - Full screen for both participants */}
-      <div className="absolute inset-0 z-10">
+      <div
+        className="absolute inset-0 z-10"
+        style={{
+          // Fix for Android where GridLayout doesn't fill properly
+          ...(isAndroid && {
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: '100vh',
+            height: '100dvh',
+          })
+        }}
+      >
         <GridLayout
           tracks={tracks}
-          style={{ height: '100%', width: '100%' }}
+          style={{
+            height: '100%',
+            width: '100%',
+            // Force minimum height on Android
+            ...(isAndroid && { minHeight: '100vh', minHeight: '100dvh' })
+          }}
         >
           <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
         </GridLayout>

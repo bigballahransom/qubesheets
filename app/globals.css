@@ -353,6 +353,24 @@
   }
 }
 
+/* Fix LiveKit GridLayout not filling on Android */
+.android-video-fix .lk-grid-layout {
+  min-height: 100vh !important;
+  min-height: 100dvh !important;
+  height: 100% !important;
+}
+
+.android-video-fix .lk-participant-tile {
+  min-height: 0 !important;
+  height: 100% !important;
+}
+
+.android-video-fix .lk-participant-tile video {
+  object-fit: cover !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 /* Prevent text selection during video interactions */
 .android-video-fix .video-overlay {
   -webkit-user-select: none;
