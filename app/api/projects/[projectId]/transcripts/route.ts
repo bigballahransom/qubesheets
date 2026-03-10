@@ -46,7 +46,7 @@ export async function GET(
     }
 
     // Fetch segments ordered by startTime
-    const segments = await TranscriptSegment.find(query)
+    const segments: any[] = await TranscriptSegment.find(query)
       .sort({ startTime: 1 })
       .lean();
 
@@ -56,7 +56,7 @@ export async function GET(
       : null;
 
     return NextResponse.json({
-      segments: segments.map(seg => ({
+      segments: segments.map((seg: any) => ({
         _id: seg._id.toString(),
         speaker: seg.speaker,
         speakerName: seg.speakerName,
