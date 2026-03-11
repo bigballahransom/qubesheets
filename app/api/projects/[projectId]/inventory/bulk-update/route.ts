@@ -7,7 +7,7 @@ import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 
-export async function PATCH(request: Request, { params }: { params: { projectId: string } }) {
+export async function PATCH(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   try {
     const authContext = await getAuthContext();
     if (authContext instanceof NextResponse) {
