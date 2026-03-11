@@ -1548,6 +1548,40 @@ useEffect(() => {
     }
   }, [currentProject]);
 
+  // Handle bulk packed_by (CP/PBO) updates from Spreadsheet
+  const handleBulkPackedByUpdate = useCallback(async (itemIds, newPackedBy) => {
+    console.log(`🔄 Bulk updating ${itemIds.length} items to packed_by: ${newPackedBy}`);
+
+    // Update local state
+    setInventoryItems(prev =>
+      prev.map(item =>
+        itemIds.includes(item._id)
+          ? { ...item, packed_by: newPackedBy }
+          : item
+      )
+    );
+
+    // Persist to database (batch update)
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/bulk-update`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemIds,
+          updates: { packed_by: newPackedBy }
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Bulk update failed');
+      }
+      console.log(`✅ Successfully bulk updated ${itemIds.length} items to ${newPackedBy}`);
+    } catch (error) {
+      console.error('Bulk packed_by update failed:', error);
+      toast.error('Failed to save changes');
+    }
+  }, [currentProject]);
+
   // Handle stock inventory changes - PATCH existing items, POST new ones, DELETE removed ones
   const handleAddStockItems = useCallback(async (changedItems) => {
     if (!currentProject?._id) {
@@ -3149,6 +3183,7 @@ const ProcessingNotification = () => {
                       refreshSpreadsheet={refreshSpreadsheetRows}
                       onInventoryUpdate={handleInventoryUpdate}
                       onPackedByUpdate={handlePackedByUpdate}
+                      onBulkPackedByUpdate={handleBulkPackedByUpdate}
                       onAddStockItem={handleAddStockItems}
                       projectId={projectId}
                       inventoryItems={inventoryItems}

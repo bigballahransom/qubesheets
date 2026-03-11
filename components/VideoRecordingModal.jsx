@@ -200,12 +200,27 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
       // Calculate absolute time: segment start + item timestamp
       const segmentDuration = 300; // 5 minutes per segment
       const segmentStart = (itemToSeek.segmentIndex || 0) * segmentDuration;
-      const absoluteTime = segmentStart + timestampSeconds;
+
+      // Calculate offset between composite recording start and customer egress start
+      // Customer segments start when customer joins, but composite video starts when first participant (agent) joins
+      // NOTE: Find the REAL customer using customerIdentity - egress participants (EG_*) may be misclassified as customers
+      const customerParticipant = recording.customerIdentity
+        ? recording.participants?.find(p => p.identity === recording.customerIdentity)
+        : recording.participants?.find(p => p.type === 'customer' && !p.identity?.startsWith('EG_'));
+      const compositeStartTime = recording.startedAt ? new Date(recording.startedAt).getTime() : 0;
+      const customerJoinTime = customerParticipant?.joinedAt
+        ? new Date(customerParticipant.joinedAt).getTime()
+        : compositeStartTime;
+      const offsetSeconds = Math.max(0, Math.floor((customerJoinTime - compositeStartTime) / 1000));
+
+      // Add offset to account for time before customer joined
+      const absoluteTime = offsetSeconds + segmentStart + timestampSeconds;
 
       console.log('🎯 Seeking to:', {
         absoluteTime,
         timestampSeconds,
         segmentStart,
+        offsetSeconds,
         videoTimestamp: itemToSeek.videoTimestamp,
         segmentIndex: itemToSeek.segmentIndex
       });
@@ -353,7 +368,21 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     // Calculate absolute time: segment start + item timestamp
     const segmentDuration = 300; // 5 minutes per segment
     const segmentStart = (item.segmentIndex || 0) * segmentDuration;
-    const absoluteTime = segmentStart + timestampSeconds;
+
+    // Calculate offset between composite recording start and customer egress start
+    // Customer segments start when customer joins, but composite video starts when first participant (agent) joins
+    // NOTE: Find the REAL customer using customerIdentity - egress participants (EG_*) may be misclassified as customers
+    const customerParticipant = recording.customerIdentity
+      ? recording.participants?.find(p => p.identity === recording.customerIdentity)
+      : recording.participants?.find(p => p.type === 'customer' && !p.identity?.startsWith('EG_'));
+    const compositeStartTime = recording.startedAt ? new Date(recording.startedAt).getTime() : 0;
+    const customerJoinTime = customerParticipant?.joinedAt
+      ? new Date(customerParticipant.joinedAt).getTime()
+      : compositeStartTime;
+    const offsetSeconds = Math.max(0, Math.floor((customerJoinTime - compositeStartTime) / 1000));
+
+    // Add offset to account for time before customer joined
+    const absoluteTime = offsetSeconds + segmentStart + timestampSeconds;
 
     // Seek to 1 second before the timestamp and pause
     videoRef.current.currentTime = Math.max(0, absoluteTime - 1);
@@ -549,11 +578,17 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                   return true;
                 }
                 // Backwards compat with string egress IDs (sourceRecordingSessionId)
-                return (
-                  item.sourceRecordingSessionId === recording.sessionId ||
-                  item.sourceRecordingSessionId === recording.egressId ||
-                  item.sourceRecordingSessionId === recording.customerEgressId
-                );
+                // FIXED: Only check if the item actually has a sourceRecordingSessionId
+                // This prevents undefined === undefined from matching all items
+                if (item.sourceRecordingSessionId) {
+                  return (
+                    item.sourceRecordingSessionId === recording.sessionId ||
+                    item.sourceRecordingSessionId === recording.egressId ||
+                    item.sourceRecordingSessionId === recording.customerEgressId
+                  );
+                }
+
+                return false;  // Item doesn't match this recording
               });
 
               if (sessionItems.length === 0) return null;
@@ -719,7 +754,10 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                     <div className="space-y-2">
                       {analysisData.segments.filter(seg => seg.summary).map((segment, idx) => (
                         <div key={idx} className="text-xs text-gray-700">
-                          <span className="font-medium text-gray-900">{segment.room}:</span> {segment.summary}
+                          {segment.room && segment.room !== 'Unknown' && segment.room !== 'N/A' && (
+                            <span className="font-medium text-gray-900">{segment.room}: </span>
+                          )}
+                          {segment.summary}
                         </div>
                       ))}
                     </div>
@@ -736,7 +774,10 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                     <ul className="space-y-1">
                       {analysisData.packingNotes.map((note, idx) => (
                         <li key={idx} className="text-xs text-amber-900">
-                          <span className="font-medium">{note.room}:</span> {note.notes}
+                          {note.room && note.room !== 'Unknown' && note.room !== 'N/A' && (
+                            <span className="font-medium">{note.room}: </span>
+                          )}
+                          {note.notes}
                         </li>
                       ))}
                     </ul>

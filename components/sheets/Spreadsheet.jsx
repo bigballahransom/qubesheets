@@ -179,6 +179,7 @@ export default function Spreadsheet({
   refreshSpreadsheet = null,
   onInventoryUpdate = null,
   onPackedByUpdate = null,
+  onBulkPackedByUpdate = null,
   onAddStockItem = null,
   projectId = null,
   inventoryItems = [],
@@ -224,6 +225,7 @@ export default function Spreadsheet({
   const [selectedRows, setSelectedRows] = useState([]);
   const [cuftMode, setCuftMode] = useState('total'); // 'total' or 'perUnit' for Cuft display
   const [weightMode, setWeightMode] = useState('total'); // 'total' or 'perUnit' for Weight display
+  const [pboDropdownOpen, setPboDropdownOpen] = useState(false); // For bulk PBO/CP dropdown
 
   // Location update dialog state
   const [locationDialog, setLocationDialog] = useState({
@@ -582,14 +584,15 @@ export default function Spreadsheet({
   // Handle outside clicks to close dropdowns
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (showDropdown && !event.target.closest('.dropdown-container')) {
-        setShowDropdown(null);
+      if (!event.target.closest('.dropdown-container')) {
+        if (showDropdown) setShowDropdown(null);
+        if (pboDropdownOpen) setPboDropdownOpen(false);
       }
     };
-    
+
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showDropdown]);
+  }, [showDropdown, pboDropdownOpen]);
   
   // Handle zoom with trackpad/pinch gestures
   useEffect(() => {
@@ -640,6 +643,45 @@ export default function Spreadsheet({
     return debouncedValue;
   }
   
+  // Handle bulk PBO/CP change for recommended boxes
+  const handleBulkPboChange = useCallback(async (newValue) => {
+    setPboDropdownOpen(false);
+
+    // Find all recommended boxes (boxes_needed)
+    const recommendedBoxRows = rows.filter(row => row.itemType === 'boxes_needed');
+
+    if (recommendedBoxRows.length === 0) {
+      toast.info('No recommended boxes to update');
+      return;
+    }
+
+    // Collect inventory item IDs
+    const itemIds = recommendedBoxRows
+      .map(row => row.inventoryItemId)
+      .filter(Boolean);
+
+    // Update local UI immediately
+    const updatedRows = rows.map(row => {
+      if (row.itemType === 'boxes_needed') {
+        return {
+          ...row,
+          cells: { ...row.cells, col7: newValue }
+        };
+      }
+      return row;
+    });
+
+    setRows(updatedRows);
+    onRowsChange?.(updatedRows);
+
+    // Call bulk update callback
+    if (onBulkPackedByUpdate && itemIds.length > 0) {
+      await onBulkPackedByUpdate(itemIds, newValue);
+    }
+
+    toast.success(`Updated ${recommendedBoxRows.length} recommended boxes to ${newValue}`);
+  }, [rows, onRowsChange, onBulkPackedByUpdate]);
+
   // Handle cell editing
   const handleCellClick = useCallback((rowId, colId, currentValue) => {
     // Prevent editing cuft (col4) and weight (col5) columns
@@ -2298,6 +2340,46 @@ export default function Spreadsheet({
                           ))}
                         </>
                       )}
+                    </div>
+                  )}
+                </div>
+                )}
+
+                {/* Dropdown for PBO/CP column to bulk update recommended boxes */}
+                {(column.name === 'PBO/CP' || column.name === 'Packed By') && (
+                <div className="relative ml-auto dropdown-container">
+                  <button
+                    className="p-1 rounded hover:bg-gray-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPboDropdownOpen(!pboDropdownOpen);
+                    }}
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                  {pboDropdownOpen && (
+                    <div className="absolute top-full right-0 mt-1 bg-white shadow-lg rounded-md border p-2 z-50 w-56">
+                      <div className="text-xs font-medium text-gray-500 px-2 mb-1">Set All Recommended Boxes</div>
+                      <div
+                        className="p-2 hover:bg-blue-50 cursor-pointer rounded flex items-center gap-2"
+                        onClick={() => handleBulkPboChange('CP')}
+                      >
+                        <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-semibold">CP</span>
+                        <div>
+                          <div className="font-medium text-sm">Carrier Pack</div>
+                          <div className="text-xs text-gray-500">Movers will pack these</div>
+                        </div>
+                      </div>
+                      <div
+                        className="p-2 hover:bg-amber-50 cursor-pointer rounded flex items-center gap-2"
+                        onClick={() => handleBulkPboChange('PBO')}
+                      >
+                        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-xs font-semibold">PBO</span>
+                        <div>
+                          <div className="font-medium text-sm">Packed By Owner</div>
+                          <div className="text-xs text-gray-500">Customer will pack these</div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>

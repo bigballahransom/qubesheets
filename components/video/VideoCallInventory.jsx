@@ -630,7 +630,6 @@ function isAgent(participantName) {
 
 const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   const [showControls, setShowControls] = useState(true);
-  const [isSmallScreen, setIsSmallScreen] = useState(true); // Default to true to avoid flash of content
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   const connectionState = useConnectionState();
@@ -638,36 +637,39 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   // Custom control states
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isCameraEnabled, setIsCameraEnabled] = useState(true);
+  const [isLeaving, setIsLeaving] = useState(false);
   const { switchCamera, isSwitching: isCameraSwitching, canSwitchCamera } = useAdvancedCameraSwitching();
 
   // Show loading screen while connecting
   const isConnecting = connectionState === ConnectionState.Connecting || connectionState === ConnectionState.Reconnecting;
 
-  // Detect Android for specific fixes
-  const isAndroid = useMemo(() => {
-    const androidDetected = /Android/i.test(navigator.userAgent);
-    if (androidDetected) {
-      console.log('🤖 Android device detected:', navigator.userAgent);
-      console.log('🤖 Screen dimensions:', window.innerWidth, 'x', window.innerHeight);
-      console.log('🤖 Viewport dimensions:', window.visualViewport?.width, 'x', window.visualViewport?.height);
-    }
-    return androidDetected;
+  // Detect mobile device immediately via user agent (no useEffect delay)
+  const isMobileDevice = useMemo(() => {
+    if (typeof window === 'undefined') return true;
+    const mobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    console.log('📱 Mobile device detection:', { mobile, userAgent: navigator.userAgent.substring(0, 50) });
+    return mobile;
   }, []);
 
-  // Detect if the screen is small (mobile-sized)
+  // Detect Android specifically for certain fixes
+  const isAndroid = useMemo(() => {
+    return /Android/i.test(navigator.userAgent);
+  }, []);
+
+  // Track screen width for dynamic changes (but mobile devices always use mobile layout)
+  const [screenWidth, setScreenWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 375
+  );
+
   useEffect(() => {
-    const checkScreenSize = () => {
-      const smallScreen = window.innerWidth < 768;
-      setIsSmallScreen(smallScreen);
-      if (isAndroid) {
-        console.log('🤖 Screen size check:', { smallScreen, width: window.innerWidth });
-      }
-    };
-    
-    checkScreenSize();
-    window.addEventListener('resize', checkScreenSize);
-    return () => window.removeEventListener('resize', checkScreenSize);
-  }, [isAndroid]);
+    const handleResize = () => setScreenWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Final mobile check: mobile device user agent OR small screen width
+  // This ensures iOS/Android always get mobile layout, plus tablets/small windows
+  const isSmallScreen = isMobileDevice || screenWidth < 768;
 
   // Android debugging - track component state
   useEffect(() => {
@@ -689,33 +691,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   // Camera is managed by LiveKit via roomOptions.videoCaptureDefaults
   // No need for manual camera management here
 
-  // Auto-hide controls after 6 seconds of inactivity (only if on small screen)
-  useEffect(() => {
-    if (!isSmallScreen) return;
-
-    let hideTimer;
-    
-    const resetHideTimer = () => {
-      setShowControls(true);
-      clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => setShowControls(false), 6000);
-    };
-
-    resetHideTimer();
-
-    const handleActivity = () => resetHideTimer();
-    
-    window.addEventListener('touchstart', handleActivity);
-    window.addEventListener('click', handleActivity);
-    window.addEventListener('mousemove', handleActivity);
-    
-    return () => {
-      clearTimeout(hideTimer);
-      window.removeEventListener('touchstart', handleActivity);
-      window.removeEventListener('click', handleActivity);
-      window.removeEventListener('mousemove', handleActivity);
-    };
-  }, [isSmallScreen]);
+  // Controls are always visible - no auto-hide behavior
 
   // Get all video tracks to display
   const tracks = useTracks(
@@ -744,39 +720,39 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   // Detect mobile for camera flip button
   const isMobile = isSmallScreen;
 
-  // Manual track attachment for Android - bypasses GridLayout issues
+  // Manual track attachment for mobile - bypasses GridLayout issues
   useEffect(() => {
-    if (!isAndroid) return;
+    if (!isSmallScreen) return;
 
     const localTrack = localCameraTrack?.publication?.track;
     const videoElement = localVideoRef.current;
 
     if (localTrack && videoElement) {
-      console.log('🤖 Attaching local track to video element');
+      console.log('📱 Attaching local track to video element');
       localTrack.attach(videoElement);
       return () => {
-        console.log('🤖 Detaching local track');
+        console.log('📱 Detaching local track');
         localTrack.detach(videoElement);
       };
     }
-  }, [isAndroid, localCameraTrack?.publication?.track]);
+  }, [isSmallScreen, localCameraTrack?.publication?.track]);
 
-  // Manual remote track attachment for Android
+  // Manual remote track attachment for mobile
   useEffect(() => {
-    if (!isAndroid) return;
+    if (!isSmallScreen) return;
 
     const remoteTrack = remoteCameraTrack?.publication?.track;
     const videoElement = remoteVideoRef.current;
 
     if (remoteTrack && videoElement) {
-      console.log('🤖 Attaching remote track to video element');
+      console.log('📱 Attaching remote track to video element');
       remoteTrack.attach(videoElement);
       return () => {
-        console.log('🤖 Detaching remote track');
+        console.log('📱 Detaching remote track');
         remoteTrack.detach(videoElement);
       };
     }
-  }, [isAndroid, remoteCameraTrack?.publication?.track]);
+  }, [isSmallScreen, remoteCameraTrack?.publication?.track]);
 
   // Sync control states with localParticipant
   useEffect(() => {
@@ -807,8 +783,9 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
     }
   }, [localParticipant, isCameraEnabled]);
 
-  // Leave call
+  // Leave call with loading state
   const leaveCall = useCallback(() => {
+    setIsLeaving(true);
     if (onCallEnd) {
       onCallEnd();
     }
@@ -886,8 +863,8 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
 
       {/* Video area - Full screen for both participants */}
       <div className="absolute inset-0 z-10">
-        {isAndroid ? (
-          // Android: Bypass GridLayout entirely - use manual video elements like pre-join
+        {isSmallScreen ? (
+          // Mobile: Bypass GridLayout entirely - use manual video elements for better compatibility
           <div className="absolute inset-0 flex flex-col bg-black">
             {/* Remote video (agent) - full screen background */}
             <div className="flex-1 relative">
@@ -925,7 +902,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
             )}
           </div>
         ) : (
-          // Non-Android: use GridLayout as before
+          // Desktop: use GridLayout for side-by-side view
           <>
             <GridLayout
               tracks={tracks}
@@ -934,7 +911,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
               <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
             </GridLayout>
 
-            {/* Self-view overlay for non-Android */}
+            {/* Self-view overlay for desktop */}
             {localCameraTrack && isCameraReady && (
               <div
                 className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30"
@@ -1028,12 +1005,17 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
               )}
             </button>
 
-            {/* End Call - Larger and prominent */}
+            {/* End Call - Larger and prominent with loading state */}
             <button
               onClick={leaveCall}
-              className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg shadow-red-500/30 transition-all duration-200 active:scale-95"
+              disabled={isLeaving}
+              className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 disabled:bg-red-400 flex items-center justify-center shadow-lg shadow-red-500/30 transition-all duration-200 active:scale-95 disabled:scale-100"
             >
-              <PhoneOff className="w-9 h-9 text-white" />
+              {isLeaving ? (
+                <Loader2 className="w-9 h-9 text-white animate-spin" />
+              ) : (
+                <PhoneOff className="w-9 h-9 text-white" />
+              )}
             </button>
 
             {/* Camera Flip - always show on mobile */}
@@ -1053,15 +1035,6 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
           </div>
         </div>
       </div>
-
-      {/* Tap hint */}
-      {!showControls && (
-        <div className="absolute bottom-safe-or-6 left-1/2 transform -translate-x-1/2 z-10">
-          <div className={`px-6 py-3 rounded-2xl text-center text-white text-sm font-medium ${glassStyle} border border-white/30 animate-pulse`}>
-            Tap to show controls
-          </div>
-        </div>
-      )}
 
       <RoomAudioRenderer />
     </div>
@@ -1092,6 +1065,7 @@ const AgentView = React.memo(({
   // Custom control states for mobile
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isCameraEnabled, setIsCameraEnabled] = useState(true);
+  const [isLeaving, setIsLeaving] = useState(false);
 
   // Get participant identity for audio processor
   const { localParticipant } = useLocalParticipant();
@@ -1140,8 +1114,9 @@ const AgentView = React.memo(({
     }
   }, [localParticipant, isCameraEnabled]);
 
-  // Leave call
+  // Leave call with loading state
   const leaveCall = useCallback(() => {
+    setIsLeaving(true);
     if (onCallEnd) {
       onCallEnd();
     }
@@ -1171,31 +1146,7 @@ const AgentView = React.memo(({
     return () => window.removeEventListener('resize', checkScreenSize);
   }, [showInventory]);
 
-  // Auto-hide controls on small screens after inactivity
-  useEffect(() => {
-    if (!isSmallScreen) return;
-    
-    let hideTimer;
-    
-    const resetHideTimer = () => {
-      setShowControls(true);
-      clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => setShowControls(false), 6000);
-    };
-
-    resetHideTimer();
-
-    const handleActivity = () => resetHideTimer();
-    
-    window.addEventListener('touchstart', handleActivity);
-    window.addEventListener('click', handleActivity);
-    
-    return () => {
-      clearTimeout(hideTimer);
-      window.removeEventListener('touchstart', handleActivity);
-      window.removeEventListener('click', handleActivity);
-    };
-  }, [isSmallScreen]);
+  // Controls are always visible - no auto-hide behavior
 
   // handleItemsDetected removed - items now saved directly to database via Railway
 
@@ -1347,12 +1298,17 @@ const AgentView = React.memo(({
                 )}
               </button>
 
-              {/* End Call - Larger and prominent */}
+              {/* End Call - Larger and prominent with loading state */}
               <button
                 onClick={leaveCall}
-                className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center shadow-lg shadow-red-500/30 transition-all duration-200 active:scale-95"
+                disabled={isLeaving}
+                className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 disabled:bg-red-400 flex items-center justify-center shadow-lg shadow-red-500/30 transition-all duration-200 active:scale-95 disabled:scale-100"
               >
-                <PhoneOff className="w-9 h-9 text-white" />
+                {isLeaving ? (
+                  <Loader2 className="w-9 h-9 text-white animate-spin" />
+                ) : (
+                  <PhoneOff className="w-9 h-9 text-white" />
+                )}
               </button>
 
               {/* Camera Flip - only show if device supports it */}
@@ -1398,15 +1354,6 @@ const AgentView = React.memo(({
                 <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
                 <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tap hint */}
-        {!showControls && (
-          <div className="absolute bottom-safe-or-6 left-1/2 transform -translate-x-1/2 z-10">
-            <div className={`px-6 py-3 rounded-2xl text-white text-sm font-medium ${glassStyle} border border-white/30 animate-pulse`}>
-              Tap to show controls
             </div>
           </div>
         )}
