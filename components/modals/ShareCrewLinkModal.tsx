@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Users, Check, Link, Copy, Loader2, RefreshCw, Phone } from 'lucide-react';
+import { X, Users, Check, Link, Copy, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ShareCrewLinkModalProps {
@@ -10,7 +10,6 @@ interface ShareCrewLinkModalProps {
   onClose: () => void;
   projectId: string;
   projectName: string;
-  customerPhone?: string;
 }
 
 export default function ShareCrewLinkModal({
@@ -18,59 +17,12 @@ export default function ShareCrewLinkModal({
   onClose,
   projectId,
   projectName,
-  customerPhone: initialCustomerPhone = '',
 }: ShareCrewLinkModalProps) {
   const [generating, setGenerating] = useState(false);
   const [reviewUrl, setReviewUrl] = useState('');
   const [existingLink, setExistingLink] = useState<any>(null);
   const [loadingExisting, setLoadingExisting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [customerPhone, setCustomerPhone] = useState(initialCustomerPhone);
-  const [phoneError, setPhoneError] = useState('');
-
-  // Phone formatting utilities - defined before useEffects that depend on them
-  const formatPhoneNumber = (value: string, previousValue: string = ''): string => {
-    const digits = value.replace(/\D/g, '');
-    const prevDigits = previousValue.replace(/\D/g, '');
-    const isDeleting = digits.length < prevDigits.length;
-    const limitedDigits = digits.slice(0, 10);
-
-    if (limitedDigits.length === 0) {
-      return '';
-    }
-
-    if (isDeleting && limitedDigits.length <= 3) {
-      return limitedDigits;
-    }
-
-    if (limitedDigits.length >= 7) {
-      return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
-    } else if (limitedDigits.length >= 4) {
-      return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3)}`;
-    } else if (limitedDigits.length >= 1) {
-      return isDeleting ? limitedDigits : `(${limitedDigits}`;
-    }
-
-    return limitedDigits;
-  };
-
-  const formatPhoneForTwilio = (formattedPhone: string): string => {
-    const digits = formattedPhone.replace(/\D/g, '');
-    return digits.length === 10 ? `+1${digits}` : '';
-  };
-
-  const formatTwilioToDisplay = (twilioPhone: string): string => {
-    if (twilioPhone && twilioPhone.startsWith('+1') && twilioPhone.length === 12) {
-      const digits = twilioPhone.slice(2);
-      return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
-    }
-    return twilioPhone || '';
-  };
-
-  // Update state when initial props change
-  useEffect(() => {
-    setCustomerPhone(formatTwilioToDisplay(initialCustomerPhone));
-  }, [initialCustomerPhone]);
 
   // Check for existing link when modal opens
   useEffect(() => {
@@ -88,9 +40,6 @@ export default function ShareCrewLinkModal({
         if (data.exists) {
           setExistingLink(data);
           setReviewUrl(data.reviewUrl);
-          if (data.customerPhone) {
-            setCustomerPhone(formatTwilioToDisplay(data.customerPhone));
-          }
         }
       }
     } catch (error) {
@@ -111,9 +60,7 @@ export default function ShareCrewLinkModal({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          customerPhone: customerPhone ? formatPhoneForTwilio(customerPhone) : undefined,
-        }),
+        body: JSON.stringify({}),
       });
 
       if (!response.ok) {
@@ -150,8 +97,6 @@ export default function ShareCrewLinkModal({
     setReviewUrl('');
     setExistingLink(null);
     setCopied(false);
-    setCustomerPhone(formatTwilioToDisplay(initialCustomerPhone));
-    setPhoneError('');
     onClose();
   };
 
@@ -200,36 +145,6 @@ export default function ShareCrewLinkModal({
                 <p className="text-xs text-indigo-600 mt-1">
                   Share this link with crew members to view the full inventory
                 </p>
-              </div>
-
-              {/* Phone Number Input */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  <Phone className="inline w-4 h-4 mr-1" />
-                  Customer Phone (optional)
-                </label>
-                <input
-                  type="tel"
-                  value={customerPhone}
-                  onChange={(e) => {
-                    const formatted = formatPhoneNumber(e.target.value, customerPhone);
-                    setCustomerPhone(formatted);
-                    const digits = formatted.replace(/\D/g, '');
-                    if (formatted && digits.length > 0 && digits.length !== 10) {
-                      setPhoneError('Phone number must be 10 digits');
-                    } else {
-                      setPhoneError('');
-                    }
-                  }}
-                  placeholder="(555) 123-4567"
-                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
-                    phoneError ? 'border-red-500' : ''
-                  }`}
-                  disabled={generating}
-                />
-                {phoneError && (
-                  <p className="text-sm text-red-500 mt-1">{phoneError}</p>
-                )}
               </div>
 
               {/* Existing link info */}
