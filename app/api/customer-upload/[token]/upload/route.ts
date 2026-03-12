@@ -161,9 +161,9 @@ export async function POST(
     console.log('🎫 Token received (optional):', token);
     
     // Validate token using CustomerUpload model (where tokens are actually stored)
+    // NOTE: Links never expire - expiresAt is not set during creation, so don't check it
     const customerUpload = await CustomerUpload.findOne({
       uploadToken: token,
-      expiresAt: { $gt: new Date() },
       isActive: true
     });
 

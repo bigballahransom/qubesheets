@@ -15,29 +15,12 @@ export async function GET(
     
     await connectMongoDB();
 
-    // Find the customer upload link (matching validation logic)
-    let customerUpload = await CustomerUpload.findOne({
+    // Find the customer upload link
+    // NOTE: Links never expire - expiresAt is not set during creation, so don't check it
+    const customerUpload = await CustomerUpload.findOne({
       uploadToken: token,
-      isActive: true,
-      expiresAt: { $gt: new Date() }
+      isActive: true
     });
-
-    // If not found, try expired tokens with grace period (matching validation logic)
-    if (!customerUpload) {
-      const expiredUpload = await CustomerUpload.findOne({
-        uploadToken: token,
-        isActive: true
-      });
-      
-      if (expiredUpload) {
-        const now = new Date();
-        const hoursSinceExpiry = (now.getTime() - expiredUpload.expiresAt.getTime()) / (1000 * 60 * 60);
-        
-        if (hoursSinceExpiry <= 24 * 7) { // 7 days grace period
-          customerUpload = expiredUpload;
-        }
-      }
-    }
 
     console.log('👤 Customer upload found:', !!customerUpload);
     

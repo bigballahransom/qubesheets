@@ -57,9 +57,9 @@ export async function POST(request: NextRequest) {
       await connectMongoDB();
       
       // Use CustomerUpload model where tokens are actually stored
+      // NOTE: Links never expire - expiresAt is not set during creation, so don't check it
       const customerUpload = await CustomerUpload.findOne({
         uploadToken: customerToken,
-        expiresAt: { $gt: new Date() },
         isActive: true
       });
       

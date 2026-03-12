@@ -106,9 +106,9 @@ export async function POST(request: NextRequest) {
     // Handle customer upload validation
     if (isCustomerUpload && customerToken) {
       // Use CustomerUpload model where tokens are actually stored
+      // NOTE: Links never expire - expiresAt is not set during creation, so don't check it
       const customerUpload = await CustomerUpload.findOne({
         uploadToken: customerToken,
-        expiresAt: { $gt: new Date() },
         isActive: true
       });
       
