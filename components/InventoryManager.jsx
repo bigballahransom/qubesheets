@@ -1846,34 +1846,43 @@ useEffect(() => {
     const statusResponse = await fetch(`/api/smartmoving/sync-from-lead?projectId=${currentProject._id}`);
     const statusData = await statusResponse.json();
 
-    // Block if already synced (one-time sync only - SmartMoving API requires item IDs to delete, which we don't store)
-    if (statusData.status?.syncedAt) {
-      toast.info('This project has already been synced to SmartMoving.');
-      return;
-    }
-
     // Check for phone if this is a new sync (no existing opportunity from webhook)
     if (!statusData.status?.hasOpportunityId && !statusData.status?.hasPhone) {
       toast.error('This project needs a phone number to sync with SmartMoving.');
       return;
     }
 
-    // Open the sync modal
+    // Open the sync modal (re-syncing is now allowed - existing items will be cleared first)
     setSmartMovingSyncResult(null);
     setSmartMovingSyncModalOpen(true);
   }, [currentProject?._id]);
 
-  const handleSmartMovingSyncConfirm = useCallback(async (syncOption = 'items_only') => {
+  const handleSmartMovingSyncConfirm = useCallback(async (syncOption = 'items_only', selectedRecord = null) => {
     if (!currentProject?._id) return;
 
     setSmartMovingLoading(true);
     setSmartMovingSyncResult(null);
 
     try {
+      // Build the request body with optional selected record
+      const requestBody = {
+        projectId: currentProject._id,
+        syncOption
+      };
+
+      // Add selected record info if user selected one
+      if (selectedRecord) {
+        requestBody.targetType = selectedRecord.type;
+        requestBody.targetId = selectedRecord.id;
+        if (selectedRecord.customerId) {
+          requestBody.customerId = selectedRecord.customerId;
+        }
+      }
+
       const response = await fetch('/api/smartmoving/sync-from-lead', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId: currentProject._id, syncOption })
+        body: JSON.stringify(requestBody)
       });
 
       const data = await response.json();
@@ -2967,7 +2976,7 @@ const ProcessingNotification = () => {
                 <MenubarSeparator />
                 <MenubarItem
                   onClick={handleSmartMovingSync}
-                  disabled={smartMovingLoading || smartMovingSyncStatus?.syncedAt}
+                  disabled={smartMovingLoading}
                 >
                   {smartMovingLoading ? (
                     <>
@@ -2976,8 +2985,8 @@ const ProcessingNotification = () => {
                     </>
                   ) : smartMovingSyncStatus?.syncedAt ? (
                     <>
-                      <ExternalLink size={16} className="mr-1" />
-                      Synced to SmartMoving
+                      <RefreshCw size={16} className="mr-1" />
+                      Re-sync to SmartMoving
                     </>
                   ) : (
                     <>
@@ -3379,10 +3388,12 @@ const ProcessingNotification = () => {
   onOpenChange={setSmartMovingSyncModalOpen}
   onSync={handleSmartMovingSyncConfirm}
   loading={smartMovingLoading}
+  projectId={currentProject?._id}
   projectPhone={currentProject?.phone}
   result={smartMovingSyncResult}
   onReset={handleSmartMovingSyncReset}
   inventoryStats={computedInventoryStats}
+  isResync={!!smartMovingSyncStatus?.syncedAt}
 />
 
 {/* Edit Project Details Modal */}

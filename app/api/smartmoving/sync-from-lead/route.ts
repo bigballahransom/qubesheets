@@ -13,6 +13,7 @@ import {
   searchCustomersByPhone,
   getOpportunitiesByCustomerId,
   getMostRecentOpportunity,
+  clearOpportunityInventory,
   ConvertLeadRequest,
   SmartMovingLead,
   SmartMovingCustomerOpportunity
@@ -114,7 +115,14 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { projectId, syncOption = 'items_only' } = body;
+    const {
+      projectId,
+      syncOption = 'items_only',
+      // New: optional parameters for user-selected record
+      targetType,  // 'lead' | 'opportunity' | undefined
+      targetId,    // ID of the selected lead or opportunity
+      customerId: selectedCustomerId  // Required when targetType is 'opportunity'
+    } = body;
 
     if (!projectId) {
       return NextResponse.json(
@@ -157,6 +165,20 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // Clear ALL existing inventory from SmartMoving before re-syncing
+      // Don't pass a target room ID - clear all rooms since we sync by location
+      console.log(`🧹 [SYNC-FROM-LEAD] Clearing existing inventory from all rooms before re-sync...`);
+      const clearResult = await clearOpportunityInventory(
+        project.metadata.smartMovingOpportunityId,
+        integration.smartMovingApiKey,
+        integration.smartMovingClientId
+        // No targetRoomId - clear all rooms
+      );
+
+      if (clearResult.deletedCount > 0) {
+        console.log(`🧹 [SYNC-FROM-LEAD] Cleared ${clearResult.deletedCount} existing items from ${clearResult.roomIds.length} rooms`);
+      }
+
       // Sync inventory to the existing opportunity
       const allInventoryItems = await InventoryItem.find({ projectId });
 
@@ -173,10 +195,11 @@ export async function POST(request: NextRequest) {
         return true;
       });
 
-      console.log(`📦 [SYNC-FROM-LEAD] Re-syncing ${inventoryItems.length} items to existing opportunity`);
+      console.log(`📦 [SYNC-FROM-LEAD] Re-syncing ${inventoryItems.length} items to existing opportunity (grouped by location)`);
 
-      let inventorySyncResult: { success: boolean; syncedCount: number; error?: string } = { success: true, syncedCount: 0 };
+      let inventorySyncResult: { success: boolean; syncedCount: number; roomId?: string; error?: string } = { success: true, syncedCount: 0 };
       if (inventoryItems.length > 0) {
+        // Sync items - they will be grouped by location and synced to corresponding rooms
         inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
       }
 
@@ -195,7 +218,8 @@ export async function POST(request: NextRequest) {
         inventorySynced: inventorySyncResult.success,
         inventoryCount: inventorySyncResult.syncedCount,
         inventoryError: inventorySyncResult.error,
-        isResync: true
+        isResync: true,
+        clearedCount: clearResult.deletedCount
       });
     }
 
@@ -291,34 +315,48 @@ export async function POST(request: NextRequest) {
       console.log(`✅ [SYNC-FROM-LEAD] Auto-configured defaults: tariff=${autoTariff?.name}, referral=${autoReferral?.name}`);
     }
 
-    // 3. Fetch leads from SmartMoving
-    console.log(`🔍 [SYNC-FROM-LEAD] Fetching leads from SmartMoving...`);
-    const leadsResult = await fetchSmartMovingLeads(smartMovingApiKey, smartMovingClientId);
-
-    if (!leadsResult.success) {
-      return NextResponse.json({
-        success: false,
-        error: 'fetch_leads_failed',
-        message: leadsResult.error || 'Failed to fetch leads from SmartMoving'
-      });
-    }
-
-    // 4. Find matching lead by phone
-    console.log(`🔍 [SYNC-FROM-LEAD] Searching for matching lead...`);
-    const matchedLead = findLeadByPhone(leadsResult.leads, project.phone);
-
     let opportunityId: string;
     let customerId: string;
     let leadId: string | null = null;
     let customerName: string = project.customerName || project.name;
+    let usedExistingOpportunity = false;
 
-    if (matchedLead) {
-      // ===== LEAD FOUND - Use original flow =====
-      console.log(`✅ [SYNC-FROM-LEAD] Found matching lead: ${matchedLead.id}`);
+    // ===== CHECK FOR USER-SELECTED RECORD =====
+    if (targetType === 'opportunity' && targetId && selectedCustomerId) {
+      // User selected an existing opportunity directly
+      console.log(`✅ [SYNC-FROM-LEAD] Using user-selected opportunity: ${targetId}`);
+      opportunityId = targetId;
+      customerId = selectedCustomerId;
+      usedExistingOpportunity = true;
+
+    } else if (targetType === 'lead' && targetId) {
+      // User selected a specific lead - fetch and convert it
+      console.log(`✅ [SYNC-FROM-LEAD] Using user-selected lead: ${targetId}`);
+
+      // Fetch the specific lead details
+      const leadDetailsUrl = `https://api-public.smartmoving.com/v1/api/leads/${targetId}`;
+      const leadResponse = await fetch(leadDetailsUrl, {
+        method: 'GET',
+        headers: {
+          'x-api-key': smartMovingApiKey,
+          'Ocp-Apim-Subscription-Key': smartMovingClientId,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!leadResponse.ok) {
+        return NextResponse.json({
+          success: false,
+          error: 'lead_fetch_failed',
+          message: `Failed to fetch lead ${targetId}: ${leadResponse.status}`
+        });
+      }
+
+      const matchedLead: SmartMovingLead = await leadResponse.json();
       leadId = matchedLead.id;
       customerName = matchedLead.customerName;
 
-      // 5. Create customer from lead data first
+      // Create customer from lead data
       console.log(`🔄 [SYNC-FROM-LEAD] Creating customer from lead data...`);
       const customerResult = await createCustomerFromLead(
         matchedLead,
@@ -337,7 +375,7 @@ export async function POST(request: NextRequest) {
       customerId = customerResult.customerId;
       console.log(`✅ [SYNC-FROM-LEAD] Customer created: ${customerId}`);
 
-      // 6. Build conversion request using lead data + defaults
+      // Build conversion request
       const moveDate = getMoveDate(matchedLead, project);
 
       const conversionData: ConvertLeadRequest = {
@@ -356,7 +394,7 @@ export async function POST(request: NextRequest) {
         } : undefined
       };
 
-      // Validate required fields exist
+      // Validate required fields
       if (!conversionData.moveSizeId) {
         return NextResponse.json({
           success: false,
@@ -373,7 +411,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // 7. Convert lead to opportunity
+      // Convert lead to opportunity
       console.log(`🔄 [SYNC-FROM-LEAD] Converting lead to opportunity...`);
       const conversionResult = await convertLeadToOpportunity(
         matchedLead.id,
@@ -393,63 +431,165 @@ export async function POST(request: NextRequest) {
       opportunityId = conversionResult.opportunityId;
 
     } else {
-      // ===== NO LEAD FOUND - Try customer/opportunity fallback =====
-      console.log(`⚠️ [SYNC-FROM-LEAD] No matching lead found, searching for existing customer...`);
+      // ===== FALLBACK: AUTO-SEARCH (original behavior) =====
+      console.log(`🔍 [SYNC-FROM-LEAD] No user selection, using auto-search...`);
 
-      // Search for customer by phone
-      const customerSearchResult = await searchCustomersByPhone(
-        project.phone,
-        smartMovingApiKey,
-        smartMovingClientId
-      );
+      // Fetch leads from SmartMoving
+      console.log(`🔍 [SYNC-FROM-LEAD] Fetching leads from SmartMoving...`);
+      const leadsResult = await fetchSmartMovingLeads(smartMovingApiKey, smartMovingClientId);
 
-      if (!customerSearchResult.success || customerSearchResult.customers.length === 0) {
+      if (!leadsResult.success) {
         return NextResponse.json({
           success: false,
-          error: 'no_lead_or_customer_found',
-          message: 'No matching lead or customer found in SmartMoving. The lead may have been converted already but no customer record exists with this phone number.',
-          searchedPhone: project.phone,
-          leadsSearched: leadsResult.leads.length
+          error: 'fetch_leads_failed',
+          message: leadsResult.error || 'Failed to fetch leads from SmartMoving'
         });
       }
 
-      // Use the first matching customer
-      const matchedCustomer = customerSearchResult.customers[0];
-      customerId = matchedCustomer.id;
-      customerName = matchedCustomer.name;
-      console.log(`✅ [SYNC-FROM-LEAD] Found existing customer: ${customerId} - ${customerName}`);
+      // Find matching lead by phone
+      console.log(`🔍 [SYNC-FROM-LEAD] Searching for matching lead...`);
+      const matchedLead = findLeadByPhone(leadsResult.leads, project.phone);
 
-      // Get opportunities for this customer
-      const opportunitiesResult = await getOpportunitiesByCustomerId(
-        customerId,
-        smartMovingApiKey,
-        smartMovingClientId
-      );
+      if (matchedLead) {
+        // ===== LEAD FOUND - Use original flow =====
+        console.log(`✅ [SYNC-FROM-LEAD] Found matching lead: ${matchedLead.id}`);
+        leadId = matchedLead.id;
+        customerName = matchedLead.customerName;
 
-      if (!opportunitiesResult.success || opportunitiesResult.opportunities.length === 0) {
-        return NextResponse.json({
-          success: false,
-          error: 'no_opportunities_found',
-          message: `Found customer "${customerName}" but they have no opportunities in SmartMoving. Please create an opportunity for this customer first.`,
+        // Create customer from lead data first
+        console.log(`🔄 [SYNC-FROM-LEAD] Creating customer from lead data...`);
+        const customerResult = await createCustomerFromLead(
+          matchedLead,
+          smartMovingApiKey,
+          smartMovingClientId
+        );
+
+        if (!customerResult.success || !customerResult.customerId) {
+          return NextResponse.json({
+            success: false,
+            error: 'customer_creation_failed',
+            message: customerResult.error || 'Failed to create customer in SmartMoving'
+          });
+        }
+
+        customerId = customerResult.customerId;
+        console.log(`✅ [SYNC-FROM-LEAD] Customer created: ${customerId}`);
+
+        // Build conversion request using lead data + defaults
+        const moveDate = getMoveDate(matchedLead, project);
+
+        const conversionData: ConvertLeadRequest = {
           customerId: customerId,
-          customerName: customerName
-        });
+          referralSourceId: integration.defaultReferralSourceId,
+          tariffId: integration.defaultTariffId,
+          moveDate: moveDate,
+          moveSizeId: matchedLead.moveSizeId || integration.defaultMoveSizeId,
+          salesPersonId: matchedLead.salesPersonId || integration.defaultSalesPersonId,
+          serviceTypeId: matchedLead.type || integration.defaultServiceTypeId || 1,
+          originAddress: matchedLead.originAddressFull ? {
+            fullAddress: matchedLead.originAddressFull
+          } : undefined,
+          destinationAddress: matchedLead.destinationAddressFull ? {
+            fullAddress: matchedLead.destinationAddressFull
+          } : undefined
+        };
+
+        // Validate required fields exist
+        if (!conversionData.moveSizeId) {
+          return NextResponse.json({
+            success: false,
+            error: 'missing_move_size',
+            message: 'Move size is required. Please set a default Move Size in SmartMoving settings.'
+          });
+        }
+
+        if (!conversionData.salesPersonId) {
+          return NextResponse.json({
+            success: false,
+            error: 'missing_salesperson',
+            message: 'Sales person is required. Please set a default Sales Person in SmartMoving settings.'
+          });
+        }
+
+        // Convert lead to opportunity
+        console.log(`🔄 [SYNC-FROM-LEAD] Converting lead to opportunity...`);
+        const conversionResult = await convertLeadToOpportunity(
+          matchedLead.id,
+          conversionData,
+          smartMovingApiKey,
+          smartMovingClientId
+        );
+
+        if (!conversionResult.success || !conversionResult.opportunityId) {
+          return NextResponse.json({
+            success: false,
+            error: 'conversion_failed',
+            message: conversionResult.error || 'Failed to convert lead to opportunity'
+          });
+        }
+
+        opportunityId = conversionResult.opportunityId;
+
+      } else {
+        // ===== NO LEAD FOUND - Try customer/opportunity fallback =====
+        console.log(`⚠️ [SYNC-FROM-LEAD] No matching lead found, searching for existing customer...`);
+
+        // Search for customer by phone
+        const customerSearchResult = await searchCustomersByPhone(
+          project.phone,
+          smartMovingApiKey,
+          smartMovingClientId
+        );
+
+        if (!customerSearchResult.success || customerSearchResult.customers.length === 0) {
+          return NextResponse.json({
+            success: false,
+            error: 'no_lead_or_customer_found',
+            message: 'No matching lead or customer found in SmartMoving. The lead may have been converted already but no customer record exists with this phone number.',
+            searchedPhone: project.phone,
+            leadsSearched: leadsResult.leads.length
+          });
+        }
+
+        // Use the first matching customer
+        const matchedCustomer = customerSearchResult.customers[0];
+        customerId = matchedCustomer.id;
+        customerName = matchedCustomer.name;
+        console.log(`✅ [SYNC-FROM-LEAD] Found existing customer: ${customerId} - ${customerName}`);
+
+        // Get opportunities for this customer
+        const opportunitiesResult = await getOpportunitiesByCustomerId(
+          customerId,
+          smartMovingApiKey,
+          smartMovingClientId
+        );
+
+        if (!opportunitiesResult.success || opportunitiesResult.opportunities.length === 0) {
+          return NextResponse.json({
+            success: false,
+            error: 'no_opportunities_found',
+            message: `Found customer "${customerName}" but they have no opportunities in SmartMoving. Please create an opportunity for this customer first.`,
+            customerId: customerId,
+            customerName: customerName
+          });
+        }
+
+        // Select the most recent/relevant opportunity
+        const selectedOpportunity = getMostRecentOpportunity(opportunitiesResult.opportunities);
+
+        if (!selectedOpportunity) {
+          return NextResponse.json({
+            success: false,
+            error: 'no_valid_opportunity',
+            message: `Found customer "${customerName}" but could not select a valid opportunity.`,
+            customerId: customerId
+          });
+        }
+
+        opportunityId = selectedOpportunity.id;
+        usedExistingOpportunity = true;
+        console.log(`✅ [SYNC-FROM-LEAD] Using existing opportunity: ${opportunityId} (status: ${selectedOpportunity.status})`);
       }
-
-      // Select the most recent/relevant opportunity
-      const selectedOpportunity = getMostRecentOpportunity(opportunitiesResult.opportunities);
-
-      if (!selectedOpportunity) {
-        return NextResponse.json({
-          success: false,
-          error: 'no_valid_opportunity',
-          message: `Found customer "${customerName}" but could not select a valid opportunity.`,
-          customerId: customerId
-        });
-      }
-
-      opportunityId = selectedOpportunity.id;
-      console.log(`✅ [SYNC-FROM-LEAD] Using existing opportunity: ${opportunityId} (status: ${selectedOpportunity.status})`);
     }
 
     // 8. Update project with the opportunity ID and customer ID
@@ -496,9 +636,19 @@ export async function POST(request: NextRequest) {
 
     console.log(`📦 [SYNC-FROM-LEAD] Filtered ${inventoryItems.length} items from ${allInventoryItems.length} total`);
 
-    let inventorySyncResult: { success: boolean; syncedCount: number; error?: string } = { success: true, syncedCount: 0 };
+    let inventorySyncResult: { success: boolean; syncedCount: number; roomId?: string; error?: string } = { success: true, syncedCount: 0 };
     if (inventoryItems.length > 0) {
       inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
+
+      // Store the room ID for future re-syncs
+      if (inventorySyncResult.roomId) {
+        console.log(`📌 [SYNC-FROM-LEAD] Storing room ID in project metadata: ${inventorySyncResult.roomId}`);
+        await Project.findByIdAndUpdate(projectId, {
+          $set: {
+            'metadata.smartMovingRoomId': inventorySyncResult.roomId
+          }
+        });
+      }
     }
 
     console.log(`✅ [SYNC-FROM-LEAD] Sync complete!`);
@@ -510,7 +660,7 @@ export async function POST(request: NextRequest) {
       customerId,
       leadId,
       customerName,
-      usedExistingOpportunity: !matchedLead, // True if we found an existing customer/opportunity
+      usedExistingOpportunity, // True if we used an existing opportunity (vs converting a lead)
       inventorySynced: inventorySyncResult.success,
       inventoryCount: inventorySyncResult.syncedCount,
       inventoryError: inventorySyncResult.error
