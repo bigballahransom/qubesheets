@@ -121,7 +121,8 @@ export async function POST(request: NextRequest) {
       // New: optional parameters for user-selected record
       targetType,  // 'lead' | 'opportunity' | undefined
       targetId,    // ID of the selected lead or opportunity
-      customerId: selectedCustomerId  // Required when targetType is 'opportunity'
+      customerId: selectedCustomerId,  // Required when targetType is 'opportunity'
+      quoteNumber: selectedQuoteNumber  // Quote number from selected opportunity
     } = body;
 
     if (!projectId) {
@@ -320,6 +321,7 @@ export async function POST(request: NextRequest) {
     let leadId: string | null = null;
     let customerName: string = project.customerName || project.name;
     let usedExistingOpportunity = false;
+    let quoteNumber: string | null = selectedQuoteNumber || null;
 
     // ===== CHECK FOR USER-SELECTED RECORD =====
     if (targetType === 'opportunity' && targetId && selectedCustomerId) {
@@ -588,20 +590,25 @@ export async function POST(request: NextRequest) {
 
         opportunityId = selectedOpportunity.id;
         usedExistingOpportunity = true;
-        console.log(`✅ [SYNC-FROM-LEAD] Using existing opportunity: ${opportunityId} (status: ${selectedOpportunity.status})`);
+        if (selectedOpportunity.quoteNumber) {
+          quoteNumber = selectedOpportunity.quoteNumber;
+        }
+        console.log(`✅ [SYNC-FROM-LEAD] Using existing opportunity: ${opportunityId} (status: ${selectedOpportunity.status}, quote: ${quoteNumber})`);
       }
     }
 
-    // 8. Update project with the opportunity ID and customer ID
-    console.log(`✅ [SYNC-FROM-LEAD] Updating project with opportunity ID: ${opportunityId}`);
-    await Project.findByIdAndUpdate(projectId, {
-      $set: {
-        'metadata.smartMovingOpportunityId': opportunityId,
-        'metadata.smartMovingLeadId': leadId,
-        'metadata.smartMovingCustomerId': customerId,
-        'metadata.smartMovingSyncedAt': new Date()
-      }
-    });
+    // 8. Update project with the opportunity ID, customer ID, and quote number
+    console.log(`✅ [SYNC-FROM-LEAD] Updating project with opportunity ID: ${opportunityId}, quote number: ${quoteNumber}`);
+    const metadataUpdate: Record<string, any> = {
+      'metadata.smartMovingOpportunityId': opportunityId,
+      'metadata.smartMovingLeadId': leadId,
+      'metadata.smartMovingCustomerId': customerId,
+      'metadata.smartMovingSyncedAt': new Date()
+    };
+    if (quoteNumber) {
+      metadataUpdate['metadata.smartMovingQuoteNumber'] = quoteNumber;
+    }
+    await Project.findByIdAndUpdate(projectId, { $set: metadataUpdate });
 
     // 9. Sync inventory to the new opportunity
     console.log(`🔄 [SYNC-FROM-LEAD] Syncing inventory to opportunity with option: ${syncOption}`);

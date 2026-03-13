@@ -261,6 +261,7 @@ export default function SmartMovingSyncModal({
                                 type: 'opportunity',
                                 id: opp.id,
                                 customerId: customer.id,
+                                quoteNumber: opp.quoteNumber,
                                 label: `${customer.name} - ${opp.statusLabel}${opp.quoteNumber ? ` (#${opp.quoteNumber})` : ''}`
                               })}
                               className="w-full flex items-center gap-3 p-3 rounded-lg border hover:bg-green-50 hover:border-green-200 transition-colors text-left"

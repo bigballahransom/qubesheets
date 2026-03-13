@@ -1877,6 +1877,9 @@ useEffect(() => {
         if (selectedRecord.customerId) {
           requestBody.customerId = selectedRecord.customerId;
         }
+        if (selectedRecord.quoteNumber) {
+          requestBody.quoteNumber = selectedRecord.quoteNumber;
+        }
       }
 
       const response = await fetch('/api/smartmoving/sync-from-lead', {
@@ -2863,6 +2866,11 @@ const ProcessingNotification = () => {
             initialName={currentProject.name}
             onNameChange={updateProjectName}
           />
+          {currentProject.metadata?.smartMovingQuoteNumber && (
+            <span className="ml-2 px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-full">
+              #{currentProject.metadata.smartMovingQuoteNumber}
+            </span>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
