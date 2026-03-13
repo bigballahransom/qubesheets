@@ -15,7 +15,10 @@ import {
   Archive,
   Eye,
   Package,
-  MessageSquare
+  MessageSquare,
+  FileCheck,
+  Users,
+  ExternalLink
 } from 'lucide-react';
 import { Button } from './ui/button';
 
@@ -27,7 +30,7 @@ interface ActivityLogProps {
 
 interface Activity {
   _id: string;
-  activityType: 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity';
+  activityType: 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'crew_link_shared';
   action: string;
   details: {
     fileName?: string;
@@ -44,6 +47,8 @@ interface Activity {
     noteTitle?: string;
     noteCategory?: string;
     notePriority?: string;
+    linkToken?: string;
+    linkUrl?: string;
   };
   createdAt: string;
   user: {
@@ -96,8 +101,8 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
   const getActivityIcon = (activity: Activity) => {
     switch (activity.activityType) {
       case 'upload':
-        return activity.details.fileType === 'video' ? 
-          <Film className="w-4 h-4 text-purple-600" /> : 
+        return activity.details.fileType === 'video' ?
+          <Film className="w-4 h-4 text-purple-600" /> :
           <Camera className="w-4 h-4 text-blue-600" />;
       case 'inventory_update':
         return <Package className="w-4 h-4 text-green-600" />;
@@ -109,6 +114,10 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return <Eye className="w-4 h-4 text-teal-600" />;
       case 'note_activity':
         return <MessageSquare className="w-4 h-4 text-amber-600" />;
+      case 'review_link_shared':
+        return <FileCheck className="w-4 h-4 text-emerald-600" />;
+      case 'crew_link_shared':
+        return <Users className="w-4 h-4 text-cyan-600" />;
       default:
         return <Archive className="w-4 h-4 text-gray-600" />;
     }
@@ -130,10 +139,17 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         );
         
       case 'inventory_update':
+        if (activity.action === 'smartmoving_inventory_sync') {
+          return (
+            <span>
+              Synced <span className="font-medium">{activity.details.itemsCount} items</span> to SmartMoving
+            </span>
+          );
+        }
         if (activity.action === 'bulk_added') {
           return (
             <span>
-              <strong>{userName}</strong> added 
+              <strong>{userName}</strong> added
               <span className="font-medium"> {activity.details.itemsCount} items</span> to inventory
             </span>
           );
@@ -149,9 +165,6 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return (
           <span>
             <strong>{userName}</strong> completed video call session
-            {activity.details.videosRecorded && 
-              <span className="font-medium"> ({activity.details.videosRecorded} videos recorded)</span>
-            }
           </span>
         );
         
@@ -174,11 +187,28 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
       case 'note_activity':
         return (
           <span>
-            <strong>{userName}</strong> {activity.action} 
+            <strong>{userName}</strong> {activity.action}
             <span className="font-medium"> {activity.details.noteTitle}</span>
           </span>
         );
-        
+
+      case 'review_link_shared':
+        return (
+          <span>
+            <strong>{userName}</strong> shared inventory review link
+            {activity.details.customerName && (
+              <span> with <span className="font-medium">{activity.details.customerName}</span></span>
+            )}
+          </span>
+        );
+
+      case 'crew_link_shared':
+        return (
+          <span>
+            <strong>{userName}</strong> generated crew review link
+          </span>
+        );
+
       default:
         return <span>{activity.action}</span>;
     }
@@ -261,8 +291,11 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
                         {formatDistanceToNow(new Date(activity.createdAt), { addSuffix: true })}
                       </div>
                       
-                      {/* Expandable details */}
-                      {(activity.activityType === 'inventory_update' && activity.details.itemsCount && activity.details.itemsCount > 1) && (
+                      {/* Expandable details - show for inventory bulk updates and link activities */}
+                      {((activity.activityType === 'inventory_update' && activity.details.itemsCount && activity.details.itemsCount > 1) ||
+                        activity.activityType === 'upload_link_sent' ||
+                        activity.activityType === 'review_link_shared' ||
+                        activity.activityType === 'crew_link_shared') && (
                         <button
                           onClick={() => toggleExpanded(activity._id)}
                           className="text-xs text-blue-600 hover:text-blue-700 mt-1 flex items-center gap-1"
@@ -270,15 +303,45 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
                           {isExpanded ? (
                             <><ChevronUp className="w-3 h-3" /> Hide details</>
                           ) : (
-                            <><ChevronDown className="w-3 h-3" /> Show details</>
+                            <><ChevronDown className="w-3 h-3" /> View details</>
                           )}
                         </button>
                       )}
-                      
+
                       {/* Expanded content */}
                       {isExpanded && (
-                        <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600">
-                          <pre>{JSON.stringify(activity.details, null, 2)}</pre>
+                        <div className="mt-2 p-2 bg-gray-50 rounded text-xs text-gray-600 space-y-1">
+                          {/* Show link URL for link-related activities */}
+                          {activity.details.linkUrl && (
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">Link:</span>
+                              <a
+                                href={activity.details.linkUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-700 hover:underline flex items-center gap-1"
+                              >
+                                {activity.details.linkUrl}
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
+                          )}
+                          {activity.details.customerName && (
+                            <div>
+                              <span className="font-medium">Customer:</span> {activity.details.customerName}
+                            </div>
+                          )}
+                          {activity.details.customerPhone && (
+                            <div>
+                              <span className="font-medium">Phone:</span> {activity.details.customerPhone}
+                            </div>
+                          )}
+                          {/* Show raw details for inventory updates */}
+                          {activity.activityType === 'inventory_update' && activity.details.itemsCount && (
+                            <div>
+                              <span className="font-medium">Items count:</span> {activity.details.itemsCount}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

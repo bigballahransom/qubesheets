@@ -1,7 +1,7 @@
 // models/ActivityLog.ts - Activity tracking for projects
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type ActivityType = 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity';
+export type ActivityType = 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'crew_link_shared';
 export type UploadSource = 'admin' | 'customer' | 'video_call' | 'inventory_upload';
 
 export interface IActivityDetails {
@@ -29,10 +29,11 @@ export interface IActivityDetails {
   videosRecorded?: number;
   participantCount?: number;
   
-  // For upload links
+  // For upload links and review/crew links
   customerName?: string;
   customerPhone?: string;
   linkToken?: string;
+  linkUrl?: string;  // Full URL to the link
   expiresAt?: Date;
   
   // For notes
@@ -78,7 +79,7 @@ const ActivityLogSchema: Schema = new Schema(
     },
     activityType: {
       type: String,
-      enum: ['upload', 'inventory_update', 'video_call', 'upload_link_sent', 'upload_link_visited', 'note_activity'],
+      enum: ['upload', 'inventory_update', 'video_call', 'upload_link_sent', 'upload_link_visited', 'note_activity', 'review_link_shared', 'crew_link_shared'],
       required: true,
       index: true
     },

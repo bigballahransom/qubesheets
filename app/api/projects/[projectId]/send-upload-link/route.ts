@@ -115,7 +115,8 @@ export async function POST(
         customerName,
         customerPhone,
         uploadToken,
-        null // Links never expire
+        null, // Links never expire
+        uploadUrl
       );
 
       // Update project with upload link tracking info

@@ -100,7 +100,8 @@ export async function logUploadLinkSent(
   customerName: string,
   customerPhone: string,
   linkToken: string,
-  expiresAt?: Date | null
+  expiresAt?: Date | null,
+  linkUrl?: string
 ) {
   return logActivity({
     projectId,
@@ -110,6 +111,7 @@ export async function logUploadLinkSent(
       customerName,
       customerPhone,
       linkToken,
+      linkUrl,
       expiresAt: expiresAt || undefined
     }
   });
@@ -131,6 +133,44 @@ export async function logUploadLinkVisited(
     details: {
       customerName,
       linkToken
+    }
+  });
+}
+
+export async function logReviewLinkShared(
+  projectId: string,
+  customerName: string,
+  customerPhone: string | undefined,
+  linkToken: string,
+  linkUrl: string
+) {
+  return logActivity({
+    projectId,
+    activityType: 'review_link_shared',
+    action: 'shared',
+    details: {
+      customerName,
+      customerPhone,
+      linkToken,
+      linkUrl
+    }
+  });
+}
+
+export async function logCrewLinkShared(
+  projectId: string,
+  linkToken: string,
+  linkUrl: string,
+  customerPhone?: string
+) {
+  return logActivity({
+    projectId,
+    activityType: 'crew_link_shared',
+    action: 'shared',
+    details: {
+      customerPhone,
+      linkToken,
+      linkUrl
     }
   });
 }

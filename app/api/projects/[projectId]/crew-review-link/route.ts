@@ -4,6 +4,7 @@ import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import CrewReviewLink from '@/models/CrewReviewLink';
+import { logCrewLinkShared } from '@/lib/activity-logger';
 import crypto from 'crypto';
 
 const getBaseUrl = () => {
@@ -125,6 +126,14 @@ export async function POST(
 
     // Create review URL
     const reviewUrl = `${getBaseUrl()}/crew-review/${reviewToken}`;
+
+    // Log the activity
+    await logCrewLinkShared(
+      projectId,
+      reviewToken,
+      reviewUrl,
+      customerPhone
+    );
 
     return NextResponse.json({
       success: true,
