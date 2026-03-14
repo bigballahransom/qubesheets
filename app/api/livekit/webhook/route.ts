@@ -30,7 +30,7 @@ interface RoomInfo {
 
 interface TrackInfo {
   sid: string;
-  type: 'AUDIO' | 'VIDEO' | 'DATA';
+  type: 'AUDIO' | 'VIDEO' | 'DATA' | number;  // LiveKit sends numeric types: 0=AUDIO, 1=VIDEO, 2=DATA
   source: 'CAMERA' | 'MICROPHONE' | 'SCREEN_SHARE' | 'SCREEN_SHARE_AUDIO' | 'UNKNOWN';
   name: string;
   muted: boolean;
