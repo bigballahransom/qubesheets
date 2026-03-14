@@ -5,6 +5,7 @@ import VideoRecording from '@/models/VideoRecording';
 import VideoRecordingSession from '@/models/VideoRecordingSession';
 import Video from '@/models/Video';
 import InventoryItem from '@/models/InventoryItem';
+import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import AWS from 'aws-sdk';
 
 const s3 = new AWS.S3({
@@ -69,6 +70,16 @@ export async function DELETE(
       console.log('🗑️ Bulk delete all video recordings requested for project:', projectId);
 
       try {
+        // Get all recording IDs for this project first
+        const recordings = await VideoRecording.find({ projectId }).select('_id').lean();
+        const recordingIds = recordings.map((r: any) => r._id);
+
+        // Delete all CallAnalysisSegments for this project's recordings
+        const segmentDeleteResult = await CallAnalysisSegment.deleteMany({
+          videoRecordingId: { $in: recordingIds }
+        }).maxTimeMS(30000);
+        console.log(`🗑️ Deleted ${segmentDeleteResult.deletedCount} analysis segments from video recordings`);
+
         // Delete all inventory items associated with video recordings for this project
         const inventoryDeleteResult = await InventoryItem.deleteMany({
           $or: [
@@ -136,7 +147,13 @@ export async function DELETE(
     if (recording) {
       console.log(`🗑️ Deleting LiveKit recording: ${recording.roomId}`);
 
-      // Delete associated inventory items first
+      // Delete associated CallAnalysisSegments first
+      const segmentDeleteResult = await CallAnalysisSegment.deleteMany({
+        videoRecordingId: recordingId
+      }).maxTimeMS(15000);
+      console.log(`🗑️ Deleted ${segmentDeleteResult.deletedCount} associated analysis segments`);
+
+      // Delete associated inventory items
       const orConditions: any[] = [
         { sourceVideoRecordingId: recordingId }
       ];

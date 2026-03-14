@@ -18,7 +18,8 @@ import {
   TrendingUp,
   Package,
   Target,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -440,6 +441,23 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
     }
   };
 
+  // Determine display status - shows "Analysis Failed" when call ended but analysis failed
+  const getDisplayStatus = (recording) => {
+    // If call is completed but analysis failed, show "Analysis Failed"
+    if (recording.status === 'completed' &&
+        (recording.analysisResult?.status === 'failed' ||
+         recording.processingPipeline?.status === 'failed')) {
+      return 'analysis_failed';
+    }
+    // If call completed but has customerVideoS3Key and no analysis status, it needs processing
+    if (recording.status === 'completed' &&
+        recording.customerVideoS3Key &&
+        !recording.analysisResult?.status) {
+      return 'analysis_failed';
+    }
+    return recording.status;
+  };
+
   const getStatusIcon = (status) => {
     switch (status) {
       case 'completed':
@@ -449,6 +467,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
       case 'processing':
         return <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />;
       case 'failed':
+      case 'analysis_failed':
         return <XCircle className="w-4 h-4 text-red-500" />;
       default:
         return <Clock className="w-4 h-4 text-gray-500" />;
@@ -473,6 +492,10 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
         className: 'bg-red-100 text-red-800 border-red-200',
         icon: <XCircle className="w-3 h-3" />
       },
+      analysis_failed: {
+        className: 'bg-red-100 text-red-800 border-red-200',
+        icon: <XCircle className="w-3 h-3" />
+      },
       starting: {
         className: 'bg-gray-100 text-gray-800 border-gray-200',
         icon: <Clock className="w-3 h-3" />
@@ -481,10 +504,15 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
 
     const config = statusConfig[status] || statusConfig.starting;
 
-    // Custom text for processing status
-    const statusText = status === 'processing'
-      ? 'Getting your call ready to view'
-      : status.charAt(0).toUpperCase() + status.slice(1);
+    // Custom text for different statuses
+    let statusText;
+    if (status === 'processing') {
+      statusText = 'Getting your call ready to view';
+    } else if (status === 'analysis_failed') {
+      statusText = 'Analysis Failed';
+    } else {
+      statusText = status.charAt(0).toUpperCase() + status.slice(1);
+    }
 
     return (
       <Badge className={cn("inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-md border", config.className)}>
@@ -632,15 +660,23 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
                     <h3 className="text-sm font-semibold text-gray-900 truncate">
                       {formatMeetingName(recording.participants)}
                     </h3>
-                    {recording.status !== 'completed' && (
-                      <span className="flex-shrink-0">
-                        {getStatusBadge(recording.status)}
-                      </span>
-                    )}
+                    {(() => {
+                      const displayStatus = getDisplayStatus(recording);
+                      // Show badge for non-completed status OR analysis_failed
+                      if (displayStatus !== 'completed') {
+                        return (
+                          <span className="flex-shrink-0">
+                            {getStatusBadge(displayStatus)}
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
 
-                  {/* Analysis Status Badge */}
-                  {recording.analysisResult?.status === 'processing' && (
+                  {/* Analysis Status Badge - only show if actively processing (not failed) */}
+                  {recording.analysisResult?.status === 'processing' &&
+                   getDisplayStatus(recording) !== 'analysis_failed' && (
                     <div className="flex gap-1 mt-1">
                       <Badge variant="secondary" className="text-xs px-1.5 py-0.5 animate-pulse">
                         <Loader2 className="w-3 h-3 mr-1 animate-spin" />
@@ -729,6 +765,31 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
                           <Download className="w-4 h-4 mr-2" />
                           Download
                         </DropdownMenuItem>
+                        {/* Rerun Analysis - for completed recordings */}
+                        <DropdownMenuItem
+                          onSelect={async () => {
+                            setOpenDropdownId(null);
+                            try {
+                              toast('Starting analysis rerun...');
+                              const response = await fetch(
+                                `/api/projects/${projectId}/video-recordings/${recording._id}/reprocess`,
+                                { method: 'POST' }
+                              );
+                              if (response.ok) {
+                                toast.success('Analysis restarted!');
+                                fetchRecordings(pagination.page);
+                              } else {
+                                const result = await response.json();
+                                toast.error(result.error || 'Failed to restart analysis');
+                              }
+                            } catch (error) {
+                              toast.error('Error restarting analysis');
+                            }
+                          }}
+                        >
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Rerun Analysis
+                        </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onSelect={() => {
@@ -748,7 +809,9 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
                           {recording.status === 'recording' && 'Recording in progress...'}
                           {recording.status === 'processing' && 'Processing video...'}
                           {recording.status === 'failed' && 'Recording failed'}
+                          {getDisplayStatus(recording) === 'analysis_failed' && 'Analysis failed - click to retry'}
                         </div>
+                        {/* Fix Status button for stuck starting/recording */}
                         {(recording.status === 'starting' || recording.status === 'recording') && (
                           <>
                             <DropdownMenuSeparator />
@@ -781,6 +844,36 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
                             >
                               <AlertCircle className="w-4 h-4 mr-2" />
                               Fix Status
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                        {/* Rerun Analysis button for analysis_failed recordings */}
+                        {getDisplayStatus(recording) === 'analysis_failed' && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onSelect={async () => {
+                                setOpenDropdownId(null);
+                                try {
+                                  toast('Starting analysis rerun...');
+                                  const response = await fetch(
+                                    `/api/projects/${projectId}/video-recordings/${recording._id}/reprocess`,
+                                    { method: 'POST' }
+                                  );
+                                  if (response.ok) {
+                                    toast.success('Analysis restarted!');
+                                    fetchRecordings(pagination.page);
+                                  } else {
+                                    const result = await response.json();
+                                    toast.error(result.error || 'Failed to restart analysis');
+                                  }
+                                } catch (error) {
+                                  toast.error('Error restarting analysis');
+                                }
+                              }}
+                            >
+                              <RefreshCw className="w-4 h-4 mr-2" />
+                              Rerun Analysis
                             </DropdownMenuItem>
                           </>
                         )}
