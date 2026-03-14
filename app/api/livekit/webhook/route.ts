@@ -769,8 +769,14 @@ async function handleCustomerEgressEnded(event: WebhookEvent, recording: any) {
       size: fileResult.size
     });
 
-    // Extract S3 key from location (format: s3://bucket/path/file.mp4)
-    const s3Key = fileResult.location.replace(/^s3:\/\/[^\/]+\//, '');
+    // Extract S3 key from location
+    // Format can be: s3://bucket/path/file.mp4 OR https://bucket.s3.amazonaws.com/path/file.mp4
+    let s3Key = fileResult.location;
+    if (s3Key.startsWith('s3://')) {
+      s3Key = s3Key.replace(/^s3:\/\/[^\/]+\//, '');
+    } else if (s3Key.includes('.s3.amazonaws.com/') || s3Key.includes('.s3.us-east-1.amazonaws.com/')) {
+      s3Key = s3Key.replace(/^https?:\/\/[^\/]+\//, '');
+    }
     const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
 
     // Calculate duration from timestamps
