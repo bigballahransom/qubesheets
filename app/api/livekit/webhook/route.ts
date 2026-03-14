@@ -71,9 +71,13 @@ interface WebhookEvent {
 }
 
 export async function POST(request: NextRequest) {
+  console.log('🚨🚨🚨 LIVEKIT WEBHOOK RECEIVED 🚨🚨🚨');
+
   try {
     const body = await request.text();
     const authHeader = request.headers.get('authorization') || '';
+
+    console.log('📥 Webhook body length:', body.length, 'Auth header present:', !!authHeader);
 
     // Verify webhook signature
     let event: WebhookEvent;
