@@ -234,8 +234,9 @@ export async function listActiveRecordings(): Promise<RecordingState> {
 }
 
 /**
- * Start customer-only egress with segmented output for AI analysis
- * Records only the customer's video feed in 10-minute HLS segments
+ * Start customer-only egress with single MP4 output for AI analysis
+ * Records only the customer's video feed as a complete MP4 file
+ * This captures ANY duration call (even 30 seconds) - no data loss
  */
 export async function startCustomerEgress(
   roomName: string,
@@ -243,7 +244,7 @@ export async function startCustomerEgress(
   recordingId: string
 ): Promise<string | null> {
   console.log('🎬 =================================');
-  console.log('🎬 START CUSTOMER EGRESS REQUEST');
+  console.log('🎬 START CUSTOMER EGRESS REQUEST (MP4)');
   console.log('🎬 =================================');
   console.log('📌 Room Name:', roomName);
   console.log('📌 Customer Identity:', customerIdentity);
@@ -253,14 +254,14 @@ export async function startCustomerEgress(
   try {
     await connectMongoDB();
 
-    // Generate S3 key prefix for segments
+    // Generate S3 key for single MP4 file (not segments)
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const segmentPrefix = `recordings/${roomName}/customer-segments/${timestamp}/segment`;
+    const s3Key = `recordings/${roomName}/customer/${timestamp}.mp4`;
 
-    console.log('☁️ S3 Configuration for segments:', {
+    console.log('☁️ S3 Configuration for customer MP4:', {
       bucket: process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME,
       region: process.env.AWS_REGION,
-      segmentPrefix
+      s3Key
     });
 
     // Create S3 upload configuration
@@ -272,14 +273,11 @@ export async function startCustomerEgress(
       forcePathStyle: false,
     });
 
-    // Create segmented file output configuration
-    // 5-minute segments (300 seconds) for faster initial results
-    const segmentedOutput = new SegmentedFileOutput({
-      filenamePrefix: segmentPrefix,
-      playlistName: `${segmentPrefix}-playlist.m3u8`,
-      livePlaylistName: `${segmentPrefix}-live.m3u8`,
-      segmentDuration: 300,  // 5 minutes in seconds
-      filenameSuffix: SegmentedFileSuffix.INDEX,
+    // Use EncodedFileOutput (single MP4) instead of SegmentedFileOutput
+    // This ensures ANY duration call is captured completely
+    const fileOutput = new EncodedFileOutput({
+      fileType: EncodedFileType.MP4,
+      filepath: s3Key,
       output: {
         case: 's3',
         value: s3Upload
@@ -288,12 +286,12 @@ export async function startCustomerEgress(
 
     console.log(`🎬 Calling LiveKit Participant Egress API for customer: ${customerIdentity}...`);
 
-    // Call LiveKit Participant Egress API for customer only
+    // Call LiveKit Participant Egress API for customer only with FILE output (not segments)
     const egress = await egressClient.startParticipantEgress(
       roomName,
       customerIdentity,
       {
-        segments: segmentedOutput
+        file: fileOutput  // Changed from segments: segmentedOutput
       }
     );
 
@@ -312,10 +310,8 @@ export async function startCustomerEgress(
         customerEgressId: egress.egressId,
         customerEgressStatus: 'starting',
         customerIdentity: customerIdentity,
-        customerSegmentPrefix: segmentPrefix,  // Store for later reference
-        'analysisResult.status': 'pending',
-        'analysisResult.totalSegments': 0,
-        'analysisResult.processedSegments': 0
+        customerVideoS3Key: s3Key,  // New field for MP4 path
+        'analysisResult.status': 'pending'
       },
       { new: true }
     );
@@ -324,7 +320,8 @@ export async function startCustomerEgress(
       console.log('✅ Database record updated with customer egress data:', {
         recordingId: updatedRecord._id,
         customerEgressId: updatedRecord.customerEgressId,
-        customerIdentity: updatedRecord.customerIdentity
+        customerIdentity: updatedRecord.customerIdentity,
+        customerVideoS3Key: s3Key
       });
     } else {
       console.error(`❌ Failed to find recording with ID: ${recordingId}`);

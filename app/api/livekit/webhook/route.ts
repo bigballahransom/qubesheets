@@ -28,10 +28,19 @@ interface RoomInfo {
   numParticipants: number;
 }
 
+interface TrackInfo {
+  sid: string;
+  type: 'AUDIO' | 'VIDEO' | 'DATA';
+  source: 'CAMERA' | 'MICROPHONE' | 'SCREEN_SHARE' | 'SCREEN_SHARE_AUDIO' | 'UNKNOWN';
+  name: string;
+  muted: boolean;
+}
+
 interface WebhookEvent {
   event: string;
   room?: RoomInfo;
   participant?: ParticipantInfo;
+  track?: TrackInfo;
   egressInfo?: {
     egressId: string;
     roomId: string;
@@ -75,10 +84,10 @@ export async function POST(request: NextRequest) {
       throw verifyError;
     }
 
-    // Only log relevant events (not room_started, room_finished, track_published, etc.)
-    const relevantEvents = ['participant_joined', 'participant_left', 'egress_started', 'egress_ended'];
+    // Only log relevant events (not room_started, room_finished, etc.)
+    const relevantEvents = ['participant_joined', 'participant_left', 'egress_started', 'egress_ended', 'track_published'];
     if (relevantEvents.includes(event.event)) {
-      console.log(`📡 [${event.event}] room=${event.room?.name?.slice(-10)} participant=${event.participant?.identity || event.egressInfo?.egressId || '-'}`);
+      console.log(`📡 [${event.event}] room=${event.room?.name?.slice(-10)} participant=${event.participant?.identity || event.egressInfo?.egressId || '-'} track=${event.track?.type || '-'}`);
     }
 
     await connectMongoDB();
@@ -98,6 +107,10 @@ export async function POST(request: NextRequest) {
 
       case 'egress_ended':
         await handleEgressEnded(event);
+        break;
+
+      case 'track_published':
+        await handleTrackPublished(event);
         break;
 
       // Silently ignore other events
@@ -296,23 +309,9 @@ async function handleParticipantJoined(event: WebhookEvent) {
     }
   }
 
-  // Start customer egress if CUSTOMER joined and not already running
-  // This is critical for railway-call-service AI analysis
-  if (participantType === 'customer') {
-    // Re-fetch to get latest state (another webhook might have started customer egress)
-    const latestRecording = await VideoRecording.findById(recording._id);
-    if (latestRecording && !latestRecording.customerEgressId) {
-      console.log(`🤖 Customer joined - starting customer egress for AI analysis`);
-      const customerEgressId = await startCustomerEgress(roomName, participantIdentity, recording._id.toString());
-      if (customerEgressId) {
-        console.log(`✅ Customer egress started: ${customerEgressId}`);
-      } else {
-        console.log(`⚠️ Customer egress failed (non-blocking - room composite continues)`);
-      }
-    } else if (latestRecording?.customerEgressId) {
-      console.log(`⏭️ Customer egress already exists: ${latestRecording.customerEgressId}`);
-    }
-  }
+  // NOTE: Customer egress is now started on track_published event
+  // This ensures we wait for the customer's video track to be ready before recording
+  // See handleTrackPublished() below
 }
 
 async function handleParticipantLeft(event: WebhookEvent) {
@@ -376,6 +375,96 @@ async function handleParticipantLeft(event: WebhookEvent) {
       console.log(`🛑 Customer left but agent remains - stopping customer egress only`);
       await stopCustomerEgress(roomName);
     }
+  }
+}
+
+/**
+ * Handle track_published event - start customer egress when video track is confirmed
+ * This is more reliable than starting on participant_joined because we know the track exists
+ *
+ * EDGE CASES HANDLED:
+ * - Customer reconnection: Starts new egress if previous one ended
+ * - Camera toggle: Starts new egress if previous one ended when camera was disabled
+ * - Race condition: Uses atomic findOneAndUpdate to prevent duplicate egress starts
+ */
+async function handleTrackPublished(event: WebhookEvent) {
+  if (!event.room || !event.participant || !event.track) return;
+
+  const roomName = event.room.name;
+  const participantIdentity = event.participant.identity;
+  const participantType = getParticipantType(participantIdentity);
+  const trackType = event.track.type;
+
+  // Only care about customer video tracks
+  if (participantType !== 'customer' || trackType !== 'VIDEO') {
+    return;
+  }
+
+  console.log(`📹 Customer video track published: ${participantIdentity} in room ${roomName}`);
+
+  const VideoRecording = (await import('@/models/VideoRecording')).default;
+
+  // ATOMIC: Find recording and claim the egress slot in one operation
+  // This handles:
+  // 1. First egress start (customerEgressId doesn't exist)
+  // 2. Reconnection (customerEgressStatus is 'completed' or 'failed')
+  // 3. Race condition prevention (atomic update)
+  const recording = await VideoRecording.findOneAndUpdate(
+    {
+      roomId: roomName,
+      status: { $in: ['waiting', 'starting', 'recording'] },
+      $or: [
+        { customerEgressId: { $exists: false } },
+        { customerEgressStatus: { $in: ['completed', 'failed'] } }
+      ]
+    },
+    {
+      $set: { customerEgressStatus: 'starting' }  // Claim this slot atomically
+    },
+    { new: true }
+  );
+
+  if (!recording) {
+    // Check if customer egress is actively running
+    const existingRecording = await VideoRecording.findOne({
+      roomId: roomName,
+      status: { $in: ['waiting', 'starting', 'recording'] }
+    });
+
+    if (existingRecording?.customerEgressId &&
+        existingRecording?.customerEgressStatus &&
+        ['starting', 'recording'].includes(existingRecording.customerEgressStatus)) {
+      console.log(`⏭️ Customer egress already active: ${existingRecording.customerEgressId} (${existingRecording.customerEgressStatus})`);
+    } else {
+      console.log(`⚠️ No active recording found for room: ${roomName}`);
+    }
+    return;
+  }
+
+  // Check if this is a reconnection (previous egress existed and ended)
+  const isReconnection = recording.customerEgressId &&
+    ['completed', 'failed'].includes(recording.customerEgressStatus || '');
+
+  if (isReconnection) {
+    console.log(`🔄 Previous egress ended (${recording.customerEgressStatus}), starting new egress for reconnected customer`);
+  }
+
+  // NOW start customer egress - we know the video track exists and is publishing
+  console.log(`🎬 Starting customer egress now that video track is confirmed`);
+  const customerEgressId = await startCustomerEgress(
+    roomName,
+    participantIdentity,
+    recording._id.toString()
+  );
+
+  if (customerEgressId) {
+    console.log(`✅ Customer egress started: ${customerEgressId}`);
+  } else {
+    console.log(`⚠️ Customer egress failed to start (non-blocking - room composite continues)`);
+    // Reset status so we can try again on next track_published
+    await VideoRecording.findByIdAndUpdate(recording._id, {
+      $unset: { customerEgressStatus: '' }
+    });
   }
 }
 
@@ -606,12 +695,33 @@ function calculateDuration(startedAt: string, endedAt: string): number {
 
 /**
  * Handle customer egress ended event
- * Updates analysis status and triggers segment processing
+ * Now handles single MP4 file output (not segmented HLS)
+ * The MP4 is sent to Railway service which splits it into chunks for Gemini
+ *
+ * IDEMPOTENCY: Prevents duplicate processing if webhook is delivered twice
  */
 async function handleCustomerEgressEnded(event: WebhookEvent, recording: any) {
   const VideoRecording = (await import('@/models/VideoRecording')).default;
   const CallAnalysisSegment = (await import('@/models/CallAnalysisSegment')).default;
   const AWS = (await import('aws-sdk')).default;
+
+  const egressId = event.egressInfo!.egressId;
+
+  // IDEMPOTENCY CHECK: Prevent duplicate processing if webhook is delivered twice
+  // Check if this egress was already processed by looking for segments with this egress's S3 key
+  const fileResult = event.egressInfo!.fileResults?.[0];
+  if (fileResult) {
+    const s3Key = fileResult.location.replace(/^s3:\/\/[^\/]+\//, '');
+    const alreadyProcessed = await CallAnalysisSegment.findOne({
+      videoRecordingId: recording._id,
+      s3Key: { $regex: `^${s3Key.replace('.mp4', '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` }
+    });
+
+    if (alreadyProcessed) {
+      console.log(`⏭️ Egress ${egressId} already processed (found segments), skipping duplicate webhook`);
+      return;
+    }
+  }
 
   // Inline SQS send function (workaround for module caching issue)
   const sendToCallQueue = async (message: any) => {
@@ -625,12 +735,12 @@ async function handleCustomerEgressEnded(event: WebhookEvent, recording: any) {
       QueueUrl: queueUrl,
       MessageBody: JSON.stringify(message)
     }).promise();
-    console.log(`📤 Sent to SQS: segment ${message.segmentIndex}`);
+    console.log(`📤 Sent to SQS: customer-video for processing`);
   };
 
   const isSuccess = event.egressInfo!.status === 3; // EGRESS_COMPLETE
 
-  console.log(`🤖 Processing customer egress end for recording: ${recording._id} (egress: ${event.egressInfo!.egressId})`);
+  console.log(`🤖 Processing customer egress end for recording: ${recording._id} (egress: ${egressId})`);
 
   // Update customer egress status
   const updateData: any = {
@@ -640,139 +750,85 @@ async function handleCustomerEgressEnded(event: WebhookEvent, recording: any) {
   if (event.egressInfo!.error) {
     updateData['analysisResult.error'] = event.egressInfo!.error;
     updateData['analysisResult.status'] = 'failed';
+    console.log(`❌ Customer egress error: ${event.egressInfo!.error}`);
   }
 
-  // If we have segment results, log them and trigger processing
-  if (event.egressInfo!.segmentResults && event.egressInfo!.segmentResults.length > 0) {
-    const segmentResult = event.egressInfo!.segmentResults[0];
-    console.log('📁 Segment result received:', {
-      playlistName: segmentResult.playlistName,
-      livePlaylistName: segmentResult.livePlaylistName,
-      segmentCount: segmentResult.segmentCount,
-      size: segmentResult.size
+  // Handle MP4 file result (new approach - single file, not segments)
+  // Note: fileResult is already declared above for idempotency check
+  if (fileResult) {
+    console.log('📁 MP4 file result received:', {
+      filename: fileResult.filename,
+      location: fileResult.location,
+      size: fileResult.size
     });
 
-    // Convert BigInt to Number (LiveKit returns BigInt for counts)
-    const totalSegments = Number(segmentResult.segmentCount) || 1;
-    updateData['analysisResult.totalSegments'] = totalSegments;
+    // Extract S3 key from location (format: s3://bucket/path/file.mp4)
+    const s3Key = fileResult.location.replace(/^s3:\/\/[^\/]+\//, '');
+    const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
 
-    // Set analysis status to processing (Railway service will handle segments)
-    if (isSuccess) {
-      updateData['analysisResult.status'] = 'processing';
-    }
+    // Calculate duration from timestamps
+    const duration = calculateDuration(fileResult.startedAt, fileResult.endedAt);
 
-    // For short calls or to ensure all segments are processed,
-    // explicitly send SQS messages for any segments not yet in database
-    if (isSuccess && segmentResult.playlistName) {
-      console.log(`📤 Ensuring all ${totalSegments} segments are queued for processing...`);
+    updateData['customerVideoS3Key'] = s3Key;
+    updateData['analysisResult.status'] = 'processing';
 
-      // Extract the base path from playlist name
-      // Playlist format: recordings/{roomName}/customer-segments/{timestamp}/segment-playlist.m3u8
-      const basePath = segmentResult.playlistName.replace(/-playlist\.m3u8$/, '');
-      const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+    console.log(`📹 Customer video saved: ${s3Key} (${duration}s)`);
 
-      for (let i = 0; i < totalSegments; i++) {
-        // Check if segment already exists in database
-        const existingSegment = await CallAnalysisSegment.findOne({
-          videoRecordingId: recording._id,
-          segmentIndex: i
-        });
-
-        if (!existingSegment || existingSegment.status === 'pending') {
-          const s3Key = `${basePath}_${String(i).padStart(5, '0')}.ts`;
-
-          // Create segment record if it doesn't exist
-          if (!existingSegment) {
-            await CallAnalysisSegment.create({
-              videoRecordingId: recording._id,
-              projectId: recording.projectId,
-              segmentIndex: i,
-              s3Key: s3Key,
-              s3Bucket: bucket,
-              status: 'pending'
-            });
-          }
-
-          // Send to SQS for processing
-          try {
-            await sendToCallQueue({
-              type: 'call-segment',
-              segmentId: existingSegment?._id?.toString() || 'pending',
-              videoRecordingId: recording._id.toString(),
-              projectId: recording.projectId,
-              segmentIndex: i,
-              s3Key: s3Key,
-              s3Bucket: bucket,
-              participantIdentity: recording.customerIdentity || 'customer',
-              roomName: recording.roomId
-            });
-            console.log(`📤 Queued segment ${i} for processing`);
-          } catch (sqsError) {
-            console.error(`⚠️ Failed to queue segment ${i}:`, sqsError);
-          }
-        } else {
-          console.log(`⏭️ Segment ${i} already processed or processing`);
-        }
-      }
-    }
-  } else {
-    // No segment results - this might be a very short call or an error
-    // Still try to process - there should be at least one segment
-    if (isSuccess && recording.customerSegmentPrefix) {
-      updateData['analysisResult.status'] = 'processing';
-      updateData['analysisResult.totalSegments'] = 1;
-
-      console.log(`⚠️ No segment results in webhook - attempting to queue segment 0`);
-
-      // Use the stored segment prefix from when egress started
-      const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
-      const s3Key = `${recording.customerSegmentPrefix}_00000.ts`;
-
-      // Create segment record
-      const segment = await CallAnalysisSegment.create({
-        videoRecordingId: recording._id,
+    // Queue the MP4 for processing (Railway service will split into chunks)
+    try {
+      await sendToCallQueue({
+        type: 'customer-video',
+        videoRecordingId: recording._id.toString(),
         projectId: recording.projectId,
-        segmentIndex: 0,
         s3Key: s3Key,
         s3Bucket: bucket,
-        status: 'pending'
+        roomName: recording.roomId,
+        customerIdentity: recording.customerIdentity || 'customer',
+        duration: duration
       });
-
-      // Send to SQS for processing
-      try {
-        await sendToCallQueue({
-          type: 'call-segment',
-          segmentId: segment._id.toString(),
-          videoRecordingId: recording._id.toString(),
-          projectId: recording.projectId,
-          segmentIndex: 0,
-          s3Key: s3Key,
-          s3Bucket: bucket,
-          participantIdentity: recording.customerIdentity || 'customer',
-          roomName: recording.roomId
-        });
-        console.log(`📤 Queued segment 0 for short call processing: ${s3Key}`);
-      } catch (sqsError) {
-        console.error(`⚠️ Failed to queue segment 0:`, sqsError);
-      }
-    } else if (isSuccess) {
-      console.log(`⚠️ No segment results and no segment prefix stored - cannot process`);
+      console.log(`✅ Queued customer video for processing: ${s3Key}`);
+    } catch (sqsError) {
+      console.error(`❌ Failed to queue customer video:`, sqsError);
       updateData['analysisResult.status'] = 'failed';
-      updateData['analysisResult.error'] = 'No segment data available';
+      updateData['analysisResult.error'] = 'Failed to queue for processing';
     }
+  } else if (recording.customerVideoS3Key) {
+    // No file result in webhook but we have the S3 key from when egress started
+    // This can happen if egress "fails" but the file was still written
+    const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+
+    console.log(`⚠️ No file result in webhook but have stored S3 key: ${recording.customerVideoS3Key}`);
+    updateData['analysisResult.status'] = 'processing';
+
+    try {
+      await sendToCallQueue({
+        type: 'customer-video',
+        videoRecordingId: recording._id.toString(),
+        projectId: recording.projectId,
+        s3Key: recording.customerVideoS3Key,
+        s3Bucket: bucket,
+        roomName: recording.roomId,
+        customerIdentity: recording.customerIdentity || 'customer',
+        duration: 0 // Unknown duration, service will detect
+      });
+      console.log(`✅ Queued customer video (from stored key) for processing`);
+    } catch (sqsError) {
+      console.error(`❌ Failed to queue customer video:`, sqsError);
+      updateData['analysisResult.status'] = 'failed';
+      updateData['analysisResult.error'] = 'Failed to queue for processing';
+    }
+  } else {
+    // No file result and no stored S3 key - actual failure
+    console.log(`❌ No file result and no stored S3 key - customer video not captured`);
+    updateData['analysisResult.status'] = 'failed';
+    updateData['analysisResult.error'] = event.egressInfo!.error || 'No video file captured';
   }
 
   await VideoRecording.findByIdAndUpdate(recording._id, updateData);
 
-  console.log(`✅ Customer egress completed for recording: ${recording._id}`, {
+  console.log(`✅ Customer egress handling complete for recording: ${recording._id}`, {
     status: isSuccess ? 'completed' : 'failed',
-    segmentResults: event.egressInfo!.segmentResults?.length || 0
+    hasFileResult: !!fileResult,
+    s3Key: fileResult?.location || recording.customerVideoS3Key || 'none'
   });
-
-  // Count existing segments for this recording
-  const segmentCount = await CallAnalysisSegment.countDocuments({
-    videoRecordingId: recording._id
-  });
-
-  console.log(`📊 Segments in database: ${segmentCount}`);
 }

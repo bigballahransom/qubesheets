@@ -40,7 +40,8 @@ export interface IVideoRecording extends Document {
   customerEgressId?: string;
   customerEgressStatus?: 'starting' | 'recording' | 'completed' | 'failed';
   customerIdentity?: string;  // Customer participant identity
-  customerSegmentPrefix?: string;  // S3 path prefix for customer segments
+  customerSegmentPrefix?: string;  // S3 path prefix for customer segments (legacy - HLS segments)
+  customerVideoS3Key?: string;  // S3 key for customer MP4 file (new - single file)
   // Analysis results from processing customer segments
   analysisResult?: {
     status: 'pending' | 'processing' | 'completed' | 'failed';
@@ -203,6 +204,9 @@ const VideoRecordingSchema: Schema = new Schema(
       type: String
     },
     customerSegmentPrefix: {
+      type: String
+    },
+    customerVideoS3Key: {
       type: String
     },
     // Analysis results from processing customer segments

@@ -11,7 +11,7 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
 function buildConsolidationPrompt(allItems: any[]): string {
   return `You are analyzing inventory items detected across multiple video segments of a moving walkthrough call.
 
-Your task: Identify DUPLICATE items that were counted multiple times as the camera moved through different rooms/angles.
+Your task: Identify DUPLICATE FURNITURE items that were counted multiple times as the camera moved through different rooms/angles.
 
 IMPORTANT CONTEXT:
 - Each segment is ~5 minutes of video from a continuous call
@@ -30,29 +30,39 @@ INVENTORY ITEMS FROM THIS RECORDING:
 ${JSON.stringify(allItems, null, 2)}
 
 DUPLICATE DETECTION RULES:
-1. SAME ITEM criteria:
+
+1. FURNITURE ITEMS ONLY - Apply duplicate detection:
    - Same name (or very similar: "Sofa" vs "Couch")
    - EXACT same room/location (must match exactly, never combine room names)
    - Similar cuft/weight (within 20%)
    - Adjacent segments (segmentIndex differs by 1-2)
    - LIKELY the camera saw the same item again
 
-2. DIFFERENT ITEMS criteria:
+2. DIFFERENT FURNITURE ITEMS criteria (keep separate):
    - Different rooms/locations
    - Significantly different dimensions
    - Segments far apart AND clearly different context
    - Customer explicitly mentioned "another one" or "the other sofa"
 
-3. For BOXES_NEEDED:
-   - Same box_type + same room = likely duplicate (merge quantities)
+3. CRITICAL - BOXES_NEEDED: DO NOT REMOVE OR REDUCE!
+   - NEVER remove boxes_needed items - they are packing estimates, not physical items
+   - NEVER reduce quantities of boxes_needed - each segment's estimate is additive
+   - Same box_type + same room = SUM the quantities together (don't reduce!)
    - Same box_type + different room = keep separate
+   - Example: Segment 0 has 5 Medium Boxes for Kitchen, Segment 1 has 3 Medium Boxes for Kitchen
+     → Result: 8 Medium Boxes for Kitchen (SUM them, don't pick one)
+   - We want MORE boxes estimated, not fewer - overestimating is better than underestimating
 
-4. For PACKED_BOXES / EXISTING_BOX:
-   - Similar size + same room + adjacent segments = likely duplicate
-   - Different labels = different boxes (keep separate)
+4. CRITICAL - PACKED_BOXES / EXISTING_BOX: DO NOT REMOVE!
+   - NEVER remove packed_boxes - they are physical items the customer already has
+   - Be VERY conservative - only merge if CLEARLY the same box
+   - Similar size + same room + adjacent segments + same label = MAYBE duplicate
+   - Different labels = DEFINITELY different boxes (keep separate)
+   - When in doubt, keep them separate - it's better to overcount than undercount
 
 5. For GOING STATUS:
-   - If ANY detection of an item has a "going" status set (from audio analysis), preserve it
+   - Default ALL items to "going" if not explicitly set
+   - If ANY detection of an item has going: "not going", preserve it
    - If same item was discussed multiple times, use the MOST RECENT statement
    - Preserve customerQuote and quoteTimestamp for the relevant statement
 
@@ -75,10 +85,10 @@ RETURN ONLY VALID JSON (no markdown):
       "videoTimestamps": ["01:23", "02:45"],
       "consolidatedFrom": 2,
       "reason": "Same sofa seen in segments 0 and 1",
-      "going": "going" | "not going" | "partial" | null,
-      "goingQuantity": null or number,
-      "customerQuote": "exact customer statement if discussed" | null,
-      "quoteTimestamp": "MM:SS" | null
+      "going": "going",
+      "goingQuantity": 1,
+      "customerQuote": null,
+      "quoteTimestamp": null
     }
   ],
   "duplicatesMerged": 3
