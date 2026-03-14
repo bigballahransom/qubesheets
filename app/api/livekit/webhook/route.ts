@@ -400,7 +400,10 @@ async function handleTrackPublished(event: WebhookEvent) {
   const trackType = event.track.type;
 
   // Only care about customer video tracks
-  if (participantType !== 'customer' || trackType !== 'VIDEO') {
+  // Track type can be string 'VIDEO' or number 1 (VIDEO=1, AUDIO=0, DATA=2)
+  const isVideoTrack = trackType === 'VIDEO' || trackType === 1;
+
+  if (participantType !== 'customer' || !isVideoTrack) {
     return;
   }
 
