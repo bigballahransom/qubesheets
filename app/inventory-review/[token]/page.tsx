@@ -86,6 +86,10 @@ interface MediaSection {
   mediaName: string;
   roomEntry?: string;
   items: GroupedItems;
+  aiSummary?: {
+    analysisSummary?: string | null;
+    transcriptSummary?: string | null;
+  };
 }
 
 interface BoxRecommendation {
@@ -710,6 +714,30 @@ export default function InventoryReviewPage() {
                           <span className="font-medium">Click to load video</span>
                         </button>
                       )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* AI Summary for Video Recordings */}
+              {section.type === 'videoRecording' && section.aiSummary && (section.aiSummary.analysisSummary || section.aiSummary.transcriptSummary) && (
+                <div className="space-y-3">
+                  {section.aiSummary.transcriptSummary && (
+                    <div className="p-4 rounded-lg border bg-green-50 border-green-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <MessageSquare className="w-4 h-4 text-green-600" />
+                        <h4 className="font-medium text-green-800">AI Summary</h4>
+                      </div>
+                      <p className="text-slate-600 whitespace-pre-wrap">{section.aiSummary.transcriptSummary}</p>
+                    </div>
+                  )}
+                  {section.aiSummary.analysisSummary && (
+                    <div className="p-4 rounded-lg border bg-blue-50 border-blue-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Package className="w-4 h-4 text-blue-600" />
+                        <h4 className="font-medium text-blue-800">Packing Notes</h4>
+                      </div>
+                      <p className="text-slate-600 whitespace-pre-wrap">{section.aiSummary.analysisSummary}</p>
                     </div>
                   )}
                 </div>

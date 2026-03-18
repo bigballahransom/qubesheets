@@ -183,7 +183,6 @@ export default function CustomerPreJoin({ onJoin, participantName, isLoading = f
               playsInline
               muted
               className={`w-full h-full object-cover ${deviceInfo?.isAndroid ? 'android-video-fix' : ''}`}
-              style={{ transform: 'scaleX(-1)' }}
             />
 
 

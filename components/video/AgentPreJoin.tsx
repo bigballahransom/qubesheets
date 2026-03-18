@@ -37,41 +37,6 @@ interface AgentPreJoinProps {
   isLoading?: boolean;
 }
 
-// Helper function to flip an image horizontally for mirrored video preview
-async function flipImageHorizontally(imageUrl: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Could not get canvas context'));
-        return;
-      }
-
-      // Flip horizontally
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(img, 0, 0);
-
-      // Convert to blob URL for better performance
-      canvas.toBlob((blob) => {
-        if (blob) {
-          resolve(URL.createObjectURL(blob));
-        } else {
-          // Fallback to data URL
-          resolve(canvas.toDataURL('image/png'));
-        }
-      }, 'image/png');
-    };
-    img.onerror = () => reject(new Error('Failed to load image'));
-    img.src = imageUrl;
-  });
-}
-
 // Preset backgrounds
 const PRESET_BACKGROUNDS: Background[] = [
   { id: 'preset_qubesheets', name: 'Qube Sheets', url: '/backgrounds/qubesheets_virtual_background.png', isPreset: true },
@@ -227,20 +192,11 @@ export default function AgentPreJoin({ onJoin, isLoading = false }: AgentPreJoin
   }, [processorModule, videoTrack, supportsBackground, isProcessorReady, deviceInfo?.isMobile]);
 
   // Apply background when mode or settings change
-  // Track flipped image URL for cleanup
-  const flippedImageUrlRef = useRef<string | null>(null);
-
   useEffect(() => {
     const applyBackground = async () => {
       if (!processorRef.current || !isProcessorReady) {
         console.log('Processor not ready, skipping background apply');
         return;
-      }
-
-      // Clean up previous flipped image URL
-      if (flippedImageUrlRef.current && flippedImageUrlRef.current.startsWith('blob:')) {
-        URL.revokeObjectURL(flippedImageUrlRef.current);
-        flippedImageUrlRef.current = null;
       }
 
       try {
@@ -258,22 +214,10 @@ export default function AgentPreJoin({ onJoin, isLoading = false }: AgentPreJoin
           const bg = allBackgrounds.find(b => b.id === selectedBackground);
           if (bg) {
             console.log('Applying virtual background:', bg.url);
-
-            // Flip the image so it appears correct in the mirrored preview
-            try {
-              const flippedUrl = await flipImageHorizontally(bg.url);
-              flippedImageUrlRef.current = flippedUrl;
-              await processorRef.current.switchTo({
-                mode: 'virtual-background',
-                imagePath: flippedUrl
-              });
-            } catch (flipError) {
-              console.warn('Could not flip image, using original:', flipError);
-              await processorRef.current.switchTo({
-                mode: 'virtual-background',
-                imagePath: bg.url
-              });
-            }
+            await processorRef.current.switchTo({
+              mode: 'virtual-background',
+              imagePath: bg.url
+            });
           }
         }
       } catch (error) {
@@ -283,13 +227,6 @@ export default function AgentPreJoin({ onJoin, isLoading = false }: AgentPreJoin
     };
 
     applyBackground();
-
-    // Cleanup on unmount
-    return () => {
-      if (flippedImageUrlRef.current && flippedImageUrlRef.current.startsWith('blob:')) {
-        URL.revokeObjectURL(flippedImageUrlRef.current);
-      }
-    };
   }, [backgroundMode, blurRadius, selectedBackground, customBackgrounds, isProcessorReady]);
 
   // Load custom backgrounds from MongoDB
@@ -492,9 +429,7 @@ export default function AgentPreJoin({ onJoin, isLoading = false }: AgentPreJoin
             muted
             className={`w-full h-full object-cover ${deviceInfo?.isAndroid ? 'android-video-fix' : ''}`}
             style={{
-              // Always mirror local video (natural selfie view)
-              transform: 'scaleX(-1)',
-              // Hide if there's an error
+              // No mirror - show video as others will see it (ensures background orientation is consistent)
               display: cameraError ? 'none' : 'block'
             }}
           />

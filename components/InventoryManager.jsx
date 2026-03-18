@@ -2598,9 +2598,114 @@ useEffect(() => {
       }
     });
     
-    // Add notes section if there are notes
+    // Add AI summaries and notes sections
     const fetchAndAddNotes = async () => {
       try {
+        // First, fetch AI summaries from video recordings
+        const recordingsResponse = await fetch(`/api/projects/${currentProject._id}/video-recordings`);
+        if (recordingsResponse.ok) {
+          const recordingsData = await recordingsResponse.json();
+          const recordings = recordingsData.recordings || [];
+
+          // Extract AI summaries from completed recordings
+          const aiSummaries = recordings.filter(rec =>
+            rec.status === 'completed' &&
+            (rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary)
+          );
+
+          if (aiSummaries.length > 0) {
+            // Add new page for AI summaries
+            doc.addPage();
+            let aiY = 20;
+
+            // AI Summaries header
+            doc.setFontSize(16);
+            doc.setTextColor(...primaryColor);
+            doc.text('AI Generated Notes', 20, aiY);
+            aiY += 15;
+
+            // Add each AI summary
+            for (const recording of aiSummaries) {
+              const pageHeight = doc.internal.pageSize.height;
+
+              // Check if we need a new page
+              if (aiY + 60 > pageHeight - 20) {
+                doc.addPage();
+                aiY = 20;
+                doc.setFontSize(16);
+                doc.setTextColor(...primaryColor);
+                doc.text('AI Generated Notes (continued)', 20, aiY);
+                aiY += 15;
+              }
+
+              // Video call date
+              doc.setFontSize(10);
+              doc.setTextColor(...textColor);
+              doc.text(`Video Call - ${new Date(recording.createdAt).toLocaleDateString()}`, 20, aiY);
+              aiY += 8;
+
+              // Transcript Summary (AI Summary)
+              if (recording.transcriptAnalysisResult?.summary) {
+                // Green header for AI Summary
+                doc.setFillColor(220, 252, 231); // green-100
+                const summaryLines = doc.splitTextToSize(recording.transcriptAnalysisResult.summary, 160);
+                const summaryHeight = summaryLines.length * 5 + 12;
+
+                if (aiY + summaryHeight > pageHeight - 20) {
+                  doc.addPage();
+                  aiY = 20;
+                }
+
+                doc.roundedRect(20, aiY - 4, 170, summaryHeight, 2, 2, 'F');
+
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(22, 101, 52); // green-800
+                doc.text('AI Summary', 25, aiY + 2);
+
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(...textColor);
+                doc.setFontSize(9);
+                summaryLines.forEach((line, i) => {
+                  doc.text(line, 25, aiY + 10 + (i * 5));
+                });
+
+                aiY += summaryHeight + 5;
+              }
+
+              // Analysis Summary (Packing Notes)
+              if (recording.analysisResult?.summary) {
+                // Blue header for Packing Notes
+                doc.setFillColor(219, 234, 254); // blue-100
+                const packingLines = doc.splitTextToSize(recording.analysisResult.summary, 160);
+                const packingHeight = packingLines.length * 5 + 12;
+
+                if (aiY + packingHeight > pageHeight - 20) {
+                  doc.addPage();
+                  aiY = 20;
+                }
+
+                doc.roundedRect(20, aiY - 4, 170, packingHeight, 2, 2, 'F');
+
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(30, 64, 175); // blue-800
+                doc.text('Packing Notes', 25, aiY + 2);
+
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(...textColor);
+                doc.setFontSize(9);
+                packingLines.forEach((line, i) => {
+                  doc.text(line, 25, aiY + 10 + (i * 5));
+                });
+
+                aiY += packingHeight + 10;
+              }
+            }
+          }
+        }
+
+        // Then fetch regular project notes
         const notesResponse = await fetch(`/api/projects/${currentProject._id}/notes?sortBy=priority&sortOrder=desc`);
         if (notesResponse.ok) {
           const notesData = await notesResponse.json();

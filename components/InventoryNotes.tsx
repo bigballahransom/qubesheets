@@ -84,6 +84,13 @@ interface Note {
   updatedAt: string;
 }
 
+interface AISummary {
+  videoRecordingId: string;
+  createdAt: string;
+  analysisSummary?: string | null;
+  transcriptSummary?: string | null;
+}
+
 interface InventoryNotesProps {
   projectId: string;
   onNoteUpdate?: () => void;
@@ -101,7 +108,9 @@ const categoryConfig = {
 
 export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNotesProps) {
   const [notes, setNotes] = useState<Note[]>([]);
+  const [aiSummaries, setAiSummaries] = useState<AISummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingAiSummaries, setLoadingAiSummaries] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'createdAt' | 'updatedAt'>('createdAt');
@@ -159,6 +168,42 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
   useEffect(() => {
     fetchNotes();
   }, [fetchNotes]);
+
+  // Fetch AI summaries from video recordings
+  const fetchAiSummaries = useCallback(async () => {
+    try {
+      setLoadingAiSummaries(true);
+      const response = await fetch(`/api/projects/${projectId}/video-recordings`);
+      if (!response.ok) throw new Error('Failed to fetch video recordings');
+
+      const data = await response.json();
+      const recordings = data.recordings || [];
+
+      // Extract AI summaries from completed recordings
+      const summaries: AISummary[] = [];
+      for (const rec of recordings) {
+        if (rec.status === 'completed' &&
+            (rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary)) {
+          summaries.push({
+            videoRecordingId: rec._id,
+            createdAt: rec.createdAt,
+            analysisSummary: rec.analysisResult?.summary || null,
+            transcriptSummary: rec.transcriptAnalysisResult?.summary || null,
+          });
+        }
+      }
+      setAiSummaries(summaries);
+    } catch (error) {
+      console.error('Error fetching AI summaries:', error);
+      // Fail silently - just don't show AI summaries section
+    } finally {
+      setLoadingAiSummaries(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    fetchAiSummaries();
+  }, [fetchAiSummaries]);
 
   // Fetch available rooms
   const fetchRooms = useCallback(async () => {
@@ -434,6 +479,58 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {/* AI Summaries from Video Calls */}
+      {!loadingAiSummaries && aiSummaries.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <Video className="h-4 w-4 text-blue-500" />
+            AI Generated Notes from Video Calls
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {aiSummaries.map((summary) => (
+              <div key={summary.videoRecordingId} className="space-y-3">
+                {summary.transcriptSummary && (
+                  <Card className="border-l-4 border-l-green-500">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <MessageSquare className="h-3 w-3 text-green-500" />
+                        <span className="text-green-600 font-medium">AI Summary</span>
+                        <span>·</span>
+                        <Calendar className="h-3 w-3" />
+                        <span>{new Date(summary.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
+                        {summary.transcriptSummary}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+                {summary.analysisSummary && (
+                  <Card className="border-l-4 border-l-blue-500">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Package className="h-3 w-3 text-blue-500" />
+                        <span className="text-blue-600 font-medium">Packing Notes</span>
+                        <span>·</span>
+                        <Calendar className="h-3 w-3" />
+                        <span>{new Date(summary.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
+                        {summary.analysisSummary}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

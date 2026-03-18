@@ -76,38 +76,6 @@ import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimi
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
 const darkGlassStyle = "backdrop-blur-xl bg-black/20 border border-white/10 shadow-2xl";
 
-// Helper function to flip an image horizontally
-// This is used for virtual backgrounds so text appears correct in the agent's mirrored selfie view
-async function flipImageHorizontally(imageUrl) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-
-      // Flip horizontally
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(img, 0, 0);
-
-      // Convert to blob URL for better performance
-      canvas.toBlob((blob) => {
-        if (blob) {
-          resolve(URL.createObjectURL(blob));
-        } else {
-          // Fallback to data URL
-          resolve(canvas.toDataURL('image/png'));
-        }
-      }, 'image/png');
-    };
-    img.onerror = reject;
-    img.src = imageUrl;
-  });
-}
-
 // Component to apply background effects to local video track
 const BackgroundApplier = React.memo(({ backgroundSettings }) => {
   const { localParticipant } = useLocalParticipant();
@@ -121,7 +89,6 @@ const BackgroundApplier = React.memo(({ backgroundSettings }) => {
     let cancelled = false;
     let retryCount = 0;
     const maxRetries = 30; // 30 attempts × 100ms = 3 seconds max
-    let flippedImageUrl = null;
 
     const applyBackground = async () => {
       try {
@@ -130,18 +97,6 @@ const BackgroundApplier = React.memo(({ backgroundSettings }) => {
         if (!supportsBackgroundProcessors || !supportsBackgroundProcessors()) {
           console.log('Background processors not supported');
           return;
-        }
-
-        // Pre-flip the virtual background image so text reads correctly in mirrored view
-        if (backgroundSettings.mode === 'virtual' && backgroundSettings.imageUrl) {
-          try {
-            console.log('Flipping background image for mirrored view...');
-            flippedImageUrl = await flipImageHorizontally(backgroundSettings.imageUrl);
-            console.log('Background image flipped successfully');
-          } catch (err) {
-            console.warn('Could not flip image, using original:', err);
-            flippedImageUrl = backgroundSettings.imageUrl;
-          }
         }
 
         // Poll for video track with small intervals
@@ -158,10 +113,10 @@ const BackgroundApplier = React.memo(({ backgroundSettings }) => {
                 mode: 'background-blur',
                 blurRadius: backgroundSettings.blurRadius || 10
               };
-            } else if (backgroundSettings.mode === 'virtual' && flippedImageUrl) {
+            } else if (backgroundSettings.mode === 'virtual' && backgroundSettings.imageUrl) {
               processorConfig = {
                 mode: 'virtual-background',
-                imagePath: flippedImageUrl
+                imagePath: backgroundSettings.imageUrl
               };
             } else {
               return;
@@ -191,10 +146,6 @@ const BackgroundApplier = React.memo(({ backgroundSettings }) => {
 
     return () => {
       cancelled = true;
-      // Clean up blob URL if created
-      if (flippedImageUrl && flippedImageUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(flippedImageUrl);
-      }
     };
   }, [backgroundSettings, localParticipant]);
 
@@ -896,7 +847,6 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
                   playsInline
                   muted
                   className="w-full h-full object-cover"
-                  style={{ transform: 'scaleX(-1)' }}
                 />
               </div>
             )}
@@ -915,7 +865,6 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
             {localCameraTrack && isCameraReady && (
               <div
                 className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30"
-                style={{ transform: 'scaleX(-1)' }}
               >
                 <VideoTrack
                   trackRef={localCameraTrack}

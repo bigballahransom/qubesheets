@@ -20,6 +20,10 @@ interface MediaSection {
   mediaName: string;
   roomEntry?: string;
   items: GroupedItems;
+  aiSummary?: {
+    analysisSummary?: string | null;
+    transcriptSummary?: string | null;
+  };
 }
 
 // Helper to group items by room/location and consolidate same-named items
@@ -196,10 +200,9 @@ export async function GET(
     const stats = calculateStats(allItems);
 
     // Fetch all media
-    const [images, videos, videoRecordings] = await Promise.all([
+    const [images, videos] = await Promise.all([
       Image.find({ projectId: reviewLink.projectId }).select('_id name originalName mimeType manualRoomEntry'),
       Video.find({ projectId: reviewLink.projectId }).select('_id originalName mimeType duration manualRoomEntry'),
-      VideoRecording.find({ projectId: reviewLink.projectId, status: 'completed' }).select('_id roomId duration s3Key createdAt')
     ]);
 
     // Build media sections with associated items
@@ -241,19 +244,29 @@ export async function GET(
       }
     }
 
-    // Process video recordings
-    for (const recording of videoRecordings) {
+    // Fetch video recordings with full analysis data
+    const videoRecordingsWithAnalysis = await VideoRecording.find({
+      projectId: reviewLink.projectId,
+      status: 'completed'
+    }).select('_id roomId duration s3Key createdAt analysisResult transcriptAnalysisResult').lean();
+
+    // Process video recordings with their AI summaries
+    for (const recording of videoRecordingsWithAnalysis as any[]) {
       const recordingItems = allItems.filter(item =>
         item.sourceVideoRecordingId && item.sourceVideoRecordingId.toString() === recording._id.toString() &&
         item.itemType !== 'boxes_needed'
       );
 
-      if (recordingItems.length > 0 || videoRecordings.length > 0) {
+      if (recordingItems.length > 0 || videoRecordingsWithAnalysis.length > 0) {
         mediaSections.push({
           type: 'videoRecording',
           mediaId: recording._id.toString(),
           mediaName: `Video Call Recording - ${new Date(recording.createdAt).toLocaleDateString()}`,
           items: groupItemsByRoom(recordingItems),
+          aiSummary: {
+            analysisSummary: recording.analysisResult?.summary || null,
+            transcriptSummary: recording.transcriptAnalysisResult?.summary || null,
+          },
         });
       }
     }
