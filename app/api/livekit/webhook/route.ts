@@ -387,92 +387,10 @@ async function handleParticipantLeft(event: WebhookEvent) {
  * The room composite captures both agent and customer video in a single stream,
  * which is then processed by Railway for AI analysis.
  */
-async function handleTrackPublished(event: WebhookEvent) {
+async function handleTrackPublished(_event: WebhookEvent) {
   // DISABLED: Customer egress removed for cost savings
   // Room composite handles both video playback and AI analysis
   return;
-
-  if (!event.room || !event.participant || !event.track) return;
-
-  const roomName = event.room.name;
-  const participantIdentity = event.participant.identity;
-  const participantType = getParticipantType(participantIdentity);
-  const trackType = event.track.type;
-
-  // Only care about customer video tracks
-  // Track type can be string 'VIDEO' or number 1 (VIDEO=1, AUDIO=0, DATA=2)
-  const isVideoTrack = trackType === 'VIDEO' || trackType === 1;
-
-  if (participantType !== 'customer' || !isVideoTrack) {
-    return;
-  }
-
-  console.log(`📹 Customer video track published: ${participantIdentity} in room ${roomName}`);
-
-  const VideoRecording = (await import('@/models/VideoRecording')).default;
-
-  // ATOMIC: Find recording and claim the egress slot in one operation
-  // This handles:
-  // 1. First egress start (customerEgressId doesn't exist)
-  // 2. Reconnection (customerEgressStatus is 'completed' or 'failed')
-  // 3. Race condition prevention (atomic update)
-  const recording = await VideoRecording.findOneAndUpdate(
-    {
-      roomId: roomName,
-      status: { $in: ['waiting', 'starting', 'recording'] },
-      $or: [
-        { customerEgressId: { $exists: false } },
-        { customerEgressStatus: { $in: ['completed', 'failed'] } }
-      ]
-    },
-    {
-      $set: { customerEgressStatus: 'starting' }  // Claim this slot atomically
-    },
-    { new: true }
-  );
-
-  if (!recording) {
-    // Check if customer egress is actively running
-    const existingRecording = await VideoRecording.findOne({
-      roomId: roomName,
-      status: { $in: ['waiting', 'starting', 'recording'] }
-    });
-
-    if (existingRecording?.customerEgressId &&
-        existingRecording?.customerEgressStatus &&
-        ['starting', 'recording'].includes(existingRecording.customerEgressStatus)) {
-      console.log(`⏭️ Customer egress already active: ${existingRecording.customerEgressId} (${existingRecording.customerEgressStatus})`);
-    } else {
-      console.log(`⚠️ No active recording found for room: ${roomName}`);
-    }
-    return;
-  }
-
-  // Check if this is a reconnection (previous egress existed and ended)
-  const isReconnection = recording.customerEgressId &&
-    ['completed', 'failed'].includes(recording.customerEgressStatus || '');
-
-  if (isReconnection) {
-    console.log(`🔄 Previous egress ended (${recording.customerEgressStatus}), starting new egress for reconnected customer`);
-  }
-
-  // NOW start customer egress - we know the video track exists and is publishing
-  console.log(`🎬 Starting customer egress now that video track is confirmed`);
-  const customerEgressId = await startCustomerEgress(
-    roomName,
-    participantIdentity,
-    recording._id.toString()
-  );
-
-  if (customerEgressId) {
-    console.log(`✅ Customer egress started: ${customerEgressId}`);
-  } else {
-    console.log(`⚠️ Customer egress failed to start (non-blocking - room composite continues)`);
-    // Reset status so we can try again on next track_published
-    await VideoRecording.findByIdAndUpdate(recording._id, {
-      $unset: { customerEgressStatus: '' }
-    });
-  }
 }
 
 async function handleEgressStarted(event: WebhookEvent) {
