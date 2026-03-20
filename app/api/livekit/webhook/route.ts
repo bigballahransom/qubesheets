@@ -609,16 +609,27 @@ async function handleEgressEnded(event: WebhookEvent) {
       size: fileResult.size
     });
     
-    // Extract the S3 key from the location or use filename
-    // LiveKit returns the full S3 path in location field
-    const s3Key = fileResult.location.startsWith('s3://') 
-      ? fileResult.location.replace(/^s3:\/\/[^\/]+\//, '') 
-      : fileResult.location;
-    
+    // Extract the S3 key from the location
+    // LiveKit can return: s3://bucket/path/file.mp4 OR https://bucket.s3.amazonaws.com/path/file.mp4
+    let s3Key = fileResult.location;
+    if (s3Key.startsWith('s3://')) {
+      s3Key = s3Key.replace(/^s3:\/\/[^\/]+\//, '');
+    } else if (s3Key.includes('.s3.amazonaws.com/') || s3Key.includes('.s3.us-east-1.amazonaws.com/')) {
+      s3Key = s3Key.replace(/^https?:\/\/[^\/]+\//, '');
+    }
+
+    // Validate S3 key - must be a path, not a URL
+    if (!s3Key || s3Key.includes('://') || !s3Key.endsWith('.mp4')) {
+      console.error(`❌ Invalid S3 key: ${s3Key}, raw: ${fileResult.location}`);
+      // Fallback: construct from known pattern
+      s3Key = `recordings/${roomName}/${fileResult.filename}`;
+      console.log(`🔧 Using fallback S3 key: ${s3Key}`);
+    }
+
     updateData.s3Key = s3Key;
     updateData.fileSize = parseInt(fileResult.size);
     updateData.duration = calculateDuration(fileResult.startedAt, fileResult.endedAt);
-    
+
     console.log('💾 Updating recording with S3 key:', s3Key);
   }
   
@@ -650,6 +661,22 @@ async function handleEgressEnded(event: WebhookEvent) {
       console.log(`✅ Recording updated via room name lookup`);
     } else {
       console.error(`❌ Could not update recording via any method (roomName: ${roomName}, SID: ${event.egressInfo.roomId})`);
+
+      // Last resort: find ANY recent recording for this room and mark it
+      const lastResortUpdate = await VideoRecording.findOneAndUpdate(
+        { roomId: roomName },
+        {
+          status: event.egressInfo.status === 3 ? 'completed' : 'failed',
+          error: 'Egress ended but could not update recording via normal lookup',
+          egressId: event.egressInfo.egressId,
+          ...updateData
+        },
+        { sort: { createdAt: -1 }, new: true }  // Most recent first
+      );
+
+      if (lastResortUpdate) {
+        console.log(`✅ Recording updated via last-resort room lookup: ${lastResortUpdate._id}`);
+      }
     }
   } else {
     console.log(`✅ Recording metadata updated:`, {
@@ -685,6 +712,59 @@ async function handleEgressEnded(event: WebhookEvent) {
         recordingId: updateResult._id,
         notesUpdated: migrateResult.modifiedCount
       });
+
+      // COST OPTIMIZATION: Queue room composite for AI analysis
+      // Previously we used a separate customer egress, now we use the room composite
+      // This saves ~$254/month (50% reduction in egress costs)
+      if (updateResult.s3Key && updateResult.s3Key !== `recordings/${updateResult.roomId}/pending.mp4`) {
+        console.log(`🤖 Queueing room composite for AI analysis: ${updateResult.s3Key}`);
+
+        const AWS = (await import('aws-sdk')).default;
+        const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+
+        if (queueUrl) {
+          const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
+          const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+
+          // Set status to 'queued' BEFORE sending to SQS (in case SQS fails)
+          await VideoRecording.findByIdAndUpdate(updateResult._id, {
+            'analysisResult.status': 'queued'
+          });
+
+          try {
+            await sqs.sendMessage({
+              QueueUrl: queueUrl,
+              DelaySeconds: 0,  // Process immediately - S3 file is already finalized by egress_ended
+              MessageBody: JSON.stringify({
+                type: 'customer-video',  // Reuse existing handler - it processes any MP4
+                videoRecordingId: updateResult._id.toString(),
+                projectId: updateResult.projectId,
+                s3Key: updateResult.s3Key,
+                s3Bucket: bucket,
+                roomName: updateResult.roomId,
+                customerIdentity: 'room-composite',  // Indicate this is the full room video
+                duration: updateResult.duration || 0
+              })
+            }).promise();
+
+            console.log(`✅ Room composite queued for AI analysis`);
+
+            // Update analysis status to processing (SQS succeeded)
+            await VideoRecording.findByIdAndUpdate(updateResult._id, {
+              'analysisResult.status': 'processing'
+            });
+          } catch (sqsError) {
+            console.error(`❌ Failed to queue room composite for analysis:`, sqsError);
+            // Mark as failed so it doesn't get stuck in 'queued' forever
+            await VideoRecording.findByIdAndUpdate(updateResult._id, {
+              'analysisResult.status': 'failed',
+              'analysisResult.error': 'Failed to queue for analysis - SQS error'
+            });
+          }
+        } else {
+          console.log(`⚠️ AWS_SQS_CALL_QUEUE_URL not configured - skipping AI analysis`);
+        }
+      }
     }
   }
 }
