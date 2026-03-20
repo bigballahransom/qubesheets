@@ -145,8 +145,8 @@ export async function GET(
       $or: [
         // Customer egress is active (starting or recording)
         { customerEgressStatus: { $in: ['starting', 'recording'] } },
-        // Analysis is pending or in progress
-        { 'analysisResult.status': { $in: ['pending', 'processing'] } },
+        // Analysis is pending, queued, or in progress
+        { 'analysisResult.status': { $in: ['pending', 'queued', 'processing'] } },
         // Customer egress completed but analysis not done yet (catches undefined status)
         {
           customerEgressStatus: 'completed',
