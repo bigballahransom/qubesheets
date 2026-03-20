@@ -379,15 +379,19 @@ async function handleParticipantLeft(event: WebhookEvent) {
 }
 
 /**
- * Handle track_published event - start customer egress when video track is confirmed
- * This is more reliable than starting on participant_joined because we know the track exists
+ * Handle track_published event
  *
- * EDGE CASES HANDLED:
- * - Customer reconnection: Starts new egress if previous one ended
- * - Camera toggle: Starts new egress if previous one ended when camera was disabled
- * - Race condition: Uses atomic findOneAndUpdate to prevent duplicate egress starts
+ * DISABLED: Customer egress is no longer used - we use room composite for both
+ * video playback AND AI analysis. This saves ~$254/month in egress costs.
+ *
+ * The room composite captures both agent and customer video in a single stream,
+ * which is then processed by Railway for AI analysis.
  */
 async function handleTrackPublished(event: WebhookEvent) {
+  // DISABLED: Customer egress removed for cost savings
+  // Room composite handles both video playback and AI analysis
+  return;
+
   if (!event.room || !event.participant || !event.track) return;
 
   const roomName = event.room.name;
