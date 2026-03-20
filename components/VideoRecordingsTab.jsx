@@ -224,7 +224,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
     // Check if we have any processing recordings (including analysis in progress)
     const hasProcessing = recordings.some(r =>
       r.status === 'starting' || r.status === 'recording' || r.status === 'processing' ||
-      r.analysisResult?.status === 'processing'
+      r.analysisResult?.status === 'processing' || r.analysisResult?.status === 'queued'
     );
     
     if (!hasProcessing || !projectId) {
@@ -441,20 +441,43 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
     }
   };
 
-  // Determine display status - shows "Analysis Failed" when call ended but analysis failed
+  // Determine display status based on recording and analysis state
   const getDisplayStatus = (recording) => {
-    // If call is completed but analysis failed, show "Analysis Failed"
-    if (recording.status === 'completed' &&
-        (recording.analysisResult?.status === 'failed' ||
-         recording.processingPipeline?.status === 'failed')) {
-      return 'analysis_failed';
+    // Recording still in progress (egress running)
+    if (['waiting', 'starting', 'recording'].includes(recording.status)) {
+      return recording.status;
     }
-    // If call completed but has customerVideoS3Key and no analysis status, it needs processing
-    if (recording.status === 'completed' &&
-        recording.customerVideoS3Key &&
-        !recording.analysisResult?.status) {
-      return 'analysis_failed';
+
+    // Recording completed - check analysis status
+    if (recording.status === 'completed') {
+      // Analysis in progress (queued, processing, or pipeline processing)
+      if (recording.analysisResult?.status === 'queued' ||
+          recording.analysisResult?.status === 'processing' ||
+          recording.processingPipeline?.status === 'processing') {
+        return 'analysis_in_progress';
+      }
+
+      // Analysis completed successfully
+      if (recording.analysisResult?.status === 'completed' ||
+          recording.processingPipeline?.status === 'completed') {
+        return 'completed';
+      }
+
+      // Analysis failed
+      if (recording.analysisResult?.status === 'failed' ||
+          recording.processingPipeline?.status === 'failed') {
+        return 'analysis_failed';
+      }
+
+      // Legacy: customerVideoS3Key exists but no analysis status (old recordings)
+      if (recording.customerVideoS3Key && !recording.analysisResult?.status) {
+        return 'analysis_failed';
+      }
+
+      // Video ready, no analysis triggered yet
+      return 'completed';
     }
+
     return recording.status;
   };
 
@@ -469,6 +492,8 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
       case 'failed':
       case 'analysis_failed':
         return <XCircle className="w-4 h-4 text-red-500" />;
+      case 'analysis_in_progress':
+        return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
       default:
         return <Clock className="w-4 h-4 text-gray-500" />;
     }
@@ -496,6 +521,10 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
         className: 'bg-red-100 text-red-800 border-red-200',
         icon: <XCircle className="w-3 h-3" />
       },
+      analysis_in_progress: {
+        className: 'bg-blue-100 text-blue-800 border-blue-200',
+        icon: <Loader2 className="w-3 h-3 animate-spin" />
+      },
       starting: {
         className: 'bg-gray-100 text-gray-800 border-gray-200',
         icon: <Clock className="w-3 h-3" />
@@ -510,6 +539,8 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
       statusText = 'Getting your call ready to view';
     } else if (status === 'analysis_failed') {
       statusText = 'Analysis Failed';
+    } else if (status === 'analysis_in_progress') {
+      statusText = 'Analyzing...';
     } else {
       statusText = status.charAt(0).toUpperCase() + status.slice(1);
     }
@@ -674,13 +705,13 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
                     })()}
                   </div>
 
-                  {/* Analysis Status Badge - only show if actively processing (not failed) */}
-                  {recording.analysisResult?.status === 'processing' &&
+                  {/* Analysis Status Badge - only show if actively processing/queued (not failed) */}
+                  {(recording.analysisResult?.status === 'processing' || recording.analysisResult?.status === 'queued') &&
                    getDisplayStatus(recording) !== 'analysis_failed' && (
                     <div className="flex gap-1 mt-1">
                       <Badge variant="secondary" className="text-xs px-1.5 py-0.5 animate-pulse">
                         <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                        Processing
+                        {recording.analysisResult?.status === 'queued' ? 'Queued' : 'Processing'}
                       </Badge>
                     </div>
                   )}
