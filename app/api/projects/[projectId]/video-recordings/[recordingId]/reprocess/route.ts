@@ -28,8 +28,8 @@ export async function POST(
       );
     }
 
-    // Determine which video file to use - prefer customer video, fall back to main recording
-    let videoS3Key = recording.customerVideoS3Key || recording.s3Key;
+    // Determine which video file to use - prefer room composite, fall back to customer video
+    let videoS3Key = recording.s3Key || recording.customerVideoS3Key;
 
     if (!videoS3Key) {
       return NextResponse.json(
@@ -47,7 +47,7 @@ export async function POST(
       videoS3Key = videoS3Key.replace(/^s3:\/\/[^\/]+\//, '');
     }
 
-    console.log(`   Using video file: ${videoS3Key} (${recording.customerVideoS3Key ? 'customer' : 'main recording'})`);
+    console.log(`   Using video file: ${videoS3Key} (${recording.s3Key ? 'room composite' : 'customer video'})`);
 
     // Only block if the call is actively being recorded
     if (recording.status === 'recording' || recording.status === 'starting') {
