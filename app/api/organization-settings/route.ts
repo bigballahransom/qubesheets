@@ -32,14 +32,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         enableCustomerFollowUps: false,
         followUpDelayHours: 4,
-        smsUploadLinkTemplate: DEFAULT_SMS_UPLOAD_TEMPLATE
+        smsUploadLinkTemplate: DEFAULT_SMS_UPLOAD_TEMPLATE,
+        // Video call templates (defaults will be applied client-side)
+        videoCallInviteTemplate: null,
+        videoCallConfirmationSmsTemplate: null,
+        videoCallReminderSmsTemplate: null,
+        videoCallReminder1HourEnabled: true,
+        videoCallReminder15MinEnabled: true,
       });
     }
-    
+
     return NextResponse.json({
       enableCustomerFollowUps: settings.enableCustomerFollowUps,
       followUpDelayHours: settings.followUpDelayHours,
-      smsUploadLinkTemplate: settings.smsUploadLinkTemplate || DEFAULT_SMS_UPLOAD_TEMPLATE
+      smsUploadLinkTemplate: settings.smsUploadLinkTemplate || DEFAULT_SMS_UPLOAD_TEMPLATE,
+      // Video call templates
+      videoCallInviteTemplate: settings.videoCallInviteTemplate,
+      videoCallConfirmationSmsTemplate: settings.videoCallConfirmationSmsTemplate,
+      videoCallReminderSmsTemplate: settings.videoCallReminderSmsTemplate,
+      videoCallReminder1HourEnabled: settings.videoCallReminder1HourEnabled ?? true,
+      videoCallReminder15MinEnabled: settings.videoCallReminder15MinEnabled ?? true,
     });
   } catch (error) {
     console.error('Error fetching organization settings:', error);
@@ -87,11 +99,17 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    const settingsData = {
+    const settingsData: Record<string, any> = {
       organizationId: authContext.organizationId,
       enableCustomerFollowUps: Boolean(data.enableCustomerFollowUps),
       followUpDelayHours: Math.max(1, Math.min(168, parseInt(data.followUpDelayHours) || 4)),
-      ...(data.smsUploadLinkTemplate && { smsUploadLinkTemplate: data.smsUploadLinkTemplate })
+      ...(data.smsUploadLinkTemplate && { smsUploadLinkTemplate: data.smsUploadLinkTemplate }),
+      // Video call templates
+      ...(data.videoCallInviteTemplate !== undefined && { videoCallInviteTemplate: data.videoCallInviteTemplate }),
+      ...(data.videoCallConfirmationSmsTemplate !== undefined && { videoCallConfirmationSmsTemplate: data.videoCallConfirmationSmsTemplate }),
+      ...(data.videoCallReminderSmsTemplate !== undefined && { videoCallReminderSmsTemplate: data.videoCallReminderSmsTemplate }),
+      ...(data.videoCallReminder1HourEnabled !== undefined && { videoCallReminder1HourEnabled: data.videoCallReminder1HourEnabled }),
+      ...(data.videoCallReminder15MinEnabled !== undefined && { videoCallReminder15MinEnabled: data.videoCallReminder15MinEnabled }),
     };
     
     // Use findOneAndUpdate with upsert to create or update
@@ -108,7 +126,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       enableCustomerFollowUps: settings.enableCustomerFollowUps,
       followUpDelayHours: settings.followUpDelayHours,
-      smsUploadLinkTemplate: settings.smsUploadLinkTemplate || DEFAULT_SMS_UPLOAD_TEMPLATE
+      smsUploadLinkTemplate: settings.smsUploadLinkTemplate || DEFAULT_SMS_UPLOAD_TEMPLATE,
+      // Video call templates
+      videoCallInviteTemplate: settings.videoCallInviteTemplate,
+      videoCallConfirmationSmsTemplate: settings.videoCallConfirmationSmsTemplate,
+      videoCallReminderSmsTemplate: settings.videoCallReminderSmsTemplate,
+      videoCallReminder1HourEnabled: settings.videoCallReminder1HourEnabled ?? true,
+      videoCallReminder15MinEnabled: settings.videoCallReminder15MinEnabled ?? true,
     }, { status: 200 });
   } catch (error) {
     console.error('Error saving organization settings:', error);

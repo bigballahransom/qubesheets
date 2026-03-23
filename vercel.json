@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/video-call-reminders",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

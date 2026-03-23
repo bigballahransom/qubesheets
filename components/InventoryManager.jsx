@@ -26,6 +26,7 @@ import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
 import ShareInventoryReviewLinkModal from './modals/ShareInventoryReviewLinkModal';
 import ShareCrewLinkModal from './modals/ShareCrewLinkModal';
+import ScheduleVideoCallModal from './modals/ScheduleVideoCallModal';
 import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import SupermoveSyncModal from './modals/SupermoveSyncModal';
@@ -124,6 +125,8 @@ export default function InventoryManager() {
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
 const [isReviewLinkModalOpen, setIsReviewLinkModalOpen] = useState(false);
 const [isCrewLinkModalOpen, setIsCrewLinkModalOpen] = useState(false);
+const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+const [scheduledCalls, setScheduledCalls] = useState([]);
 const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
@@ -3036,6 +3039,9 @@ const ProcessingNotification = () => {
             >
               <Video size={16} className="mr-1" /> Start Video Inventory
             </MenubarItem>
+            <MenubarItem onClick={() => setIsScheduleModalOpen(true)}>
+              <Clock size={16} className="mr-1" /> Schedule Video Call
+            </MenubarItem>
             <MenubarItem onClick={() => setIsUploaderOpen(true)}>
               <Camera size={16} className="mr-1" />Upload Inventory
             </MenubarItem>
@@ -3483,6 +3489,22 @@ const ProcessingNotification = () => {
     projectId={currentProject._id}
     projectName={currentProject.name}
     customerPhone={currentProject.phone}
+  />
+)}
+
+{/* Schedule Video Call Modal */}
+{isScheduleModalOpen && currentProject && (
+  <ScheduleVideoCallModal
+    isOpen={isScheduleModalOpen}
+    onClose={() => setIsScheduleModalOpen(false)}
+    projectId={currentProject._id}
+    projectName={currentProject.name}
+    customerName={currentProject.customerName || currentProject.name}
+    customerPhone={currentProject.phone}
+    customerEmail={currentProject.customerEmail}
+    onScheduled={(call) => {
+      setScheduledCalls(prev => [call, ...prev]);
+    }}
   />
 )}
 

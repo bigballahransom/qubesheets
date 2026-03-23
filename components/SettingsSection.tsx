@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useOrganization } from '@clerk/nextjs';
-import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key, Building2, Scale } from 'lucide-react';
+import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key, Building2, Scale, CalendarDays } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SettingsItem {
@@ -11,6 +11,7 @@ interface SettingsItem {
   icon: React.ComponentType<{ className?: string }>;
   href: string;
   crmOnly?: boolean;
+  group?: string;
 }
 
 const settingsItems: SettingsItem[] = [
@@ -36,19 +37,27 @@ const settingsItems: SettingsItem[] = [
     href: '/settings/branding',
   },
   {
-    title: 'Integrations',
-    icon: Plug,
-    href: '/settings/integrations',
-  },
-  {
     title: 'Weight Configuration',
     icon: Scale,
     href: '/settings/weight-configuration',
   },
   {
+    title: 'Link Calendar',
+    icon: CalendarDays,
+    href: '/settings/calendar',
+    group: 'Connections',
+  },
+  {
+    title: 'Integrations',
+    icon: Plug,
+    href: '/settings/integrations',
+    group: 'Connections',
+  },
+  {
     title: 'API Keys',
     icon: Key,
     href: '/settings/api-keys',
+    group: 'Connections',
   },
 ];
 
@@ -95,36 +104,50 @@ export function SettingsSection() {
       {/* Settings Menu Items - Responsive positioning */}
       {isSettingsOpen && (
         <div className={cn(
-          "absolute left-0 right-0 bg-white border border-gray-200 rounded-md shadow-lg p-2 space-y-1 z-50",
-          isMobile 
+          "absolute left-0 right-0 bg-white border border-gray-200 rounded-md shadow-lg p-2 z-50",
+          isMobile
             ? "bottom-full mb-2 max-h-[40vh] overflow-y-auto" // Mobile: above with scrolling
             : "bottom-full mb-1" // Desktop: just above
         )}>
-          {settingsItems
-            .filter(item => !item.crmOnly || hasCrmAddOn)
-            .map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
+          {(() => {
+            const filteredItems = settingsItems.filter(item => !item.crmOnly || hasCrmAddOn);
+            let lastGroup: string | undefined = undefined;
 
-            return (
-              <a
-                key={item.href}
-                href={item.href}
-                onClick={() => setIsSettingsOpen(false)} // Close menu on navigation
-                className={cn(
-                  'flex items-center gap-3 px-3 text-sm rounded-md transition-colors cursor-pointer',
-                  'touch-manipulation', // Better touch response
-                  isMobile ? 'py-3 min-h-[44px]' : 'py-2', // Larger touch targets on mobile
-                  isActive
-                    ? 'bg-gray-100 text-gray-900 font-medium'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 active:bg-gray-100'
-                )}
-              >
-                <Icon className="w-4 h-4 flex-shrink-0" />
-                <span className="truncate">{item.title}</span>
-              </a>
-            );
-          })}
+            return filteredItems.map((item, index) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.href;
+              const showGroupHeader = item.group && item.group !== lastGroup;
+              lastGroup = item.group;
+
+              return (
+                <div key={item.href}>
+                  {showGroupHeader && (
+                    <div className={cn(
+                      "px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider",
+                      index > 0 && "mt-2 pt-2 border-t border-gray-100"
+                    )}>
+                      {item.group}
+                    </div>
+                  )}
+                  <a
+                    href={item.href}
+                    onClick={() => setIsSettingsOpen(false)} // Close menu on navigation
+                    className={cn(
+                      'flex items-center gap-3 px-3 text-sm rounded-md transition-colors cursor-pointer',
+                      'touch-manipulation', // Better touch response
+                      isMobile ? 'py-3 min-h-[44px]' : 'py-2', // Larger touch targets on mobile
+                      isActive
+                        ? 'bg-gray-100 text-gray-900 font-medium'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 active:bg-gray-100'
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    <span className="truncate">{item.title}</span>
+                  </a>
+                </div>
+              );
+            });
+          })()}
         </div>
       )}
       
