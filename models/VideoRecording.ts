@@ -7,7 +7,12 @@ export interface IVideoRecording extends Document {
   organizationId?: string;
   roomId: string;
   egressId?: string;  // Optional - will be set after LiveKit API call
-  status: 'waiting' | 'starting' | 'recording' | 'processing' | 'completed' | 'failed';
+  status: 'waiting' | 'starting' | 'recording' | 'processing' | 'completed' | 'failed' | 'partial';
+  // Auto-recovery fields for egress disconnection
+  isPartialRecording?: boolean;  // True if egress disconnected mid-call
+  previousRecordingId?: string;  // For auto-restarted recordings: link to the partial recording
+  continuedInRecordingId?: string;  // For partial recordings: link to the continuation
+  isAutoRestarted?: boolean;  // True if this recording was auto-started after egress failure
   startedAt: Date;
   endedAt?: Date;
   duration?: number; // Duration in seconds
@@ -135,8 +140,24 @@ const VideoRecordingSchema: Schema = new Schema(
     status: {
       type: String,
       required: true,
-      enum: ['waiting', 'starting', 'recording', 'processing', 'completed', 'failed'],
+      enum: ['waiting', 'starting', 'recording', 'processing', 'completed', 'failed', 'partial'],
       default: 'waiting'
+    },
+    // Auto-recovery fields for egress disconnection
+    isPartialRecording: {
+      type: Boolean,
+      default: false
+    },
+    previousRecordingId: {
+      type: String,
+      index: true
+    },
+    continuedInRecordingId: {
+      type: String
+    },
+    isAutoRestarted: {
+      type: Boolean,
+      default: false
     },
     startedAt: { 
       type: Date, 

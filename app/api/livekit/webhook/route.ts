@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { WebhookReceiver } from 'livekit-server-sdk';
+import { WebhookReceiver, RoomServiceClient } from 'livekit-server-sdk';
 import connectMongoDB from '@/lib/mongodb';
 import { startRecording, stopRecording, startCustomerEgress, stopCustomerEgress } from '@/lib/livekitEgress';
+
+// Room service client for checking active participants
+const roomServiceClient = new RoomServiceClient(
+  process.env.LIVEKIT_URL!,
+  process.env.LIVEKIT_API_KEY!,
+  process.env.LIVEKIT_API_SECRET!
+);
 
 const webhookReceiver = new WebhookReceiver(
   process.env.LIVEKIT_API_KEY!,
@@ -136,6 +143,109 @@ function getParticipantType(identity: string): 'agent' | 'customer' | 'egress' {
   if (identity.startsWith('agent-')) return 'agent';
   if (identity.startsWith('EG_')) return 'egress';
   return 'customer';
+}
+
+/**
+ * Check if a room still has active (non-egress) participants
+ * Used to detect if we need to restart recording after an egress disconnection
+ */
+async function getRoomActiveParticipants(roomName: string): Promise<{ count: number; identities: string[] }> {
+  try {
+    const participants = await roomServiceClient.listParticipants(roomName);
+
+    // Filter out egress participants (EG_ prefix)
+    const activeParticipants = participants.filter(p => !p.identity.startsWith('EG_'));
+
+    return {
+      count: activeParticipants.length,
+      identities: activeParticipants.map(p => p.identity)
+    };
+  } catch (error: any) {
+    // Room might not exist anymore (call ended)
+    if (error.message?.includes('not found') || error.code === 'NOT_FOUND') {
+      return { count: 0, identities: [] };
+    }
+    console.error(`❌ Error checking room participants for ${roomName}:`, error);
+    return { count: 0, identities: [] };
+  }
+}
+
+/**
+ * Auto-restart recording when egress disconnects while call is still active
+ * This prevents losing entire call recordings due to LiveKit egress timeouts
+ */
+async function autoRestartRecording(
+  roomName: string,
+  existingRecording: any,
+  disconnectionReason: string
+): Promise<boolean> {
+  console.log('🔄 =================================');
+  console.log('🔄 AUTO-RESTART RECORDING');
+  console.log('🔄 =================================');
+  console.log(`📌 Room: ${roomName}`);
+  console.log(`📌 Previous Recording ID: ${existingRecording._id}`);
+  console.log(`📌 Disconnection Reason: ${disconnectionReason}`);
+
+  const VideoRecording = (await import('@/models/VideoRecording')).default;
+
+  try {
+    // Mark the old recording as partial (not failed, since we have some data)
+    await VideoRecording.findByIdAndUpdate(existingRecording._id, {
+      status: 'partial',
+      error: `Egress disconnected: ${disconnectionReason}. Auto-restart initiated.`,
+      isPartialRecording: true
+    });
+
+    // Create a new recording entry for the continuation
+    const Project = (await import('@/models/Project')).default;
+    const project = await Project.findById(existingRecording.projectId);
+
+    if (!project) {
+      console.error('❌ Project not found for auto-restart');
+      return false;
+    }
+
+    // Create new recording with reference to the previous partial recording
+    const newRecording = await VideoRecording.create({
+      projectId: existingRecording.projectId,
+      userId: project.userId,
+      organizationId: project.organizationId,
+      roomId: roomName,
+      status: 'starting',
+      s3Key: `recordings/${roomName}/pending.mp4`,
+      startedAt: new Date(),
+      participants: existingRecording.participants || [],
+      activeParticipants: existingRecording.activeParticipants || [],
+      previousRecordingId: existingRecording._id,  // Link to partial recording
+      isAutoRestarted: true
+    });
+
+    console.log(`✅ Created new recording entry: ${newRecording._id}`);
+
+    // Start a new egress
+    const egressId = await startRecording(roomName, newRecording._id.toString());
+
+    if (egressId) {
+      console.log(`✅ Auto-restart successful! New egress: ${egressId}`);
+
+      // Update the old recording to reference the new one
+      await VideoRecording.findByIdAndUpdate(existingRecording._id, {
+        continuedInRecordingId: newRecording._id
+      });
+
+      return true;
+    } else {
+      console.error('❌ Failed to start new egress');
+      await VideoRecording.findByIdAndUpdate(newRecording._id, {
+        status: 'failed',
+        error: 'Auto-restart failed: Could not start new egress'
+      });
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Auto-restart recording failed:', error);
+    return false;
+  }
 }
 
 async function handleParticipantJoined(event: WebhookEvent) {
@@ -500,24 +610,48 @@ async function handleEgressEnded(event: WebhookEvent) {
     console.error(`❌ Recording not found for egress: ${egressId}`);
     return;
   }
-  
+
   console.log(`📄 Found recording:`, {
     id: existingRecording._id,
     roomId: existingRecording.roomId,
     currentStatus: existingRecording.status,
     currentS3Key: existingRecording.s3Key
   });
-  
+
+  // 🚨 AUTO-RECOVERY: Check if participants are still in the room
+  // If yes, the egress disconnected unexpectedly and we need to restart recording
+  const activeParticipants = await getRoomActiveParticipants(roomName);
+  console.log(`👥 Active participants in room: ${activeParticipants.count}`, activeParticipants.identities);
+
+  if (activeParticipants.count > 0) {
+    // Call is still active but egress disconnected - this is bad!
+    console.log('🚨 EGRESS DISCONNECTED WHILE CALL STILL ACTIVE!');
+    console.log(`🔄 Attempting auto-restart to prevent data loss...`);
+
+    const disconnectionReason = event.egressInfo.error || 'CONNECTION_TIMEOUT';
+    const restarted = await autoRestartRecording(roomName, existingRecording, disconnectionReason);
+
+    if (restarted) {
+      console.log('✅ Auto-restart successful - call recording will continue');
+      // Don't process this egress end as normal - we've handled it via auto-restart
+      // The partial recording is already marked, and a new recording has started
+      return;
+    } else {
+      console.error('❌ Auto-restart failed - some recording may be lost');
+      // Continue processing as failed recording
+    }
+  }
+
   // Convert nanosecond timestamps to milliseconds
-  const endedAtMs = event.egressInfo.endedAt 
-    ? Math.floor(Number(event.egressInfo.endedAt) / 1000000) 
+  const endedAtMs = event.egressInfo.endedAt
+    ? Math.floor(Number(event.egressInfo.endedAt) / 1000000)
     : Date.now();
 
   const updateData: any = {
     status: event.egressInfo.status === 3 ? 'completed' : 'failed', // 3 = EgressStatus.EGRESS_COMPLETE
     endedAt: new Date(endedAtMs)
   };
-  
+
   if (event.egressInfo.error) {
     updateData.error = event.egressInfo.error;
   }
