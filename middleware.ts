@@ -3,6 +3,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Create route matchers for different types of routes
 const isPublicRoute = createRouteMatcher([
+  '/join(.*)',
   '/video-call(.*)',
   '/call-complete(.*)',
   '/customer-upload(.*)',

@@ -18,7 +18,10 @@ import {
   MessageSquare,
   FileCheck,
   Users,
-  ExternalLink
+  ExternalLink,
+  Calendar,
+  CalendarX,
+  CalendarClock
 } from 'lucide-react';
 import { Button } from './ui/button';
 
@@ -30,7 +33,7 @@ interface ActivityLogProps {
 
 interface Activity {
   _id: string;
-  activityType: 'upload' | 'inventory_update' | 'video_call' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'crew_link_shared';
+  activityType: 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'crew_link_shared';
   action: string;
   details: {
     fileName?: string;
@@ -49,6 +52,9 @@ interface Activity {
     notePriority?: string;
     linkToken?: string;
     linkUrl?: string;
+    scheduledFor?: string;
+    timezone?: string;
+    previousScheduledFor?: string;
   };
   createdAt: string;
   user: {
@@ -118,6 +124,13 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return <FileCheck className="w-4 h-4 text-emerald-600" />;
       case 'crew_link_shared':
         return <Users className="w-4 h-4 text-cyan-600" />;
+      case 'video_call_scheduled':
+        if (activity.action === 'cancelled') {
+          return <CalendarX className="w-4 h-4 text-red-600" />;
+        } else if (activity.action === 'rescheduled') {
+          return <CalendarClock className="w-4 h-4 text-amber-600" />;
+        }
+        return <Calendar className="w-4 h-4 text-blue-600" />;
       default:
         return <Archive className="w-4 h-4 text-gray-600" />;
     }
@@ -209,6 +222,53 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
           </span>
         );
 
+      case 'video_call_scheduled':
+        const formatScheduledDate = (dateStr: string, tz?: string) => {
+          try {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+              timeZone: tz || 'America/New_York'
+            });
+          } catch {
+            return dateStr;
+          }
+        };
+
+        if (activity.action === 'scheduled') {
+          return (
+            <span>
+              <strong>{userName}</strong> scheduled video call with{' '}
+              <span className="font-medium">{activity.details.customerName}</span>
+              {activity.details.scheduledFor && (
+                <span className="text-gray-500"> for {formatScheduledDate(activity.details.scheduledFor, activity.details.timezone)}</span>
+              )}
+            </span>
+          );
+        } else if (activity.action === 'rescheduled') {
+          return (
+            <span>
+              <strong>{userName}</strong> rescheduled video call with{' '}
+              <span className="font-medium">{activity.details.customerName}</span>
+              {activity.details.scheduledFor && (
+                <span className="text-gray-500"> to {formatScheduledDate(activity.details.scheduledFor, activity.details.timezone)}</span>
+              )}
+            </span>
+          );
+        } else if (activity.action === 'cancelled') {
+          return (
+            <span>
+              <strong>{userName}</strong> cancelled video call with{' '}
+              <span className="font-medium">{activity.details.customerName}</span>
+            </span>
+          );
+        }
+        return <span>{activity.action} video call</span>;
+
       default:
         return <span>{activity.action}</span>;
     }
@@ -291,11 +351,12 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
                         {formatDistanceToNow(new Date(activity.createdAt), { addSuffix: true })}
                       </div>
                       
-                      {/* Expandable details - show for inventory bulk updates and link activities */}
+                      {/* Expandable details - show for inventory bulk updates, link activities, and scheduled calls */}
                       {((activity.activityType === 'inventory_update' && activity.details.itemsCount && activity.details.itemsCount > 1) ||
                         activity.activityType === 'upload_link_sent' ||
                         activity.activityType === 'review_link_shared' ||
-                        activity.activityType === 'crew_link_shared') && (
+                        activity.activityType === 'crew_link_shared' ||
+                        activity.activityType === 'video_call_scheduled') && (
                         <button
                           onClick={() => toggleExpanded(activity._id)}
                           className="text-xs text-blue-600 hover:text-blue-700 mt-1 flex items-center gap-1"
@@ -341,6 +402,29 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
                             <div>
                               <span className="font-medium">Items count:</span> {activity.details.itemsCount}
                             </div>
+                          )}
+                          {/* Show details for scheduled video calls */}
+                          {activity.activityType === 'video_call_scheduled' && (
+                            <>
+                              {activity.details.previousScheduledFor && (
+                                <div>
+                                  <span className="font-medium">Previously scheduled:</span>{' '}
+                                  {new Date(activity.details.previousScheduledFor).toLocaleDateString('en-US', {
+                                    weekday: 'short',
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                    timeZone: activity.details.timezone || 'America/New_York'
+                                  })}
+                                </div>
+                              )}
+                              {activity.details.timezone && (
+                                <div>
+                                  <span className="font-medium">Timezone:</span> {activity.details.timezone}
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       )}

@@ -77,6 +77,15 @@ export interface IOrganizationSettings extends Document {
   // SMS Templates
   smsUploadLinkTemplate?: string;
 
+  // Video Call Scheduling Templates
+  videoCallInviteTemplate?: string;
+  videoCallConfirmationSmsTemplate?: string;
+  videoCallReminderSmsTemplate?: string;
+
+  // Video Call Reminder Settings
+  videoCallReminder1HourEnabled?: boolean;
+  videoCallReminder15MinEnabled?: boolean;
+
   // CRM Settings
   crmJobTypes?: string[];
   crmOpportunityTypes?: string[];
@@ -118,6 +127,28 @@ const OrganizationSettingsSchema: Schema = new Schema(
     smsUploadLinkTemplate: {
       type: String,
       required: false
+    },
+    // Video Call Scheduling Templates
+    videoCallInviteTemplate: {
+      type: String,
+      required: false
+    },
+    videoCallConfirmationSmsTemplate: {
+      type: String,
+      required: false
+    },
+    videoCallReminderSmsTemplate: {
+      type: String,
+      required: false
+    },
+    // Video Call Reminder Settings
+    videoCallReminder1HourEnabled: {
+      type: Boolean,
+      default: true
+    },
+    videoCallReminder15MinEnabled: {
+      type: Boolean,
+      default: true
     },
     // CRM Settings
     crmJobTypes: {

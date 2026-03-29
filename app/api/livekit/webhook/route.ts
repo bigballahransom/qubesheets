@@ -400,6 +400,19 @@ async function handleParticipantJoined(event: WebhookEvent) {
 
     if (transitioned) {
       console.log(`🎬 First participant joined - starting room composite egress`);
+
+      // Update ScheduledVideoCall status to 'started' if this room is from a scheduled call
+      const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
+      console.log(`🔍 Looking for ScheduledVideoCall with roomId: ${roomName}`);
+      const scheduledCallUpdate = await ScheduledVideoCall.findOneAndUpdate(
+        { roomId: roomName, status: 'scheduled' },
+        { status: 'started', startedAt: new Date() },
+        { new: true }
+      );
+      if (scheduledCallUpdate) {
+        console.log(`📅 ScheduledVideoCall status updated to 'started': ${scheduledCallUpdate._id}`);
+      }
+
       try {
         const egressId = await startRecording(roomName, recording._id.toString());
         if (egressId) {
@@ -462,6 +475,18 @@ async function handleParticipantLeft(event: WebhookEvent) {
   // ONLY stop recording when LAST participant leaves
   if (remainingParticipants === 0) {
     console.log(`🛑 Last participant left - stopping recording: ${recording._id}`);
+
+    // Update ScheduledVideoCall status to 'completed' if this room is from a scheduled call
+    const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
+    console.log(`🔍 Looking for ScheduledVideoCall with roomId: ${roomName} to mark completed`);
+    const scheduledCallUpdate = await ScheduledVideoCall.findOneAndUpdate(
+      { roomId: roomName, status: 'started' },
+      { status: 'completed', completedAt: new Date() },
+      { new: true }
+    );
+    if (scheduledCallUpdate) {
+      console.log(`📅 ScheduledVideoCall status updated to 'completed': ${scheduledCallUpdate._id}`);
+    }
 
     // Stop customer egress first (if running)
     if (recording.customerEgressId && ['starting', 'recording'].includes(recording.customerEgressStatus || '')) {
