@@ -1551,6 +1551,42 @@ useEffect(() => {
     }
   }, [currentProject]);
 
+  // Handle going status updates from Spreadsheet dropdown (without regenerating rows)
+  // This avoids triggering initialRows change which causes scroll jump
+  const handleGoingStatusChange = useCallback(async (inventoryItemId, newGoingQuantity) => {
+    console.log(`🔄 Updating inventory item ${inventoryItemId} goingQuantity to ${newGoingQuantity}`);
+
+    // Update local inventory state (don't regenerate rows - the spreadsheet already updated its display)
+    setInventoryItems(prev =>
+      prev.map(item => {
+        if (item._id === inventoryItemId) {
+          const quantity = item.quantity || 1;
+          const going = newGoingQuantity === 0 ? 'not going' :
+                        newGoingQuantity === quantity ? 'going' : 'partial';
+          return { ...item, goingQuantity: newGoingQuantity, going };
+        }
+        return item;
+      })
+    );
+
+    // Persist to database
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goingQuantity: newGoingQuantity }),
+      });
+
+      if (!response.ok) {
+        console.error(`Failed to persist goingQuantity update for item ${inventoryItemId}`);
+      } else {
+        console.log(`✅ Successfully persisted goingQuantity ${newGoingQuantity} for item ${inventoryItemId}`);
+      }
+    } catch (error) {
+      console.error('Error persisting goingQuantity update:', error);
+    }
+  }, [currentProject]);
+
   // Handle bulk packed_by (CP/PBO) updates from Spreadsheet
   const handleBulkPackedByUpdate = useCallback(async (itemIds, newPackedBy) => {
     console.log(`🔄 Bulk updating ${itemIds.length} items to packed_by: ${newPackedBy}`);
@@ -3577,6 +3613,7 @@ const ProcessingNotification = () => {
                       onQuantityChange={handleQuantityChange}
                       refreshSpreadsheet={refreshSpreadsheetRows}
                       onInventoryUpdate={handleInventoryUpdate}
+                      onGoingStatusChange={handleGoingStatusChange}
                       onPackedByUpdate={handlePackedByUpdate}
                       onBulkPackedByUpdate={handleBulkPackedByUpdate}
                       onAddStockItem={handleAddStockItems}
@@ -3589,7 +3626,7 @@ const ProcessingNotification = () => {
                 </div>
               </div>
             </TabsContent>
-            
+
             <TabsContent value="images">
               {/* Image Gallery Container */}
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">

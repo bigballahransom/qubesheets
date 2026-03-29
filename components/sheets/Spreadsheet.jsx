@@ -178,6 +178,7 @@ export default function Spreadsheet({
   onQuantityChange = null,
   refreshSpreadsheet = null,
   onInventoryUpdate = null,
+  onGoingStatusChange = null,
   onPackedByUpdate = null,
   onBulkPackedByUpdate = null,
   onAddStockItem = null,
@@ -498,34 +499,29 @@ export default function Spreadsheet({
   useEffect(() => {
     if (initialRows && initialRows.length > 0) {
       // Save current scroll position BEFORE updating rows
-      if (spreadsheetRef.current) {
-        scrollPositionRef.current = {
-          top: spreadsheetRef.current.scrollTop,
-          left: spreadsheetRef.current.scrollLeft
-        };
-      }
+      const savedScrollTop = spreadsheetRef.current?.scrollTop || 0;
+      const savedScrollLeft = spreadsheetRef.current?.scrollLeft || 0;
+
       // Always sync with parent data to ensure consistency
       setRows(initialRows);
       setIsLoading(false);
+
+      // Restore scroll position AFTER React updates the DOM
+      // Use double requestAnimationFrame to ensure DOM has fully updated
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (spreadsheetRef.current) {
+            spreadsheetRef.current.scrollTop = savedScrollTop;
+            spreadsheetRef.current.scrollLeft = savedScrollLeft;
+          }
+        });
+      });
     } else if (!initialRows || initialRows.length === 0) {
       // No rows - start with empty spreadsheet
       setRows([]);
       setIsLoading(false);
     }
   }, [initialRows, onRowsChange]);
-
-  // Restore scroll position after rows update
-  useEffect(() => {
-    if (spreadsheetRef.current && scrollPositionRef.current) {
-      // Use requestAnimationFrame to ensure DOM has updated
-      requestAnimationFrame(() => {
-        if (spreadsheetRef.current) {
-          spreadsheetRef.current.scrollTop = scrollPositionRef.current.top;
-          spreadsheetRef.current.scrollLeft = scrollPositionRef.current.left;
-        }
-      });
-    }
-  }, [rows]);
   
   // Add this function to handle empty states in render
   const renderEmptyStateIfNeeded = () => {
@@ -868,10 +864,10 @@ export default function Spreadsheet({
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
 
-    // Update going status in parent inventory state and DB (pass quantity as 3rd param)
-    // This handles both quantity and goingQuantity in one call
-    if (onInventoryUpdate && inventoryItemId) {
-      onInventoryUpdate(inventoryItemId, validCount, validCount);  // goingQty=validCount, qty=validCount
+    // Update quantity in parent - use onQuantityChange like manual input does
+    // This avoids triggering initialRows change which causes scroll jump
+    if (onQuantityChange && inventoryItemId) {
+      onQuantityChange(inventoryItemId, validCount);
     }
   }, [rows, onRowsChange, onQuantityChange, onInventoryUpdate]);
 
@@ -1890,7 +1886,8 @@ export default function Spreadsheet({
                 );
 
                 // If this is the Going column (col6) and we have inventory item ID, update the parent inventory state
-                if (colId === 'col6' && currentRow?.inventoryItemId && onInventoryUpdate) {
+                // Use onGoingStatusChange to avoid triggering initialRows change which causes scroll jump
+                if (colId === 'col6' && currentRow?.inventoryItemId && onGoingStatusChange) {
                   // Convert the selected value to goingQuantity for inventory update
                   const quantity = currentRow?.quantity || parseInt(currentRow?.cells?.col3) || 1;
                   let goingQuantity = 0;
@@ -1905,7 +1902,7 @@ export default function Spreadsheet({
                     goingQuantity = match ? parseInt(match[1]) : 0;
                   }
 
-                  onInventoryUpdate(currentRow.inventoryItemId, goingQuantity);
+                  onGoingStatusChange(currentRow.inventoryItemId, goingQuantity);
                 }
 
                 // For CP/PBO column, update the packed_by field in the inventory item
