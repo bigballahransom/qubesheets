@@ -225,3 +225,112 @@ ${customMessage}
 Scheduled by ${agentName}
 ${companyName}`;
 }
+
+/**
+ * Create calendar events for a scheduled video call
+ * Creates agent's event on their calendar, and optionally sends invite to customer
+ */
+export async function createVideoCallCalendarEvents(params: {
+  userId: string;
+  agentTitle: string;
+  customerTitle: string;
+  agentDescription: string;
+  customerDescription: string;
+  startTime: Date;
+  endTime: Date;
+  customerEmail?: string;
+  timezone?: string;
+}): Promise<{ agentEventId: string | null; customerEventId: string | null }> {
+  const {
+    userId,
+    agentTitle,
+    customerTitle,
+    agentDescription,
+    customerDescription,
+    startTime,
+    endTime,
+    customerEmail,
+    timezone = 'America/New_York',
+  } = params;
+
+  const calendar = await getCalendarClient(userId);
+  if (!calendar) {
+    console.error('Could not get calendar client for user:', userId);
+    return { agentEventId: null, customerEventId: null };
+  }
+
+  let agentEventId: string | null = null;
+  let customerEventId: string | null = null;
+
+  try {
+    // 1. Create agent's event (no attendees, just on their calendar)
+    const agentEvent: calendar_v3.Schema$Event = {
+      summary: agentTitle,
+      description: agentDescription,
+      start: {
+        dateTime: startTime.toISOString(),
+        timeZone: timezone,
+      },
+      end: {
+        dateTime: endTime.toISOString(),
+        timeZone: timezone,
+      },
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: 15 },
+          { method: 'popup', minutes: 60 },
+        ],
+      },
+    };
+
+    const agentResponse = await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody: agentEvent,
+      sendUpdates: 'none',
+    });
+
+    agentEventId = agentResponse.data.id || null;
+    console.log('Agent calendar event created:', agentEventId);
+
+    // 2. If customer email provided, create event with customer as attendee
+    if (customerEmail) {
+      const customerEvent: calendar_v3.Schema$Event = {
+        summary: customerTitle,
+        description: customerDescription,
+        start: {
+          dateTime: startTime.toISOString(),
+          timeZone: timezone,
+        },
+        end: {
+          dateTime: endTime.toISOString(),
+          timeZone: timezone,
+        },
+        attendees: [{ email: customerEmail }],
+        guestsCanModify: false,
+        guestsCanInviteOthers: false,
+        reminders: {
+          useDefault: false,
+          overrides: [
+            { method: 'popup', minutes: 15 },
+            { method: 'popup', minutes: 60 },
+          ],
+        },
+      };
+
+      const customerResponse = await calendar.events.insert({
+        calendarId: 'primary',
+        requestBody: customerEvent,
+        sendUpdates: 'all', // Send email invite to customer
+      });
+
+      customerEventId = customerResponse.data.id || null;
+      console.log('Customer calendar invite created:', customerEventId);
+    }
+
+    return { agentEventId, customerEventId };
+  } catch (error) {
+    console.error('Error creating calendar events:', error);
+    return { agentEventId, customerEventId };
+  }
+}

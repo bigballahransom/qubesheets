@@ -7,6 +7,7 @@ import OrganizationSettings from '@/models/OrganizationSettings';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 import { updateCalendarEvent, deleteCalendarEvent } from '@/lib/google-calendar';
+import { logVideoCallScheduled } from '@/lib/activity-logger';
 
 const DEFAULT_VIDEO_CALL_CONFIRMATION_SMS = `Hi {customerName}, your video call with {companyName} has been rescheduled to {scheduledDate} at {scheduledTime}.
 
@@ -121,6 +122,9 @@ export async function PATCH(
       );
     }
 
+    // Store previous date for activity log
+    const previousScheduledFor = new Date(scheduledCall.scheduledFor);
+
     // Update the scheduled call
     const updatedTimezone = timezone || scheduledCall.timezone;
     scheduledCall.scheduledFor = newScheduledDate;
@@ -186,6 +190,16 @@ export async function PATCH(
       });
     }
 
+    // Log activity
+    await logVideoCallScheduled(projectId, 'rescheduled', {
+      customerName: scheduledCall.customerName,
+      customerPhone: scheduledCall.customerPhone,
+      roomId: scheduledCall.roomId,
+      scheduledFor: newScheduledDate,
+      timezone: updatedTimezone,
+      previousScheduledFor,
+    });
+
     return NextResponse.json({
       success: true,
       scheduledCall: {
@@ -220,6 +234,15 @@ export async function DELETE(
 
     const { projectId, callId } = await params;
 
+    // Parse request body for optional sendSms flag
+    let sendSms = false;
+    try {
+      const body = await request.json();
+      sendSms = body.sendSms === true;
+    } catch {
+      // Body is optional, default to not sending SMS
+    }
+
     // Verify project ownership
     const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
     if (!project) {
@@ -252,8 +275,37 @@ export async function DELETE(
       await deleteCalendarEvent(userId, scheduledCall.googleCalendarEventId);
     }
 
-    // Optionally send cancellation SMS
-    // For now, we'll skip this but could add a cancellation template
+    // Send cancellation SMS if requested
+    if (sendSms && scheduledCall.customerPhone) {
+      try {
+        // Get branding for company name
+        const brandingQuery = authContext.isPersonalAccount
+          ? { userId: authContext.userId }
+          : { organizationId: authContext.organizationId };
+        const branding = await Branding.findOne(brandingQuery);
+        const companyName = branding?.companyName || 'Your Company';
+
+        const cancellationMessage = `Hi ${scheduledCall.customerName}, your scheduled video call with ${companyName} has been cancelled. Please contact us if you have any questions.`;
+
+        await twilioClient.messages.create({
+          body: cancellationMessage,
+          from: twilioPhoneNumber,
+          to: scheduledCall.customerPhone,
+        });
+      } catch (twilioError) {
+        console.error('Failed to send cancellation SMS:', twilioError);
+        // Don't fail the cancellation if SMS fails
+      }
+    }
+
+    // Log activity
+    await logVideoCallScheduled(projectId, 'cancelled', {
+      customerName: scheduledCall.customerName,
+      customerPhone: scheduledCall.customerPhone,
+      roomId: scheduledCall.roomId,
+      scheduledFor: scheduledCall.scheduledFor,
+      timezone: scheduledCall.timezone,
+    });
 
     return NextResponse.json({
       success: true,

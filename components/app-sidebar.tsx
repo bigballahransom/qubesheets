@@ -386,6 +386,19 @@ export function AppSidebar() {
         {/* Footer menu */}
         <ClerkProvider>
         <div className="border-t bg-white flex-shrink-0 mobile-safe-bottom">
+        {/* Dashboard Link - only for non-CRM users since CRM users have it in navigation */}
+        {!hasCrmAddOn && (
+          <button
+            onClick={() => router.push('/qubesheets-dashboard')}
+            className={`flex items-center gap-2 w-full p-3 text-gray-700 transition-colors cursor-pointer hover:bg-gray-100 active:bg-gray-200 ${
+              pathname === '/qubesheets-dashboard' ? 'bg-gray-100' : ''
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4 flex-shrink-0" />
+            <span className="text-sm font-medium">Dashboard</span>
+          </button>
+        )}
+
         {/* Settings Section */}
         <SettingsSection />
         

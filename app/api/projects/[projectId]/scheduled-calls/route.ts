@@ -3,6 +3,7 @@ import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
+import { generateJoinUrl } from '@/lib/video-call-tokens';
 
 // GET /api/projects/[projectId]/scheduled-calls - List scheduled calls for a project
 export async function GET(
@@ -46,22 +47,29 @@ export async function GET(
       .sort({ scheduledFor: upcoming ? 1 : -1 })
       .limit(50);
 
-    // Add video call link to each call
-    const callsWithLinks = scheduledCalls.map((call) => ({
-      _id: call._id,
-      roomId: call.roomId,
-      scheduledFor: call.scheduledFor,
-      timezone: call.timezone,
-      status: call.status,
-      customerName: call.customerName,
-      customerPhone: call.customerPhone,
-      customerEmail: call.customerEmail,
-      googleCalendarEventId: call.googleCalendarEventId,
-      remindersSent: call.remindersSent,
-      createdAt: call.createdAt,
-      videoCallLink: `${process.env.NEXT_PUBLIC_APP_URL}/video-call/${call.roomId}?projectId=${projectId}&name=${encodeURIComponent(call.customerName)}`,
-      agentJoinLink: `${process.env.NEXT_PUBLIC_APP_URL}/video-call/${call.roomId}?projectId=${projectId}&isAgent=true`,
-    }));
+    // Add tokenized video call links to each call
+    const callsWithLinks = scheduledCalls.map((call) => {
+      const scheduledCallId = call._id.toString();
+      const scheduledFor = new Date(call.scheduledFor);
+
+      return {
+        _id: call._id,
+        roomId: call.roomId,
+        scheduledFor: call.scheduledFor,
+        timezone: call.timezone,
+        status: call.status,
+        customerName: call.customerName,
+        customerPhone: call.customerPhone,
+        customerEmail: call.customerEmail,
+        googleCalendarEventId: call.googleCalendarEventId,
+        customerCalendarEventId: call.customerCalendarEventId,
+        remindersSent: call.remindersSent,
+        createdAt: call.createdAt,
+        // Tokenized URLs that work without authentication
+        agentJoinLink: generateJoinUrl(scheduledCallId, 'agent', scheduledFor),
+        customerJoinLink: generateJoinUrl(scheduledCallId, 'customer', scheduledFor),
+      };
+    });
 
     return NextResponse.json(callsWithLinks);
   } catch (error) {

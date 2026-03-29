@@ -14,7 +14,11 @@ export interface IScheduledVideoCall extends Document {
   // Scheduling
   scheduledFor: Date;
   timezone: string;
-  status: 'scheduled' | 'started' | 'completed' | 'cancelled' | 'missed';
+  status: 'scheduled' | 'started' | 'completed' | 'cancelled';
+
+  // Call timing (set when status changes)
+  startedAt?: Date;
+  completedAt?: Date;
 
   // Customer info
   customerName: string;
@@ -25,7 +29,8 @@ export interface IScheduledVideoCall extends Document {
   roomId: string;
 
   // Calendar integration
-  googleCalendarEventId?: string;
+  googleCalendarEventId?: string; // Agent's calendar event
+  customerCalendarEventId?: string; // Customer's calendar event (if email provided)
 
   // Notifications sent
   remindersSent: IReminderSent[];
@@ -66,9 +71,17 @@ const ScheduledVideoCallSchema: Schema = new Schema(
     },
     status: {
       type: String,
-      enum: ['scheduled', 'started', 'completed', 'cancelled', 'missed'],
+      enum: ['scheduled', 'started', 'completed', 'cancelled'],
       default: 'scheduled',
       index: true,
+    },
+
+    // Call timing (set when status changes)
+    startedAt: {
+      type: Date,
+    },
+    completedAt: {
+      type: Date,
     },
 
     // Customer info
@@ -94,6 +107,9 @@ const ScheduledVideoCallSchema: Schema = new Schema(
 
     // Calendar integration
     googleCalendarEventId: {
+      type: String,
+    },
+    customerCalendarEventId: {
       type: String,
     },
 

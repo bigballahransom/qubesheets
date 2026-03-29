@@ -1,9 +1,57 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useUser } from '@clerk/nextjs';
-import { X, Video, Calendar, Loader2, Clock, Phone, Mail, User } from 'lucide-react';
+import { X, Video, Calendar, Loader2, Clock, Phone, Mail, User, Globe, ChevronDown, FileText } from 'lucide-react';
 import { toast } from 'sonner';
+
+// Common US timezones
+const COMMON_TIMEZONES = [
+  { value: 'America/New_York', label: 'Eastern Time (ET)' },
+  { value: 'America/Chicago', label: 'Central Time (CT)' },
+  { value: 'America/Denver', label: 'Mountain Time (MT)' },
+  { value: 'America/Phoenix', label: 'Arizona (MT - no DST)' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time (PT)' },
+  { value: 'America/Anchorage', label: 'Alaska Time (AKT)' },
+  { value: 'Pacific/Honolulu', label: 'Hawaii Time (HT)' },
+];
+
+// Get timezone label for display
+const getTimezoneLabel = (tz: string) => {
+  const common = COMMON_TIMEZONES.find(t => t.value === tz);
+  if (common) return common.label;
+  return tz.replace(/_/g, ' ');
+};
+
+// Convert a date/time in a specific timezone to UTC
+const toUTCDate = (dateStr: string, timeStr: string, tz: string): Date => {
+  // Our initial guess: treat the input as UTC
+  const guess = new Date(`${dateStr}T${timeStr}:00Z`);
+
+  // What does this moment look like in the target timezone?
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+
+  const inTz = formatter.format(guess); // e.g., "2026-03-26, 07:00:00" if input was 14:00Z and TZ is UTC-7
+  const inTzAsUTC = new Date(inTz.replace(', ', 'T') + 'Z');
+
+  // The target is dateStr/timeStr in the timezone
+  const target = new Date(`${dateStr}T${timeStr}:00Z`);
+
+  // How far is our guess's representation from the target?
+  const diffMs = target.getTime() - inTzAsUTC.getTime();
+
+  // Adjust guess by this difference
+  return new Date(guess.getTime() + diffMs);
+};
 
 // Helper to format phone number
 const formatPhoneNumber = (value: string) => {
@@ -60,12 +108,33 @@ export default function ScheduleVideoCallModal({
   const [scheduledTime, setScheduledTime] = useState('');
   const [addToCalendar, setAddToCalendar] = useState(true);
 
-  // Check if user has Google Calendar connected
+  // Timezone state
+  const [timezone, setTimezone] = useState('');
+  const [showTimezoneSelect, setShowTimezoneSelect] = useState(false);
+  const [savingTimezone, setSavingTimezone] = useState(false);
+
+  // Calendar description state
+  const [calendarDescription, setCalendarDescription] = useState('');
+  const [showDescriptionEdit, setShowDescriptionEdit] = useState(false);
+
+  // Get browser's detected timezone as fallback
+  const detectedTimezone = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return 'America/New_York';
+    }
+  }, []);
+
+  // Check if user has Google Calendar connected and load timezone
   useEffect(() => {
     if (isOpen && user) {
       checkCalendarConnection();
+      // Load saved timezone or use detected
+      const savedTimezone = (user.publicMetadata as any)?.calendarTimezone;
+      setTimezone(savedTimezone || detectedTimezone);
     }
-  }, [isOpen, user]);
+  }, [isOpen, user, detectedTimezone]);
 
   // Set default date/time and pre-fill form when modal opens
   useEffect(() => {
@@ -79,7 +148,8 @@ export default function ScheduleVideoCallModal({
 
       // Pre-fill customer info from project
       // Use project name as customer name (per business logic)
-      setCustomerName(initialCustomerName || projectName || '');
+      const name = initialCustomerName || projectName || '';
+      setCustomerName(name);
 
       // Format phone if provided
       if (initialCustomerPhone) {
@@ -90,6 +160,10 @@ export default function ScheduleVideoCallModal({
       if (initialCustomerEmail) {
         setCustomerEmail(initialCustomerEmail);
       }
+
+      // Set default calendar description
+      setCalendarDescription(`Please join the video call at the scheduled time. Make sure you're in a well-lit area and have access to the rooms/items we'll be reviewing.`);
+      setShowDescriptionEdit(false);
     }
   }, [isOpen, initialCustomerName, initialCustomerPhone, initialCustomerEmail, projectName]);
 
@@ -110,6 +184,30 @@ export default function ScheduleVideoCallModal({
     setCustomerPhone(formatted);
   };
 
+  const handleTimezoneChange = async (newTimezone: string) => {
+    setTimezone(newTimezone);
+    setShowTimezoneSelect(false);
+    setSavingTimezone(true);
+
+    try {
+      const response = await fetch('/api/user/timezone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: newTimezone }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save timezone');
+      }
+      // Silently saved - no toast needed in modal context
+    } catch (error) {
+      console.error('Error saving timezone:', error);
+      // Don't revert - still use the selected timezone for this session
+    } finally {
+      setSavingTimezone(false);
+    }
+  };
+
   const handleSchedule = async () => {
     // Validate fields
     if (!customerName.trim()) {
@@ -128,8 +226,10 @@ export default function ScheduleVideoCallModal({
       return;
     }
 
-    // Combine date and time
-    const scheduledFor = new Date(`${scheduledDate}T${scheduledTime}`);
+    // Combine date and time, converting from selected timezone to UTC
+    const selectedTimezone = timezone || detectedTimezone;
+    const scheduledFor = toUTCDate(scheduledDate, scheduledTime, selectedTimezone);
+
     if (scheduledFor <= new Date()) {
       toast.error('Scheduled time must be in the future');
       return;
@@ -148,8 +248,9 @@ export default function ScheduleVideoCallModal({
           customerPhone: `+1${phoneDigits}`,
           customerEmail: customerEmail.trim() || undefined,
           scheduledFor: scheduledFor.toISOString(),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezone: timezone || detectedTimezone,
           addToCalendar: addToCalendar && hasCalendarConnected,
+          calendarDescription: calendarDescription.trim() || undefined,
         }),
       });
 
@@ -181,6 +282,9 @@ export default function ScheduleVideoCallModal({
     setScheduledDate('');
     setScheduledTime('');
     setAddToCalendar(true);
+    setShowTimezoneSelect(false);
+    setCalendarDescription('');
+    setShowDescriptionEdit(false);
     onClose();
   };
 
@@ -299,6 +403,47 @@ export default function ScheduleVideoCallModal({
               </div>
             </div>
 
+            {/* Timezone */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">
+                  <Globe className="inline w-4 h-4 mr-1" />
+                  Timezone
+                </label>
+                {savingTimezone && (
+                  <Loader2 className="w-3 h-3 animate-spin text-gray-400" />
+                )}
+              </div>
+
+              {showTimezoneSelect ? (
+                <div className="relative">
+                  <select
+                    value={timezone}
+                    onChange={(e) => handleTimezoneChange(e.target.value)}
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer"
+                    autoFocus
+                    onBlur={() => setShowTimezoneSelect(false)}
+                  >
+                    {COMMON_TIMEZONES.map((tz) => (
+                      <option key={tz.value} value={tz.value}>
+                        {tz.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowTimezoneSelect(true)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 text-left flex items-center justify-between cursor-pointer transition-colors"
+                >
+                  <span className="text-gray-700">{getTimezoneLabel(timezone)}</span>
+                  <span className="text-xs text-blue-600 hover:text-blue-700">Change</span>
+                </button>
+              )}
+            </div>
+
             {/* Add to Calendar checkbox */}
             {!checkingCalendar && (
               <div className="bg-gray-50 p-4 rounded-lg">
@@ -333,6 +478,40 @@ export default function ScheduleVideoCallModal({
                         Connect in Settings to add events
                       </a>
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Calendar event description - only show when adding to calendar */}
+            {addToCalendar && hasCalendarConnected && customerEmail && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowDescriptionEdit(!showDescriptionEdit)}
+                  className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 cursor-pointer"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>
+                    {showDescriptionEdit ? 'Hide' : 'Edit'} calendar invite description
+                  </span>
+                  <ChevronDown
+                    className={`w-4 h-4 transition-transform ${showDescriptionEdit ? 'rotate-180' : ''}`}
+                  />
+                </button>
+
+                {showDescriptionEdit && (
+                  <div className="mt-2">
+                    <textarea
+                      value={calendarDescription}
+                      onChange={(e) => setCalendarDescription(e.target.value)}
+                      rows={4}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      placeholder="Instructions for the customer..."
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      This message appears in the customer's calendar invite
+                    </p>
                   </div>
                 )}
               </div>

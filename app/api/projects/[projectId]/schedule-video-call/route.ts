@@ -7,7 +7,9 @@ import Branding from '@/models/Branding';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
-import { createCalendarEvent, hasGoogleCalendarConnected } from '@/lib/google-calendar';
+import { createVideoCallCalendarEvents, hasGoogleCalendarConnected } from '@/lib/google-calendar';
+import { generateJoinUrl } from '@/lib/video-call-tokens';
+import { logVideoCallScheduled } from '@/lib/activity-logger';
 import { randomBytes } from 'crypto';
 
 // Default templates
@@ -82,6 +84,7 @@ export async function POST(
       scheduledFor,
       timezone = 'America/New_York',
       addToCalendar = false,
+      calendarDescription,
     } = body;
 
     // Validate required fields
@@ -132,8 +135,25 @@ export async function POST(
       ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`
       : user.emailAddresses[0]?.emailAddress || 'Agent';
 
-    // Build video call URL
-    const videoCallLink = `${process.env.NEXT_PUBLIC_APP_URL}/video-call/${roomId}?projectId=${projectId}&name=${encodeURIComponent(customerName)}`;
+    // Create the scheduled video call record first (we need the _id for tokens)
+    const scheduledCall = await ScheduledVideoCall.create({
+      projectId,
+      userId,
+      organizationId: organizationId || undefined,
+      scheduledFor: scheduledDate,
+      timezone,
+      status: 'scheduled',
+      customerName,
+      customerPhone: formatPhoneForTwilio(customerPhone),
+      customerEmail: customerEmail || undefined,
+      roomId,
+      remindersSent: [],
+    });
+
+    // Generate tokenized join URLs
+    const scheduledCallId = scheduledCall._id.toString();
+    const agentJoinLink = generateJoinUrl(scheduledCallId, 'agent', scheduledDate);
+    const customerJoinLink = generateJoinUrl(scheduledCallId, 'customer', scheduledDate);
 
     // Format date and time for templates
     const dateFormatter = new Intl.DateTimeFormat('en-US', {
@@ -152,31 +172,16 @@ export async function POST(
     const formattedDate = dateFormatter.format(scheduledDate);
     const formattedTime = timeFormatter.format(scheduledDate);
 
-    // Template variables
+    // Template variables - use customer link for SMS/customer-facing content
     const templateVariables = {
       customerName,
       companyName,
       projectName: project.name,
       agentName,
-      videoCallLink,
+      videoCallLink: customerJoinLink,
       scheduledDate: formattedDate,
       scheduledTime: formattedTime,
     };
-
-    // Create the scheduled video call record
-    const scheduledCall = await ScheduledVideoCall.create({
-      projectId,
-      userId,
-      organizationId: organizationId || undefined,
-      scheduledFor: scheduledDate,
-      timezone,
-      status: 'scheduled',
-      customerName,
-      customerPhone: formatPhoneForTwilio(customerPhone),
-      customerEmail: customerEmail || undefined,
-      roomId,
-      remindersSent: [],
-    });
 
     // Send confirmation SMS
     const smsMessage = replaceTemplateVariables(confirmationTemplate, templateVariables);
@@ -205,35 +210,88 @@ export async function POST(
       // Don't fail the whole request, just log it
     }
 
-    // Create Google Calendar event if requested and user has calendar connected
+    // Create Google Calendar events if requested and user has calendar connected
     let googleCalendarEventId: string | null = null;
+    let customerCalendarEventId: string | null = null;
+
     if (addToCalendar) {
       const hasCalendar = await hasGoogleCalendarConnected(userId);
       if (hasCalendar) {
-        const calendarDescription = replaceTemplateVariables(inviteTemplate, templateVariables);
-        const calendarTitle = `${companyName} <> ${project.name}`;
+        // Separate titles for agent and customer events
+        const agentTitle = `Video Call: ${customerName}`;
+        const customerTitle = `${companyName} Video Call`;
+
+        // Agent-specific description
+        const agentDescription = `Video Inventory Call with ${customerName}
+
+Click here to join: ${agentJoinLink}
+
+Customer: ${customerName}
+Phone: ${customerPhone}
+${customerEmail ? `Email: ${customerEmail}` : ''}
+
+---
+${formattedDate} at ${formattedTime}`;
+
+        // Customer-facing description - use custom description if provided
+        let customerDescription: string;
+        if (calendarDescription) {
+          // Build description with custom message from user
+          customerDescription = `Video Inventory Call
+
+Join here: ${customerJoinLink}
+
+${calendarDescription}
+
+---
+Scheduled by ${agentName}
+${companyName}`;
+        } else {
+          customerDescription = replaceTemplateVariables(inviteTemplate, {
+            ...templateVariables,
+            videoCallLink: customerJoinLink,
+          });
+        }
 
         // Default call duration: 30 minutes
         const endTime = new Date(scheduledDate.getTime() + 30 * 60 * 1000);
 
-        googleCalendarEventId = await createCalendarEvent({
+        const calendarResult = await createVideoCallCalendarEvents({
           userId,
-          title: calendarTitle,
-          description: calendarDescription,
+          agentTitle,
+          customerTitle,
+          agentDescription,
+          customerDescription,
           startTime: scheduledDate,
           endTime,
-          attendeeEmail: customerEmail,
+          customerEmail: customerEmail || undefined,
           timezone,
         });
 
-        if (googleCalendarEventId) {
+        googleCalendarEventId = calendarResult.agentEventId;
+        customerCalendarEventId = calendarResult.customerEventId;
+
+        // Update scheduled call with calendar event IDs
+        if (googleCalendarEventId || customerCalendarEventId) {
           await ScheduledVideoCall.updateOne(
             { _id: scheduledCall._id },
-            { googleCalendarEventId }
+            {
+              ...(googleCalendarEventId && { googleCalendarEventId }),
+              ...(customerCalendarEventId && { customerCalendarEventId }),
+            }
           );
         }
       }
     }
+
+    // Log activity
+    await logVideoCallScheduled(projectId, 'scheduled', {
+      customerName,
+      customerPhone: formatPhoneForTwilio(customerPhone),
+      roomId,
+      scheduledFor: scheduledDate,
+      timezone,
+    });
 
     return NextResponse.json({
       success: true,
@@ -243,8 +301,10 @@ export async function POST(
         scheduledFor: scheduledDate,
         customerName,
         status: 'scheduled',
-        videoCallLink,
+        agentJoinLink,
+        customerJoinLink,
         googleCalendarEventId,
+        customerCalendarEventId,
       },
     });
   } catch (error) {

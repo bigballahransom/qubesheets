@@ -1,14 +1,35 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useUser } from '@clerk/nextjs';
-import { CalendarDays, CheckCircle, Loader2, ExternalLink, Unlink } from 'lucide-react';
+import { CalendarDays, CheckCircle, Loader2, ExternalLink, Unlink, Globe, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
 import { toast } from 'sonner';
 import IntercomChat from '@/components/IntercomChat';
+
+// Common US timezones (most users will be in these)
+const COMMON_TIMEZONES = [
+  { value: 'America/New_York', label: 'Eastern Time (ET)' },
+  { value: 'America/Chicago', label: 'Central Time (CT)' },
+  { value: 'America/Denver', label: 'Mountain Time (MT)' },
+  { value: 'America/Phoenix', label: 'Arizona (MT - no DST)' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time (PT)' },
+  { value: 'America/Anchorage', label: 'Alaska Time (AKT)' },
+  { value: 'Pacific/Honolulu', label: 'Hawaii Time (HT)' },
+];
+
+// Get all available timezones for the "Other" option
+const getAllTimezones = () => {
+  try {
+    return Intl.supportedValuesOf('timeZone');
+  } catch {
+    // Fallback for older browsers
+    return COMMON_TIMEZONES.map(tz => tz.value);
+  }
+};
 
 export default function CalendarSettingsPage() {
   const { user, isLoaded } = useUser();
@@ -22,11 +43,31 @@ export default function CalendarSettingsPage() {
     hasCalendarScope: boolean;
   } | null>(null);
 
+  // Timezone state
+  const [timezone, setTimezone] = useState<string>('');
+  const [savingTimezone, setSavingTimezone] = useState(false);
+  const [showAllTimezones, setShowAllTimezones] = useState(false);
+
+  // Get browser's detected timezone
+  const detectedTimezone = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return 'America/New_York';
+    }
+  }, []);
+
+  // All timezones for the expanded dropdown
+  const allTimezones = useMemo(() => getAllTimezones(), []);
+
   useEffect(() => {
     if (isLoaded && user) {
       checkGoogleConnection();
+      // Load saved timezone from user metadata
+      const savedTimezone = (user.publicMetadata as any)?.calendarTimezone;
+      setTimezone(savedTimezone || detectedTimezone);
     }
-  }, [isLoaded, user]);
+  }, [isLoaded, user, detectedTimezone]);
 
   // Check URL params for OAuth callback status
   useEffect(() => {
@@ -111,7 +152,7 @@ export default function CalendarSettingsPage() {
       // Get the OAuth URL and redirect
       const url = externalAccount?.verification?.externalVerificationRedirectURL;
       if (url) {
-        window.location.href = url;
+        window.location.href = url.toString();
       } else {
         throw new Error('Failed to get OAuth URL');
       }
@@ -171,6 +212,36 @@ export default function CalendarSettingsPage() {
       setDisconnecting(false);
     }
   };
+
+  const handleTimezoneChange = async (newTimezone: string) => {
+    const previousTimezone = timezone;
+    setTimezone(newTimezone);
+    setSavingTimezone(true);
+
+    try {
+      const response = await fetch('/api/user/timezone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: newTimezone }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save timezone');
+      }
+
+      toast.success('Timezone updated');
+    } catch (error) {
+      console.error('Error saving timezone:', error);
+      toast.error('Failed to save timezone');
+      // Revert on error
+      setTimezone(previousTimezone);
+    } finally {
+      setSavingTimezone(false);
+    }
+  };
+
+  // Check if current timezone is in common list
+  const isCommonTimezone = COMMON_TIMEZONES.some(tz => tz.value === timezone);
 
   return (
     <>
@@ -285,6 +356,82 @@ export default function CalendarSettingsPage() {
                           Connect Google Calendar
                         </Button>
                       )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Timezone Setting */}
+                <div className="bg-white rounded-lg shadow-sm border p-6">
+                  <div className="flex items-start gap-4">
+                    <div className="flex-shrink-0">
+                      <div className="w-12 h-12 bg-blue-50 border rounded-lg flex items-center justify-center">
+                        <Globe className="w-6 h-6 text-blue-600" />
+                      </div>
+                    </div>
+
+                    <div className="flex-1">
+                      <h2 className="text-lg font-medium mb-1">Timezone</h2>
+                      <p className="text-sm text-gray-600 mb-4">
+                        Set your timezone for scheduling video calls. Calendar events and SMS reminders will use this timezone.
+                      </p>
+
+                      <div className="space-y-3">
+                        <div className="relative">
+                          <select
+                            value={isCommonTimezone || showAllTimezones ? timezone : 'other'}
+                            onChange={(e) => {
+                              if (e.target.value === 'other') {
+                                setShowAllTimezones(true);
+                              } else {
+                                setShowAllTimezones(false);
+                                handleTimezoneChange(e.target.value);
+                              }
+                            }}
+                            disabled={savingTimezone}
+                            className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer disabled:opacity-50"
+                          >
+                            {COMMON_TIMEZONES.map((tz) => (
+                              <option key={tz.value} value={tz.value}>
+                                {tz.label}
+                              </option>
+                            ))}
+                            <option value="other">Other timezone...</option>
+                          </select>
+                          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        </div>
+
+                        {/* Show all timezones dropdown when "Other" is selected */}
+                        {showAllTimezones && (
+                          <div className="relative">
+                            <select
+                              value={timezone}
+                              onChange={(e) => handleTimezoneChange(e.target.value)}
+                              disabled={savingTimezone}
+                              className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer disabled:opacity-50"
+                            >
+                              {allTimezones.map((tz) => (
+                                <option key={tz} value={tz}>
+                                  {tz.replace(/_/g, ' ')}
+                                </option>
+                              ))}
+                            </select>
+                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                          </div>
+                        )}
+
+                        {savingTimezone && (
+                          <div className="flex items-center gap-2 text-sm text-gray-500">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Saving...
+                          </div>
+                        )}
+
+                        {timezone === detectedTimezone && (
+                          <p className="text-xs text-gray-500">
+                            This matches your browser's detected timezone.
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

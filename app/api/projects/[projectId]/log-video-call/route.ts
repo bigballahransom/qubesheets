@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
+import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import { logVideoCall } from '@/lib/activity-logger';
 
 export async function POST(
@@ -63,6 +64,18 @@ export async function POST(
         userName: userName || 'Unknown participant'
       }
     );
+
+    // Update scheduled call status to completed (fallback if webhook didn't fire)
+    if (roomId) {
+      const updatedCall = await ScheduledVideoCall.findOneAndUpdate(
+        { roomId, status: { $in: ['scheduled', 'started'] } },
+        { status: 'completed', completedAt: new Date() },
+        { new: true }
+      );
+      if (updatedCall) {
+        console.log(`✅ Marked scheduled call ${updatedCall._id} as completed via log-video-call`);
+      }
+    }
 
     return NextResponse.json({
       success: true,

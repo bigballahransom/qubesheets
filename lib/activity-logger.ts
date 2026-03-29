@@ -174,3 +174,23 @@ export async function logCrewLinkShared(
     }
   });
 }
+
+export async function logVideoCallScheduled(
+  projectId: string,
+  action: 'scheduled' | 'rescheduled' | 'cancelled',
+  details: {
+    customerName: string;
+    customerPhone: string;
+    roomId: string;
+    scheduledFor: Date;
+    timezone: string;
+    previousScheduledFor?: Date;
+  }
+) {
+  return logActivity({
+    projectId,
+    activityType: 'video_call_scheduled',
+    action,
+    details
+  });
+}

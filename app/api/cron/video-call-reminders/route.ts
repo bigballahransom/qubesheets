@@ -4,9 +4,13 @@ import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import Branding from '@/models/Branding';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
+import { generateJoinUrl } from '@/lib/video-call-tokens';
 
-// Default reminder template
-const DEFAULT_REMINDER_TEMPLATE = `Reminder: Your video call with {companyName} is in {timeUntil}.
+// 1-hour reminder - no link, just a heads up
+const DEFAULT_1H_REMINDER_TEMPLATE = `Reminder: Your video call with {companyName} is in {timeUntil}. We'll send you the join link closer to the call time.`;
+
+// 15-minute reminder - includes the link
+const DEFAULT_15M_REMINDER_TEMPLATE = `Your video call with {companyName} starts in {timeUntil}!
 
 Join here: {videoCallLink}`;
 
@@ -145,9 +149,14 @@ async function sendReminder(
   const branding = await Branding.findOne(brandingQuery);
   const companyName = branding?.companyName || 'Your Company';
 
-  // Get reminder template from org settings
-  let reminderTemplate = DEFAULT_REMINDER_TEMPLATE;
-  if (call.organizationId) {
+  // Use different default templates based on reminder type
+  const isOneHourReminder = reminderType === 'reminder_1h';
+  let reminderTemplate = isOneHourReminder
+    ? DEFAULT_1H_REMINDER_TEMPLATE
+    : DEFAULT_15M_REMINDER_TEMPLATE;
+
+  // Check for custom template in org settings (only for 15min, since 1hr doesn't need link)
+  if (!isOneHourReminder && call.organizationId) {
     const orgSettings = await OrganizationSettings.findOne({
       organizationId: call.organizationId,
     });
@@ -156,8 +165,12 @@ async function sendReminder(
     }
   }
 
-  // Build video call link
-  const videoCallLink = `${process.env.NEXT_PUBLIC_APP_URL}/video-call/${call.roomId}?projectId=${call.projectId}&name=${encodeURIComponent(call.customerName)}`;
+  // Generate tokenized customer join link (only needed for 15-minute reminder)
+  const videoCallLink = generateJoinUrl(
+    call._id.toString(),
+    'customer',
+    new Date(call.scheduledFor)
+  );
 
   // Replace template variables
   const message = replaceTemplateVariables(reminderTemplate, {
