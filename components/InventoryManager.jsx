@@ -2472,9 +2472,14 @@ useEffect(() => {
     
     yPosition += 10;
     
-    // Prepare table data
+    // Prepare table data - filter out box items for main inventory table
     const tableHeaders = spreadsheetColumns.map(col => col.name);
-    const tableRows = spreadsheetRows.map(row => {
+    const inventoryOnlyRows = spreadsheetRows.filter(row =>
+      row.itemType !== 'boxes_needed' &&
+      row.itemType !== 'existing_box' &&
+      row.itemType !== 'packed_box'
+    );
+    const tableRows = inventoryOnlyRows.map(row => {
       return spreadsheetColumns.map(col => {
         const value = row.cells[col.id] || '';
         // Handle going status display
@@ -2515,7 +2520,7 @@ useEffect(() => {
     
     // Draw rows
     tableRows.forEach((row, rowIndex) => {
-      const rowData = spreadsheetRows[rowIndex];
+      const rowData = inventoryOnlyRows[rowIndex];
       const goingValue = rowData.cells?.col6 || 'going';
       const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
       
@@ -2600,7 +2605,269 @@ useEffect(() => {
         doc.setFont('helvetica', 'normal');
       }
     });
-    
+
+    // Add Packed Boxes section - render each row individually (same as spreadsheet)
+    const packedBoxes = spreadsheetRows.filter(row =>
+      row.itemType === 'existing_box' || row.itemType === 'packed_box'
+    );
+    if (packedBoxes.length > 0) {
+      // Prepare row data - same format as inventory table
+      const packedTableRows = packedBoxes.map(row => {
+        return spreadsheetColumns.map(col => {
+          const value = row.cells[col.id] || '';
+          if (col.id === 'col6' && value.includes('(')) {
+            return value;
+          }
+          return value;
+        });
+      });
+
+      // Check if we need a new page
+      if (currentY > doc.internal.pageSize.height - 60) {
+        doc.addPage();
+        currentY = 20;
+      } else {
+        currentY += 15;
+      }
+
+      // Section header
+      doc.setFontSize(16);
+      doc.setTextColor(...primaryColor);
+      doc.text('Packed Boxes', 20, currentY);
+      currentY += 10;
+
+      // Draw header - same style as inventory table
+      doc.setFillColor(...primaryColor);
+      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+
+      let packedXPos = startX;
+      tableHeaders.forEach((header, i) => {
+        doc.text(String(header || ''), packedXPos + cellPadding, currentY + rowHeight - 2);
+        packedXPos += colWidths[i];
+      });
+
+      currentY += rowHeight;
+      doc.setFont('helvetica', 'normal');
+
+      // Draw rows - same logic as inventory table
+      packedTableRows.forEach((row, rowIndex) => {
+        const rowData = packedBoxes[rowIndex];
+        const goingValue = rowData.cells?.col6 || 'going';
+        const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
+
+        let goingCount = quantity;
+        if (goingValue === 'not going') {
+          goingCount = 0;
+        } else if (goingValue.includes('(') && goingValue.includes('/')) {
+          const match = goingValue.match(/going \((\d+)\/\d+\)/);
+          goingCount = match ? parseInt(match[1]) : quantity;
+        }
+
+        const isFullyNotGoing = goingCount === 0;
+        const isPartial = goingCount > 0 && goingCount < quantity;
+
+        // Row background
+        if (isFullyNotGoing) {
+          doc.setFillColor(254, 226, 226); // red-100
+        } else if (isPartial) {
+          doc.setFillColor(254, 249, 195); // yellow-100
+        } else if (rowIndex % 2 === 0) {
+          doc.setFillColor(...lightGray);
+        } else {
+          doc.setFillColor(255, 255, 255);
+        }
+
+        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+
+        // Draw cell borders
+        doc.setDrawColor(200, 200, 200);
+        doc.rect(startX, currentY, totalWidth, rowHeight, 'S');
+
+        // Draw cell content
+        doc.setTextColor(...textColor);
+        doc.setFontSize(8);
+
+        packedXPos = startX;
+        row.forEach((cell, i) => {
+          const text = (cell !== null && cell !== undefined) ? String(cell) : '';
+          const maxWidth = colWidths[i] - cellPadding * 2;
+
+          let displayText = text;
+          while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
+            displayText = displayText.slice(0, -1);
+          }
+          if (displayText !== text && displayText.length > 3) {
+            displayText = displayText.slice(0, -3) + '...';
+          }
+
+          doc.text(displayText, packedXPos + cellPadding, currentY + rowHeight - 2);
+
+          if (i < row.length - 1) {
+            doc.line(packedXPos + colWidths[i], currentY, packedXPos + colWidths[i], currentY + rowHeight);
+          }
+
+          packedXPos += colWidths[i];
+        });
+
+        currentY += rowHeight;
+
+        // Check if we need a new page
+        if (currentY > doc.internal.pageSize.height - 30) {
+          doc.addPage();
+          currentY = 20;
+
+          // Redraw header on new page
+          doc.setFillColor(...primaryColor);
+          doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+
+          packedXPos = startX;
+          tableHeaders.forEach((header, i) => {
+            doc.text(String(header || ''), packedXPos + cellPadding, currentY + rowHeight - 2);
+            packedXPos += colWidths[i];
+          });
+
+          currentY += rowHeight;
+          doc.setFont('helvetica', 'normal');
+        }
+      });
+    }
+
+    // Add Recommended Boxes section - render each row individually (same as spreadsheet)
+    const recommendedBoxes = spreadsheetRows.filter(row => row.itemType === 'boxes_needed');
+    if (recommendedBoxes.length > 0) {
+      // Prepare row data - same format as inventory table
+      const recommendedTableRows = recommendedBoxes.map(row => {
+        return spreadsheetColumns.map(col => {
+          const value = row.cells[col.id] || '';
+          if (col.id === 'col6' && value.includes('(')) {
+            return value;
+          }
+          return value;
+        });
+      });
+
+      // Check if we need a new page
+      if (currentY > doc.internal.pageSize.height - 60) {
+        doc.addPage();
+        currentY = 20;
+      } else {
+        currentY += 15;
+      }
+
+      // Section header
+      doc.setFontSize(16);
+      doc.setTextColor(...primaryColor);
+      doc.text('Recommended Boxes', 20, currentY);
+      currentY += 10;
+
+      // Draw header - same style as inventory table
+      doc.setFillColor(...primaryColor);
+      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+
+      let boxXPos = startX;
+      tableHeaders.forEach((header, i) => {
+        doc.text(String(header || ''), boxXPos + cellPadding, currentY + rowHeight - 2);
+        boxXPos += colWidths[i];
+      });
+
+      currentY += rowHeight;
+      doc.setFont('helvetica', 'normal');
+
+      // Draw rows - same logic as inventory table
+      recommendedTableRows.forEach((row, rowIndex) => {
+        const rowData = recommendedBoxes[rowIndex];
+        const goingValue = rowData.cells?.col6 || 'going';
+        const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
+
+        let goingCount = quantity;
+        if (goingValue === 'not going') {
+          goingCount = 0;
+        } else if (goingValue.includes('(') && goingValue.includes('/')) {
+          const match = goingValue.match(/going \((\d+)\/\d+\)/);
+          goingCount = match ? parseInt(match[1]) : quantity;
+        }
+
+        const isFullyNotGoing = goingCount === 0;
+        const isPartial = goingCount > 0 && goingCount < quantity;
+
+        // Row background
+        if (isFullyNotGoing) {
+          doc.setFillColor(254, 226, 226); // red-100
+        } else if (isPartial) {
+          doc.setFillColor(254, 249, 195); // yellow-100
+        } else if (rowIndex % 2 === 0) {
+          doc.setFillColor(...lightGray);
+        } else {
+          doc.setFillColor(255, 255, 255);
+        }
+
+        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+
+        // Draw cell borders
+        doc.setDrawColor(200, 200, 200);
+        doc.rect(startX, currentY, totalWidth, rowHeight, 'S');
+
+        // Draw cell content
+        doc.setTextColor(...textColor);
+        doc.setFontSize(8);
+
+        boxXPos = startX;
+        row.forEach((cell, i) => {
+          const text = (cell !== null && cell !== undefined) ? String(cell) : '';
+          const maxWidth = colWidths[i] - cellPadding * 2;
+
+          let displayText = text;
+          while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
+            displayText = displayText.slice(0, -1);
+          }
+          if (displayText !== text && displayText.length > 3) {
+            displayText = displayText.slice(0, -3) + '...';
+          }
+
+          doc.text(displayText, boxXPos + cellPadding, currentY + rowHeight - 2);
+
+          if (i < row.length - 1) {
+            doc.line(boxXPos + colWidths[i], currentY, boxXPos + colWidths[i], currentY + rowHeight);
+          }
+
+          boxXPos += colWidths[i];
+        });
+
+        currentY += rowHeight;
+
+        // Check if we need a new page
+        if (currentY > doc.internal.pageSize.height - 30) {
+          doc.addPage();
+          currentY = 20;
+
+          // Redraw header on new page
+          doc.setFillColor(...primaryColor);
+          doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+
+          boxXPos = startX;
+          tableHeaders.forEach((header, i) => {
+            doc.text(String(header || ''), boxXPos + cellPadding, currentY + rowHeight - 2);
+            boxXPos += colWidths[i];
+          });
+
+          currentY += rowHeight;
+          doc.setFont('helvetica', 'normal');
+        }
+      });
+    }
+
     // Add AI summaries and notes sections
     const fetchAndAddNotes = async () => {
       try {
