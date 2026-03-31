@@ -1825,7 +1825,7 @@ export default function Spreadsheet({
           }
         } else if (column.name === 'PBO/CP' || column.name === 'Packed By') {
           // Static options for PBO/CP column
-          selectOptions = ['N/A', 'PBO', 'CP'];
+          selectOptions = ['N/A', 'PBO', 'CP', 'Crated'];
           defaultValue = 'N/A';
         } else if (column.name === 'Location') {
           // Dynamic room options for Location column

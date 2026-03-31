@@ -38,7 +38,7 @@ export interface IInventoryItem extends Document {
   going?: string; // "going" or "not going" - defaults to "going" if null
   goingQuantity?: number; // How many of this item are going (0 to quantity)
   goingUpdateSource?: IGoingUpdateSource; // Tracks source of going status changes
-  packed_by?: string; // "N/A", "PBO", or "CP" - who packed the item
+  packed_by?: string; // "N/A", "PBO", "CP", or "Crated" - who packed the item
   fragile?: boolean;
   special_handling?: string;
   box_recommendation?: IBoxRecommendation;
@@ -121,7 +121,7 @@ const InventoryItemSchema: Schema = new Schema(
     going: { type: String, enum: ['going', 'not going', 'partial'], default: 'going' },
     goingQuantity: { type: Number, min: 0 },
     goingUpdateSource: { type: GoingUpdateSourceSchema },
-    packed_by: { type: String, enum: ['N/A', 'PBO', 'CP'], default: 'N/A' },
+    packed_by: { type: String, enum: ['N/A', 'PBO', 'CP', 'Crated'], default: 'N/A' },
     fragile: { type: Boolean, default: false },
     special_handling: { type: String },
     box_recommendation: { type: BoxRecommendationSchema },
