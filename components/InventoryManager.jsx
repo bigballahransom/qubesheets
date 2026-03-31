@@ -1551,6 +1551,37 @@ useEffect(() => {
     }
   }, [currentProject]);
 
+  // Handle location updates from Spreadsheet
+  const handleLocationChange = useCallback(async (inventoryItemId, newLocation) => {
+    console.log(`🔄 Updating inventory item ${inventoryItemId} location to ${newLocation}`);
+
+    // Update local inventory state (don't regenerate rows - the spreadsheet already updated its display)
+    setInventoryItems(prev =>
+      prev.map(item =>
+        item._id === inventoryItemId
+          ? { ...item, location: newLocation }
+          : item
+      )
+    );
+
+    // Persist to database
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: newLocation }),
+      });
+
+      if (!response.ok) {
+        console.error(`Failed to persist location update for item ${inventoryItemId}`);
+      } else {
+        console.log(`✅ Successfully persisted location ${newLocation} for item ${inventoryItemId}`);
+      }
+    } catch (error) {
+      console.error('Error persisting location update:', error);
+    }
+  }, [currentProject]);
+
   // Handle going status updates from Spreadsheet dropdown (without regenerating rows)
   // This avoids triggering initialRows change which causes scroll jump
   const handleGoingStatusChange = useCallback(async (inventoryItemId, newGoingQuantity) => {
@@ -3615,6 +3646,7 @@ const ProcessingNotification = () => {
                       onInventoryUpdate={handleInventoryUpdate}
                       onGoingStatusChange={handleGoingStatusChange}
                       onPackedByUpdate={handlePackedByUpdate}
+                      onLocationChange={handleLocationChange}
                       onBulkPackedByUpdate={handleBulkPackedByUpdate}
                       onAddStockItem={handleAddStockItems}
                       projectId={projectId}

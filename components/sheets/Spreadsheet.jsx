@@ -180,6 +180,7 @@ export default function Spreadsheet({
   onInventoryUpdate = null,
   onGoingStatusChange = null,
   onPackedByUpdate = null,
+  onLocationChange = null,
   onBulkPackedByUpdate = null,
   onAddStockItem = null,
   projectId = null,
@@ -1423,6 +1424,33 @@ export default function Spreadsheet({
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
 
+    // Persist location changes to InventoryItem records in the database
+    if (onLocationChange) {
+      if (updateAllFromMedia) {
+        // Get all items from the same media source that have inventoryItemId
+        const itemsFromSameMedia = rows.filter(r => {
+          if (currentRow?.sourceImageId) {
+            return r.sourceImageId === currentRow.sourceImageId;
+          } else if (currentRow?.sourceVideoId) {
+            return r.sourceVideoId === currentRow.sourceVideoId;
+          }
+          return r.id === currentRowId;
+        });
+
+        // Update each inventory item's location in the database
+        itemsFromSameMedia.forEach(row => {
+          if (row.inventoryItemId) {
+            onLocationChange(row.inventoryItemId, newLocation);
+          }
+        });
+      } else {
+        // Update only the specific item
+        if (currentRow?.inventoryItemId) {
+          onLocationChange(currentRow.inventoryItemId, newLocation);
+        }
+      }
+    }
+
     // Show appropriate toast notification
     toast.success(
       affectedItemCount > 1
@@ -1433,7 +1461,7 @@ export default function Spreadsheet({
         duration: 2000,
       }
     );
-  }, [rows, setSaveStatus, onRowsChange]);
+  }, [rows, setSaveStatus, onRowsChange, onLocationChange]);
 
   const renderCellContent = useCallback((colType, value, rowId, colId, row, column) => {
     // Skip activeCell editing mode for col3 - it has its own inline input with +/- buttons
