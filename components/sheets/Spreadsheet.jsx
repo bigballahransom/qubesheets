@@ -1,7 +1,7 @@
 // components/sheets/Spreadsheet.jsx
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react';
 import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info, Pencil, Check } from 'lucide-react';
 import VideoRecordingModal from '../VideoRecordingModal';
 import {
@@ -256,7 +256,9 @@ export default function Spreadsheet({
   const cellInputRef = useRef(null);
   const spreadsheetRef = useRef(null);
   const columnRefs = useRef({});
-  const scrollPositionRef = useRef({ top: 0, left: 0 });  // Track scroll position for preservation
+  const scrollPositionRef = useRef(null);  // Track scroll position for preservation
+  const localUpdateInProgressRef = useRef(false);  // Track local updates to prevent parent sync race condition
+  const localUpdateTimeoutRef = useRef(null);  // Track timeout to prevent race conditions from rapid clicks
   
 
   // Fetch media data on-demand when user clicks with caching and deduplication
@@ -501,32 +503,55 @@ export default function Spreadsheet({
   
   // Sync local rows with parent's initialRows when it changes
   // This ensures external updates (like ToggleGoingBadge) are reflected
+  // BUT skip updates that are just local changes echoing back from parent
   useEffect(() => {
-    if (initialRows && initialRows.length > 0) {
-      // Save current scroll position BEFORE updating rows
-      const savedScrollTop = spreadsheetRef.current?.scrollTop || 0;
-      const savedScrollLeft = spreadsheetRef.current?.scrollLeft || 0;
-
-      // Always sync with parent data to ensure consistency
-      setRows(initialRows);
+    // Skip sync if a local update is in progress (prevents race condition)
+    if (localUpdateInProgressRef.current) {
       setIsLoading(false);
+      return;
+    }
 
-      // Restore scroll position AFTER React updates the DOM
-      // Use double requestAnimationFrame to ensure DOM has fully updated
-      requestAnimationFrame(() => {
+    if (initialRows && initialRows.length > 0) {
+      // Check if this is a real structural change vs just a local update echoing back
+      // We compare by inventoryItemId and item name - quantity/going changes are local
+      setRows(currentRows => {
+        const hasRealChanges = currentRows.length !== initialRows.length ||
+          initialRows.some((newRow, i) => {
+            const oldRow = currentRows[i];
+            if (!oldRow) return true;
+            // Only sync if items were added/removed/reordered, not quantity/going changes
+            return oldRow.inventoryItemId !== newRow.inventoryItemId ||
+                   oldRow.cells?.col2 !== newRow.cells?.col2;
+          });
+
+        if (!hasRealChanges) {
+          // No structural changes - keep current local state (preserves scroll)
+          return currentRows;
+        }
+
+        // Real changes detected - sync with parent
+        // Save and restore scroll for structural changes
+        const savedScrollTop = spreadsheetRef.current?.scrollTop || 0;
+        const savedScrollLeft = spreadsheetRef.current?.scrollLeft || 0;
+
         requestAnimationFrame(() => {
-          if (spreadsheetRef.current) {
-            spreadsheetRef.current.scrollTop = savedScrollTop;
-            spreadsheetRef.current.scrollLeft = savedScrollLeft;
-          }
+          requestAnimationFrame(() => {
+            if (spreadsheetRef.current) {
+              spreadsheetRef.current.scrollTop = savedScrollTop;
+              spreadsheetRef.current.scrollLeft = savedScrollLeft;
+            }
+          });
         });
+
+        return initialRows;
       });
+      setIsLoading(false);
     } else if (!initialRows || initialRows.length === 0) {
       // No rows - start with empty spreadsheet
       setRows([]);
       setIsLoading(false);
     }
-  }, [initialRows, onRowsChange]);
+  }, [initialRows]);  // Removed onRowsChange - it changes every render!
   
   // Add this function to handle empty states in render
   const renderEmptyStateIfNeeded = () => {
@@ -557,6 +582,18 @@ export default function Spreadsheet({
   useEffect(() => {
     if (rows.length > 0) {
       setRowCount(`${rows.length}/${rows.length} rows`);
+    }
+  }, [rows]);
+
+  // Restore scroll position after local row updates (quantity changes, etc.)
+  // useLayoutEffect runs BEFORE browser paint, preventing visible jump
+  useLayoutEffect(() => {
+    if (scrollPositionRef.current && spreadsheetRef.current) {
+      const { top, left } = scrollPositionRef.current;
+      // Restore immediately - no RAF needed since useLayoutEffect is synchronous
+      spreadsheetRef.current.scrollTop = top;
+      spreadsheetRef.current.scrollLeft = left;
+      scrollPositionRef.current = null;
     }
   }, [rows]);
 
@@ -746,10 +783,49 @@ export default function Spreadsheet({
     }
   }, [activeCell, editingCellContent, rows, onQuantityChange, onRowsChange]);
 
+  // Helper: Parse goingQuantity from col6 display value
+  const parseGoingQuantity = useCallback((col6Value, quantity) => {
+    if (!col6Value || col6Value === 'going') {
+      return quantity; // All going
+    }
+    if (col6Value === 'not going') {
+      return 0;
+    }
+    // Parse "going (X/Y)" format
+    const match = col6Value.match(/going\s*\((\d+)\/(\d+)\)/);
+    if (match) {
+      return parseInt(match[1]);
+    }
+    return quantity; // Default to all going
+  }, []);
+
+  // Helper: Format col6 display value from goingQuantity and quantity
+  // Must match format from InventoryManager.convertItemsToRows
+  const formatGoingDisplay = useCallback((goingQuantity, quantity) => {
+    if (quantity === 1) {
+      return goingQuantity === 1 ? 'going' : 'not going';
+    }
+    if (goingQuantity === 0) {
+      return 'not going';
+    }
+    // Always show ratio format for quantity > 1 (e.g., "going (2/3)")
+    return `going (${goingQuantity}/${quantity})`;
+  }, []);
+
+  // Helper: Calculate new goingQuantity when quantity changes
+  // When quantity changes, all items should be going
+  const calculateNewGoingQuantity = useCallback((currentGoingQty, currentQuantity, newQuantity) => {
+    return newQuantity;
+  }, []);
+
   // Handle +/- button clicks for Count column
   const handleCountChange = useCallback((rowId, delta) => {
+    // Mark local update in progress to prevent parent sync race condition
+    localUpdateInProgressRef.current = true;
+
     // Save scroll position before updating rows
-    if (spreadsheetRef.current) {
+    // Only save if not already pending restoration (prevents rapid click race condition)
+    if (spreadsheetRef.current && !scrollPositionRef.current) {
       scrollPositionRef.current = {
         top: spreadsheetRef.current.scrollTop,
         left: spreadsheetRef.current.scrollLeft
@@ -762,12 +838,17 @@ export default function Spreadsheet({
     const currentCount = parseInt(row.cells?.col3) || 1;
     const newCount = Math.max(1, currentCount + delta);
 
+    // Calculate new goingQuantity based on the rules
+    const currentGoingQty = parseGoingQuantity(row.cells?.col6, currentCount);
+    const newGoingQty = calculateNewGoingQuantity(currentGoingQty, currentCount, newCount);
+    const newGoingDisplay = formatGoingDisplay(newGoingQty, newCount);
+
     const updatedRows = rows.map(r => {
       if (r.id === rowId) {
         const newCells = {
           ...r.cells,
           col3: newCount.toString(),
-          col6: 'going'  // When quantity changes, all items are going
+          col6: newGoingDisplay
         };
 
         // Recalculate cuft and weight if per-unit values exist
@@ -776,13 +857,19 @@ export default function Spreadsheet({
           newCells.col5 = (r.perUnitWeight * newCount).toString();
         }
 
-        // Update quantity and going status in parent inventory state and DB
-        // handleInventoryUpdate now handles both in one PATCH call
-        if (onInventoryUpdate && r.inventoryItemId) {
-          onInventoryUpdate(r.inventoryItemId, newCount, newCount);  // goingQty=newCount, qty=newCount
+        // Persist directly to API (bypass parent state to avoid race condition)
+        if (projectId && r.inventoryItemId) {
+          fetch(`/api/projects/${projectId}/inventory/${r.inventoryItemId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              quantity: newCount,
+              goingQuantity: newCount  // Always all going
+            }),
+          }).catch(err => console.error('Failed to persist quantity change:', err));
         }
 
-        return { ...r, cells: newCells };
+        return { ...r, cells: newCells, quantity: newCount };
       }
       return r;
     });
@@ -790,26 +877,49 @@ export default function Spreadsheet({
     setRows(updatedRows);  // Immediate local update
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
-  }, [rows, onRowsChange, onInventoryUpdate]);
+
+    // Clear any existing timeout to prevent race conditions from rapid clicks
+    if (localUpdateTimeoutRef.current) {
+      clearTimeout(localUpdateTimeoutRef.current);
+    }
+    // Clear flag after React processes the update AND polling cycle
+    localUpdateTimeoutRef.current = setTimeout(() => {
+      localUpdateInProgressRef.current = false;
+      localUpdateTimeoutRef.current = null;
+    }, 5000);  // Extended to cover polling interval
+  }, [rows, onRowsChange, projectId, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay]);
 
   // Set count to an absolute value (for input field - avoids delta timing issues)
   const setCountAbsolute = useCallback((rowId, newCount) => {
+    // Mark local update in progress to prevent parent sync race condition
+    localUpdateInProgressRef.current = true;
+
     // Save scroll position before updating rows
-    if (spreadsheetRef.current) {
+    // Only save if not already pending restoration (prevents rapid click race condition)
+    if (spreadsheetRef.current && !scrollPositionRef.current) {
       scrollPositionRef.current = {
         top: spreadsheetRef.current.scrollTop,
         left: spreadsheetRef.current.scrollLeft
       };
     }
 
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+
+    const currentCount = parseInt(row.cells?.col3) || 1;
     const validCount = Math.max(1, parseInt(newCount) || 1);
+
+    // Calculate new goingQuantity based on the rules
+    const currentGoingQty = parseGoingQuantity(row.cells?.col6, currentCount);
+    const newGoingQty = calculateNewGoingQuantity(currentGoingQty, currentCount, validCount);
+    const newGoingDisplay = formatGoingDisplay(newGoingQty, validCount);
 
     const updatedRows = rows.map(r => {
       if (r.id === rowId) {
         const newCells = {
           ...r.cells,
           col3: validCount.toString(),
-          col6: 'going'  // When quantity changes, all items are going
+          col6: newGoingDisplay
         };
 
         // Recalculate cuft and weight
@@ -818,13 +928,19 @@ export default function Spreadsheet({
           newCells.col5 = (r.perUnitWeight * validCount).toString();
         }
 
-        // Update quantity and going status in parent inventory state and DB
-        // handleInventoryUpdate now handles both in one PATCH call
-        if (onInventoryUpdate && r.inventoryItemId) {
-          onInventoryUpdate(r.inventoryItemId, validCount, validCount);  // goingQty=validCount, qty=validCount
+        // Persist directly to API (bypass parent state to avoid race condition)
+        if (projectId && r.inventoryItemId) {
+          fetch(`/api/projects/${projectId}/inventory/${r.inventoryItemId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              quantity: validCount,
+              goingQuantity: validCount  // Always all going
+            }),
+          }).catch(err => console.error('Failed to persist quantity change:', err));
         }
 
-        return { ...r, cells: newCells };
+        return { ...r, cells: newCells, quantity: validCount };
       }
       return r;
     });
@@ -832,26 +948,49 @@ export default function Spreadsheet({
     setRows(updatedRows);  // Immediate local update
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
-  }, [rows, onRowsChange, onInventoryUpdate]);
+
+    // Clear any existing timeout to prevent race conditions from rapid clicks
+    if (localUpdateTimeoutRef.current) {
+      clearTimeout(localUpdateTimeoutRef.current);
+    }
+    // Clear flag after React processes the update AND polling cycle
+    localUpdateTimeoutRef.current = setTimeout(() => {
+      localUpdateInProgressRef.current = false;
+      localUpdateTimeoutRef.current = null;
+    }, 5000);  // Extended to cover polling interval
+  }, [rows, onRowsChange, projectId, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay]);
 
   // Callback for CountInput component - handles count changes with cuft/weight recalculation
   const handleCountInputChange = useCallback((rowId, newCount, perUnitCuft, perUnitWeight, inventoryItemId) => {
+    // Mark local update in progress to prevent parent sync race condition
+    localUpdateInProgressRef.current = true;
+
     // Save scroll position before updating rows
-    if (spreadsheetRef.current) {
+    // Only save if not already pending restoration (prevents rapid click race condition)
+    if (spreadsheetRef.current && !scrollPositionRef.current) {
       scrollPositionRef.current = {
         top: spreadsheetRef.current.scrollTop,
         left: spreadsheetRef.current.scrollLeft
       };
     }
 
+    const row = rows.find(r => r.id === rowId);
+    if (!row) return;
+
+    const currentCount = parseInt(row.cells?.col3) || 1;
     const validCount = Math.max(1, parseInt(newCount) || 1);
+
+    // Calculate new goingQuantity based on the rules
+    const currentGoingQty = parseGoingQuantity(row.cells?.col6, currentCount);
+    const newGoingQty = calculateNewGoingQuantity(currentGoingQty, currentCount, validCount);
+    const newGoingDisplay = formatGoingDisplay(newGoingQty, validCount);
 
     const updatedRows = rows.map(r => {
       if (r.id === rowId) {
         const newCells = {
           ...r.cells,
           col3: validCount.toString(),
-          col6: 'going'  // When quantity changes, all items are going
+          col6: newGoingDisplay
         };
 
         // Recalculate cuft and weight
@@ -860,7 +999,7 @@ export default function Spreadsheet({
           newCells.col5 = (perUnitWeight * validCount).toString();
         }
 
-        return { ...r, cells: newCells };
+        return { ...r, cells: newCells, quantity: validCount };
       }
       return r;
     });
@@ -869,12 +1008,28 @@ export default function Spreadsheet({
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
 
-    // Update quantity in parent - use onQuantityChange like manual input does
-    // This avoids triggering initialRows change which causes scroll jump
-    if (onQuantityChange && inventoryItemId) {
-      onQuantityChange(inventoryItemId, validCount);
+    // Persist directly to API (bypass parent state to avoid race condition)
+    if (projectId && inventoryItemId) {
+      fetch(`/api/projects/${projectId}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quantity: validCount,
+          goingQuantity: validCount  // Always all going
+        }),
+      }).catch(err => console.error('Failed to persist quantity change:', err));
     }
-  }, [rows, onRowsChange, onQuantityChange, onInventoryUpdate]);
+
+    // Clear any existing timeout to prevent race conditions from rapid clicks
+    if (localUpdateTimeoutRef.current) {
+      clearTimeout(localUpdateTimeoutRef.current);
+    }
+    // Clear flag after React processes the update AND polling cycle
+    localUpdateTimeoutRef.current = setTimeout(() => {
+      localUpdateInProgressRef.current = false;
+      localUpdateTimeoutRef.current = null;
+    }, 5000);  // Extended to cover polling interval
+  }, [rows, onRowsChange, projectId, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay]);
 
   const handleKeyDown = useCallback((e) => {
     if (!activeCell) return;
@@ -1830,8 +1985,8 @@ export default function Spreadsheet({
         let defaultValue = '';
         if (column.name === 'Going') {
           // Generate dynamic options based on item quantity
-          const currentRow = rows.find(r => r.id === rowId);
-          const quantity = currentRow?.quantity || parseInt(currentRow?.cells?.col3) || 1;
+          // Use the row parameter directly (not rows.find) to ensure we have current data
+          const quantity = row?.quantity || parseInt(row?.cells?.col3) || 1;
           
           selectOptions = ['not going'];
           if (quantity === 1) {
