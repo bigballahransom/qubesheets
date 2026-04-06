@@ -2,7 +2,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
-import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info } from 'lucide-react';
+import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info, Pencil, Check } from 'lucide-react';
 import VideoRecordingModal from '../VideoRecordingModal';
 import {
   Dialog,
@@ -20,6 +20,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import StockInventoryPickerModal from '@/components/modals/StockInventoryPickerModal';
 
@@ -183,6 +185,7 @@ export default function Spreadsheet({
   onLocationChange = null,
   onBulkPackedByUpdate = null,
   onAddStockItem = null,
+  onCuftWeightUpdate = null,
   projectId = null,
   inventoryItems = [],
   weightConfig = { weightMode: 'actual', customWeightMultiplier: 7 },
@@ -228,6 +231,7 @@ export default function Spreadsheet({
   const [cuftMode, setCuftMode] = useState('total'); // 'total' or 'perUnit' for Cuft display
   const [weightMode, setWeightMode] = useState('total'); // 'total' or 'perUnit' for Weight display
   const [pboDropdownOpen, setPboDropdownOpen] = useState(false); // For bulk PBO/CP dropdown
+  const [cuftModal, setCuftModal] = useState({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
 
   // Location update dialog state
   const [locationDialog, setLocationDialog] = useState({
@@ -1480,10 +1484,26 @@ export default function Spreadsheet({
       );
     }
 
-    // Handle Cuft (col4) display based on cuftMode
-    if (colId === 'col4' && cuftMode === 'perUnit' && row) {
-      const displayValue = row.perUnitCuft !== undefined ? row.perUnitCuft.toFixed(1) : value;
-      return <span className="p-2 text-gray-600">{displayValue}</span>;
+    // Handle Cuft (col4) display with edit icon
+    if (colId === 'col4' && row) {
+      const perUnitValue = row.perUnitCuft !== undefined ? row.perUnitCuft : parseFloat(value) || 0;
+      const displayValue = cuftMode === 'perUnit' ? perUnitValue.toFixed(1) : value;
+
+      return (
+        <div className="group flex items-center gap-1 p-2 h-full">
+          <span className="text-blue-500">{displayValue}</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setCuftModal({ isOpen: true, rowId, value: perUnitValue.toString(), row });
+            }}
+            className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity ml-auto"
+            title="Edit Cuft"
+          >
+            <Pencil size={14} className="text-gray-500" />
+          </button>
+        </div>
+      );
     }
 
     // Handle Weight (col5) display based on weightMode
@@ -3199,6 +3219,203 @@ export default function Spreadsheet({
                 className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
               >
                 {locationDialog.isAddingNewRoom ? 'Add Room' : 'Update Location'}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Cuft Modal */}
+      <Dialog
+        open={cuftModal.isOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCuftModal({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{cuftModal.row?.cells?.col2 || 'Item'}</DialogTitle>
+            <DialogDescription>
+              Edit cubic feet for this item
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Per Unit Input */}
+            <div className="space-y-2">
+              <label htmlFor="cuft-value" className="text-sm font-medium text-gray-700">
+                Cuft per item
+              </label>
+              <input
+                id="cuft-value"
+                type="number"
+                step="0.1"
+                value={cuftModal.value || ''}
+                onChange={(e) => setCuftModal(prev => ({ ...prev, value: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                autoFocus
+              />
+            </div>
+
+            {/* Weight Adjustment Options */}
+            {weightConfig?.weightMode === 'custom' ? (
+              // Custom mode: weight auto-updates
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-sm text-blue-700">
+                  Weight will auto-update based on Cuft × {weightConfig.customWeightMultiplier}
+                </p>
+              </div>
+            ) : (
+              // Actual mode: give user choice
+              <div>
+                <Label className="text-sm font-medium text-gray-700 mb-2 block">Weight adjustment</Label>
+                <RadioGroup
+                  value={cuftModal.adjustWeight === true ? 'adjust' : 'keep'}
+                  onValueChange={(value) => setCuftModal(prev => ({ ...prev, adjustWeight: value === 'adjust' }))}
+                  className="space-y-1"
+                >
+                  <div className="flex items-center gap-3">
+                    <RadioGroupItem value="adjust" id="adjust-weight" />
+                    <Label htmlFor="adjust-weight" className="text-sm font-medium text-gray-900 cursor-pointer">
+                      Adjust weight proportionally
+                      <span className="block text-xs text-gray-500 font-normal mt-0.5">
+                        {cuftModal.row?.perUnitWeight?.toFixed(1) || 0} → {((parseFloat(cuftModal.value) || 0) * (cuftModal.row?.perUnitWeight || 0) / (cuftModal.row?.perUnitCuft || 1)).toFixed(1)} per item
+                      </span>
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <RadioGroupItem value="keep" id="keep-weight" />
+                    <Label htmlFor="keep-weight" className="text-sm font-medium text-gray-900 cursor-pointer">
+                      Keep current weight
+                      <span className="block text-xs text-gray-500 font-normal mt-0.5">
+                        {cuftModal.row?.perUnitWeight?.toFixed(1) || 0} per item
+                      </span>
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
+            )}
+
+            {/* Preview */}
+            <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Quantity</span>
+                <span className="font-medium">{cuftModal.row?.quantity || parseInt(cuftModal.row?.cells?.col3) || 1}</span>
+              </div>
+              <div className="flex justify-between text-sm border-t pt-1">
+                <span className="text-gray-500">Total Cuft</span>
+                <span className="font-medium text-blue-600">
+                  {((parseFloat(cuftModal.value) || 0) * (cuftModal.row?.quantity || parseInt(cuftModal.row?.cells?.col3) || 1)).toFixed(1)}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm border-t pt-1">
+                <span className="text-gray-500">Weight per item</span>
+                <span className="font-medium">
+                  {(() => {
+                    const newCuft = parseFloat(cuftModal.value) || 0;
+                    const currentCuft = cuftModal.row?.perUnitCuft || 1;
+                    const currentWeight = cuftModal.row?.perUnitWeight || 0;
+
+                    if (weightConfig?.weightMode === 'custom') {
+                      return (newCuft * weightConfig.customWeightMultiplier).toFixed(1);
+                    } else if (cuftModal.adjustWeight && currentCuft > 0) {
+                      return ((newCuft * currentWeight) / currentCuft).toFixed(1);
+                    } else {
+                      return currentWeight.toFixed(1);
+                    }
+                  })()}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm border-t pt-1">
+                <span className="text-gray-500">Total Weight</span>
+                <span className="font-medium text-blue-600">
+                  {(() => {
+                    const newCuft = parseFloat(cuftModal.value) || 0;
+                    const currentCuft = cuftModal.row?.perUnitCuft || 1;
+                    const currentWeight = cuftModal.row?.perUnitWeight || 0;
+                    const quantity = cuftModal.row?.quantity || parseInt(cuftModal.row?.cells?.col3) || 1;
+
+                    let newPerUnitWeight;
+                    if (weightConfig?.weightMode === 'custom') {
+                      newPerUnitWeight = newCuft * weightConfig.customWeightMultiplier;
+                    } else if (cuftModal.adjustWeight && currentCuft > 0) {
+                      newPerUnitWeight = (newCuft * currentWeight) / currentCuft;
+                    } else {
+                      newPerUnitWeight = currentWeight;
+                    }
+                    return (newPerUnitWeight * quantity).toFixed(1);
+                  })()}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setCuftModal({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const newPerUnitCuft = parseFloat(cuftModal.value) || 0;
+                  const quantity = cuftModal.row?.quantity || parseInt(cuftModal.row?.cells?.col3) || 1;
+                  const newTotalCuft = newPerUnitCuft * quantity;
+
+                  // Calculate new weight
+                  const currentCuft = cuftModal.row?.perUnitCuft || 1;
+                  const currentWeight = cuftModal.row?.perUnitWeight || 0;
+
+                  let newPerUnitWeight;
+                  if (weightConfig?.weightMode === 'custom') {
+                    newPerUnitWeight = newPerUnitCuft * weightConfig.customWeightMultiplier;
+                  } else if (cuftModal.adjustWeight && currentCuft > 0) {
+                    newPerUnitWeight = (newPerUnitCuft * currentWeight) / currentCuft;
+                  } else {
+                    newPerUnitWeight = currentWeight;
+                  }
+
+                  const newTotalWeight = newPerUnitWeight * quantity;
+
+                  // Update local state immediately for UI feedback
+                  setRows(prevRows => prevRows.map(r => {
+                    if (r.id === cuftModal.rowId) {
+                      return {
+                        ...r,
+                        perUnitCuft: newPerUnitCuft,
+                        perUnitWeight: newPerUnitWeight,
+                        cells: {
+                          ...r.cells,
+                          col4: newTotalCuft.toString(),
+                          col5: newTotalWeight.toString()
+                        }
+                      };
+                    }
+                    return r;
+                  }));
+
+                  // Persist to database
+                  if (onCuftWeightUpdate && cuftModal.row?.inventoryItemId) {
+                    if (weightConfig?.weightMode === 'custom') {
+                      // Custom mode: only save cuft, weight is derived from cuft × multiplier
+                      onCuftWeightUpdate(cuftModal.row.inventoryItemId, newPerUnitCuft, null);
+                    } else if (cuftModal.adjustWeight) {
+                      // Actual mode + adjust proportionally: save both cuft and new weight
+                      onCuftWeightUpdate(cuftModal.row.inventoryItemId, newPerUnitCuft, newPerUnitWeight);
+                    } else {
+                      // Actual mode + keep current: only save cuft
+                      onCuftWeightUpdate(cuftModal.row.inventoryItemId, newPerUnitCuft, null);
+                    }
+                  }
+
+                  setCuftModal({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
+                }}
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+              >
+                Save
               </button>
             </div>
           </div>

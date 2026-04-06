@@ -1520,6 +1520,58 @@ useEffect(() => {
     }
   }, [convertItemsToRows, currentProject]);
 
+  // Handle cuft/weight updates from Spreadsheet
+  // newWeight is optional - if null, only cuft is updated (used in custom mode or when keeping current weight)
+  const handleCuftWeightUpdate = useCallback(async (inventoryItemId, newCuft, newWeight = null) => {
+    console.log(`🔄 Updating inventory item ${inventoryItemId} cuft to ${newCuft}${newWeight !== null ? `, weight to ${newWeight}` : ' (weight unchanged)'}`);
+
+    // First, update the local state immediately for instant UI feedback
+    setInventoryItems(prev => {
+      const updated = prev.map(item => {
+        if (item._id === inventoryItemId) {
+          return {
+            ...item,
+            cuft: newCuft,
+            ...(newWeight !== null && { weight: newWeight })
+          };
+        }
+        return item;
+      });
+
+      // Immediately update spreadsheet rows with the new data
+      const updatedRows = convertItemsToRows(updated);
+      setSpreadsheetRows(updatedRows);
+      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
+
+      return updated;
+    });
+
+    // Then, persist the change to the server
+    try {
+      // Build payload - only include weight if provided
+      const payload = { cuft: newCuft };
+      if (newWeight !== null) {
+        payload.weight = newWeight;
+      }
+
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        console.error(`Failed to persist cuft update for item ${inventoryItemId}`);
+      } else {
+        console.log(`✅ Successfully persisted cuft ${newCuft}${newWeight !== null ? ` and weight ${newWeight}` : ''} for item ${inventoryItemId}`);
+      }
+    } catch (error) {
+      console.error('Error persisting cuft/weight update:', error);
+    }
+  }, [convertItemsToRows, currentProject]);
+
   // Handle packed_by (CP/PBO) updates from Spreadsheet
   const handlePackedByUpdate = useCallback(async (inventoryItemId, newPackedBy) => {
     console.log(`🔄 Updating inventory item ${inventoryItemId} packed_by to ${newPackedBy}`);
@@ -3649,6 +3701,7 @@ const ProcessingNotification = () => {
                       onLocationChange={handleLocationChange}
                       onBulkPackedByUpdate={handleBulkPackedByUpdate}
                       onAddStockItem={handleAddStockItems}
+                      onCuftWeightUpdate={handleCuftWeightUpdate}
                       projectId={projectId}
                       inventoryItems={inventoryItems}
                       weightConfig={weightConfig}
