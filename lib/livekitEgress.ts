@@ -234,6 +234,21 @@ export async function listActiveRecordings(): Promise<RecordingState> {
 }
 
 /**
+ * Clear the in-memory recording state for a room
+ * IMPORTANT: Call this before auto-restarting a recording to prevent
+ * the old egress ID from being returned by startRecording()
+ */
+export function clearRecordingState(roomName: string): void {
+  if (activeRecordings[roomName]) {
+    console.log(`🧹 Clearing in-memory recording state for room: ${roomName}`, {
+      oldEgressId: activeRecordings[roomName].egressId,
+      oldStatus: activeRecordings[roomName].status
+    });
+    delete activeRecordings[roomName];
+  }
+}
+
+/**
  * Start customer-only egress with single MP4 output for AI analysis
  * Records only the customer's video feed as a complete MP4 file
  * This captures ANY duration call (even 30 seconds) - no data loss

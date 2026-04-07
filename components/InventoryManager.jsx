@@ -1777,18 +1777,30 @@ useEffect(() => {
 
       // Handle creates (POST new items)
       if (creates.length > 0) {
-        const newItems = creates.map(({ item, quantity, location }) => ({
-          name: item.name,
-          category: item.parent_class,
-          weight: item.weight || 0,
-          cuft: item.cubic_feet || 0,
-          quantity: quantity,
-          going: 'going',
-          goingQuantity: quantity,
-          packed_by: 'N/A',
-          stockItemId: item._id,
-          location: location || '', // Set location/room if specified
-        }));
+        const newItems = creates.map(({ item, quantity, location }) => {
+          const isCustomItem = item._id && item._id.startsWith('custom_');
+          // For custom items, user enters total weight/cuft, so divide by quantity to get per-unit
+          // For stock items, weight/cuft are already per-unit values
+          const perUnitWeight = isCustomItem ? (item.weight || 0) / quantity : (item.weight || 0);
+          const perUnitCuft = isCustomItem ? (item.cubic_feet || 0) / quantity : (item.cubic_feet || 0);
+
+          const newItem = {
+            name: item.name,
+            category: item.parent_class,
+            weight: perUnitWeight,
+            cuft: perUnitCuft,
+            quantity: quantity,
+            going: 'going',
+            goingQuantity: quantity,
+            packed_by: 'N/A',
+            location: location || '', // Set location/room if specified
+          };
+          // Only include stockItemId if it's a valid ObjectId (not a custom_ prefix)
+          if (!isCustomItem) {
+            newItem.stockItemId = item._id;
+          }
+          return newItem;
+        });
 
         console.log(`➕ Creating ${newItems.length} new inventory items`);
         const response = await fetch(`/api/projects/${currentProject._id}/inventory`, {

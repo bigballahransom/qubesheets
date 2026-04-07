@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WebhookReceiver, RoomServiceClient } from 'livekit-server-sdk';
 import connectMongoDB from '@/lib/mongodb';
-import { startRecording, stopRecording, startCustomerEgress, stopCustomerEgress } from '@/lib/livekitEgress';
+import { startRecording, stopRecording, startCustomerEgress, stopCustomerEgress, clearRecordingState } from '@/lib/livekitEgress';
 
 // Room service client for checking active participants
 const roomServiceClient = new RoomServiceClient(
@@ -221,6 +221,10 @@ async function autoRestartRecording(
     });
 
     console.log(`✅ Created new recording entry: ${newRecording._id}`);
+
+    // CRITICAL: Clear the in-memory cache before starting new egress
+    // This prevents startRecording() from returning the old (disconnected) egress ID
+    clearRecordingState(roomName);
 
     // Start a new egress
     const egressId = await startRecording(roomName, newRecording._id.toString());
@@ -642,6 +646,9 @@ async function handleEgressEnded(event: WebhookEvent) {
     currentStatus: existingRecording.status,
     currentS3Key: existingRecording.s3Key
   });
+
+  // Always clear in-memory cache when egress ends (prevents stale state)
+  clearRecordingState(roomName);
 
   // 🚨 AUTO-RECOVERY: Check if participants are still in the room
   // If yes, the egress disconnected unexpectedly and we need to restart recording

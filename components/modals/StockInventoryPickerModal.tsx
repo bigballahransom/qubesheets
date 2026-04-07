@@ -1,7 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { X, Search, Loader2, Minus, Plus } from 'lucide-react';
+import { X, Search, Loader2, Minus, Plus, Package } from 'lucide-react';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -113,6 +116,21 @@ export default function StockInventoryPickerModal({
   const [showNewRoomInput, setShowNewRoomInput] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
   const [customRooms, setCustomRooms] = useState<string[]>([]); // Rooms created in this session
+
+  // Custom item form state
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [customItem, setCustomItem] = useState({
+    name: '',
+    quantity: 1,
+    location: '',
+    cubic_feet: 0,
+    weight: 0,
+  });
+  const [saveToLibrary, setSaveToLibrary] = useState(false);
+  const [isSubmittingCustom, setIsSubmittingCustom] = useState(false);
+  const [showCustomFormNewRoom, setShowCustomFormNewRoom] = useState(false);
+  const [customFormNewRoomName, setCustomFormNewRoomName] = useState('');
+
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -283,6 +301,75 @@ export default function StockInventoryPickerModal({
     }
     onClose();
   }, [items, aiItems, getQuantity, initialQuantities, selectedRoom, onAddItems, onClose]);
+
+  // Handle adding a custom item
+  const handleAddCustomItem = useCallback(async () => {
+    if (!customItem.name.trim()) return;
+
+    setIsSubmittingCustom(true);
+
+    try {
+      let stockItemId: string | undefined;
+
+      // If saving to library, create stock item first
+      if (saveToLibrary) {
+        const stockResponse = await fetch('/api/stock-inventory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: customItem.name.trim(),
+            parent_class: 'Custom',
+            weight: customItem.weight,
+            cubic_feet: customItem.cubic_feet,
+          }),
+        });
+
+        if (stockResponse.ok) {
+          const stockItem = await stockResponse.json();
+          stockItemId = stockItem._id;
+          toast.success('Item saved to your stock library');
+        } else {
+          console.error('Failed to save to stock library');
+          toast.error('Failed to save to library, but item will still be added');
+        }
+      }
+
+      // Create a pseudo stock item for the callback
+      const pseudoStockItem: StockInventoryItem = {
+        _id: stockItemId || `custom_${Date.now()}`,
+        name: customItem.name.trim(),
+        parent_class: 'Custom',
+        weight: customItem.weight,
+        cubic_feet: customItem.cubic_feet,
+        tags: '[]',
+        image: '',
+      };
+
+      // Add to selection with quantity
+      const selectedItem: SelectedItem = {
+        item: pseudoStockItem,
+        quantity: customItem.quantity,
+        previousQuantity: 0,
+        isAiItem: false,
+        location: customItem.location || selectedRoom || undefined,
+      };
+
+      // Call the parent handler
+      onAddItems([selectedItem]);
+
+      // Reset form
+      setCustomItem({ name: '', quantity: 1, location: '', cubic_feet: 0, weight: 0 });
+      setSaveToLibrary(false);
+      setShowCustomForm(false);
+
+      toast.success(`Added "${customItem.name}" to inventory`);
+    } catch (error) {
+      console.error('Error adding custom item:', error);
+      toast.error('Failed to add custom item');
+    } finally {
+      setIsSubmittingCustom(false);
+    }
+  }, [customItem, saveToLibrary, selectedRoom, onAddItems]);
 
   // Fetch stock inventory items - uses refs to avoid dependency issues
   const fetchItems = useCallback(async (reset = false) => {
@@ -458,6 +545,13 @@ export default function StockInventoryPickerModal({
       setInitialQuantities({});
       setHasMore(true);
       setTotal(0);
+      // Reset custom form state
+      setShowCustomForm(false);
+      setCustomItem({ name: '', quantity: 1, location: '', cubic_feet: 0, weight: 0 });
+      setSaveToLibrary(false);
+      setIsSubmittingCustom(false);
+      setShowCustomFormNewRoom(false);
+      setCustomFormNewRoomName('');
       // Reset refs
       offsetRef.current = 0;
       isLoadingRef.current = false;
@@ -582,8 +676,219 @@ export default function StockInventoryPickerModal({
                 </Button>
               </div>
             )}
+
+            {/* Add Custom Item Button */}
+            <Button
+              onClick={() => setShowCustomForm(true)}
+              className="h-10 bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 hover:border-blue-300"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              <span className="hidden sm:inline">Custom Item</span>
+              <span className="sm:hidden">Custom</span>
+            </Button>
           </div>
         </div>
+
+        {/* Custom Item Form - Collapsible */}
+        {showCustomForm && (
+          <div className="flex-shrink-0 bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-medium text-slate-700">Add Custom Item</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCustomForm(false);
+                  setCustomItem({ name: '', quantity: 1, location: '', cubic_feet: 0, weight: 0 });
+                  setSaveToLibrary(false);
+                  setShowCustomFormNewRoom(false);
+                  setCustomFormNewRoomName('');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Form Fields Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {/* Name - Required */}
+              <div className="sm:col-span-2">
+                <Label htmlFor="custom-name" className="text-xs text-slate-500">
+                  Item Name *
+                </Label>
+                <Input
+                  id="custom-name"
+                  placeholder="e.g., Antique Dresser"
+                  value={customItem.name}
+                  onChange={(e) => setCustomItem(prev => ({ ...prev, name: e.target.value }))}
+                  className="h-9 mt-1"
+                />
+              </div>
+
+              {/* Quantity */}
+              <div>
+                <Label htmlFor="custom-qty" className="text-xs text-slate-500">
+                  Quantity
+                </Label>
+                <Input
+                  id="custom-qty"
+                  type="text"
+                  inputMode="numeric"
+                  value={customItem.quantity || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/^0+(?=\d)/, '');
+                    setCustomItem(prev => ({ ...prev, quantity: Math.max(1, parseInt(val) || 1) }));
+                  }}
+                  className="h-9 mt-1"
+                />
+              </div>
+
+              {/* Location/Room */}
+              <div>
+                <Label htmlFor="custom-location" className="text-xs text-slate-500">
+                  Room/Location
+                </Label>
+                {!showCustomFormNewRoom ? (
+                  <Select
+                    value={customItem.location}
+                    onValueChange={(val) => {
+                      if (val === 'add_new') {
+                        setShowCustomFormNewRoom(true);
+                      } else {
+                        setCustomItem(prev => ({ ...prev, location: val }));
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-9 mt-1">
+                      <SelectValue placeholder="Select room" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allRooms.filter(r => r !== 'All Rooms').map(room => (
+                        <SelectItem key={room} value={room}>{room}</SelectItem>
+                      ))}
+                      <SelectItem value="add_new" className="text-blue-600 font-medium">
+                        + Add new room
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex gap-1 mt-1">
+                    <Input
+                      placeholder="Room name..."
+                      value={customFormNewRoomName}
+                      onChange={(e) => setCustomFormNewRoomName(e.target.value)}
+                      className="h-9 flex-1"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && customFormNewRoomName.trim()) {
+                          const roomName = customFormNewRoomName.trim();
+                          setCustomRooms(prev => prev.includes(roomName) ? prev : [...prev, roomName]);
+                          setCustomItem(prev => ({ ...prev, location: roomName }));
+                          setShowCustomFormNewRoom(false);
+                          setCustomFormNewRoomName('');
+                        } else if (e.key === 'Escape') {
+                          setShowCustomFormNewRoom(false);
+                          setCustomFormNewRoomName('');
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      className="h-9 px-2"
+                      onClick={() => {
+                        if (customFormNewRoomName.trim()) {
+                          const roomName = customFormNewRoomName.trim();
+                          setCustomRooms(prev => prev.includes(roomName) ? prev : [...prev, roomName]);
+                          setCustomItem(prev => ({ ...prev, location: roomName }));
+                          setShowCustomFormNewRoom(false);
+                          setCustomFormNewRoomName('');
+                        }
+                      }}
+                    >
+                      Add
+                    </Button>
+                    <Button
+                      type="button"
+                      className="h-9 px-2"
+                      variant="ghost"
+                      onClick={() => {
+                        setShowCustomFormNewRoom(false);
+                        setCustomFormNewRoomName('');
+                      }}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Cubic Feet */}
+              <div>
+                <Label htmlFor="custom-cuft" className="text-xs text-slate-500">
+                  Cubic Feet
+                </Label>
+                <Input
+                  id="custom-cuft"
+                  type="text"
+                  inputMode="decimal"
+                  value={customItem.cubic_feet || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/^0+(?=\d)/, '');
+                    setCustomItem(prev => ({ ...prev, cubic_feet: parseFloat(val) || 0 }));
+                  }}
+                  className="h-9 mt-1"
+                />
+              </div>
+
+              {/* Weight */}
+              <div>
+                <Label htmlFor="custom-weight" className="text-xs text-slate-500">
+                  Weight (lbs)
+                </Label>
+                <Input
+                  id="custom-weight"
+                  type="text"
+                  inputMode="decimal"
+                  value={customItem.weight || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/^0+(?=\d)/, '');
+                    setCustomItem(prev => ({ ...prev, weight: parseFloat(val) || 0 }));
+                  }}
+                  className="h-9 mt-1"
+                />
+              </div>
+            </div>
+
+            {/* Save to Library Toggle + Add Button */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 border-t border-slate-200">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="save-to-library"
+                  checked={saveToLibrary}
+                  onCheckedChange={setSaveToLibrary}
+                />
+                <Label htmlFor="save-to-library" className="text-sm text-slate-600 cursor-pointer">
+                  Save to my organization&apos;s stock library
+                </Label>
+              </div>
+
+              <Button
+                onClick={handleAddCustomItem}
+                disabled={!customItem.name.trim() || isSubmittingCustom}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {isSubmittingCustom ? (
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" />
+                )}
+                Add Item
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Items Grid */}
         <div
