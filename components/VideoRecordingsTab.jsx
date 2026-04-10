@@ -97,23 +97,29 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
     }
   }, [projectId]);
 
-  // Calculate statistics
+  // Filter out superseded recordings (partial recordings that were stitched)
+  // Users should only see ONE video per call session
+  const visibleRecordings = useMemo(() => {
+    return recordings.filter(r => r.status !== 'superseded');
+  }, [recordings]);
+
+  // Calculate statistics (only for visible/non-superseded recordings)
   const recordingStats = useMemo(() => {
-    const completed = recordings.filter(r => r.status === 'completed').length;
-    const processing = recordings.filter(r => r.status === 'processing').length;
-    const failed = recordings.filter(r => r.status === 'failed').length;
-    const totalDuration = recordings
+    const completed = visibleRecordings.filter(r => r.status === 'completed').length;
+    const processing = visibleRecordings.filter(r => r.status === 'processing').length;
+    const failed = visibleRecordings.filter(r => r.status === 'failed').length;
+    const totalDuration = visibleRecordings
       .filter(r => r.duration && r.status === 'completed')
       .reduce((sum, r) => sum + r.duration, 0);
-    
+
     return {
-      total: recordings.length,
+      total: visibleRecordings.length,
       completed,
       processing,
       failed,
       totalDuration: Math.round(totalDuration / 60) // Convert to minutes
     };
-  }, [recordings]);
+  }, [visibleRecordings]);
 
   const handleOpenModal = (recording) => {
     setSelectedRecording(recording);
@@ -293,7 +299,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
   };
 
   const handleDownloadAll = async () => {
-    const completedRecordings = recordings.filter(r => r.status === 'completed');
+    const completedRecordings = visibleRecordings.filter(r => r.status === 'completed');
 
     if (completedRecordings.length === 0) {
       toast.error('No completed recordings to download');
@@ -614,9 +620,9 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
             {pagination.totalCount} recording{pagination.totalCount !== 1 ? 's' : ''} found
           </p>
         </div>
-        {recordings.length > 0 && (
+        {visibleRecordings.length > 0 && (
           <div className="flex items-center gap-2">
-            {recordings.filter(r => r.status === 'completed').length > 0 && (
+            {visibleRecordings.filter(r => r.status === 'completed').length > 0 && (
               <Button
                 variant="outline"
                 size="sm"
@@ -661,7 +667,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
       </div>
 
       {/* Recordings Grid */}
-      {recordings.length === 0 ? (
+      {visibleRecordings.length === 0 ? (
         <div className="border-2 border-dashed border-gray-300 bg-gray-50 rounded-lg p-12">
           <div className="text-center">
             <FileVideo className="mx-auto h-12 w-12 text-gray-400" />
@@ -673,7 +679,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
         </div>
       ) : (
         <div className="space-y-3">
-          {recordings.map((recording, index) => (
+          {visibleRecordings.map((recording, index) => (
             <div
               key={recording._id}
               className="group border border-gray-200 rounded-lg bg-white flex items-center justify-between py-3 px-4 hover:bg-gray-50 cursor-pointer transition-colors shadow-sm"

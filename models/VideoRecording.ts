@@ -7,12 +7,17 @@ export interface IVideoRecording extends Document {
   organizationId?: string;
   roomId: string;
   egressId?: string;  // Optional - will be set after LiveKit API call
-  status: 'waiting' | 'starting' | 'recording' | 'processing' | 'completed' | 'failed' | 'partial';
+  status: 'waiting' | 'starting' | 'recording' | 'processing' | 'completed' | 'failed' | 'partial' | 'superseded';
   // Auto-recovery fields for egress disconnection
   isPartialRecording?: boolean;  // True if egress disconnected mid-call
   previousRecordingId?: string;  // For auto-restarted recordings: link to the partial recording
   continuedInRecordingId?: string;  // For partial recordings: link to the continuation
   isAutoRestarted?: boolean;  // True if this recording was auto-started after egress failure
+  // Video stitching fields (for combining partial recordings into ONE video)
+  isStitched?: boolean;  // True if this recording is stitched from multiple parts
+  stitchedFrom?: string[];  // IDs of recordings that were stitched into this one
+  stitchedAt?: Date;  // When stitching was completed
+  supersededBy?: string;  // If this recording was superseded by a stitched version
   startedAt: Date;
   endedAt?: Date;
   duration?: number; // Duration in seconds
@@ -140,7 +145,7 @@ const VideoRecordingSchema: Schema = new Schema(
     status: {
       type: String,
       required: true,
-      enum: ['waiting', 'starting', 'recording', 'processing', 'completed', 'failed', 'partial'],
+      enum: ['waiting', 'starting', 'recording', 'processing', 'completed', 'failed', 'partial', 'superseded'],
       default: 'waiting'
     },
     // Auto-recovery fields for egress disconnection
@@ -158,6 +163,22 @@ const VideoRecordingSchema: Schema = new Schema(
     isAutoRestarted: {
       type: Boolean,
       default: false
+    },
+    // Video stitching fields (for combining partial recordings into ONE video)
+    isStitched: {
+      type: Boolean,
+      default: false
+    },
+    stitchedFrom: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'VideoRecording'
+    }],
+    stitchedAt: {
+      type: Date
+    },
+    supersededBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'VideoRecording'
     },
     startedAt: { 
       type: Date, 
@@ -318,6 +339,30 @@ const VideoRecordingSchema: Schema = new Schema(
       summary: { type: String },
       processedAt: { type: Date },
       error: { type: String }
+    },
+    // Client-side backup recording (redundancy for never losing video)
+    backupS3Key: {
+      type: String,
+      description: 'S3 key for client-side backup recording'
+    },
+    backupUploadedAt: {
+      type: Date,
+      description: 'When backup was uploaded'
+    },
+    backupFileSize: {
+      type: Number,
+      description: 'Size of backup file in bytes'
+    },
+    backupIsComposite: {
+      type: Boolean,
+      default: false,
+      description: 'Whether backup has both agent+customer feeds (canvas composite)'
+    },
+    recordingSource: {
+      type: String,
+      enum: ['primary', 'backup', 'recovered', 'stitched'],
+      default: 'primary',
+      description: 'Which recording source was used for the final video'
     }
   },
   {

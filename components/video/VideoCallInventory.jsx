@@ -71,6 +71,7 @@ import { Button } from '../ui/button';
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 import VideoCallNotes from '../VideoCallNotes';
 import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimizedRoomOptions } from '@/lib/webrtc-compatibility';
+import BackupRecordingProvider from './BackupRecordingProvider';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
@@ -1985,12 +1986,18 @@ export default function VideoCallInventory({
           pendingErrors.current.push(errorTimeout);
         }}
       >
-        {/* Apply background effects if settings provided */}
-        {backgroundSettings && <BackgroundApplier backgroundSettings={backgroundSettings} />}
+        {/* Backup recording for redundancy (agent only) */}
+        <BackupRecordingProvider
+          roomId={roomId}
+          isAgent={isCurrentUserAgent}
+          enabled={isCurrentUserAgent}
+        >
+          {/* Apply background effects if settings provided */}
+          {backgroundSettings && <BackgroundApplier backgroundSettings={backgroundSettings} />}
 
-        {/* Render different views based on participant type */}
-        {isCurrentUserAgent ? (
-          <AgentView
+          {/* Render different views based on participant type */}
+          {isCurrentUserAgent ? (
+            <AgentView
             projectId={projectId}
             currentRoom={currentRoom}
             setCurrentRoom={setCurrentRoom}
@@ -1998,9 +2005,10 @@ export default function VideoCallInventory({
             roomId={roomId}
             onCallEnd={onCallEnd}
           />
-        ) : (
-          <CustomerView onCallEnd={onCallEnd} roomId={roomId} />
-        )}
+          ) : (
+            <CustomerView onCallEnd={onCallEnd} roomId={roomId} />
+          )}
+        </BackupRecordingProvider>
       </LiveKitRoom>
     </div>
   );

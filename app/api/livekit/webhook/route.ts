@@ -392,8 +392,16 @@ async function handleParticipantJoined(event: WebhookEvent) {
     });
   }
 
-  // Start room composite egress if status is 'waiting' (first participant to trigger egress)
-  // Use atomic update to prevent race condition where two participants both try to start egress
+  // AGENT-CENTRIC: Only start recording when AGENT joins (not customer)
+  // Customer joining is tracked but doesn't trigger recording start
+  if (participantType === 'customer') {
+    console.log(`👤 Customer joined - tracking only, recording waits for agent`);
+    return;
+  }
+
+  // AGENT JOINED - This is when we start recording
+  // Start room composite egress if status is 'waiting'
+  // Use atomic update to prevent race condition where two agents both try to start egress
   if (recording.status === 'waiting') {
     // Atomically transition from 'waiting' to 'starting' - only one webhook will succeed
     const transitioned = await VideoRecording.findOneAndUpdate(
@@ -403,7 +411,7 @@ async function handleParticipantJoined(event: WebhookEvent) {
     );
 
     if (transitioned) {
-      console.log(`🎬 First participant joined - starting room composite egress`);
+      console.log(`🎬 Agent joined - starting room composite egress`);
 
       // Update ScheduledVideoCall status to 'started' if this room is from a scheduled call
       const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
@@ -474,11 +482,13 @@ async function handleParticipantLeft(event: WebhookEvent) {
   }
 
   const remainingParticipants = recording.activeParticipants?.length || 0;
-  console.log(`👥 Participants remaining in room: ${remainingParticipants}`);
+  const hasAgent = recording.activeParticipants?.some((p: any) => p.type === 'agent');
+  console.log(`👥 Participants remaining: ${remainingParticipants}, hasAgent: ${hasAgent}`);
 
-  // ONLY stop recording when LAST participant leaves
-  if (remainingParticipants === 0) {
-    console.log(`🛑 Last participant left - stopping recording: ${recording._id}`);
+  // AGENT-CENTRIC: Stop recording when AGENT leaves (not when all leave)
+  // Agent leaving = call is effectively over for business purposes
+  if (participantType === 'agent') {
+    console.log(`🛑 Agent left - stopping recording immediately: ${recording._id}`);
 
     // Update ScheduledVideoCall status to 'completed' if this room is from a scheduled call
     const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
@@ -504,15 +514,32 @@ async function handleParticipantLeft(event: WebhookEvent) {
       // If stopRecording returned false (no active egress found), update status manually
       await VideoRecording.findByIdAndUpdate(recording._id, { status: 'processing', endedAt: new Date() });
     }
-  } else {
-    console.log(`⏳ Recording continues - ${remainingParticipants} participant(s) still in room`);
+    return;
+  }
 
-    // Edge case: If the CUSTOMER left but agent is still there, stop customer egress only
-    // (no point recording empty customer feed for AI analysis)
-    const hasCustomer = recording.activeParticipants?.some((p: any) => p.type === 'customer');
-    if (!hasCustomer && recording.customerEgressId && recording.customerEgressStatus === 'recording') {
-      console.log(`🛑 Customer left but agent remains - stopping customer egress only`);
-      await stopCustomerEgress(roomName);
+  // CUSTOMER LEFT (but agent is still there)
+  // Recording continues - agent may be wrapping up or waiting for customer to rejoin
+  console.log(`👤 Customer left - recording continues while agent is present`);
+
+  // Stop customer-only egress if it was running (no point recording empty customer feed)
+  if (recording.customerEgressId && recording.customerEgressStatus === 'recording') {
+    console.log(`🛑 Customer left - stopping customer egress (room composite continues)`);
+    await stopCustomerEgress(roomName);
+  }
+
+  // Also handle edge case: all participants left (shouldn't happen with agent-centric but safety net)
+  if (remainingParticipants === 0) {
+    console.log(`🛑 All participants left - stopping recording: ${recording._id}`);
+
+    const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
+    await ScheduledVideoCall.findOneAndUpdate(
+      { roomId: roomName, status: 'started' },
+      { status: 'completed', completedAt: new Date() }
+    );
+
+    const stopped = await stopRecording(roomName);
+    if (!stopped) {
+      await VideoRecording.findByIdAndUpdate(recording._id, { status: 'processing', endedAt: new Date() });
     }
   }
 }
@@ -805,55 +832,126 @@ async function handleEgressEnded(event: WebhookEvent) {
       // Previously we used a separate customer egress, now we use the room composite
       // This saves ~$254/month (50% reduction in egress costs)
       if (updateResult.s3Key && updateResult.s3Key !== `recordings/${updateResult.roomId}/pending.mp4`) {
-        console.log(`🤖 Queueing room composite for AI analysis: ${updateResult.s3Key}`);
+        // Check if this is a partial recording that needs stitching
+        const isPartialRecording = updateResult.isPartialRecording ||
+          updateResult.previousRecordingId ||
+          updateResult.continuedInRecordingId;
 
-        const AWS = (await import('aws-sdk')).default;
-        const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+        if (isPartialRecording) {
+          console.log(`🧵 Recording is partial - checking if all parts are ready for stitching`);
 
-        if (queueUrl) {
-          const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
-          const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
-
-          // Set status to 'queued' BEFORE sending to SQS (in case SQS fails)
-          await VideoRecording.findByIdAndUpdate(updateResult._id, {
-            'analysisResult.status': 'queued'
+          // Check if there are any active recordings still running for this room
+          const activeRecordings = await VideoRecording.find({
+            roomId: updateResult.roomId,
+            status: { $in: ['waiting', 'starting', 'recording', 'processing'] },
+            _id: { $ne: updateResult._id }
           });
 
-          try {
-            await sqs.sendMessage({
-              QueueUrl: queueUrl,
-              DelaySeconds: 0,  // Process immediately - S3 file is already finalized by egress_ended
-              MessageBody: JSON.stringify({
-                type: 'customer-video',  // Reuse existing handler - it processes any MP4
-                videoRecordingId: updateResult._id.toString(),
-                projectId: updateResult.projectId,
-                s3Key: updateResult.s3Key,
-                s3Bucket: bucket,
-                roomName: updateResult.roomId,
-                customerIdentity: 'room-composite',  // Indicate this is the full room video
-                duration: updateResult.duration || 0
-              })
-            }).promise();
+          if (activeRecordings.length > 0) {
+            console.log(`⏳ ${activeRecordings.length} recordings still active - waiting before stitch`);
+            // Don't queue to Railway yet - more recording parts coming
+          } else {
+            console.log(`✅ All recording parts complete - triggering stitch`);
 
-            console.log(`✅ Room composite queued for AI analysis`);
+            // Trigger stitching API
+            try {
+              const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ||
+                (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
-            // Update analysis status to processing (SQS succeeded)
-            await VideoRecording.findByIdAndUpdate(updateResult._id, {
-              'analysisResult.status': 'processing'
-            });
-          } catch (sqsError) {
-            console.error(`❌ Failed to queue room composite for analysis:`, sqsError);
-            // Mark as failed so it doesn't get stuck in 'queued' forever
-            await VideoRecording.findByIdAndUpdate(updateResult._id, {
-              'analysisResult.status': 'failed',
-              'analysisResult.error': 'Failed to queue for analysis - SQS error'
-            });
+              const stitchResponse = await fetch(`${baseUrl}/api/video-recordings/stitch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ roomId: updateResult.roomId }),
+              });
+
+              if (stitchResponse.ok) {
+                const stitchResult = await stitchResponse.json();
+                console.log(`🧵 Stitch result:`, stitchResult);
+
+                if (stitchResult.stitched) {
+                  // Queue the STITCHED recording to Railway
+                  const stitchedRecording = await VideoRecording.findById(stitchResult.recordingId);
+                  if (stitchedRecording) {
+                    await queueToRailway(stitchedRecording);
+                  }
+                } else {
+                  // Single recording or stitching not needed - queue this recording
+                  await queueToRailway(updateResult);
+                }
+              } else {
+                console.error(`❌ Stitch API failed: ${stitchResponse.status}`);
+                // Fallback: queue this recording anyway
+                await queueToRailway(updateResult);
+              }
+            } catch (stitchError) {
+              console.error(`❌ Stitch trigger failed:`, stitchError);
+              // Fallback: queue this recording anyway
+              await queueToRailway(updateResult);
+            }
           }
         } else {
-          console.log(`⚠️ AWS_SQS_CALL_QUEUE_URL not configured - skipping AI analysis`);
+          // Not a partial recording - queue immediately
+          await queueToRailway(updateResult);
         }
       }
     }
+  }
+}
+
+/**
+ * Helper function to queue a recording to Railway for AI analysis
+ */
+async function queueToRailway(recording: any) {
+  const VideoRecording = (await import('@/models/VideoRecording')).default;
+
+  console.log(`🤖 Queueing recording for AI analysis: ${recording.s3Key}`);
+
+  const AWS = (await import('aws-sdk')).default;
+  const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+
+  if (!queueUrl) {
+    console.log(`⚠️ AWS_SQS_CALL_QUEUE_URL not configured - skipping AI analysis`);
+    return;
+  }
+
+  const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
+  const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+
+  // Set status to 'queued' BEFORE sending to SQS (in case SQS fails)
+  await VideoRecording.findByIdAndUpdate(recording._id, {
+    'analysisResult.status': 'queued'
+  });
+
+  try {
+    await sqs.sendMessage({
+      QueueUrl: queueUrl,
+      DelaySeconds: 0,  // Process immediately - S3 file is already finalized by egress_ended
+      MessageBody: JSON.stringify({
+        type: 'customer-video',  // Reuse existing handler - it processes any MP4
+        videoRecordingId: recording._id.toString(),
+        projectId: recording.projectId,
+        s3Key: recording.s3Key,
+        s3Bucket: bucket,
+        roomName: recording.roomId,
+        customerIdentity: recording.isStitched ? 'stitched-composite' : 'room-composite',
+        duration: recording.duration || 0,
+        isStitched: recording.isStitched || false
+      })
+    }).promise();
+
+    console.log(`✅ Recording queued for AI analysis (stitched: ${recording.isStitched || false})`);
+
+    // Update analysis status to processing (SQS succeeded)
+    await VideoRecording.findByIdAndUpdate(recording._id, {
+      'analysisResult.status': 'processing'
+    });
+  } catch (sqsError) {
+    console.error(`❌ Failed to queue recording for analysis:`, sqsError);
+    // Mark as failed so it doesn't get stuck in 'queued' forever
+    await VideoRecording.findByIdAndUpdate(recording._id, {
+      'analysisResult.status': 'failed',
+      'analysisResult.error': 'Failed to queue for analysis - SQS error'
+    });
   }
 }
 
