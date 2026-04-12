@@ -2737,13 +2737,12 @@ useEffect(() => {
       }
     });
 
-    // Add Packed Boxes section - render each row individually (same as spreadsheet)
-    const packedBoxes = spreadsheetRows.filter(row =>
-      row.itemType === 'existing_box' || row.itemType === 'packed_box'
-    );
-    if (packedBoxes.length > 0) {
-      // Prepare row data - same format as inventory table
-      const packedTableRows = packedBoxes.map(row => {
+    // Helper function to render detailed box rows (original format)
+    const renderDetailedBoxRows = (boxRows, sectionTitle) => {
+      if (boxRows.length === 0) return;
+
+      // Prepare row data
+      const boxTableRows = boxRows.map(row => {
         return spreadsheetColumns.map(col => {
           const value = row.cells[col.id] || '';
           if (col.id === 'col6' && value.includes('(')) {
@@ -2764,140 +2763,10 @@ useEffect(() => {
       // Section header
       doc.setFontSize(16);
       doc.setTextColor(...primaryColor);
-      doc.text('Packed Boxes', 20, currentY);
+      doc.text(sectionTitle, 20, currentY);
       currentY += 10;
 
-      // Draw header - same style as inventory table
-      doc.setFillColor(...primaryColor);
-      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-
-      let packedXPos = startX;
-      tableHeaders.forEach((header, i) => {
-        doc.text(String(header || ''), packedXPos + cellPadding, currentY + rowHeight - 2);
-        packedXPos += colWidths[i];
-      });
-
-      currentY += rowHeight;
-      doc.setFont('helvetica', 'normal');
-
-      // Draw rows - same logic as inventory table
-      packedTableRows.forEach((row, rowIndex) => {
-        const rowData = packedBoxes[rowIndex];
-        const goingValue = rowData.cells?.col6 || 'going';
-        const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
-
-        let goingCount = quantity;
-        if (goingValue === 'not going') {
-          goingCount = 0;
-        } else if (goingValue.includes('(') && goingValue.includes('/')) {
-          const match = goingValue.match(/going \((\d+)\/\d+\)/);
-          goingCount = match ? parseInt(match[1]) : quantity;
-        }
-
-        const isFullyNotGoing = goingCount === 0;
-        const isPartial = goingCount > 0 && goingCount < quantity;
-
-        // Row background
-        if (isFullyNotGoing) {
-          doc.setFillColor(254, 226, 226); // red-100
-        } else if (isPartial) {
-          doc.setFillColor(254, 249, 195); // yellow-100
-        } else if (rowIndex % 2 === 0) {
-          doc.setFillColor(...lightGray);
-        } else {
-          doc.setFillColor(255, 255, 255);
-        }
-
-        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-
-        // Draw cell borders
-        doc.setDrawColor(200, 200, 200);
-        doc.rect(startX, currentY, totalWidth, rowHeight, 'S');
-
-        // Draw cell content
-        doc.setTextColor(...textColor);
-        doc.setFontSize(8);
-
-        packedXPos = startX;
-        row.forEach((cell, i) => {
-          const text = (cell !== null && cell !== undefined) ? String(cell) : '';
-          const maxWidth = colWidths[i] - cellPadding * 2;
-
-          let displayText = text;
-          while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
-            displayText = displayText.slice(0, -1);
-          }
-          if (displayText !== text && displayText.length > 3) {
-            displayText = displayText.slice(0, -3) + '...';
-          }
-
-          doc.text(displayText, packedXPos + cellPadding, currentY + rowHeight - 2);
-
-          if (i < row.length - 1) {
-            doc.line(packedXPos + colWidths[i], currentY, packedXPos + colWidths[i], currentY + rowHeight);
-          }
-
-          packedXPos += colWidths[i];
-        });
-
-        currentY += rowHeight;
-
-        // Check if we need a new page
-        if (currentY > doc.internal.pageSize.height - 30) {
-          doc.addPage();
-          currentY = 20;
-
-          // Redraw header on new page
-          doc.setFillColor(...primaryColor);
-          doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-          doc.setTextColor(255, 255, 255);
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'bold');
-
-          packedXPos = startX;
-          tableHeaders.forEach((header, i) => {
-            doc.text(String(header || ''), packedXPos + cellPadding, currentY + rowHeight - 2);
-            packedXPos += colWidths[i];
-          });
-
-          currentY += rowHeight;
-          doc.setFont('helvetica', 'normal');
-        }
-      });
-    }
-
-    // Add Recommended Boxes section - render each row individually (same as spreadsheet)
-    const recommendedBoxes = spreadsheetRows.filter(row => row.itemType === 'boxes_needed');
-    if (recommendedBoxes.length > 0) {
-      // Prepare row data - same format as inventory table
-      const recommendedTableRows = recommendedBoxes.map(row => {
-        return spreadsheetColumns.map(col => {
-          const value = row.cells[col.id] || '';
-          if (col.id === 'col6' && value.includes('(')) {
-            return value;
-          }
-          return value;
-        });
-      });
-
-      // Check if we need a new page
-      if (currentY > doc.internal.pageSize.height - 60) {
-        doc.addPage();
-        currentY = 20;
-      } else {
-        currentY += 15;
-      }
-
-      // Section header
-      doc.setFontSize(16);
-      doc.setTextColor(...primaryColor);
-      doc.text('Recommended Boxes', 20, currentY);
-      currentY += 10;
-
-      // Draw header - same style as inventory table
+      // Draw header
       doc.setFillColor(...primaryColor);
       doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
       doc.setTextColor(255, 255, 255);
@@ -2913,9 +2782,9 @@ useEffect(() => {
       currentY += rowHeight;
       doc.setFont('helvetica', 'normal');
 
-      // Draw rows - same logic as inventory table
-      recommendedTableRows.forEach((row, rowIndex) => {
-        const rowData = recommendedBoxes[rowIndex];
+      // Draw rows
+      boxTableRows.forEach((row, rowIndex) => {
+        const rowData = boxRows[rowIndex];
         const goingValue = rowData.cells?.col6 || 'going';
         const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
 
@@ -2997,7 +2866,159 @@ useEffect(() => {
           doc.setFont('helvetica', 'normal');
         }
       });
-    }
+    };
+
+    // Helper function to render box summary table
+    const renderBoxSummaryTable = (items, sectionTitle, getBoxTypeFn) => {
+      if (items.length === 0) return;
+
+      // Aggregate boxes by type (using same logic as BoxesManager)
+      const boxSummary = {};
+      items.forEach(item => {
+        const boxType = getBoxTypeFn(item);
+        const quantity = item.quantity || 1;
+        const capacity = item.box_details?.capacity_cuft || item.cuft || 0;
+        const weight = item.weight || 0;
+        const packedBy = item.packed_by || 'N/A';
+
+        // Calculate going quantity
+        let goingQty = quantity;
+        if (item.going === 'not going') {
+          goingQty = 0;
+        } else if (item.goingQuantity !== undefined) {
+          goingQty = item.goingQuantity;
+        }
+
+        if (!boxSummary[boxType]) {
+          boxSummary[boxType] = { count: 0, cuft: 0, weight: 0, goingQty: 0, totalQty: 0, packedByValues: {} };
+        }
+
+        boxSummary[boxType].count += quantity;
+        boxSummary[boxType].cuft += (capacity * quantity);
+        boxSummary[boxType].weight += weight;
+        boxSummary[boxType].goingQty += goingQty;
+        boxSummary[boxType].totalQty += quantity;
+        boxSummary[boxType].packedByValues[packedBy] = (boxSummary[boxType].packedByValues[packedBy] || 0) + quantity;
+      });
+
+      // Convert to array and sort
+      const summaryRows = Object.entries(boxSummary)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([boxType, data]) => {
+          // Format going
+          let goingStr = data.goingQty === data.totalQty ? 'going' :
+                         data.goingQty === 0 ? 'not going' :
+                         `going (${data.goingQty}/${data.totalQty})`;
+
+          // Format PBO/CP
+          const pboEntries = Object.entries(data.packedByValues);
+          let pboStr = pboEntries.length === 1 ? pboEntries[0][0] :
+                       pboEntries.length > 1 ? 'Mixed' : 'N/A';
+
+          return [boxType, data.count.toString(), Math.round(data.cuft * 10) / 10 + '',
+                  Math.round(data.weight) + ' lbs', goingStr, pboStr];
+        });
+
+      // Check if we need a new page
+      if (currentY > doc.internal.pageSize.height - 60) {
+        doc.addPage();
+        currentY = 20;
+      } else {
+        currentY += 10;
+      }
+
+      // Section header
+      doc.setFontSize(12);
+      doc.setTextColor(...primaryColor);
+      doc.text(sectionTitle, 20, currentY);
+      currentY += 8;
+
+      // Summary table columns
+      const summaryHeaders = ['Box Type', 'Count', 'Cu.Ft', 'Weight', 'Going', 'PBO/CP'];
+      const summaryColWidths = [50, 20, 25, 30, 35, 25];
+      const summaryTotalWidth = summaryColWidths.reduce((a, b) => a + b, 0);
+
+      // Draw header
+      doc.setFillColor(100, 116, 139); // slate-500 for summary
+      doc.rect(startX, currentY, summaryTotalWidth, rowHeight, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+
+      let sumXPos = startX;
+      summaryHeaders.forEach((header, i) => {
+        doc.text(String(header), sumXPos + cellPadding, currentY + rowHeight - 2);
+        sumXPos += summaryColWidths[i];
+      });
+
+      currentY += rowHeight;
+      doc.setFont('helvetica', 'normal');
+
+      // Draw summary rows
+      summaryRows.forEach((row, rowIndex) => {
+        if (rowIndex % 2 === 0) {
+          doc.setFillColor(241, 245, 249); // slate-100
+        } else {
+          doc.setFillColor(255, 255, 255);
+        }
+
+        doc.rect(startX, currentY, summaryTotalWidth, rowHeight, 'F');
+        doc.setDrawColor(200, 200, 200);
+        doc.rect(startX, currentY, summaryTotalWidth, rowHeight, 'S');
+
+        doc.setTextColor(...textColor);
+        doc.setFontSize(7);
+
+        sumXPos = startX;
+        row.forEach((cell, i) => {
+          const text = String(cell || '');
+          const maxWidth = summaryColWidths[i] - cellPadding * 2;
+          let displayText = text;
+          while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
+            displayText = displayText.slice(0, -1);
+          }
+          if (displayText !== text && displayText.length > 3) {
+            displayText = displayText.slice(0, -3) + '...';
+          }
+          doc.text(displayText, sumXPos + cellPadding, currentY + rowHeight - 2);
+          if (i < row.length - 1) {
+            doc.line(sumXPos + summaryColWidths[i], currentY, sumXPos + summaryColWidths[i], currentY + rowHeight);
+          }
+          sumXPos += summaryColWidths[i];
+        });
+
+        currentY += rowHeight;
+      });
+    };
+
+    // Get box type using BoxesManager logic
+    const getBoxType = (item) => {
+      return item.box_details?.box_type || item.packed_box_details?.size || item.name || 'Unknown Box';
+    };
+
+    // Packed Boxes section - detailed rows
+    const packedBoxRows = spreadsheetRows.filter(row =>
+      row.itemType === 'existing_box' || row.itemType === 'packed_box'
+    );
+    renderDetailedBoxRows(packedBoxRows, 'Packed Boxes');
+
+    // Packed Boxes Summary
+    const packedBoxItems = inventoryItems.filter(item => {
+      const itemType = item.itemType || item.item_type;
+      return itemType === 'existing_box' || itemType === 'packed_box';
+    });
+    renderBoxSummaryTable(packedBoxItems, 'Packed Boxes Summary', getBoxType);
+
+    // Recommended Boxes section - detailed rows
+    const recommendedBoxRows = spreadsheetRows.filter(row => row.itemType === 'boxes_needed');
+    renderDetailedBoxRows(recommendedBoxRows, 'Recommended Boxes');
+
+    // Recommended Boxes Summary
+    const recommendedBoxItems = inventoryItems.filter(item => {
+      const itemType = item.itemType || item.item_type;
+      return itemType === 'boxes_needed';
+    });
+    renderBoxSummaryTable(recommendedBoxItems, 'Recommended Boxes Summary', getBoxType);
 
     // Add AI summaries and notes sections
     const fetchAndAddNotes = async () => {
