@@ -89,11 +89,14 @@ interface AISummary {
   createdAt: string;
   analysisSummary?: string | null;
   transcriptSummary?: string | null;
+  segmentSummaries?: string | null;  // Combined AI summaries from all segments
+  packingNotes?: string | null;       // Combined packing notes from all segments
 }
 
 interface InventoryNotesProps {
   projectId: string;
   onNoteUpdate?: () => void;
+  smartMovingEnabled?: boolean;
 }
 
 const categoryConfig = {
@@ -105,8 +108,18 @@ const categoryConfig = {
   'video-call': { icon: MessageSquare, label: 'Video Call', color: 'text-indigo-500' }
 };
 
+// SmartMoving note type mapping
+const smartMovingNoteMapping: Record<string, string> = {
+  'general': 'Internal',
+  'inventory': 'Internal',
+  'video-call': 'Internal',
+  'customer': 'Customer',
+  'moving-day': 'Crew Notes',
+  'special-instructions': 'Crew Notes'
+};
 
-export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNotesProps) {
+
+export default function InventoryNotes({ projectId, onNoteUpdate, smartMovingEnabled = false }: InventoryNotesProps) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [aiSummaries, setAiSummaries] = useState<AISummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,12 +196,14 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
       const summaries: AISummary[] = [];
       for (const rec of recordings) {
         if (rec.status === 'completed' &&
-            (rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary)) {
+            (rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary || rec.segmentSummaries || rec.packingNotes)) {
           summaries.push({
             videoRecordingId: rec._id,
             createdAt: rec.createdAt,
             analysisSummary: rec.analysisResult?.summary || null,
             transcriptSummary: rec.transcriptAnalysisResult?.summary || null,
+            segmentSummaries: rec.segmentSummaries || null,
+            packingNotes: rec.packingNotes || null,
           });
         }
       }
@@ -435,7 +450,7 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
 
           {/* Filters */}
           <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
             <SelectContent>
@@ -444,7 +459,12 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
                 <SelectItem key={key} value={key}>
                   <div className="flex items-center gap-2">
                     <config.icon className={cn("h-4 w-4", config.color)} />
-                    {config.label}
+                    <span>{config.label}</span>
+                    {smartMovingEnabled && (
+                      <span className="text-xs text-muted-foreground ml-1">
+                        → SM {smartMovingNoteMapping[key]}
+                      </span>
+                    )}
                   </div>
                 </SelectItem>
               ))}
@@ -492,12 +512,51 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {aiSummaries.map((summary) => (
               <div key={summary.videoRecordingId} className="space-y-3">
+                {/* AI Summary from segment analysis */}
+                {summary.segmentSummaries && (
+                  <Card className="border-l-4 border-l-indigo-500">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Video className="h-3 w-3 text-indigo-500" />
+                        <span className="text-indigo-600 font-medium">AI Summary</span>
+                        <span>·</span>
+                        <Calendar className="h-3 w-3" />
+                        <span>{new Date(summary.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
+                        {summary.segmentSummaries}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+                {/* Packing Notes from segment analysis */}
+                {summary.packingNotes && (
+                  <Card className="border-l-4 border-l-orange-500">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Package className="h-3 w-3 text-orange-500" />
+                        <span className="text-orange-600 font-medium">Packing Notes</span>
+                        <span>·</span>
+                        <Calendar className="h-3 w-3" />
+                        <span>{new Date(summary.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
+                        {summary.packingNotes}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+                {/* Transcript Summary (customer decisions) */}
                 {summary.transcriptSummary && (
                   <Card className="border-l-4 border-l-green-500">
                     <CardHeader className="pb-2">
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <MessageSquare className="h-3 w-3 text-green-500" />
-                        <span className="text-green-600 font-medium">AI Summary</span>
+                        <span className="text-green-600 font-medium">Customer Decisions</span>
                         <span>·</span>
                         <Calendar className="h-3 w-3" />
                         <span>{new Date(summary.createdAt).toLocaleDateString()}</span>
@@ -506,24 +565,6 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
                     <CardContent className="pt-0">
                       <p className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
                         {summary.transcriptSummary}
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
-                {summary.analysisSummary && (
-                  <Card className="border-l-4 border-l-blue-500">
-                    <CardHeader className="pb-2">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Package className="h-3 w-3 text-blue-500" />
-                        <span className="text-blue-600 font-medium">Packing Notes</span>
-                        <span>·</span>
-                        <Calendar className="h-3 w-3" />
-                        <span>{new Date(summary.createdAt).toLocaleDateString()}</span>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <p className="text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap">
-                        {summary.analysisSummary}
                       </p>
                     </CardContent>
                   </Card>
@@ -735,7 +776,12 @@ export default function InventoryNotes({ projectId, onNoteUpdate }: InventoryNot
                     <SelectItem key={key} value={key}>
                       <div className="flex items-center gap-2">
                         <config.icon className={cn("h-4 w-4", config.color)} />
-                        {config.label}
+                        <span>{config.label}</span>
+                        {smartMovingEnabled && (
+                          <span className="text-xs text-muted-foreground ml-1">
+                            → SM {smartMovingNoteMapping[key]}
+                          </span>
+                        )}
                       </div>
                     </SelectItem>
                   ))}

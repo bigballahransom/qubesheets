@@ -3785,8 +3785,9 @@ const ProcessingNotification = () => {
                   {currentProject ? (
                     <>
                       {console.log('About to render InventoryNotes component')}
-                      <InventoryNotes 
+                      <InventoryNotes
                         projectId={currentProject._id}
+                        smartMovingEnabled={smartMovingEnabled}
                         onNoteUpdate={() => {
                           // Refresh notes count when a note is created/updated/deleted
                           fetch(`/api/projects/${currentProject._id}/notes/count`)

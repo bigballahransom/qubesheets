@@ -107,6 +107,9 @@ export interface IVideoRecording extends Document {
     processedAt?: Date;
     error?: string;
   };
+  // Aggregated segment data for Notes tab display
+  segmentSummaries?: string;   // Combined AI summaries from all segments
+  packingNotes?: string;       // Combined packing notes from all segments
   createdAt: Date;
   updatedAt: Date;
 }
@@ -318,7 +321,10 @@ const VideoRecordingSchema: Schema = new Schema(
       summary: { type: String },
       processedAt: { type: Date },
       error: { type: String }
-    }
+    },
+    // Aggregated segment data for Notes tab display
+    segmentSummaries: { type: String },
+    packingNotes: { type: String }
   },
   {
     timestamps: true,

@@ -200,6 +200,26 @@ function getBoxCuft(size: string): number {
   return sizes[size] || 3.0;
 }
 
+// Extract and combine summaries and packing notes from segments
+function extractSummariesAndPackingNotes(segments: any[]): { segmentSummaries: string; packingNotes: string } {
+  const summaries: string[] = [];
+  const packingNotesList: string[] = [];
+
+  for (const segment of segments) {
+    if (segment.rawAnalysis?.summary) {
+      summaries.push(segment.rawAnalysis.summary);
+    }
+    if (segment.rawAnalysis?.packing_notes) {
+      packingNotesList.push(segment.rawAnalysis.packing_notes);
+    }
+  }
+
+  return {
+    segmentSummaries: summaries.join('\n\n'),
+    packingNotes: packingNotesList.join('\n\n')
+  };
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
@@ -300,6 +320,9 @@ export async function POST(
         quoteTimestamp: item.quoteTimestamp || null
       }));
 
+      // Extract summaries and packing notes from segments
+      const { segmentSummaries, packingNotes } = extractSummariesAndPackingNotes(segments);
+
       await VideoRecording.findByIdAndUpdate(videoRecordingId, {
         'consolidationResult.status': 'completed',
         'consolidationResult.itemsBefore': allItems.length,
@@ -307,7 +330,9 @@ export async function POST(
         'consolidationResult.duplicatesMerged': 0,
         'consolidationResult.summary': 'Single segment - no consolidation needed',
         'consolidationResult.processedAt': new Date(),
-        consolidatedInventory: consolidatedItems
+        consolidatedInventory: consolidatedItems,
+        segmentSummaries,
+        packingNotes
       });
 
       return NextResponse.json({
@@ -353,6 +378,9 @@ export async function POST(
       quoteTimestamp: item.quoteTimestamp || null
     }));
 
+    // Extract summaries and packing notes from segments
+    const { segmentSummaries, packingNotes } = extractSummariesAndPackingNotes(segments);
+
     // Update recording with consolidation results
     await VideoRecording.findByIdAndUpdate(videoRecordingId, {
       'consolidationResult.status': 'completed',
@@ -361,7 +389,9 @@ export async function POST(
       'consolidationResult.duplicatesMerged': consolidationResult.duplicatesMerged || (allItems.length - finalItems.length),
       'consolidationResult.summary': consolidationResult.summary || `Consolidated ${allItems.length} items into ${finalItems.length}`,
       'consolidationResult.processedAt': new Date(),
-      consolidatedInventory: finalItems
+      consolidatedInventory: finalItems,
+      segmentSummaries,
+      packingNotes
     });
 
     console.log(`   ✅ Consolidation complete: ${allItems.length} → ${finalItems.length} items`);

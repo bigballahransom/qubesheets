@@ -3,8 +3,11 @@ import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
 import OrganizationSettings from '@/models/OrganizationSettings';
+import CrewReviewLink from '@/models/CrewReviewLink';
+import InventoryNote from '@/models/InventoryNote';
 import { IInventoryItem } from '@/models/InventoryItem';
 import { logActivity } from '@/lib/activity-logger';
+import crypto from 'crypto';
 
 interface WeightConfig {
   weightMode: 'actual' | 'custom';
@@ -358,7 +361,28 @@ export async function syncInventoryToSmartMoving(
           duration: Date.now() - startTime
         }
       });
-      
+
+      // Sync notes to SmartMoving job notes (if enabled)
+      // This includes: crew review link + all QubeSheets notes grouped by category
+      if (smartMovingIntegration.syncCrewLinkOnSync !== false) {
+        try {
+          const notesResult = await syncNotesToSmartMoving(
+            projectId,
+            smartMovingOpportunityId,
+            smartMovingIntegration.smartMovingApiKey,
+            smartMovingIntegration.smartMovingClientId
+          );
+          if (notesResult.success) {
+            console.log(`✅ [SMARTMOVING-SYNC] Notes synced to opportunity (${notesResult.notesSynced} notes, ${notesResult.jobsUpdated} jobs updated)`);
+          } else if (notesResult.error) {
+            console.error(`❌ [SMARTMOVING-SYNC] Failed to sync notes: ${notesResult.error}`);
+          }
+        } catch (notesError) {
+          // Don't fail the entire sync if notes sync fails
+          console.error(`❌ [SMARTMOVING-SYNC] Notes sync error (non-fatal):`, notesError);
+        }
+      }
+
       return { success: true, syncedCount, roomId: firstRoomId || undefined };
     } else {
       console.error(`❌ SmartMoving API sync failed for project ${projectId}:`, syncResult.error);
@@ -408,6 +432,429 @@ export async function syncInventoryToSmartMoving(
     }
     
     return { success: false, syncedCount: 0, error: errorMessage };
+  }
+}
+
+/**
+ * Helper to get the base URL for crew review links
+ */
+function getBaseUrl(): string {
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.NEXT_PUBLIC_APP_URL || 'https://app.qubesheets.com';
+  }
+  return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+}
+
+/**
+ * Fetches opportunity details including jobs from SmartMoving
+ */
+async function getOpportunityJobs(
+  opportunityId: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; jobs?: Array<{ id: string; jobNumber?: string }>; error?: string }> {
+  try {
+    console.log(`🔍 [SMARTMOVING-JOBS] Fetching jobs for opportunity ${opportunityId}`);
+
+    const url = `https://api-public.smartmoving.com/v1/api/opportunities/${opportunityId}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId
+      }
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-JOBS] Failed to fetch opportunity: ${response.status} - ${errorText}`);
+      return { success: false, error: `Failed to fetch opportunity: ${response.status}` };
+    }
+
+    const opportunity = await response.json();
+    const jobs = opportunity.jobs || [];
+    console.log(`✅ [SMARTMOVING-JOBS] Found ${jobs.length} jobs for opportunity ${opportunityId}`);
+
+    return { success: true, jobs };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-JOBS] Error fetching opportunity:`, error);
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
+ * Updates the crew notes field for a job in SmartMoving
+ */
+async function updateJobCrewNotes(
+  opportunityId: string,
+  jobId: string,
+  crewNotes: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    console.log(`📝 [SMARTMOVING-CREW-NOTES] Updating crew notes for job ${jobId}`);
+
+    const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/jobs/${jobId}/notes`;
+
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId
+      },
+      body: JSON.stringify({ crewNotes })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-CREW-NOTES] Failed to update job ${jobId}: ${response.status} - ${errorText}`);
+      return { success: false, error: `Failed to update crew notes: ${response.status} - ${errorText}` };
+    }
+
+    console.log(`✅ [SMARTMOVING-CREW-NOTES] Successfully updated crew notes for job ${jobId}`);
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-CREW-NOTES] Error updating job ${jobId}:`, error);
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
+ * Syncs the crew review link to SmartMoving's Job Notes "Crew Notes" field
+ * This updates the crewNotes field for ALL jobs in the opportunity
+ *
+ * @param projectId - The QubeSheets project ID
+ * @param opportunityId - The SmartMoving opportunity ID
+ * @param apiKey - SmartMoving API key
+ * @param clientId - SmartMoving client ID
+ * @returns Result indicating success/failure and number of jobs updated
+ */
+export async function syncCrewReviewLinkToSmartMoving(
+  projectId: string,
+  opportunityId: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; jobsUpdated?: number; error?: string }> {
+  console.log(`🔗 [SMARTMOVING-CREW-LINK] Starting crew review link sync for project ${projectId}`);
+
+  try {
+    await connectMongoDB();
+
+    // Get the active crew review link for this project, or auto-generate one
+    let crewReviewLink = await CrewReviewLink.findOne({
+      projectId,
+      isActive: true
+    });
+
+    if (!crewReviewLink) {
+      console.log(`📝 [SMARTMOVING-CREW-LINK] No active crew review link found - auto-generating one`);
+
+      // Generate unique review token
+      const reviewToken = crypto.randomBytes(32).toString('hex');
+
+      // Create the crew review link
+      crewReviewLink = await CrewReviewLink.create({
+        projectId,
+        reviewToken,
+        isActive: true,
+        accessCount: 0
+      });
+
+      console.log(`✅ [SMARTMOVING-CREW-LINK] Auto-generated crew review link for project ${projectId}`);
+    }
+
+    // Construct the crew review URL
+    const crewReviewUrl = `${getBaseUrl()}/crew-review/${crewReviewLink.reviewToken}`;
+    console.log(`🔗 [SMARTMOVING-CREW-LINK] Crew review URL: ${crewReviewUrl}`);
+
+    // Fetch jobs for the opportunity
+    const jobsResult = await getOpportunityJobs(opportunityId, apiKey, clientId);
+    if (!jobsResult.success || !jobsResult.jobs) {
+      console.error(`❌ [SMARTMOVING-CREW-LINK] Failed to fetch jobs: ${jobsResult.error}`);
+      return { success: false, error: jobsResult.error };
+    }
+
+    if (jobsResult.jobs.length === 0) {
+      console.log(`⚠️ [SMARTMOVING-CREW-LINK] No jobs found for opportunity ${opportunityId} - skipping sync`);
+      return { success: true, jobsUpdated: 0 };
+    }
+
+    // Update crew notes for all jobs
+    const crewNotesContent = `Crew Review Link: ${crewReviewUrl}`;
+    let jobsUpdated = 0;
+    let lastError = '';
+
+    for (const job of jobsResult.jobs) {
+      const updateResult = await updateJobCrewNotes(
+        opportunityId,
+        job.id,
+        crewNotesContent,
+        apiKey,
+        clientId
+      );
+
+      if (updateResult.success) {
+        jobsUpdated++;
+      } else {
+        lastError = updateResult.error || 'Unknown error';
+        console.error(`⚠️ [SMARTMOVING-CREW-LINK] Failed to update job ${job.id}: ${lastError}`);
+      }
+
+      // Small delay between API calls to be respectful of rate limits
+      if (jobsResult.jobs.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+
+    console.log(`✅ [SMARTMOVING-CREW-LINK] Updated ${jobsUpdated}/${jobsResult.jobs.length} jobs with crew review link`);
+
+    return {
+      success: jobsUpdated > 0,
+      jobsUpdated,
+      error: jobsUpdated === 0 ? lastError : undefined
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-CREW-LINK] Error syncing crew review link:`, error);
+    return { success: false, error: errorMessage };
+  }
+}
+
+// Mapping from QubeSheets note category to SmartMoving note type
+const noteCategoryMapping: Record<string, 'internal' | 'crew' | 'customer'> = {
+  'general': 'internal',
+  'inventory': 'internal',
+  'video-call': 'internal',
+  'customer': 'customer',
+  'moving-day': 'crew',
+  'special-instructions': 'crew'
+};
+
+// Display names for categories when building note content
+const categoryDisplayNames: Record<string, string> = {
+  'general': 'General',
+  'inventory': 'Inventory',
+  'video-call': 'Video Call',
+  'customer': 'Customer',
+  'moving-day': 'Moving Day',
+  'special-instructions': 'Special Instructions'
+};
+
+/**
+ * Updates all job notes (internal, crew, customer) in SmartMoving
+ */
+async function updateJobAllNotes(
+  opportunityId: string,
+  jobId: string,
+  notes: {
+    internalNotes?: string;
+    crewNotes?: string;
+    customerNotes?: string;
+  },
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    console.log(`📝 [SMARTMOVING-NOTES] Updating all notes for job ${jobId}`);
+
+    const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/jobs/${jobId}/notes`;
+
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId
+      },
+      body: JSON.stringify(notes)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ [SMARTMOVING-NOTES] Failed to update job ${jobId}: ${response.status} - ${errorText}`);
+      return { success: false, error: `Failed to update notes: ${response.status} - ${errorText}` };
+    }
+
+    console.log(`✅ [SMARTMOVING-NOTES] Successfully updated notes for job ${jobId}`);
+    return { success: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-NOTES] Error updating job ${jobId}:`, error);
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
+ * Syncs QubeSheets notes to SmartMoving job notes based on category mapping:
+ * - video-call, inventory, general → Internal Notes
+ * - moving-day, special-instructions → Crew Notes (also includes crew review link)
+ * - customer → Customer Notes
+ *
+ * @param projectId - The QubeSheets project ID
+ * @param opportunityId - The SmartMoving opportunity ID
+ * @param apiKey - SmartMoving API key
+ * @param clientId - SmartMoving client ID
+ * @returns Result indicating success/failure and counts
+ */
+export async function syncNotesToSmartMoving(
+  projectId: string,
+  opportunityId: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; jobsUpdated?: number; notesSynced?: number; error?: string }> {
+  console.log(`📝 [SMARTMOVING-NOTES-SYNC] Starting notes sync for project ${projectId}`);
+
+  try {
+    await connectMongoDB();
+
+    // Fetch all notes for the project
+    const notes = await InventoryNote.find({ projectId }).sort({ createdAt: 1 });
+    console.log(`📝 [SMARTMOVING-NOTES-SYNC] Found ${notes.length} notes to sync`);
+
+    // Group notes by SmartMoving note type
+    const groupedNotes: {
+      internal: Array<{ category: string; title?: string; content: string }>;
+      crew: Array<{ category: string; title?: string; content: string }>;
+      customer: Array<{ category: string; title?: string; content: string }>;
+    } = {
+      internal: [],
+      crew: [],
+      customer: []
+    };
+
+    for (const note of notes) {
+      const category = note.category || 'general';
+      const smNoteType = noteCategoryMapping[category] || 'internal';
+      groupedNotes[smNoteType].push({
+        category,
+        title: note.title,
+        content: note.content
+      });
+    }
+
+    console.log(`📝 [SMARTMOVING-NOTES-SYNC] Grouped notes - Internal: ${groupedNotes.internal.length}, Crew: ${groupedNotes.crew.length}, Customer: ${groupedNotes.customer.length}`);
+
+    // Build combined content for each SmartMoving note type
+    const buildNotesContent = (notesList: Array<{ category: string; title?: string; content: string }>): string => {
+      if (notesList.length === 0) return '';
+
+      // Group by category
+      const byCategory: Record<string, Array<{ title?: string; content: string }>> = {};
+      for (const note of notesList) {
+        if (!byCategory[note.category]) {
+          byCategory[note.category] = [];
+        }
+        byCategory[note.category].push({ title: note.title, content: note.content });
+      }
+
+      // Build content
+      const sections: string[] = [];
+      for (const [category, categoryNotes] of Object.entries(byCategory)) {
+        const displayName = categoryDisplayNames[category] || category;
+        const categoryContent = categoryNotes
+          .map(n => n.title ? `${n.title}:\n${n.content}` : n.content)
+          .join('\n\n');
+        sections.push(`--- ${displayName} Notes ---\n${categoryContent}`);
+      }
+
+      return sections.join('\n\n');
+    };
+
+    const internalNotesContent = buildNotesContent(groupedNotes.internal);
+    const customerNotesContent = buildNotesContent(groupedNotes.customer);
+
+    // For crew notes, also include the crew review link
+    let crewNotesContent = buildNotesContent(groupedNotes.crew);
+
+    // Get crew review link
+    let crewReviewLink = await CrewReviewLink.findOne({
+      projectId,
+      isActive: true
+    });
+
+    if (!crewReviewLink) {
+      // Auto-generate crew review link
+      const reviewToken = crypto.randomBytes(32).toString('hex');
+      crewReviewLink = await CrewReviewLink.create({
+        projectId,
+        reviewToken,
+        isActive: true,
+        accessCount: 0
+      });
+      console.log(`📝 [SMARTMOVING-NOTES-SYNC] Auto-generated crew review link`);
+    }
+
+    const crewReviewUrl = `${getBaseUrl()}/crew-review/${crewReviewLink.reviewToken}`;
+
+    // Prepend crew review link to crew notes
+    if (crewNotesContent) {
+      crewNotesContent = `Crew Review Link: ${crewReviewUrl}\n\n${crewNotesContent}`;
+    } else {
+      crewNotesContent = `Crew Review Link: ${crewReviewUrl}`;
+    }
+
+    // Fetch jobs for the opportunity
+    const jobsResult = await getOpportunityJobs(opportunityId, apiKey, clientId);
+    if (!jobsResult.success || !jobsResult.jobs) {
+      console.error(`❌ [SMARTMOVING-NOTES-SYNC] Failed to fetch jobs: ${jobsResult.error}`);
+      return { success: false, error: jobsResult.error };
+    }
+
+    if (jobsResult.jobs.length === 0) {
+      console.log(`⚠️ [SMARTMOVING-NOTES-SYNC] No jobs found for opportunity ${opportunityId} - skipping sync`);
+      return { success: true, jobsUpdated: 0, notesSynced: notes.length };
+    }
+
+    // Update notes for all jobs
+    let jobsUpdated = 0;
+    let lastError = '';
+
+    for (const job of jobsResult.jobs) {
+      const updateResult = await updateJobAllNotes(
+        opportunityId,
+        job.id,
+        {
+          internalNotes: internalNotesContent || undefined,
+          crewNotes: crewNotesContent || undefined,
+          customerNotes: customerNotesContent || undefined
+        },
+        apiKey,
+        clientId
+      );
+
+      if (updateResult.success) {
+        jobsUpdated++;
+      } else {
+        lastError = updateResult.error || 'Unknown error';
+        console.error(`⚠️ [SMARTMOVING-NOTES-SYNC] Failed to update job ${job.id}: ${lastError}`);
+      }
+
+      // Small delay between API calls
+      if (jobsResult.jobs.length > 1) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+
+    console.log(`✅ [SMARTMOVING-NOTES-SYNC] Updated ${jobsUpdated}/${jobsResult.jobs.length} jobs with notes`);
+
+    return {
+      success: jobsUpdated > 0,
+      jobsUpdated,
+      notesSynced: notes.length,
+      error: jobsUpdated === 0 ? lastError : undefined
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`❌ [SMARTMOVING-NOTES-SYNC] Error syncing notes:`, error);
+    return { success: false, error: errorMessage };
   }
 }
 

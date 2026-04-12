@@ -25,6 +25,7 @@ export default function IntegrationsPage() {
   const [smartMovingApiKey, setSmartMovingApiKey] = useState('');
   const [hasExistingIntegration, setHasExistingIntegration] = useState(false);
   const [sendUploadLinkOnCreate, setSendUploadLinkOnCreate] = useState(false);
+  const [syncCrewLinkOnSync, setSyncCrewLinkOnSync] = useState(true);
 
   useEffect(() => {
     loadIntegrations();
@@ -41,6 +42,7 @@ export default function IntegrationsPage() {
           setSmartMovingEnabled(true);
           setSmartMovingClientId(data.integration.smartMovingClientId);
           setSendUploadLinkOnCreate(data.integration.sendUploadLinkOnCreate || false);
+          setSyncCrewLinkOnSync(data.integration.syncCrewLinkOnSync !== false);
           // API key is not returned for security, just show that it exists
           if (data.integration.hasApiKey) {
             setSmartMovingApiKey('••••••••••••••••');
@@ -68,6 +70,7 @@ export default function IntegrationsPage() {
             smartMovingClientId,
             smartMovingApiKey,
             sendUploadLinkOnCreate,
+            syncCrewLinkOnSync,
           }),
         });
 
@@ -87,6 +90,7 @@ export default function IntegrationsPage() {
           },
           body: JSON.stringify({
             sendUploadLinkOnCreate,
+            syncCrewLinkOnSync,
           }),
         });
 
@@ -437,6 +441,29 @@ export default function IntegrationsPage() {
                               </label>
                               <p className="text-xs text-gray-600 mt-1">
                                 Automatically send an SMS with an upload link to the customer when a new opportunity is created in SmartMoving.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sync Crew Review Link Option */}
+                      {hasExistingIntegration && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              id="sync-crew-link-on-sync"
+                              checked={syncCrewLinkOnSync}
+                              onChange={(e) => setSyncCrewLinkOnSync(e.target.checked)}
+                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <label htmlFor="sync-crew-link-on-sync" className="text-sm font-medium text-gray-900 cursor-pointer">
+                                Sync crew review link to job notes
+                              </label>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Automatically add the crew review link to the Crew Notes field in SmartMoving when syncing inventory.
                               </p>
                             </div>
                           </div>

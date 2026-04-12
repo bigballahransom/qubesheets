@@ -40,6 +40,7 @@ export async function GET() {
         smartMovingClientId: integration.smartMovingClientId,
         hasApiKey: !!integration.smartMovingApiKey,
         sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
+        syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false, // default true
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt,
         lastUpdatedBy: integration.userId // Show who last updated it
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate } = body;
+    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate, syncCrewLinkOnSync } = body;
 
     if (!smartMovingClientId || !smartMovingApiKey) {
       return NextResponse.json(
@@ -88,7 +89,8 @@ export async function POST(request: Request) {
       organizationId: orgId,
       smartMovingClientId: smartMovingClientId.trim(),
       smartMovingApiKey: smartMovingApiKey.trim(),
-      sendUploadLinkOnCreate: sendUploadLinkOnCreate || false
+      sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
+      syncCrewLinkOnSync: syncCrewLinkOnSync !== false // default true
     };
 
     const integration = await SmartMovingIntegration.findOneAndUpdate(
@@ -110,6 +112,7 @@ export async function POST(request: Request) {
         smartMovingClientId: integration.smartMovingClientId,
         hasApiKey: !!integration.smartMovingApiKey,
         sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
+        syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt
       }
@@ -139,7 +142,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { sendUploadLinkOnCreate } = body;
+    const { sendUploadLinkOnCreate, syncCrewLinkOnSync } = body;
 
     await connectMongoDB();
 
@@ -149,6 +152,7 @@ export async function PATCH(request: Request) {
       {
         $set: {
           sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
+          syncCrewLinkOnSync: syncCrewLinkOnSync !== false,
           userId // Track who updated it
         }
       },
@@ -171,6 +175,7 @@ export async function PATCH(request: Request) {
         smartMovingClientId: integration.smartMovingClientId,
         hasApiKey: !!integration.smartMovingApiKey,
         sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
+        syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
         updatedAt: integration.updatedAt
       }
     });

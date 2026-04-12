@@ -57,6 +57,12 @@ const SmartMovingIntegrationSchema = new mongoose.Schema({
   sendUploadLinkOnCreate: {
     type: Boolean,
     default: false
+  },
+
+  // Auto-sync crew review link to SmartMoving job notes during inventory sync
+  syncCrewLinkOnSync: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true // Automatically manage createdAt and updatedAt
