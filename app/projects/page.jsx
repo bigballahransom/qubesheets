@@ -2,13 +2,20 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Folder, Plus, Loader2 } from 'lucide-react';
+import { Folder, Plus, Loader2, User, Users, UserX, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import IntercomChat from '@/components/IntercomChat';
+import { useAuth, useOrganization } from '@clerk/nextjs';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 // Define Project type (optional in JSX but helpful for documentation)
 // interface Project {
 //   _id: string;
@@ -21,8 +28,28 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
+  const [projectFilter, setProjectFilter] = useState('mine');
+
   const router = useRouter();
+  const { isLoaded, userId } = useAuth();
+  const { organization } = useOrganization();
+
+  // Filter projects based on dropdown selection (only for organizations)
+  const filteredProjects = (() => {
+    if (!organization) return projects;
+
+    switch (projectFilter) {
+      case 'mine':
+        // Falls back to userId (creator) if no assignedTo exists
+        return projects.filter(p => (p.assignedTo?.userId || p.userId) === userId);
+      case 'unassigned':
+        // Projects with no assignedTo AND created via API/webhook (not a real user)
+        return projects.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook'].includes(p.userId));
+      case 'all':
+      default:
+        return projects;
+    }
+  })();
   
   // Fetch projects on component mount
   useEffect(() => {
@@ -101,8 +128,55 @@ export default function ProjectsPage() {
       
       {/* Projects list */}
       <div className="bg-white rounded-lg shadow-sm border p-4">
-        <h2 className="text-lg font-medium mb-4">Your Projects</h2>
-        
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-medium">Your Projects</h2>
+
+          {/* Project Filter Dropdown - only show for organizations */}
+          {organization && !loading && projects.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center justify-between gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors cursor-pointer">
+                  <span className="flex items-center gap-1.5">
+                    {projectFilter === 'mine' && <User size={14} />}
+                    {projectFilter === 'all' && <Users size={14} />}
+                    {projectFilter === 'unassigned' && <UserX size={14} />}
+                    {projectFilter === 'mine' && 'My Projects'}
+                    {projectFilter === 'all' && 'All Projects'}
+                    {projectFilter === 'unassigned' && 'Unassigned'}
+                  </span>
+                  <ChevronDown size={14} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[180px]">
+                <DropdownMenuItem
+                  onClick={() => setProjectFilter('mine')}
+                  className="cursor-pointer"
+                >
+                  <User size={14} className="mr-2" />
+                  My Projects
+                  {projectFilter === 'mine' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setProjectFilter('all')}
+                  className="cursor-pointer"
+                >
+                  <Users size={14} className="mr-2" />
+                  All Projects
+                  {projectFilter === 'all' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setProjectFilter('unassigned')}
+                  className="cursor-pointer"
+                >
+                  <UserX size={14} className="mr-2" />
+                  Unassigned
+                  {projectFilter === 'unassigned' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+
         {loading ? (
           <div className="flex justify-center items-center py-8">
             <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -119,14 +193,20 @@ export default function ProjectsPage() {
               Try Again
             </Button>
           </div>
-        ) : projects.length === 0 ? (
+        ) : filteredProjects.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <p>You don't have any projects yet.</p>
-            <p className="mt-2">Create your first project to get started!</p>
+            {projects.length === 0 ? (
+              <>
+                <p>You don't have any projects yet.</p>
+                <p className="mt-2">Create your first project to get started!</p>
+              </>
+            ) : (
+              <p>No projects found for the selected filter.</p>
+            )}
           </div>
         ) : (
           <div className="divide-y">
-            {projects.map((project) => (
+            {filteredProjects.map((project) => (
               <div
                 key={project._id}
                 className="py-3 hover:bg-gray-50 transition-colors cursor-pointer"

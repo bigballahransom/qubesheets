@@ -30,16 +30,17 @@ export default function SmartMovingSyncModal({
   const [searchResults, setSearchResults] = useState({ leads: [], customers: [] });
   const [searchError, setSearchError] = useState(null);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [isChangingSelection, setIsChangingSelection] = useState(false);
 
   // Search for SmartMoving records when modal opens
-  const searchRecords = useCallback(async () => {
+  const searchRecords = useCallback(async (forceSearch = false) => {
     if (!projectId || !projectPhone) {
       setModalStep('no_results');
       return;
     }
 
-    // For re-syncs, skip search and go directly to ready state
-    if (isResync) {
+    // For re-syncs, skip search and go directly to ready state (unless forcing)
+    if (isResync && !forceSearch) {
       setModalStep('ready');
       return;
     }
@@ -94,6 +95,7 @@ export default function SmartMovingSyncModal({
     setSearchResults({ leads: [], customers: [] });
     setSelectedRecord(null);
     setSearchError(null);
+    setIsChangingSelection(false);
     onOpenChange(false);
   };
 
@@ -105,6 +107,12 @@ export default function SmartMovingSyncModal({
   const handleBackToSelection = () => {
     setSelectedRecord(null);
     setModalStep('selecting');
+  };
+
+  const handleChangeLinkedProject = () => {
+    setIsChangingSelection(true);
+    setSelectedRecord(null);
+    searchRecords(true); // Force search even during re-sync
   };
 
   const handleSync = () => {
@@ -301,14 +309,21 @@ export default function SmartMovingSyncModal({
           {modalStep === 'ready' && (
             <div className="space-y-4">
               {/* Re-sync warning OR Selected Record */}
-              {isResync ? (
+              {isResync && !isChangingSelection ? (
                 <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
-                  <div>
+                  <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
                     <p className="font-medium text-amber-800">Re-syncing to SmartMoving</p>
                     <p className="text-sm text-amber-700 mt-1">
                       This will replace all existing inventory items in SmartMoving with the current items from this project.
                     </p>
+                    <button
+                      type="button"
+                      onClick={handleChangeLinkedProject}
+                      className="text-sm text-amber-700 hover:text-amber-900 underline mt-2"
+                    >
+                      Sync to a different project instead
+                    </button>
                   </div>
                 </div>
               ) : (

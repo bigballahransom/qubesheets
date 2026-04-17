@@ -149,8 +149,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if project already has an opportunity ID - if so, just sync inventory
-    if (project.metadata?.smartMovingOpportunityId) {
+    // Check if project already has an opportunity ID
+    // If user provided a new targetType/targetId, they want to change the linked project - proceed with new selection
+    // Otherwise, just sync inventory to the existing linked opportunity
+    const isChangingSelection = targetType && targetId;
+    if (project.metadata?.smartMovingOpportunityId && !isChangingSelection) {
       console.log(`🔄 [SYNC-FROM-LEAD] Project already linked to opportunity ${project.metadata.smartMovingOpportunityId}, syncing inventory only`);
 
       // Get SmartMoving integration for credentials
@@ -324,6 +327,10 @@ export async function POST(request: NextRequest) {
     let quoteNumber: string | null = selectedQuoteNumber || null;
 
     // ===== CHECK FOR USER-SELECTED RECORD =====
+    if (project.metadata?.smartMovingOpportunityId && isChangingSelection) {
+      console.log(`🔄 [SYNC-FROM-LEAD] Changing linked project from ${project.metadata.smartMovingOpportunityId} to new selection`);
+    }
+
     if (targetType === 'opportunity' && targetId && selectedCustomerId) {
       // User selected an existing opportunity directly
       console.log(`✅ [SYNC-FROM-LEAD] Using user-selected opportunity: ${targetId}`);
