@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
+import { clerkClient } from '@clerk/nextjs/server';
 
 // GET /api/projects - Get all projects for the authenticated organization
 export async function GET(request: NextRequest) {
@@ -62,12 +63,25 @@ export async function POST(request: NextRequest) {
       description: data.description,
       userId,
     };
-    
+
     // Only add organizationId if user is in an organization
     if (!authContext.isPersonalAccount) {
       projectData.organizationId = authContext.organizationId;
+
+      // Auto-assign to creator for organization projects
+      const clerk = await clerkClient();
+      const user = await clerk.users.getUser(userId);
+      const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+      const email = user.emailAddresses?.[0]?.emailAddress || '';
+      const userName = fullName || email || 'Unknown User';
+
+      projectData.assignedTo = {
+        userId,
+        name: userName,
+        assignedAt: new Date(),
+      };
     }
-    
+
     const project = await Project.create(projectData);
     
     return NextResponse.json(project, { status: 201 });

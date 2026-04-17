@@ -16,6 +16,8 @@ import {
   ArrowRight,
   Loader2,
   Users,
+  User,
+  UserX,
   LayoutDashboard,
   Calendar,
   Truck,
@@ -30,6 +32,12 @@ import {
 } from 'lucide-react';
 import { Sidebar } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '@clerk/nextjs';
 import { SearchDropdown } from '@/components/SearchDropdown';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
@@ -44,6 +52,12 @@ interface Project {
   customerName?: string;
   phone?: string;
   updatedAt: string;
+  userId: string; // Creator of the project
+  assignedTo?: {
+    userId: string;
+    name: string;
+    assignedAt: string;
+  };
   metadata?: {
     smartMovingOpportunityId?: string;
     smartMovingSyncedAt?: string;
@@ -58,6 +72,7 @@ export function AppSidebar() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [dispatchExpanded, setDispatchExpanded] = useState(false);
   const [automationsExpanded, setAutomationsExpanded] = useState(false);
+  const [projectFilter, setProjectFilter] = useState<'mine' | 'all' | 'unassigned'>('mine'); // Default to My Projects
   
   const router = useRouter();
   const pathname = usePathname();
@@ -138,7 +153,24 @@ export function AppSidebar() {
       year: 'numeric',
     });
   };
-  
+
+  // Filter projects based on dropdown selection (only for organizations)
+  const filteredProjects = (() => {
+    if (!organization) return projects;
+
+    switch (projectFilter) {
+      case 'mine':
+        // Falls back to userId (creator) if no assignedTo exists
+        return projects.filter(p => (p.assignedTo?.userId || p.userId) === userId);
+      case 'unassigned':
+        // Projects with no assignedTo AND created via API/webhook (not a real user)
+        return projects.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook'].includes(p.userId));
+      case 'all':
+      default:
+        return projects;
+    }
+  })();
+
   return (
     <Sidebar>
       <div className="flex flex-col h-full">
@@ -325,6 +357,52 @@ export function AppSidebar() {
             ) : (
               /* Non-CRM: Project List */
               <>
+                {/* Project Filter Dropdown - only show for organizations */}
+                {organization && !loading && projects.length > 0 && (
+                  <div className="mb-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button className="flex items-center justify-between w-full px-2 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors cursor-pointer">
+                          <span className="flex items-center gap-1.5">
+                            {projectFilter === 'mine' && <User size={12} />}
+                            {projectFilter === 'all' && <Users size={12} />}
+                            {projectFilter === 'unassigned' && <UserX size={12} />}
+                            {projectFilter === 'mine' && 'My Projects'}
+                            {projectFilter === 'all' && 'All Projects'}
+                            {projectFilter === 'unassigned' && 'Unassigned'}
+                          </span>
+                          <ChevronDown size={12} />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-[180px]">
+                        <DropdownMenuItem
+                          onClick={() => setProjectFilter('mine')}
+                          className="cursor-pointer"
+                        >
+                          <User size={14} className="mr-2" />
+                          My Projects
+                          {projectFilter === 'mine' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setProjectFilter('all')}
+                          className="cursor-pointer"
+                        >
+                          <Users size={14} className="mr-2" />
+                          All Projects
+                          {projectFilter === 'all' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setProjectFilter('unassigned')}
+                          className="cursor-pointer"
+                        >
+                          <UserX size={14} className="mr-2" />
+                          Unassigned
+                          {projectFilter === 'unassigned' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
                 {loading ? (
                   <div className="flex justify-center p-4">
                     <Loader2 size={24} className="animate-spin text-gray-400" />
@@ -333,13 +411,15 @@ export function AppSidebar() {
                   <div className="text-red-500 p-4 text-center text-sm">
                     {error}
                   </div>
-                ) : projects.length === 0 ? (
+                ) : filteredProjects.length === 0 ? (
                   <div className="text-gray-500 p-4 text-center text-sm">
-                    No projects found. Create your first project!
+                    {projectFilter === 'mine' && 'No projects assigned to you.'}
+                    {projectFilter === 'unassigned' && 'No unassigned projects.'}
+                    {projectFilter === 'all' && 'No projects found. Create your first project!'}
                   </div>
                 ) : (
                   <ul className="space-y-1">
-                    {projects.map((project) => {
+                    {filteredProjects.map((project) => {
                       // Show SmartMoving logo only for projects that have been synced (have syncedAt timestamp)
                       const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
 

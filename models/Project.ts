@@ -11,6 +11,12 @@ export interface ILocation {
   longWalk?: boolean;
 }
 
+export interface IAssignedTo {
+  userId: string;
+  name: string;
+  assignedAt: Date;
+}
+
 export interface IProject extends Document {
   name: string;
   customerName: string;
@@ -20,6 +26,7 @@ export interface IProject extends Document {
   customerId?: string;
   userId: string;
   organizationId?: string;
+  assignedTo?: IAssignedTo;
   description?: string;
   // Job scheduling fields
   jobDate?: Date;
@@ -76,6 +83,14 @@ const ProjectSchema: Schema = new Schema(
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: false, index: true },
     userId: { type: String, required: true, index: true },
     organizationId: { type: String, required: false, index: true },
+    assignedTo: {
+      type: {
+        userId: { type: String, required: true },
+        name: { type: String, required: true },
+        assignedAt: { type: Date, required: true }
+      },
+      required: false
+    },
     description: { type: String },
     // Job scheduling fields
     jobDate: { type: Date, required: false },

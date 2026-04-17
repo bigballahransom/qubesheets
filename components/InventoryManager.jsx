@@ -4,9 +4,9 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { useOrganization } from '@clerk/nextjs';
+import { useOrganization, useAuth } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -63,6 +63,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 // Helper function to generate a unique ID
 const generateId = () => `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
@@ -103,10 +111,16 @@ export default function InventoryManager() {
   const params = useParams();
   const projectId = params?.projectId;
   const { organization } = useOrganization();
+  const { userId } = useAuth();
 
   // Check if organization has CRM add-on
   const hasCrmAddOn = organization?.publicMetadata?.subscription?.addOns?.includes('crm');
-  
+
+  // Assignment state (for non-CRM orgs)
+  const [orgMembers, setOrgMembers] = useState([]);
+  const [claimingProject, setClaimingProject] = useState(false);
+  const [assigningProject, setAssigningProject] = useState(false);
+
   const [inventoryItems, setInventoryItems] = useState([]);
   const [isUploaderOpen, setIsUploaderOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -483,10 +497,89 @@ const inventoryDataChanged = (oldItems, newItems) => {
     }
   }, [currentProject?._id, convertItemsToRows]);
 
+  // Fetch organization members for assignment dropdown (non-CRM orgs only)
+  const fetchOrgMembers = useCallback(async () => {
+    if (!organization || hasCrmAddOn) return;
+
+    try {
+      const response = await fetch('/api/organizations/members');
+      if (response.ok) {
+        const members = await response.json();
+        setOrgMembers(members);
+      }
+    } catch (error) {
+      console.error('Error fetching org members:', error);
+    }
+  }, [organization, hasCrmAddOn]);
+
+  // Claim project for current user
+  const handleClaimProject = async () => {
+    if (!currentProject || claimingProject) return;
+
+    setClaimingProject(true);
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/claim`, {
+        method: 'POST',
+      });
+
+      if (response.ok) {
+        const updatedProject = await response.json();
+        setCurrentProject(updatedProject);
+        toast.success('Project claimed successfully');
+        // Dispatch event to refresh sidebar
+        window.dispatchEvent(new CustomEvent('organizationDataRefresh'));
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to claim project');
+      }
+    } catch (error) {
+      console.error('Error claiming project:', error);
+      toast.error('Failed to claim project');
+    } finally {
+      setClaimingProject(false);
+    }
+  };
+
+  // Assign project to a specific user
+  const handleAssignProject = async (targetUserId) => {
+    if (!currentProject || assigningProject) return;
+
+    setAssigningProject(true);
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId }),
+      });
+
+      if (response.ok) {
+        const updatedProject = await response.json();
+        setCurrentProject(updatedProject);
+        toast.success('Project assigned successfully');
+        // Dispatch event to refresh sidebar
+        window.dispatchEvent(new CustomEvent('organizationDataRefresh'));
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to assign project');
+      }
+    } catch (error) {
+      console.error('Error assigning project:', error);
+      toast.error('Failed to assign project');
+    } finally {
+      setAssigningProject(false);
+    }
+  };
+
+  // Fetch org members when component mounts (for non-CRM orgs)
+  useEffect(() => {
+    if (organization && !hasCrmAddOn) {
+      fetchOrgMembers();
+    }
+  }, [organization, hasCrmAddOn, fetchOrgMembers]);
 
   useEffect(() => {
     if (!currentProject) return;
-  
+
     const isMobile = typeof window !== 'undefined' && /iphone|ipad|android|mobile/i.test(navigator.userAgent);
     const pollInterval = isMobile ? 5000 : 3000; // Restored from emergency 15s/10s back to 5s/3s for responsive loading
     
@@ -3415,6 +3508,111 @@ const ProcessingNotification = () => {
           </TooltipProvider>
         </>
       )}
+      {/* Project Assignment - only shown for non-CRM organization users */}
+      {organization && !hasCrmAddOn && currentProject && (() => {
+        // Determine the effective owner: assignedTo if exists, otherwise fall back to creator (userId)
+        const effectiveOwnerId = currentProject.assignedTo?.userId || currentProject.userId;
+        const isRealUser = effectiveOwnerId && !['api-created', 'smartmoving-webhook'].includes(effectiveOwnerId);
+        const ownerMember = orgMembers.find(m => m.userId === effectiveOwnerId);
+        const ownerName = currentProject.assignedTo?.name ||
+          (ownerMember ? `${ownerMember.firstName} ${ownerMember.lastName}`.trim() || ownerMember.identifier : null);
+
+        return (
+          <div className="ml-2 flex items-center">
+            {isRealUser && ownerName ? (
+              // Show owner with dropdown to reassign
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium transition-colors cursor-pointer">
+                    <User size={14} />
+                    <span className="max-w-[100px] truncate">{ownerName}</span>
+                    <ChevronDown size={12} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuLabel>Reassign Project</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {orgMembers.map((member) => {
+                    const displayName = (member.firstName || member.lastName)
+                      ? `${member.firstName} ${member.lastName}`.trim()
+                      : member.identifier;
+                    return (
+                      <DropdownMenuItem
+                        key={member.userId}
+                        onClick={() => handleAssignProject(member.userId)}
+                        disabled={assigningProject || member.userId === effectiveOwnerId}
+                        className="cursor-pointer"
+                      >
+                        <User size={14} className="mr-2" />
+                        {displayName}
+                        {member.userId === effectiveOwnerId && (
+                          <span className="ml-auto text-xs text-gray-400">(Current)</span>
+                        )}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              // Show claim button and assign dropdown for unassigned projects (API/webhook created)
+              <div className="flex items-center gap-1">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={handleClaimProject}
+                        disabled={claimingProject}
+                        className="flex items-center gap-1 px-2 py-1 rounded-md bg-green-50 hover:bg-green-100 text-green-700 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {claimingProject ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <UserPlus size={14} />
+                        )}
+                        <span>Claim</span>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Assign this project to yourself</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium transition-colors cursor-pointer">
+                      <Users size={14} />
+                      <ChevronDown size={12} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuLabel>Assign to Team Member</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {orgMembers.map((member) => {
+                      const displayName = (member.firstName || member.lastName)
+                        ? `${member.firstName} ${member.lastName}`.trim()
+                        : member.identifier;
+                      return (
+                        <DropdownMenuItem
+                          key={member.userId}
+                          onClick={() => handleAssignProject(member.userId)}
+                          disabled={assigningProject}
+                          className="cursor-pointer"
+                        >
+                          <User size={14} className="mr-2" />
+                          {displayName}
+                          {member.userId === userId && (
+                            <span className="ml-auto text-xs text-gray-400">(You)</span>
+                          )}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {/* Link to Customer Record - only shown for CRM add-on users */}
       {hasCrmAddOn && currentProject?.customerId && (
         <TooltipProvider>
