@@ -163,8 +163,8 @@ export function AppSidebar() {
         // Falls back to userId (creator) if no assignedTo exists
         return projects.filter(p => (p.assignedTo?.userId || p.userId) === userId);
       case 'unassigned':
-        // Projects with no assignedTo AND created via API/webhook (not a real user)
-        return projects.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook'].includes(p.userId));
+        // Projects with no assignedTo AND created via API/webhook/global-self-survey-link (not a real user)
+        return projects.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook', 'global-self-survey-link'].includes(p.userId));
       case 'all':
       default:
         return projects;

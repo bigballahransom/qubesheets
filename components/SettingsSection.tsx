@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { useOrganization } from '@clerk/nextjs';
-import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key, Building2, Scale, CalendarDays } from 'lucide-react';
+import { ChevronDown, Settings, Bell, FileText, Palette, Plug, Key, Building2, Scale, CalendarDays, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface SettingsItem {
@@ -40,6 +40,11 @@ const settingsItems: SettingsItem[] = [
     title: 'Weight Configuration',
     icon: Scale,
     href: '/settings/weight-configuration',
+  },
+  {
+    title: 'Global Self-Survey Link',
+    icon: Link2,
+    href: '/settings/global-upload-link',
   },
   {
     title: 'Link Calendar',

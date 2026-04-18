@@ -194,3 +194,27 @@ export async function logVideoCallScheduled(
     details
   });
 }
+
+export async function logProjectCreated(
+  projectId: string,
+  projectName: string,
+  source: string,
+  userId?: string,
+  organizationId?: string,
+  additionalDetails?: Record<string, any>
+) {
+  return logActivity({
+    projectId,
+    userId,
+    organizationId,
+    activityType: 'project_created',
+    action: 'created',
+    details: {
+      itemName: projectName,
+      ...additionalDetails
+    },
+    metadata: {
+      source
+    }
+  });
+}
