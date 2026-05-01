@@ -1821,7 +1821,9 @@ export default function Spreadsheet({
           {row.videoTimestamp && row.sourceVideoRecordingId && (
             <span className="text-xs text-gray-500 flex-shrink-0">{row.videoTimestamp}</span>
           )}
-          {row.sourceVideoRecordingId ? (
+          {row.sourceType === 'self_serve' ? (
+            <Video size={14} className="text-purple-500 flex-shrink-0" />
+          ) : row.sourceVideoRecordingId ? (
             <Phone size={14} className="text-green-500 flex-shrink-0" />
           ) : row.sourceImageId ? (
             <Camera size={14} className="text-blue-500 flex-shrink-0" />

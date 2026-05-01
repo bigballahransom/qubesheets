@@ -53,6 +53,7 @@ export interface IInventoryItem extends Document {
   sourceVideoId?: mongoose.Types.ObjectId | string;
   sourceVideoRecordingId?: mongoose.Types.ObjectId | string; // Links to VideoRecording for video call items
   sourceRecordingSessionId?: string; // Legacy: egress ID string (kept for backwards compatibility)
+  sourceType?: 'image' | 'video' | 'video_call' | 'self_serve'; // Type of source media
   videoTimestamp?: string; // "MM:SS" - timestamp within segment when item was first seen
   segmentIndex?: number; // Which segment (0, 1, 2...) the item was seen in
   // For consolidated items (created by finalize-inventory from multiple segment detections)
@@ -163,6 +164,11 @@ const InventoryItemSchema: Schema = new Schema(
       type: String,
       required: false,
       index: true
+    },
+    sourceType: {
+      type: String,
+      enum: ['image', 'video', 'video_call', 'self_serve'],
+      required: false
     },
     videoTimestamp: {
       type: String,  // "MM:SS" format

@@ -397,9 +397,14 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Customer Video Call</DialogTitle>
+          <DialogTitle>
+            {recording.source === 'self_serve' ? 'Customer Recording' : 'Customer Video Call'}
+          </DialogTitle>
           <DialogDescription>
-            Video Room ID: Room {recording.roomId.split('-').pop()}
+            {recording.source === 'self_serve'
+              ? `Self-serve recording ${recording.selfServeSessionId ? `(${recording.selfServeSessionId.substring(0, 12)})` : ''}`
+              : `Video Room ID: Room ${recording.roomId.split('-').pop()}`
+            }
           </DialogDescription>
         </DialogHeader>
 

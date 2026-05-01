@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization, useAuth } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -171,7 +171,7 @@ const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const prevProcessingCountRef = useRef(0); // Track previous processing count for change detection
 const prevVideoCountRef = useRef(0); // Track previous video count for change detection
-const prevCallCountRef = useRef(0); // Track previous video call count for change detection
+const prevCallCountRef = useRef(0); // Track previous virtual call count for change detection
 const sseRetryTimeoutRef = useRef(null);
 const isVideoPlayingRef = useRef(false);
 
@@ -272,7 +272,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
 
       // Refresh video recordings tab when call count changes (new calls added or completed)
       if (currentCallCount !== prevCallCount) {
-        console.log(`📹 Video call processing count changed: ${prevCallCount} → ${currentCallCount}`);
+        console.log(`📹 Virtual call processing count changed: ${prevCallCount} → ${currentCallCount}`);
         setVideoRecordingsKey(prev => prev + 1);
       }
 
@@ -3156,7 +3156,7 @@ useEffect(() => {
               // Video call date
               doc.setFontSize(10);
               doc.setTextColor(...textColor);
-              doc.text(`Video Call - ${new Date(recording.createdAt).toLocaleDateString()}`, 20, aiY);
+              doc.text(`Virtual Call - ${new Date(recording.createdAt).toLocaleDateString()}`, 20, aiY);
               aiY += 8;
 
               // Transcript Summary (AI Summary)
@@ -3654,23 +3654,23 @@ const ProcessingNotification = () => {
                 setIsVideoModalOpen(true);
               }}
             >
-              <Video size={16} className="mr-1" /> Start Video Inventory
+              <Phone size={16} className="mr-1" /> Start Virtual Call
             </MenubarItem>
             <MenubarItem onClick={() => setIsScheduleModalOpen(true)}>
-              <Clock size={16} className="mr-1" /> Schedule Video Call
+              <Clock size={16} className="mr-1" /> Schedule Virtual Call
             </MenubarItem>
             <MenubarItem onClick={() => setIsUploaderOpen(true)}>
-              <Camera size={16} className="mr-1" />Upload Inventory
+              <Upload size={16} className="mr-1" />Upload Inventory (on-site)
             </MenubarItem>
             <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
               <MessageSquare size={16} className="mr-1" />
-              Send Customer Upload Link
+              Send Customer Self-Survey Link
             </MenubarItem>
             <MenubarSeparator />
             <div className="px-2 py-1.5 text-xs font-semibold text-slate-500">Review Inventory</div>
             <MenubarItem onClick={() => setIsReviewLinkModalOpen(true)}>
               <Package size={16} className="mr-1" />
-              Send Inventory Review Link
+              Send Customer Review Link
             </MenubarItem>
             <MenubarItem onClick={() => setIsCrewLinkModalOpen(true)}>
               <Users size={16} className="mr-1" />
@@ -3873,7 +3873,7 @@ const ProcessingNotification = () => {
                 Boxes
               </TabsTrigger>
               <TabsTrigger value="images" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
-                <Images size={16} />
+                <Camera size={16} />
                 Images
               </TabsTrigger>
               <TabsTrigger value="videos" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
@@ -3881,8 +3881,8 @@ const ProcessingNotification = () => {
                 Videos
               </TabsTrigger>
               <TabsTrigger value="videocalls" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
-                <Video size={16} />
-                <span className="hidden sm:inline">Video Calls</span>
+                <Phone size={16} />
+                <span className="hidden sm:inline">Virtual Calls</span>
                 <span className="sm:hidden">Calls</span>
               </TabsTrigger>
               <TabsTrigger value="notes" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
@@ -4113,7 +4113,7 @@ const ProcessingNotification = () => {
   />
 )}
 
-{/* Schedule Video Call Modal */}
+{/* Schedule Virtual Call Modal */}
 {isScheduleModalOpen && currentProject && (
   <ScheduleVideoCallModal
     isOpen={isScheduleModalOpen}

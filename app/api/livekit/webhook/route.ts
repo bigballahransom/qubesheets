@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { WebhookReceiver, RoomServiceClient } from 'livekit-server-sdk';
 import connectMongoDB from '@/lib/mongodb';
 import { startRecording, stopRecording, startCustomerEgress, stopCustomerEgress, clearRecordingState } from '@/lib/livekitEgress';
+import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
 
 // Room service client for checking active participants
 const roomServiceClient = new RoomServiceClient(
@@ -262,6 +263,12 @@ async function handleParticipantJoined(event: WebhookEvent) {
   // Ignore LiveKit egress participants
   if (participantType === 'egress') return;
 
+  // Ignore self-serve recording rooms - they have their own flow
+  if (roomName.startsWith('self-serve-')) {
+    console.log(`📹 Ignoring participant_joined for self-serve room: ${roomName}`);
+    return;
+  }
+
   // Try to get name from event, fallback to metadata, then 'Unknown'
   let participantName = event.participant.name;
   if (!participantName && event.participant.metadata) {
@@ -451,6 +458,12 @@ async function handleParticipantLeft(event: WebhookEvent) {
   // Ignore egress participants
   if (participantType === 'egress') return;
 
+  // Ignore self-serve recording rooms - they have their own flow
+  if (roomName.startsWith('self-serve-')) {
+    console.log(`📹 Ignoring participant_left for self-serve room: ${roomName}`);
+    return;
+  }
+
   console.log(`👋 ${participantType} left: ${participantIdentity}`);
 
   const VideoRecording = (await import('@/models/VideoRecording')).default;
@@ -575,6 +588,36 @@ async function handleEgressStarted(event: WebhookEvent) {
     return;
   }
 
+  // Check if this is a self-serve recording egress
+  // First try by egressId, then by roomName (in case webhook arrives before DB update)
+  let selfServeSession = await SelfServeRecordingSession.findOne({
+    egressId: egressId
+  });
+
+  if (!selfServeSession && roomName.startsWith('self-serve-')) {
+    // Fallback: find by roomName for self-serve rooms
+    // Include 'starting_egress' status which is set by atomic transition in start-recording API
+    selfServeSession = await SelfServeRecordingSession.findOne({
+      livekitRoomName: roomName,
+      status: { $in: ['initialized', 'connecting', 'starting_egress', 'recording'] }
+    });
+
+    if (selfServeSession) {
+      // Update the egressId since we found it by roomName
+      selfServeSession.egressId = egressId;
+    }
+  }
+
+  if (selfServeSession) {
+    console.log(`📹 Self-serve egress started: ${egressId}, session=${selfServeSession.sessionId}`);
+    selfServeSession.egressStatus = 'recording';
+    selfServeSession.status = 'recording';
+    selfServeSession.startedAt = new Date(startedAtMs);
+    await selfServeSession.save();
+    console.log(`✅ Self-serve session status updated to 'recording'`);
+    return;
+  }
+
   // Otherwise, it's the room composite egress
   // Update recording - use roomName (the actual room name) not roomId (LiveKit SID)
   // Include 'waiting' status in case of timing edge cases
@@ -629,7 +672,34 @@ async function handleEgressEnded(event: WebhookEvent) {
     return;
   }
 
-  // Otherwise, handle room composite egress
+  // Check if this is a self-serve recording egress
+  // First try by egressId, then by roomName
+  let selfServeSession = await SelfServeRecordingSession.findOne({
+    egressId: egressId
+  });
+
+  if (!selfServeSession && roomName && roomName.startsWith('self-serve-')) {
+    // Fallback: find by roomName for self-serve rooms
+    selfServeSession = await SelfServeRecordingSession.findOne({
+      livekitRoomName: roomName,
+      status: { $in: ['initialized', 'connecting', 'recording', 'processing'] }
+    });
+  }
+
+  if (selfServeSession) {
+    console.log(`📹 Self-serve egress ended: ${egressId}, session=${selfServeSession.sessionId}`);
+    await handleSelfServeEgressEnded(event, selfServeSession);
+    return;
+  }
+
+  // Skip room composite egress for self-serve rooms (they're handled above)
+  // This prevents creating duplicate VideoRecording without source='self_serve'
+  if (roomName && roomName.startsWith('self-serve-')) {
+    console.log(`📹 Skipping room composite egress for self-serve room: ${roomName}`);
+    return;
+  }
+
+  // Otherwise, handle room composite egress (regular video calls only)
   // First, find the recording to ensure it exists
   const existingRecording = await VideoRecording.findOne({
     egressId: egressId
@@ -1007,5 +1077,274 @@ async function handleCustomerEgressEnded(event: WebhookEvent, recording: any) {
     status: isSuccess ? 'completed' : 'failed',
     hasFileResult: !!fileResult,
     s3Key: fileResult?.location || recording.customerVideoS3Key || 'none'
+  });
+}
+
+/**
+ * Handle self-serve recording egress ended event
+ * This is for customer self-service home walkthrough recordings
+ * The MP4 is sent to the analysis queue for Gemini processing
+ */
+async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
+  const AWS = (await import('aws-sdk')).default;
+  const VideoRecording = (await import('@/models/VideoRecording')).default;
+
+  const egressId = event.egressInfo!.egressId;
+  const isSuccess = event.egressInfo!.status === 3; // EGRESS_COMPLETE
+
+  console.log(`📹 Processing self-serve egress end for session: ${session.sessionId} (egress: ${egressId})`);
+  console.log(`   Status: ${isSuccess ? 'SUCCESS' : 'FAILED'}, Error: ${event.egressInfo!.error || 'None'}`);
+  console.log(`   Session egressId: ${session.egressId || 'none'}`);
+
+  // IMPORTANT: Skip processing if this egress doesn't match the session's egressId
+  // This prevents duplicate processing when multiple egresses exist for the same room
+  // (e.g., if LiveKit auto-recording is enabled or there's a race condition)
+  if (session.egressId && session.egressId !== egressId) {
+    console.log(`⚠️ Egress ${egressId} doesn't match session's egress ${session.egressId} - skipping`);
+    return;
+  }
+
+  // Backfill migration: Fix any existing VideoRecordings with self-serve roomId but missing source field
+  // This handles legacy records created before the source field was properly set
+  try {
+    const backfillResult = await VideoRecording.updateMany(
+      {
+        roomId: { $regex: '^self-serve-' },
+        $or: [
+          { source: { $exists: false } },
+          { source: null },
+          { source: { $ne: 'self_serve' } }
+        ]
+      },
+      {
+        $set: { source: 'self_serve' }
+      }
+    );
+    if (backfillResult.modifiedCount > 0) {
+      console.log(`🔧 Backfilled ${backfillResult.modifiedCount} VideoRecordings with source='self_serve'`);
+    }
+  } catch (backfillError) {
+    console.error('⚠️ Backfill migration error (non-fatal):', backfillError);
+  }
+
+  // Update session egress status
+  session.egressStatus = isSuccess ? 'completed' : 'failed';
+
+  // Handle file result
+  const fileResult = event.egressInfo!.fileResults?.[0];
+
+  if (fileResult) {
+    console.log('📁 Self-serve MP4 file result received:', {
+      filename: fileResult.filename,
+      location: fileResult.location,
+      size: fileResult.size
+    });
+
+    // Extract S3 key from location
+    let s3Key = fileResult.location;
+    if (s3Key.startsWith('s3://')) {
+      s3Key = s3Key.replace(/^s3:\/\/[^\/]+\//, '');
+    } else if (s3Key.includes('.s3.amazonaws.com/') || s3Key.includes('.s3.us-east-1.amazonaws.com/')) {
+      s3Key = s3Key.replace(/^https?:\/\/[^\/]+\//, '');
+    }
+
+    const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+
+    // Calculate duration from timestamps
+    const duration = calculateDuration(fileResult.startedAt, fileResult.endedAt);
+
+    // Update session with final video details
+    session.s3Key = s3Key;
+    session.s3Bucket = bucket;
+    session.totalDuration = duration;
+
+    console.log(`📹 Self-serve video saved: ${s3Key} (${duration}s)`);
+
+    const finalS3Key = s3Key;
+    session.status = 'analyzing';
+    session.analysisStatus = 'processing';
+
+    // ATOMIC: Create VideoRecording only if it doesn't exist for this session
+    // Uses upsert with $setOnInsert to prevent race conditions from concurrent webhooks
+    const upsertResult = await VideoRecording.findOneAndUpdate(
+      { selfServeSessionId: session.sessionId },
+      {
+        $setOnInsert: {
+          projectId: session.projectId.toString(),
+          userId: session.userId,
+          organizationId: session.organizationId,
+          roomId: session.livekitRoomName || `self-serve-${session.sessionId}`,
+          egressId: egressId,
+          status: 'processing',
+          source: 'self_serve',
+          selfServeSessionId: session.sessionId,
+          s3Key: finalS3Key,
+          startedAt: session.startedAt || new Date(),
+          endedAt: new Date(),
+          duration: duration,
+          customerIdentity: session.customerIdentity || 'customer',
+          customerVideoS3Key: finalS3Key,
+          analysisResult: {
+            status: 'processing',
+            totalSegments: 0,
+            processedSegments: 0
+          },
+          createdAt: new Date()
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    // Check if this was our insert by comparing egressId
+    // If the existing record has a different egressId, it was created by another egress
+    const wasOurInsert = upsertResult.egressId === egressId;
+
+    if (!wasOurInsert) {
+      console.log(`📹 VideoRecording already exists for session ${session.sessionId} (created by egress ${upsertResult.egressId}): ${upsertResult._id} - skipping queue`);
+    } else {
+      console.log(`📹 Created VideoRecording for self-serve: ${upsertResult._id} (source: self_serve, sessionId: ${session.sessionId})`);
+
+      // Queue for Gemini analysis (reuse existing customer-video handler)
+      const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+
+      if (queueUrl) {
+        try {
+          const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
+
+          await sqs.sendMessage({
+            QueueUrl: queueUrl,
+            DelaySeconds: 0,
+            MessageBody: JSON.stringify({
+              type: 'customer-video',
+              videoRecordingId: upsertResult._id.toString(),
+              projectId: session.projectId.toString(),
+              s3Key: finalS3Key, // Use trimmed key if available
+              s3Bucket: bucket,
+              roomName: session.livekitRoomName || 'self-serve',
+              customerIdentity: session.customerIdentity || 'customer',
+              duration: duration,
+              source: 'self_serve' // Mark as self-serve for analytics
+            })
+          }).promise();
+
+          console.log(`✅ Self-serve video queued for AI analysis: ${finalS3Key}`);
+          session.analysisStatus = 'processing';
+        } catch (sqsError) {
+          console.error(`❌ Failed to queue self-serve video for analysis:`, sqsError);
+          session.analysisStatus = 'failed';
+          session.analysisError = 'Failed to queue for processing';
+        }
+      } else {
+        console.log(`⚠️ AWS_SQS_CALL_QUEUE_URL not configured - skipping AI analysis`);
+        session.analysisStatus = 'pending';
+      }
+    }
+  } else if (session.s3Key) {
+    // No file result but we have stored S3 key from when egress started
+    console.log(`⚠️ No file result in webhook but have stored S3 key: ${session.s3Key}`);
+    session.status = 'analyzing';
+    session.analysisStatus = 'processing';
+
+    const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+
+    // ATOMIC: Create VideoRecording only if it doesn't exist for this session
+    // Uses upsert with $setOnInsert to prevent race conditions from concurrent webhooks
+    const upsertResult = await VideoRecording.findOneAndUpdate(
+      { selfServeSessionId: session.sessionId },
+      {
+        $setOnInsert: {
+          projectId: session.projectId.toString(),
+          userId: session.userId,
+          organizationId: session.organizationId,
+          roomId: session.livekitRoomName || `self-serve-${session.sessionId}`,
+          egressId: egressId,
+          status: 'processing',
+          source: 'self_serve',
+          selfServeSessionId: session.sessionId,
+          s3Key: session.s3Key,
+          startedAt: session.startedAt || new Date(),
+          endedAt: new Date(),
+          duration: session.totalDuration || 0,
+          customerIdentity: session.customerIdentity || 'customer',
+          customerVideoS3Key: session.s3Key,
+          analysisResult: {
+            status: 'processing',
+            totalSegments: 0,
+            processedSegments: 0
+          },
+          createdAt: new Date()
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    // Check if this was our insert by comparing egressId
+    const wasOurInsert = upsertResult.egressId === egressId;
+
+    if (!wasOurInsert) {
+      console.log(`📹 VideoRecording already exists for session ${session.sessionId} (created by egress ${upsertResult.egressId}): ${upsertResult._id} - skipping queue`);
+    } else {
+      console.log(`📹 Created VideoRecording for self-serve (fallback): ${upsertResult._id} (source: self_serve, sessionId: ${session.sessionId})`);
+
+      const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+      if (queueUrl) {
+        try {
+          const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
+
+          await sqs.sendMessage({
+            QueueUrl: queueUrl,
+            DelaySeconds: 0,
+            MessageBody: JSON.stringify({
+              type: 'customer-video',
+              videoRecordingId: upsertResult._id.toString(),
+              projectId: session.projectId.toString(),
+              s3Key: session.s3Key,
+              s3Bucket: bucket,
+              roomName: session.livekitRoomName || 'self-serve',
+              customerIdentity: session.customerIdentity || 'customer',
+              duration: session.totalDuration || 0,
+              source: 'self_serve'
+            })
+          }).promise();
+
+          console.log(`✅ Self-serve video (from stored key) queued for AI analysis`);
+        } catch (sqsError) {
+          console.error(`❌ Failed to queue self-serve video:`, sqsError);
+          session.analysisStatus = 'failed';
+          session.analysisError = 'Failed to queue for processing';
+        }
+      }
+    }
+  } else {
+    // No file result and no stored S3 key - actual failure
+    console.log(`❌ No file result and no stored S3 key - self-serve video not captured`);
+    session.status = 'failed';
+    session.analysisStatus = 'failed';
+    session.analysisError = event.egressInfo!.error || 'No video file captured';
+    session.lastError = event.egressInfo!.error || 'Recording failed - no video captured';
+    session.errorCount = (session.errorCount || 0) + 1;
+  }
+
+  await session.save();
+
+  // Link this session as the completed recording on the CustomerUpload, even
+  // if /stop was never called (e.g. tab closed mid-recording, LiveKit timed
+  // out the empty room). /stop also does this; whichever runs first wins.
+  if (['analyzing', 'completed'].includes(session.status)) {
+    try {
+      const CustomerUpload = (await import('@/models/CustomerUpload')).default;
+      await CustomerUpload.findByIdAndUpdate(session.customerUploadId, {
+        completedRecordingSessionId: session._id
+      });
+    } catch (linkErr) {
+      console.error('⚠️ Failed to link completedRecordingSessionId on CustomerUpload (non-fatal):', linkErr);
+    }
+  }
+
+  console.log(`✅ Self-serve egress handling complete for session: ${session.sessionId}`, {
+    status: session.status,
+    analysisStatus: session.analysisStatus,
+    s3Key: session.s3Key || 'none',
+    duration: session.totalDuration
   });
 }

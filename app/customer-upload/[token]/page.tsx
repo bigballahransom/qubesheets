@@ -1,12 +1,14 @@
-// app/customer-upload/[token]/page.tsx - Modern mobile-responsive design
+// app/customer-upload/[token]/page.tsx - Modern mobile-responsive design with video recording
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
-import { CheckCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight } from 'lucide-react';
+import { useParams, useSearchParams } from 'next/navigation';
+import { CheckCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight, Video } from 'lucide-react';
 import CustomerPhotoUploader from '@/components/CustomerPhotoUploader';
 import InventoryInstructionsModal from '@/components/InventoryInstructionsModal';
-// RailwayTransferOverlay removed - using simple S3 upload with SQS
+import SelfServeRecorderLiveKit from '@/components/SelfServeRecorderLiveKit';
+import DesktopQRCodeView from '@/components/DesktopQRCodeView';
+import { shouldShowQRCode, isMobileDevice, canRecordVideo } from '@/lib/deviceDetection';
 import { toast } from 'sonner';
 import Logo from '../../../public/logo';
 
@@ -23,7 +25,13 @@ interface UploadValidation {
   isValid: boolean;
   branding?: BrandingData | null;
   instructions?: string | null;
+  // Self-serve recording settings
+  uploadMode?: 'files' | 'recording' | 'both';
+  recordingInstructions?: string;
+  maxRecordingDuration?: number;
 }
+
+type ViewMode = 'choice' | 'recording' | 'upload' | 'qr';
 
 interface UploadedImage {
   id: string;
@@ -33,8 +41,9 @@ interface UploadedImage {
 
 export default function CustomerUploadPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const token = params?.token as string;
-  
+
   const [validation, setValidation] = useState<UploadValidation | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
@@ -44,7 +53,11 @@ export default function CustomerUploadPage() {
   const [showProcessingStatus, setShowProcessingStatus] = useState(false);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [showInstructionsModal, setShowInstructionsModal] = useState(false);
-  // Transfer overlay state removed - using simple S3 upload with SQS
+
+  // View mode for recording vs upload
+  const [viewMode, setViewMode] = useState<ViewMode>('choice');
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [supportsRecording, setSupportsRecording] = useState(false);
 
   // Parse instructions for display (simple markdown-like parsing)
   const parseInstructionsForDisplay = (text: string, companyName: string) => {
@@ -86,6 +99,32 @@ export default function CustomerUploadPage() {
     });
   };
 
+  // Device detection
+  useEffect(() => {
+    const deviceParam = searchParams?.get('device');
+    const checkDesktop = shouldShowQRCode();
+    const checkRecording = canRecordVideo();
+
+    setIsDesktop(checkDesktop && deviceParam !== 'mobile');
+    setSupportsRecording(checkRecording);
+
+    // Determine initial view mode
+    if (deviceParam === 'mobile' || !checkDesktop) {
+      // Mobile device - show choice between recording and upload
+      setViewMode('choice');
+    } else {
+      // Desktop - show QR code
+      setViewMode('qr');
+    }
+  }, [searchParams]);
+
+  // Show instructions modal when entering upload mode
+  useEffect(() => {
+    if (viewMode === 'upload' && !loading && validation) {
+      setShowInstructionsModal(true);
+    }
+  }, [viewMode, loading, validation]);
+
   // Skip validation but fetch branding data for display
   useEffect(() => {
     const fetchBrandingData = async () => {
@@ -103,7 +142,11 @@ export default function CustomerUploadPage() {
             expiresAt: data.expiresAt || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
             isValid: true,
             branding: data.branding,
-            instructions: data.instructions
+            instructions: data.instructions,
+            // Self-serve recording settings
+            uploadMode: data.uploadMode || 'both',
+            recordingInstructions: data.recordingInstructions,
+            maxRecordingDuration: data.maxRecordingDuration || 1200
           });
           
           // Set project ID for SSE connection
@@ -118,7 +161,9 @@ export default function CustomerUploadPage() {
             expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
             isValid: true,
             branding: null,
-            instructions: null
+            instructions: null,
+            uploadMode: 'both',
+            maxRecordingDuration: 1200
           });
         }
       } catch (error) {
@@ -130,12 +175,13 @@ export default function CustomerUploadPage() {
           expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
           isValid: true,
           branding: null,
-          instructions: null
+          instructions: null,
+          uploadMode: 'both',
+          maxRecordingDuration: 1200
         });
       } finally {
         setLoading(false);
-        // Show instructions modal after page loads
-        setShowInstructionsModal(true);
+        // Instructions modal will be shown based on viewMode
       }
     };
 
@@ -575,6 +621,149 @@ export default function CustomerUploadPage() {
     );
   }
 
+  // Handler for recording completion
+  const handleRecordingComplete = (sessionId?: string) => {
+    console.log('Recording complete, session:', sessionId);
+    // Optionally switch to a completion view or refresh
+  };
+
+  // Desktop QR Code View - shows QR for mobile handoff
+  if (viewMode === 'qr' && isDesktop) {
+    return (
+      <DesktopQRCodeView
+        uploadToken={token}
+        customerName={validation.customerName}
+        projectName={validation.projectName}
+        companyName={validation.branding?.companyName}
+        companyLogo={validation.branding?.companyLogo}
+        onSessionComplete={handleRecordingComplete}
+        onSwitchToUpload={() => setViewMode('upload')}
+      />
+    );
+  }
+
+  // Mobile Recording View (using LiveKit for server-side recording)
+  if (viewMode === 'recording') {
+    return (
+      <SelfServeRecorderLiveKit
+        uploadToken={token}
+        maxDuration={validation.maxRecordingDuration || 1200}
+        instructions={validation.recordingInstructions}
+        companyName={validation.branding?.companyName}
+        onComplete={handleRecordingComplete}
+        onCancel={() => setViewMode('choice')}
+      />
+    );
+  }
+
+  // Mobile Choice View - choose between recording and upload
+  if (viewMode === 'choice' && !isDesktop) {
+    const canRecord = supportsRecording && validation.uploadMode !== 'files';
+    const canUpload = validation.uploadMode !== 'recording';
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100 flex flex-col">
+        {/* Header */}
+        <header className="p-4 flex items-center justify-between border-b border-slate-200/50 bg-white/80 backdrop-blur-md">
+          {validation.branding?.companyLogo ? (
+            <img
+              src={validation.branding.companyLogo}
+              alt={validation.branding.companyName}
+              className="h-8 object-contain"
+            />
+          ) : validation.branding?.companyName ? (
+            <span className="text-lg font-semibold text-slate-800">{validation.branding.companyName}</span>
+          ) : (
+            <div className="scale-75 origin-left">
+              <Logo />
+            </div>
+          )}
+        </header>
+
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col items-center justify-center p-6">
+          <div className="max-w-sm w-full text-center">
+            {/* Greeting */}
+            <h1 className="text-2xl font-bold text-slate-800 mb-2">
+              Hi {validation.customerName}!
+            </h1>
+            <p className="text-slate-600 mb-8">
+              Help us prepare your moving inventory for <strong>{validation.projectName}</strong>
+            </p>
+
+            {/* Option Cards */}
+            <div className="space-y-4">
+              {/* Record Video Option */}
+              {canRecord && (
+                <button
+                  onClick={() => setViewMode('recording')}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-2xl p-6 text-left transition-all shadow-lg hover:shadow-xl"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-blue-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <Video className="w-7 h-7" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold mb-1">Record Video</h2>
+                      <p className="text-blue-100 text-sm">
+                        Walk through your home and record your belongings
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center gap-2 text-blue-200 text-xs">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>Recommended - fastest way to capture everything</span>
+                  </div>
+                </button>
+              )}
+
+              {/* Upload Photos Option */}
+              {canUpload && (
+                <button
+                  onClick={() => setViewMode('upload')}
+                  className="w-full bg-white hover:bg-slate-50 text-slate-800 rounded-2xl p-6 text-left transition-all shadow-lg hover:shadow-xl border border-slate-200"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <ImageIcon className="w-7 h-7 text-slate-600" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold mb-1">Upload Photos</h2>
+                      <p className="text-slate-500 text-sm">
+                        Take individual photos of items and rooms
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              )}
+            </div>
+
+            {/* Security Note */}
+            <div className="mt-8 flex items-center justify-center gap-2 text-sm text-slate-400">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <span>Your media is private and secure</span>
+            </div>
+          </div>
+        </main>
+
+        {/* Footer */}
+        <footer className="p-4 text-center">
+          <div className="inline-flex items-center text-slate-400 text-sm">
+            <span>Powered by</span>
+            <div className="scale-[0.7] origin-center -ml-1">
+              <Logo />
+            </div>
+          </div>
+        </footer>
+      </div>
+    );
+  }
+
+  // File Upload View (default for desktop or when user chooses upload)
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100">
       {/* Header Section */}
@@ -582,9 +771,21 @@ export default function CustomerUploadPage() {
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
+              {/* Back button for mobile users who came from choice screen */}
+              {!isDesktop && supportsRecording && validation.uploadMode !== 'files' && (
+                <button
+                  onClick={() => setViewMode('choice')}
+                  className="w-10 h-10 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center justify-center transition-colors"
+                  aria-label="Back to options"
+                >
+                  <svg className="w-5 h-5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
               {validation.branding?.companyLogo ? (
-                <img 
-                  src={validation.branding.companyLogo} 
+                <img
+                  src={validation.branding.companyLogo}
                   alt={validation.branding.companyName}
                   className="w-10 h-10 object-contain rounded-lg"
                 />
@@ -600,7 +801,7 @@ export default function CustomerUploadPage() {
                 <p className="text-sm text-slate-500">Inventory Upload</p>
               </div>
             </div>
-            
+
             <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-100 px-3 py-1.5 rounded-full">
               <Clock className="w-4 h-4" />
               <span>Expires {new Date(validation.expiresAt).toLocaleDateString()}</span>

@@ -3,6 +3,7 @@ import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import VideoRecording from '@/models/VideoRecording';
 import VideoRecordingSession from '@/models/VideoRecordingSession';
+import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
 import AWS from 'aws-sdk';
 
 const s3 = new AWS.S3({
@@ -34,8 +35,16 @@ export async function GET(
     });
 
     if (liveKitRecording) {
+      console.log('📹 Stream request for recording:', {
+        recordingId: liveKitRecording._id,
+        status: liveKitRecording.status,
+        source: liveKitRecording.source,
+        selfServeSessionId: liveKitRecording.selfServeSessionId
+      });
+
       // Only allow streaming for completed recordings
       if (liveKitRecording.status !== 'completed' && liveKitRecording.status !== 'recording') {
+        console.log('📹 Recording not ready - status:', liveKitRecording.status);
         return NextResponse.json({
           error: 'Recording not ready for streaming',
           status: liveKitRecording.status,
@@ -43,20 +52,61 @@ export async function GET(
         }, { status: 400 });
       }
 
-      // Extract the actual S3 key from the URL if it's a full URL
-      let s3Key = liveKitRecording.s3Key;
-      if (s3Key.startsWith('https://')) {
-        const url = new URL(s3Key);
-        s3Key = decodeURIComponent(url.pathname.substring(1));
+      let s3Key: string | undefined;
+      let bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME;
+
+      // Check if this is a self-serve recording (has selfServeSessionId)
+      if (liveKitRecording.selfServeSessionId) {
+        // Look up the S3 key from SelfServeRecordingSession
+        const selfServeSession = await SelfServeRecordingSession.findOne({
+          sessionId: liveKitRecording.selfServeSessionId
+        });
+
+        if (selfServeSession?.mergedS3Key) {
+          s3Key = selfServeSession.mergedS3Key;
+          bucket = process.env.AWS_S3_BUCKET_NAME;
+          console.log('📹 Found self-serve recording S3 key from session:', {
+            recordingId: liveKitRecording._id,
+            sessionId: liveKitRecording.selfServeSessionId,
+            s3Key
+          });
+        } else {
+          console.error('📹 Self-serve session not found or missing mergedS3Key:', {
+            selfServeSessionId: liveKitRecording.selfServeSessionId,
+            sessionFound: !!selfServeSession,
+            mergedS3Key: selfServeSession?.mergedS3Key
+          });
+          return NextResponse.json({
+            error: 'Recording not ready for streaming',
+            message: 'Video is still being processed'
+          }, { status: 400 });
+        }
+      } else {
+        // Regular LiveKit recording - use s3Key directly
+        s3Key = liveKitRecording.s3Key;
+
+        if (!s3Key) {
+          return NextResponse.json({
+            error: 'Recording not ready for streaming',
+            message: 'S3 key not found'
+          }, { status: 400 });
+        }
+
+        // Extract the actual S3 key from the URL if it's a full URL
+        if (s3Key.startsWith('https://')) {
+          const url = new URL(s3Key);
+          s3Key = decodeURIComponent(url.pathname.substring(1));
+        }
       }
 
-      console.log('📹 Generating LiveKit stream URL:', {
+      console.log('📹 Generating stream URL:', {
         recordingId: liveKitRecording._id,
-        s3Key
+        s3Key,
+        bucket
       });
 
       const signedUrl = s3.getSignedUrl('getObject', {
-        Bucket: process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME,
+        Bucket: bucket,
         Key: s3Key,
         Expires: 3600
       });

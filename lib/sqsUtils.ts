@@ -74,6 +74,7 @@ export interface CallSegmentProcessingMessage {
   duration?: number;  // Segment duration in seconds
 }
 
+
 /**
  * Send video processing message to SQS video queue
  */
