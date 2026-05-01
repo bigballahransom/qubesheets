@@ -9,6 +9,7 @@ import InventoryNote from '@/models/InventoryNote';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
+import { resolveWeightConfig, resolveItemWeight, WeightConfig } from '@/lib/weight-config';
 
 interface GroupedItems {
   [room: string]: any[];
@@ -82,7 +83,7 @@ function groupItemsByRoom(items: any[]): GroupedItems {
 }
 
 // Calculate stats from inventory items
-function calculateStats(items: any[]) {
+function calculateStats(items: any[], weightConfig: WeightConfig) {
   let totalItems = 0;
   let totalBoxes = 0;
   let totalCuft = 0;
@@ -93,7 +94,7 @@ function calculateStats(items: any[]) {
   for (const item of items) {
     const quantity = item.quantity || 1;
     const cuft = (item.cuft || 0) * quantity;
-    const weight = (item.weight || 0) * quantity;
+    const weight = resolveItemWeight(item, weightConfig) * quantity;
     const location = item.location || '';
 
     // Track unique rooms (excluding Unassigned)
@@ -196,8 +197,14 @@ export async function GET(
     // Fetch all inventory items for the project
     const allItems = await InventoryItem.find({ projectId: reviewLink.projectId });
 
+    // Resolve weight configuration (project override → org default → 'actual')
+    const weightConfig = await resolveWeightConfig({
+      project,
+      organizationId: project.organizationId,
+    });
+
     // Calculate stats
-    const stats = calculateStats(allItems);
+    const stats = calculateStats(allItems, weightConfig);
 
     // Fetch all media
     const [images, videos] = await Promise.all([

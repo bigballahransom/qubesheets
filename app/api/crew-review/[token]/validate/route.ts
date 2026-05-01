@@ -9,6 +9,7 @@ import InventoryNote from '@/models/InventoryNote';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
+import { resolveWeightConfig, resolveItemWeight, WeightConfig } from '@/lib/weight-config';
 
 interface GroupedItems {
   [room: string]: any[];
@@ -93,7 +94,7 @@ function groupItemsByRoom(items: any[]): GroupedItems {
 }
 
 // Calculate stats from inventory items
-function calculateStats(items: any[]) {
+function calculateStats(items: any[], weightConfig: WeightConfig) {
   let totalItems = 0;
   let totalBoxes = 0;
   let totalBoxesWithRec = 0;
@@ -107,7 +108,7 @@ function calculateStats(items: any[]) {
   for (const item of items) {
     const quantity = item.quantity || 1;
     const cuft = (item.cuft || 0) * quantity;
-    const weight = (item.weight || 0) * quantity;
+    const weight = resolveItemWeight(item, weightConfig) * quantity;
     const location = item.location || '';
 
     // Track unique rooms (excluding Unassigned)
@@ -226,6 +227,12 @@ export async function GET(
     // Fetch all inventory items for the project
     const allItems = await InventoryItem.find({ projectId: reviewLink.projectId });
 
+    // Resolve weight configuration (project override → org default → 'actual')
+    const weightConfig = await resolveWeightConfig({
+      project,
+      organizationId: project.organizationId,
+    });
+
     // Format items with all spreadsheet columns
     const formatItem = (item: any) => ({
       _id: item._id.toString(),
@@ -233,7 +240,7 @@ export async function GET(
       quantity: item.quantity || 1,
       location: item.location || 'Unassigned',
       cuft: item.cuft || 0,
-      weight: item.weight || 0,
+      weight: Math.round(resolveItemWeight(item, weightConfig) * 100) / 100,
       going: item.going || 'going',
       goingQuantity: item.goingQuantity ?? item.quantity ?? 1,
       packed_by: item.packed_by || 'N/A',
@@ -333,8 +340,8 @@ export async function GET(
       });
     }
 
-    // Calculate stats
-    const stats = calculateStats(allItems);
+    // Calculate stats (uses raw items + resolved weight config so the multiplier is honored)
+    const stats = calculateStats(allItems, weightConfig);
 
     // Get project notes
     const projectNotes = await InventoryNote.find({

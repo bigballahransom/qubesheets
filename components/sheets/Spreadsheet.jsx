@@ -513,15 +513,21 @@ export default function Spreadsheet({
 
     if (initialRows && initialRows.length > 0) {
       // Check if this is a real structural change vs just a local update echoing back
-      // We compare by inventoryItemId and item name - quantity/going changes are local
+      // Sync on add/remove/reorder, name changes, AND per-unit cuft/weight changes
+      // (the last is critical so weight-multiplier toggles propagate to each row)
       setRows(currentRows => {
         const hasRealChanges = currentRows.length !== initialRows.length ||
           initialRows.some((newRow, i) => {
             const oldRow = currentRows[i];
             if (!oldRow) return true;
-            // Only sync if items were added/removed/reordered, not quantity/going changes
-            return oldRow.inventoryItemId !== newRow.inventoryItemId ||
-                   oldRow.cells?.col2 !== newRow.cells?.col2;
+            if (oldRow.inventoryItemId !== newRow.inventoryItemId) return true;
+            if (oldRow.cells?.col2 !== newRow.cells?.col2) return true;
+            // Detect weight/cuft recomputation (e.g. multiplier change)
+            if ((oldRow.perUnitWeight || 0) !== (newRow.perUnitWeight || 0)) return true;
+            if ((oldRow.perUnitCuft || 0) !== (newRow.perUnitCuft || 0)) return true;
+            if ((oldRow.cells?.col4 || '') !== (newRow.cells?.col4 || '')) return true;
+            if ((oldRow.cells?.col5 || '') !== (newRow.cells?.col5 || '')) return true;
+            return false;
           });
 
         if (!hasRealChanges) {
