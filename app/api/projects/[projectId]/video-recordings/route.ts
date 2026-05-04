@@ -56,6 +56,8 @@ export async function GET(
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
     const status = searchParams.get('status');
+    const source = searchParams.get('source');
+    const sourceExclude = searchParams.get('sourceExclude');
     const sortBy = searchParams.get('sortBy') || 'createdAt';
     const sortOrder = searchParams.get('sortOrder') === 'asc' ? 1 : -1;
 
@@ -69,7 +71,25 @@ export async function GET(
       matchCriteria.status = status;
     }
 
-    console.log('🔍 Video recordings query:', { projectId, status, sortBy, sortOrder });
+    // Filter by source if provided (e.g., source=self_serve)
+    if (source) {
+      matchCriteria.source = source;
+    }
+
+    // Exclude specific source if provided (e.g., sourceExclude=self_serve)
+    // Belt-and-suspenders: also exclude by roomId pattern for robustness
+    // IMPORTANT: Use $not: { $eq: value } instead of $ne to also match documents
+    // where the source field doesn't exist (regular video calls don't have source set)
+    if (sourceExclude === 'self_serve') {
+      matchCriteria.$and = [
+        { source: { $not: { $eq: 'self_serve' } } },  // Matches undefined/null/other values
+        { roomId: { $not: { $regex: '^self-serve-' } } }  // Also exclude by roomId pattern
+      ];
+    } else if (sourceExclude) {
+      matchCriteria.source = { $not: { $eq: sourceExclude } };
+    }
+
+    console.log('🔍 Video recordings query:', { projectId, status, source, sourceExclude, sortBy, sortOrder });
 
     // Use aggregation to group recordings by roomId and return only the best one per call
     // This prevents duplicate entries when a call has multiple recording attempts (e.g., failed + succeeded)

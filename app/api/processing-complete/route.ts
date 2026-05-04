@@ -87,9 +87,10 @@ export async function PUT(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify webhook source (accept both image and video services)
+    // Verify webhook source (accept image, video, and call services)
     const webhookSource = request.headers.get('x-webhook-source');
-    if (webhookSource !== 'railway-image-service' && webhookSource !== 'railway-video-service') {
+    const validSources = ['railway-image-service', 'railway-video-service', 'railway-call-service'];
+    if (!validSources.includes(webhookSource || '')) {
       return NextResponse.json({ error: 'Invalid webhook source' }, { status: 401 });
     }
 

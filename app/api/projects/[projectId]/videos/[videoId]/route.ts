@@ -2,8 +2,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
+import VideoRecording from '@/models/VideoRecording';
+import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
+import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/videos/:videoId - Get specific video file or all videos
@@ -46,27 +49,101 @@ export async function GET(
       const startTime = Date.now();
       
       try {
-        // Get total count for pagination
-        const totalCount = await Video.countDocuments(filter);
-        
-        // Get paginated videos
-        const videos = await Promise.race([
-          Video.find(filter)
-            .select('name originalName mimeType size duration description source metadata analysisResult s3RawFile createdAt updatedAt cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl')
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit)
-            .maxTimeMS(10000), // 10 second MongoDB timeout
-          new Promise<any>((_, reject) => 
-            setTimeout(() => reject(new Error('Database query timeout')), 12000)
-          )
+        // Get counts for pagination (Video + self-serve VideoRecording)
+        const selfServeFilter = {
+          projectId: projectId,
+          source: 'self_serve',
+          status: 'completed',
+          ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
+        };
+
+        const [videoCount, selfServeCount] = await Promise.all([
+          Video.countDocuments(filter),
+          VideoRecording.countDocuments(selfServeFilter)
         ]);
-        
+        const totalCount = videoCount + selfServeCount;
+
+        // Get both Video documents and self-serve VideoRecordings
+        const [videos, selfServeRecordings] = await Promise.all([
+          Promise.race([
+            Video.find(filter)
+              .select('name originalName mimeType size duration description source metadata analysisResult s3RawFile createdAt updatedAt cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl')
+              .sort({ createdAt: -1 })
+              .maxTimeMS(10000),
+            new Promise<any>((_, reject) =>
+              setTimeout(() => reject(new Error('Video query timeout')), 12000)
+            )
+          ]),
+          Promise.race([
+            VideoRecording.find(selfServeFilter)
+              .select('roomId fileSize duration analysisResult source selfServeSessionId participants s3Key s3Url createdAt updatedAt')
+              .sort({ createdAt: -1 })
+              .maxTimeMS(10000),
+            new Promise<any>((_, reject) =>
+              setTimeout(() => reject(new Error('Self-serve query timeout')), 12000)
+            )
+          ])
+        ]);
+
+        // Get mergedS3Key from SelfServeRecordingSession for each self-serve recording
+        const sessionIds = selfServeRecordings
+          .map((r: any) => r.selfServeSessionId)
+          .filter(Boolean);
+
+        const sessions = sessionIds.length > 0
+          ? await SelfServeRecordingSession.find({ sessionId: { $in: sessionIds } })
+              .select('sessionId mergedS3Key')
+              .lean()
+          : [];
+
+        const sessionMap = new Map(sessions.map((s: any) => [s.sessionId, s.mergedS3Key]));
+
+        // Map self-serve VideoRecordings to Video-like structure
+        const mappedSelfServe = selfServeRecordings.map((rec: any) => {
+          // Get S3 key from session or recording
+          const s3Key = rec.selfServeSessionId
+            ? (sessionMap.get(rec.selfServeSessionId) || rec.s3Key)
+            : rec.s3Key;
+
+          // Generate display name from participants or roomId
+          const customerParticipant = rec.participants?.find((p: any) => p.type === 'customer');
+          const displayName = customerParticipant?.name || `Self-Serve Recording`;
+
+          return {
+            _id: rec._id,
+            _type: 'self_serve_recording', // Discriminator for streaming endpoint
+            name: `self-serve-${rec._id}`,
+            originalName: `${displayName}.mp4`,
+            mimeType: 'video/mp4',
+            size: rec.fileSize || 0,
+            duration: rec.duration || 0,
+            source: 'self_serve',
+            s3RawFile: {
+              key: s3Key,
+              bucket: process.env.AWS_S3_BUCKET_NAME,
+              url: rec.s3Url
+            },
+            analysisResult: rec.analysisResult || { status: 'pending' },
+            createdAt: rec.createdAt,
+            updatedAt: rec.updatedAt,
+            // Additional metadata for reference
+            selfServeSessionId: rec.selfServeSessionId,
+            participants: rec.participants
+          };
+        });
+
+        // Combine and sort by createdAt descending
+        const allVideos = [...videos.map((v: any) => v.toObject()), ...mappedSelfServe]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+        // Apply pagination to combined results
+        const paginatedVideos = allVideos.slice(skip, skip + limit);
+
         const queryTime = Date.now() - startTime;
-        console.log(`🎬 Found ${videos.length} videos (${totalCount} total) for project ${projectId} in ${queryTime}ms`);
-        
+        console.log(`🎬 Found ${videos.length} videos + ${selfServeRecordings.length} self-serve recordings (${totalCount} total) for project ${projectId} in ${queryTime}ms`);
+
         return NextResponse.json({
-          videos,
+          videos: paginatedVideos,
           pagination: {
             currentPage: page,
             pageSize: limit,
@@ -299,14 +376,66 @@ export async function DELETE(
         
         // Then delete all videos
         const videoDeleteResult = await Video.deleteMany(filter).maxTimeMS(30000);
-        
+
         console.log(`🗑️ Deleted ${videoDeleteResult.deletedCount} videos from project ${projectId}`);
-        
+
+        // Also delete self-serve VideoRecordings
+        const selfServeFilter = {
+          projectId: projectId,
+          source: 'self_serve',
+          ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
+        };
+
+        // Find self-serve recordings to get their IDs for related cleanup
+        const selfServeRecordings = await VideoRecording.find(selfServeFilter).select('_id selfServeSessionId').maxTimeMS(15000);
+        const selfServeIds = selfServeRecordings.map((r: any) => r._id.toString());
+        const sessionIds = selfServeRecordings.map((r: any) => r.selfServeSessionId).filter(Boolean);
+
+        let selfServeInventoryDeleted = 0;
+        let selfServeSegmentsDeleted = 0;
+        let selfServeRecordingsDeleted = 0;
+        let selfServeSessionsDeleted = 0;
+
+        if (selfServeIds.length > 0) {
+          // Delete inventory items linked to self-serve recordings
+          const selfServeInventoryResult = await InventoryItem.deleteMany({
+            sourceVideoRecordingId: { $in: selfServeIds },
+            projectId: projectId,
+            ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
+          }).maxTimeMS(30000);
+          selfServeInventoryDeleted = selfServeInventoryResult.deletedCount;
+          console.log(`🗑️ Deleted ${selfServeInventoryDeleted} inventory items for self-serve recordings`);
+
+          // Delete analysis segments for self-serve recordings
+          const segmentsResult = await CallAnalysisSegment.deleteMany({
+            videoRecordingId: { $in: selfServeIds }
+          }).maxTimeMS(30000);
+          selfServeSegmentsDeleted = segmentsResult.deletedCount;
+          console.log(`🗑️ Deleted ${selfServeSegmentsDeleted} analysis segments for self-serve recordings`);
+
+          // Delete the VideoRecording documents
+          const recordingsResult = await VideoRecording.deleteMany(selfServeFilter).maxTimeMS(30000);
+          selfServeRecordingsDeleted = recordingsResult.deletedCount;
+          console.log(`🗑️ Deleted ${selfServeRecordingsDeleted} self-serve VideoRecordings`);
+        }
+
+        // Delete associated SelfServeRecordingSessions
+        if (sessionIds.length > 0) {
+          const sessionsResult = await SelfServeRecordingSession.deleteMany({
+            sessionId: { $in: sessionIds }
+          }).maxTimeMS(30000);
+          selfServeSessionsDeleted = sessionsResult.deletedCount;
+          console.log(`🗑️ Deleted ${selfServeSessionsDeleted} SelfServeRecordingSessions`);
+        }
+
         return NextResponse.json({
           success: true,
-          message: `Successfully deleted ${videoDeleteResult.deletedCount} videos`,
+          message: `Successfully deleted ${videoDeleteResult.deletedCount} videos and ${selfServeRecordingsDeleted} self-serve recordings`,
           deletedVideos: videoDeleteResult.deletedCount,
-          deletedInventoryItems: inventoryDeleteResult.deletedCount
+          deletedInventoryItems: inventoryDeleteResult.deletedCount + selfServeInventoryDeleted,
+          deletedSelfServeRecordings: selfServeRecordingsDeleted,
+          deletedAnalysisSegments: selfServeSegmentsDeleted,
+          deletedSessions: selfServeSessionsDeleted
         });
       } catch (error) {
         console.error('❌ Bulk video delete failed:', error);
@@ -331,17 +460,72 @@ export async function DELETE(
       }
     }
     
+    // Check if this is a self-serve recording request (via query param)
+    const url = new URL(request.url);
+    const recordingType = url.searchParams.get('type');
+
     // Handle individual video deletion
     const video = await Video.findOne({
       _id: videoId,
       projectId: projectId,
       ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
     });
-    
+
+    // If video not found and it might be a self-serve recording, handle that
     if (!video) {
-      return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+      // Check if it's a self-serve VideoRecording
+      const selfServeRecording = await VideoRecording.findOne({
+        _id: videoId,
+        projectId: projectId,
+        source: 'self_serve',
+        ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
+      });
+
+      if (!selfServeRecording) {
+        return NextResponse.json({ error: 'Video not found' }, { status: 404 });
+      }
+
+      console.log(`🗑️ Deleting self-serve recording: ${videoId}`, {
+        selfServeSessionId: selfServeRecording.selfServeSessionId,
+        status: selfServeRecording.status,
+        analysisStatus: selfServeRecording.analysisResult?.status,
+        createdAt: selfServeRecording.createdAt
+      });
+
+      // Delete associated inventory items (using sourceVideoRecordingId)
+      const inventoryDeleteResult = await InventoryItem.deleteMany({
+        sourceVideoRecordingId: videoId,
+        projectId: projectId,
+        ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
+      }).maxTimeMS(15000);
+      console.log(`🗑️ Deleted ${inventoryDeleteResult.deletedCount} inventory items for self-serve recording`);
+
+      // Delete associated CallAnalysisSegments
+      const segmentDeleteResult = await CallAnalysisSegment.deleteMany({
+        videoRecordingId: videoId
+      }).maxTimeMS(15000);
+      console.log(`🗑️ Deleted ${segmentDeleteResult.deletedCount} analysis segments for self-serve recording`);
+
+      // Delete the SelfServeRecordingSession if it exists
+      if (selfServeRecording.selfServeSessionId) {
+        await SelfServeRecordingSession.deleteOne({
+          sessionId: selfServeRecording.selfServeSessionId
+        });
+        console.log(`🗑️ Deleted SelfServeRecordingSession: ${selfServeRecording.selfServeSessionId}`);
+      }
+
+      // Delete the VideoRecording
+      await VideoRecording.deleteOne({ _id: videoId });
+      console.log(`✅ Self-serve recording deleted: ${videoId}`);
+
+      return NextResponse.json({
+        success: true,
+        message: 'Self-serve recording deleted successfully',
+        deletedInventoryItems: inventoryDeleteResult.deletedCount,
+        deletedSegments: segmentDeleteResult.deletedCount
+      });
     }
-    
+
     console.log(`🗑️ Deleting video: ${video.originalName}`, {
       hasCloudinaryId: !!video.cloudinaryPublicId,
       size: video.size,
@@ -353,14 +537,14 @@ export async function DELETE(
     // Check if video has been stuck in processing for more than 1 hour
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     const isStuckProcessing = (
-      video.analysisResult?.status === 'processing' || 
+      video.analysisResult?.status === 'processing' ||
       video.processingStatus === 'processing'
     ) && video.createdAt < oneHourAgo;
 
     if (isStuckProcessing) {
       console.log(`⚠️ Video appears to be stuck in processing (created ${video.createdAt}), allowing force delete`);
     }
-    
+
     // First, find and delete all associated inventory items with timeout protection
     const associatedInventoryItems = await Promise.race([
       InventoryItem.find({
@@ -368,13 +552,13 @@ export async function DELETE(
         projectId: projectId,
         ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
       }).maxTimeMS(15000), // 15 second MongoDB timeout
-      new Promise((_, reject) => 
+      new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Inventory lookup timeout')), 20000)
       )
     ]) as any[];
-    
+
     console.log(`🗑️ Found ${associatedInventoryItems.length} inventory items to delete with video`);
-    
+
     if (associatedInventoryItems.length > 0) {
       await Promise.race([
         InventoryItem.deleteMany({
@@ -382,7 +566,7 @@ export async function DELETE(
           projectId: projectId,
           ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
         }).maxTimeMS(15000), // 15 second MongoDB timeout
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Inventory deletion timeout')), 20000)
         )
       ]);

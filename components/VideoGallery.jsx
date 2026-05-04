@@ -42,6 +42,7 @@ import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { toast } from 'sonner';
+import VideoRecordingModal from './VideoRecordingModal';
 
 // Helper to group items by location/room
 const groupByRoom = (items) => {
@@ -62,7 +63,7 @@ const formatDuration = (seconds) => {
 };
 
 const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 Bytes';
+  if (!bytes || bytes === 0) return '';
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -98,13 +99,16 @@ const VideoCard = memo(({
   const [thumbnailLoaded, setThumbnailLoaded] = useState(false);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
 
-  const hasS3Video = video.s3RawFile?.key;
+  // Check if this is a self-serve recording or regular uploaded video
+  const isSelfServe = video._type === 'self_serve_recording';
+  const hasS3Video = isSelfServe ? (video.s3Key || video.customerVideoS3Key) : video.s3RawFile?.key;
+  const videoTitle = isSelfServe ? 'Self-Serve Recording' : video.originalName;
 
   // Load video thumbnail on mount
   useEffect(() => {
     const loadThumbnail = async () => {
       if (hasS3Video && !streamUrl) {
-        const url = await onLoadStreamUrl(video._id);
+        const url = await onLoadStreamUrl(video._id, video._type);
         if (url) {
           setShowVideoPreview(true);
         }
@@ -113,7 +117,7 @@ const VideoCard = memo(({
       }
     };
     loadThumbnail();
-  }, [video._id, hasS3Video, streamUrl, onLoadStreamUrl]);
+  }, [video._id, video._type, hasS3Video, streamUrl, onLoadStreamUrl]);
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-md transition-shadow relative">
@@ -127,8 +131,8 @@ const VideoCard = memo(({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="z-50">
             <DropdownMenuItem onClick={async () => {
-              if (video.s3RawFile && !streamUrl) {
-                await onLoadStreamUrl(video._id);
+              if (hasS3Video && !streamUrl) {
+                await onLoadStreamUrl(video._id, video._type);
               }
               onSelectVideo(video);
             }}>
@@ -179,7 +183,7 @@ const VideoCard = memo(({
                   setThumbnailLoaded(true);
                 }}
                 onError={(e) => {
-                  console.error('🎬 Thumbnail load error for video:', video.originalName);
+                  console.error('🎬 Thumbnail load error for video:', videoTitle);
                   setShowVideoPreview(false);
                 }}
               />
@@ -225,10 +229,15 @@ const VideoCard = memo(({
         <div className="space-y-3">
           <div>
             <div className="flex items-center gap-2">
-              <VideoIcon size={14} className="text-blue-500" />
-              <h4 className="font-medium text-gray-900 truncate" title={video.originalName}>
-                {video.originalName}
+              <VideoIcon size={14} className={isSelfServe ? "text-purple-500" : "text-blue-500"} />
+              <h4 className="font-medium text-gray-900 truncate" title={videoTitle}>
+                {videoTitle}
               </h4>
+              {isSelfServe && (
+                <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                  Self-Serve
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-gray-500 flex items-center gap-1">
               <Calendar size={12} />
@@ -249,7 +258,7 @@ const VideoCard = memo(({
             {video.analysisResult?.status === 'processing' ? (
               <Badge variant="secondary" className="text-xs animate-pulse">
                 <Loader2 size={10} className="mr-1 animate-spin" />
-                Processing...
+                Analyzing...
               </Badge>
             ) : video.analysisResult?.status === 'failed' ? (
               <Badge variant="destructive" className="text-xs">
@@ -311,7 +320,7 @@ const VideoCard = memo(({
 
           {/* File info */}
           <div className="text-xs text-gray-500 flex items-center justify-between">
-            <span>{formatFileSize(video.size)}</span>
+            <span>{formatFileSize(video.size || video.fileSize)}</span>
             {video.duration > 0 && (
               <span className="flex items-center gap-1">
                 <VideoIcon size={10} />
@@ -362,6 +371,9 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   const [inventoryPollInterval, setInventoryPollInterval] = useState(15000); // Dynamic polling interval with exponential backoff (start at 15s)
   const [lastInventoryHash, setLastInventoryHash] = useState(null); // Hash of last inventory data to detect changes
   const [ongoingRequests, setOngoingRequests] = useState(new Set()); // Track ongoing requests to prevent duplication
+  const [isSelfServePolling, setIsSelfServePolling] = useState(false); // Track polling for self-serve recordings
+  const [selectedRecording, setSelectedRecording] = useState(null); // For VideoRecordingModal (self-serve)
+  const [isRecordingModalOpen, setIsRecordingModalOpen] = useState(false); // Track VideoRecordingModal state
   const inventoryAbortControllerRef = useRef(null); // AbortController for inventory polling
   
   // Pagination state
@@ -598,28 +610,46 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
     }
   };
 
-  // Fetch videos for the project with pagination
+  // Fetch videos for the project with pagination (includes uploaded videos AND self-serve recordings)
   const fetchVideos = async (page = 1) => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/projects/${projectId}/videos/all?page=${page}&limit=20`, {
-        signal: AbortSignal.timeout(30000) // Increased to 30 second timeout
-      });
-      
-      if (!response.ok) {
+
+      // /videos/all already returns both uploaded Videos AND self-serve
+      // VideoRecordings tagged with `_type: 'self_serve_recording'`. A previous
+      // version also fetched /video-recordings?source=self_serve and merged the
+      // results, which caused every self-serve recording to appear twice with
+      // the same _id (React duplicate-key warning).
+      const videosResponse = await fetch(
+        `/api/projects/${projectId}/videos/all?page=${page}&limit=20`,
+        { signal: AbortSignal.timeout(30000) }
+      );
+
+      if (!videosResponse.ok) {
         throw new Error('Failed to fetch videos');
       }
-      
-      const data = await response.json();
-      console.log('🎬 VideoGallery received response:', data);
-      
-      if (data.error) {
-        throw new Error(data.error);
+
+      const videosData = await videosResponse.json();
+      console.log('🎬 VideoGallery received videos:', videosData);
+
+      if (videosData.error) {
+        throw new Error(videosData.error);
       }
-      
+
+      // Defensive de-dupe by _id. /videos/all should never return duplicates,
+      // but if it ever does (data migration weirdness, etc.) we don't want
+      // React duplicate-key warnings to surface to the user.
+      const seen = new Set();
+      const allVideos = (videosData.videos || []).filter(v => {
+        if (!v?._id) return true;
+        if (seen.has(v._id)) return false;
+        seen.add(v._id);
+        return true;
+      });
+
       // Update videos and pagination state
-      setVideos(data.videos || []);
-      setPagination(data.pagination || {
+      setVideos(allVideos);
+      setPagination(videosData.pagination || {
         currentPage: 1,
         pageSize: 20,
         totalItems: 0,
@@ -628,14 +658,14 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
         hasPrevPage: false
       });
       setCurrentPage(page);
-      
+
       // Fetch inventory items separately (not blocking video display)
-      if ((data.videos || []).length > 0) {
+      if (allVideos.length > 0) {
         setTimeout(() => fetchInventoryItems(), 100);
       }
     } catch (err) {
       console.error('Error fetching videos:', err);
-      
+
       // Handle timeout errors specifically
       if (err.name === 'AbortError' || err.message.includes('timeout')) {
         setError('Video loading timed out. Please refresh the page or check your connection.');
@@ -657,6 +687,38 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   // New videos appear via SSE notifications when processing completes
   // This prevents constant flickering and re-loading of video cards
 
+  // Auto-refresh polling for self-serve recordings that are still processing
+  // This matches the behavior of VideoRecordingsTab which polls every 5 seconds
+  useEffect(() => {
+    // Check if any self-serve recordings are still processing
+    const hasProcessingSelfServe = videos.some(v =>
+      v._type === 'self_serve_recording' &&
+      (v.status === 'processing' ||
+       v.analysisResult?.status === 'processing' ||
+       v.analysisResult?.status === 'queued')
+    );
+
+    if (!hasProcessingSelfServe || !projectId) {
+      setIsSelfServePolling(false);
+      return;
+    }
+
+    setIsSelfServePolling(true);
+    console.log('🔄 Starting self-serve polling - processing recordings detected');
+
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        console.log('🔄 Polling for self-serve recording status updates...');
+        fetchVideos(currentPage);
+      }
+    }, 5000); // Poll every 5 seconds
+
+    return () => {
+      console.log('🔄 Stopping self-serve polling');
+      clearInterval(pollInterval);
+    };
+  }, [videos, projectId, currentPage]);
+
   // NOTE: Inventory polling removed - inventoryItems prop is already managed by InventoryManager
   // This component receives inventoryItems as a prop, so internal polling was redundant
 
@@ -664,15 +726,15 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   // When key changes, component remounts and fetches fresh data (same pattern as ImageGallery)
 
   // Fetch streaming URL for S3 videos with enhanced caching and deduplication
-  const getStreamUrl = async (videoId) => {
+  const getStreamUrl = async (videoId, videoType = null) => {
     // Defensive check for invalid videoId
     if (!videoId || typeof videoId !== 'string') {
       console.error('🎬 Invalid videoId passed to getStreamUrl:', videoId);
       return null;
     }
-    
+
     const cacheEntry = streamUrls[videoId];
-    
+
     // Check if we have a valid cached entry
     if (cacheEntry && isCacheEntryValid(cacheEntry)) {
       console.log(`🎬 Using cached stream URL for video ${videoId} (age: ${Math.round((Date.now() - cacheEntry.timestamp) / 1000)}s)`);
@@ -680,7 +742,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
     }
 
     const requestId = `stream-${videoId}`;
-    
+
     // Check if request is already ongoing
     if (isRequestOngoing(requestId)) {
       console.log(`⏸️ Stream URL request for video ${videoId} already in progress, waiting...`);
@@ -692,18 +754,20 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
       }
       return null; // If still not available, return null
     }
-    
+
     addOngoingRequest(requestId);
 
     try {
       console.log(`🎬 Fetching fresh stream URL for video ${videoId}${cacheEntry ? ' (cache expired)' : ' (not cached)'}`);
-      
+
       // Defensive check for projectId
       if (!projectId || typeof projectId !== 'string') {
         throw new Error(`Invalid projectId: ${projectId}`);
       }
-      
-      const response = await fetch(`/api/projects/${projectId}/videos/${videoId}/stream`, {
+
+      // Add type query param for self-serve recordings
+      const typeParam = videoType === 'self_serve_recording' ? '?type=self_serve_recording' : '';
+      const response = await fetch(`/api/projects/${projectId}/videos/${videoId}/stream${typeParam}`, {
         signal: AbortSignal.timeout(8000) // 8 second timeout for stream URLs
       });
       if (!response.ok) {
@@ -747,7 +811,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
       // Get the streaming URL from S3
       const video = videos.find(v => v._id === videoId);
       if (video?.s3RawFile) {
-        const streamUrl = await getStreamUrl(videoId);
+        const streamUrl = await getStreamUrl(videoId, video._type);
         if (streamUrl) {
           setPlayingVideoId(videoId);
           addOperation('isPlaying', videoId);
@@ -755,6 +819,31 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           console.error('🎬 Could not get streaming URL for video');
         }
       }
+    }
+  };
+
+  // Handle video selection - use VideoRecordingModal for self-serve, Dialog for uploads
+  const handleVideoSelect = (video) => {
+    if (video._type === 'self_serve_recording') {
+      // Transform to VideoRecording format for VideoRecordingModal
+      const recordingData = {
+        _id: video._id,
+        roomId: video.name || `self-serve-${video._id}`,
+        source: 'self_serve',
+        selfServeSessionId: video.selfServeSessionId,
+        s3Key: video.s3RawFile?.key,
+        status: 'completed',
+        analysisResult: video.analysisResult,
+        participants: video.participants || [],
+        createdAt: video.createdAt,
+        startedAt: video.createdAt,
+        duration: video.duration
+      };
+      setSelectedRecording(recordingData);
+      setIsRecordingModalOpen(true);
+    } else {
+      // Regular uploaded video - use existing Dialog
+      setSelectedVideo(video);
     }
   };
 
@@ -789,7 +878,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
         let streamUrl = streamUrls[video._id]?.url;
         if (!streamUrl) {
           console.log('🎬 Fetching stream URL for download...');
-          streamUrl = await getStreamUrl(video._id);
+          streamUrl = await getStreamUrl(video._id, video._type);
         }
         
         if (!streamUrl) {
@@ -993,7 +1082,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
         try {
           let streamUrl = streamUrls[video._id]?.url;
           if (!streamUrl && video.s3RawFile) {
-            streamUrl = await getStreamUrl(video._id);
+            streamUrl = await getStreamUrl(video._id, video._type);
           }
 
           if (streamUrl) {
@@ -1084,13 +1173,21 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   };
 
   // Pre-compute inventory items grouped by video ID to avoid filtering in each card
+  // Also includes items linked via sourceVideoRecordingId for self-serve recordings
   const inventoryByVideoId = useMemo(() => {
     const map = {};
     inventoryItems.forEach(item => {
+      // Check sourceVideoId (for Video model items)
       const videoId = item.sourceVideoId?._id || item.sourceVideoId;
       if (videoId) {
         if (!map[videoId]) map[videoId] = [];
         map[videoId].push(item);
+      }
+      // Also check sourceVideoRecordingId (for VideoRecording items including self-serve)
+      const recordingId = item.sourceVideoRecordingId?._id || item.sourceVideoRecordingId;
+      if (recordingId) {
+        if (!map[recordingId]) map[recordingId] = [];
+        map[recordingId].push(item);
       }
     });
     return map;
@@ -1129,8 +1226,13 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
         </div>
         <div className="border-2 border-dashed border-gray-200 bg-gray-50 rounded-lg">
           <div className="flex flex-col items-center justify-center py-12">
-            <FileVideo className="h-12 w-12 text-gray-400 mb-4" />
-            <h4 className="text-lg font-medium text-gray-900 mb-2">No videos yet</h4>
+            <div className="text-center">
+              <FileVideo className="mx-auto h-12 w-12 text-gray-400" />
+              <h3 className="mt-2 text-sm font-medium text-gray-900">No videos</h3>
+              <p className="mt-1 text-sm text-gray-500">
+                Upload customer videos to automatically identify and inventory items.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -1191,7 +1293,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           )}
         </div>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {videos.map((video) => (
           <VideoCard
@@ -1201,7 +1303,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
             isPlaying={playingVideoId === video._id}
             streamUrl={streamUrls[video._id]?.url}
             onPlayToggle={handlePlayToggle}
-            onSelectVideo={setSelectedVideo}
+            onSelectVideo={handleVideoSelect}
             onDownload={handleDownload}
             onDelete={handleDelete}
             onLoadStreamUrl={getStreamUrl}
@@ -1245,7 +1347,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           setSelectedVideo(null);
         } else if (selectedVideo?.s3RawFile && !streamUrls[selectedVideo._id]?.url) {
           // Fetch streaming URL for modal video
-          await getStreamUrl(selectedVideo._id);
+          await getStreamUrl(selectedVideo._id, selectedVideo._type);
         }
       }}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
@@ -1267,13 +1369,13 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
             return (
               <div className="space-y-4">
                 {/* Video Player */}
-                <div className="relative bg-gray-100 rounded-lg overflow-hidden">
+                <div className="relative bg-black rounded-lg overflow-hidden">
                   {modalVideoUrl ? (
                     <video
                       src={modalVideoUrl}
                       controls
                       preload="metadata"
-                      className="w-full h-auto max-h-96 object-contain"
+                      className="w-full h-auto bg-black block"
                       style={{ maxHeight: '400px' }}
                       onLoadedMetadata={(e) => {
                         // Ensure video shows first frame
@@ -1581,6 +1683,22 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* VideoRecordingModal for self-serve recordings - provides full features like Notes, Find in Video, AI Summary */}
+      {isRecordingModalOpen && selectedRecording && (
+        <VideoRecordingModal
+          recording={selectedRecording}
+          projectId={projectId}
+          isOpen={isRecordingModalOpen}
+          onClose={() => {
+            setIsRecordingModalOpen(false);
+            setSelectedRecording(null);
+          }}
+          inventoryItems={inventoryItems}
+          onInventoryUpdate={onInventoryUpdate}
+        />
+      )}
+
     </div>
   );
 }

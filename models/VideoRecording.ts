@@ -110,6 +110,9 @@ export interface IVideoRecording extends Document {
   // Aggregated segment data for Notes tab display
   segmentSummaries?: string;   // Combined AI summaries from all segments
   packingNotes?: string;       // Combined packing notes from all segments
+  // Self-serve recording fields
+  selfServeSessionId?: string; // Link to SelfServeRecordingSession.sessionId
+  source?: 'livekit' | 'self_serve' | 'video_call'; // Recording source type
   createdAt: Date;
   updatedAt: Date;
 }
@@ -324,7 +327,16 @@ const VideoRecordingSchema: Schema = new Schema(
     },
     // Aggregated segment data for Notes tab display
     segmentSummaries: { type: String },
-    packingNotes: { type: String }
+    packingNotes: { type: String },
+    // Self-serve recording fields
+    selfServeSessionId: {
+      type: String,
+      index: true
+    },
+    source: {
+      type: String,
+      enum: ['livekit', 'self_serve', 'video_call']
+    }
   },
   {
     timestamps: true,

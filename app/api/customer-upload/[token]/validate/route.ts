@@ -148,6 +148,11 @@ export async function GET(
         companyLogo: branding.companyLogo,
       } : null,
       instructions: instructions,
+
+      // Self-serve recording settings
+      uploadMode: customerUpload.uploadMode || 'both',
+      recordingInstructions: customerUpload.recordingInstructions,
+      maxRecordingDuration: customerUpload.maxRecordingDuration || 1200,
     });
 
   } catch (error) {

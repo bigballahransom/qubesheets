@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization, useAuth } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -171,7 +171,7 @@ const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const prevProcessingCountRef = useRef(0); // Track previous processing count for change detection
 const prevVideoCountRef = useRef(0); // Track previous video count for change detection
-const prevCallCountRef = useRef(0); // Track previous video call count for change detection
+const prevCallCountRef = useRef(0); // Track previous virtual call count for change detection
 const sseRetryTimeoutRef = useRef(null);
 const isVideoPlayingRef = useRef(false);
 
@@ -272,7 +272,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
 
       // Refresh video recordings tab when call count changes (new calls added or completed)
       if (currentCallCount !== prevCallCount) {
-        console.log(`📹 Video call processing count changed: ${prevCallCount} → ${currentCallCount}`);
+        console.log(`📹 Virtual call processing count changed: ${prevCallCount} → ${currentCallCount}`);
         setVideoRecordingsKey(prev => prev + 1);
       }
 
@@ -402,6 +402,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
   const convertItemsToRows = useCallback((items) => {
     // PERFORMANCE: Only log summary, not individual items
     console.log(`🔄 Converting ${items.length} items to rows (weightMode: ${weightConfig.weightMode})`);
+
     return items.map(item => {
       const quantity = item.quantity || 1;
 
@@ -413,6 +414,20 @@ const inventoryDataChanged = (oldItems, newItems) => {
         ? perUnitCuft * weightConfig.customWeightMultiplier
         : (item.weight || 0);
 
+      // Derive sourceType so the spreadsheet can pick the right icon / tooltip.
+      // The linked VideoRecording.source is the source of truth — older items
+      // were stamped with `sourceType: 'video_call'` by railway-call-service
+      // even when they came from a self-serve recording, so we MUST let the
+      // recording's source override the stale stamped value.
+      const recordingSource = item.sourceVideoRecordingId?.source;
+      const derivedSourceType =
+        (recordingSource === 'self_serve' ? 'self_serve' : null)
+        || item.sourceType
+        || (item.sourceVideoRecordingId ? 'video_call' : null)
+        || (item.sourceVideoId ? 'video' : null)
+        || (item.sourceImageId ? 'image' : null)
+        || undefined;
+
       const row = {
         id: generateId(),
         inventoryItemId: item._id, // Preserve inventory item ID for deletion
@@ -420,6 +435,8 @@ const inventoryDataChanged = (oldItems, newItems) => {
         sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
         sourceVideoRecordingId: item.sourceVideoRecordingId?._id || item.sourceVideoRecordingId, // Handle both populated and unpopulated
         sourceRecordingSessionId: item.sourceRecordingSessionId, // Legacy: kept for backwards compat
+        sourceType: derivedSourceType, // Drives icon + tooltip in Spreadsheet.jsx
+        videoTimestamp: item.videoTimestamp, // "MM:SS" for video-call/self-serve items
         stockItemId: item.stockItemId, // Reference to stock inventory item
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
@@ -2158,7 +2175,11 @@ useEffect(() => {
   }, [inventoryItems]);
 
   const videoInventoryItems = useMemo(() => {
-    return inventoryItems.filter(item => item.sourceVideoId);
+    // Include both uploaded Video items (sourceVideoId) AND self-serve recording
+    // items (sourceVideoRecordingId). Without the second filter, self-serve cards
+    // in VideoGallery never get an inventoryByVideoId match and the items/boxes/
+    // recommended badges don't render.
+    return inventoryItems.filter(item => item.sourceVideoId || item.sourceVideoRecordingId);
   }, [inventoryItems]);
 
   // Calculate stats based on what's displayed in the spreadsheet (source of truth)
@@ -3156,7 +3177,7 @@ useEffect(() => {
               // Video call date
               doc.setFontSize(10);
               doc.setTextColor(...textColor);
-              doc.text(`Video Call - ${new Date(recording.createdAt).toLocaleDateString()}`, 20, aiY);
+              doc.text(`Virtual Call - ${new Date(recording.createdAt).toLocaleDateString()}`, 20, aiY);
               aiY += 8;
 
               // Transcript Summary (AI Summary)
@@ -3654,23 +3675,23 @@ const ProcessingNotification = () => {
                 setIsVideoModalOpen(true);
               }}
             >
-              <Video size={16} className="mr-1" /> Start Video Inventory
+              <Phone size={16} className="mr-1" /> Start Virtual Call
             </MenubarItem>
             <MenubarItem onClick={() => setIsScheduleModalOpen(true)}>
-              <Clock size={16} className="mr-1" /> Schedule Video Call
+              <Clock size={16} className="mr-1" /> Schedule Virtual Call
             </MenubarItem>
             <MenubarItem onClick={() => setIsUploaderOpen(true)}>
-              <Camera size={16} className="mr-1" />Upload Inventory
+              <Upload size={16} className="mr-1" />Upload Inventory (on-site)
             </MenubarItem>
             <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
               <MessageSquare size={16} className="mr-1" />
-              Send Customer Upload Link
+              Send Customer Self-Survey Link
             </MenubarItem>
             <MenubarSeparator />
             <div className="px-2 py-1.5 text-xs font-semibold text-slate-500">Review Inventory</div>
             <MenubarItem onClick={() => setIsReviewLinkModalOpen(true)}>
               <Package size={16} className="mr-1" />
-              Send Inventory Review Link
+              Send Customer Review Link
             </MenubarItem>
             <MenubarItem onClick={() => setIsCrewLinkModalOpen(true)}>
               <Users size={16} className="mr-1" />
@@ -3873,7 +3894,7 @@ const ProcessingNotification = () => {
                 Boxes
               </TabsTrigger>
               <TabsTrigger value="images" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
-                <Images size={16} />
+                <Camera size={16} />
                 Images
               </TabsTrigger>
               <TabsTrigger value="videos" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
@@ -3881,8 +3902,8 @@ const ProcessingNotification = () => {
                 Videos
               </TabsTrigger>
               <TabsTrigger value="videocalls" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
-                <Video size={16} />
-                <span className="hidden sm:inline">Video Calls</span>
+                <Phone size={16} />
+                <span className="hidden sm:inline">Virtual Calls</span>
                 <span className="sm:hidden">Calls</span>
               </TabsTrigger>
               <TabsTrigger value="notes" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
@@ -4113,7 +4134,7 @@ const ProcessingNotification = () => {
   />
 )}
 
-{/* Schedule Video Call Modal */}
+{/* Schedule Virtual Call Modal */}
 {isScheduleModalOpen && currentProject && (
   <ScheduleVideoCallModal
     isOpen={isScheduleModalOpen}

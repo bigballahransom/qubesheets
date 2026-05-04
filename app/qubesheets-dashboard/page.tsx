@@ -800,12 +800,12 @@ export default function QubesheetsDashboardPage() {
             </div>
             */}
 
-            {/* Scheduled Video Calls Calendar */}
+            {/* Scheduled Virtual Calls Calendar */}
             <div className="bg-white rounded-xl border shadow-sm p-6 hover:shadow-md transition-shadow">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                 <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                  <Video className="h-5 w-5 text-blue-500" />
-                  Scheduled Video Calls
+                  <Phone className="h-5 w-5 text-blue-500" />
+                  Scheduled Virtual Calls
                 </h2>
 
                 {/* Filters */}
@@ -938,7 +938,7 @@ export default function QubesheetsDashboardPage() {
                           <div className="flex items-start justify-between">
                             <div className="flex items-center gap-2">
                               <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                                <Video className="h-5 w-5 text-blue-600" />
+                                <Phone className="h-5 w-5 text-blue-600" />
                               </div>
                               <div>
                                 <p className="font-medium text-gray-900">{call.customerName}</p>
@@ -1017,8 +1017,8 @@ export default function QubesheetsDashboardPage() {
                     </div>
                   ) : (
                     <div className="text-center py-8 text-gray-500 bg-slate-50 rounded-lg">
-                      <Video className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-                      <p>No video calls scheduled for this date</p>
+                      <Phone className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                      <p>No virtual calls scheduled for this date</p>
                     </div>
                   )}
                 </div>
@@ -1034,8 +1034,8 @@ export default function QubesheetsDashboardPage() {
         <DialogContent className="sm:max-w-md max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
-              <Video className="h-5 w-5 text-blue-500 flex-shrink-0" />
-              Video Call Details
+              <Phone className="h-5 w-5 text-blue-500 flex-shrink-0" />
+              Virtual Call Details
             </DialogTitle>
           </DialogHeader>
 
@@ -1095,8 +1095,8 @@ export default function QubesheetsDashboardPage() {
                   rel="noopener noreferrer"
                   className="flex items-center gap-3 w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-full font-medium transition-colors"
                 >
-                  <Video className="h-5 w-5" />
-                  Join Video Call
+                  <Phone className="h-5 w-5" />
+                  Join Virtual Call
                 </a>
 
                 {/* Customer Link */}
@@ -1172,7 +1172,7 @@ export default function QubesheetsDashboardPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CalendarIcon className="h-5 w-5 text-amber-500" />
-              Reschedule Video Call
+              Reschedule Virtual Call
             </DialogTitle>
           </DialogHeader>
 
@@ -1285,7 +1285,7 @@ export default function QubesheetsDashboardPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-600">
               <XCircle className="h-5 w-5" />
-              Cancel Video Call
+              Cancel Virtual Call
             </DialogTitle>
           </DialogHeader>
 

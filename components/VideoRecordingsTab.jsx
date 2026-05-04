@@ -137,7 +137,8 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
         page: page.toString(),
         limit: pagination.limit.toString(),
         sortBy: 'createdAt',
-        sortOrder: 'desc'
+        sortOrder: 'desc',
+        sourceExclude: 'self_serve'  // Self-serve recordings are shown in Videos tab
       });
 
       const response = await fetch(
@@ -385,7 +386,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
   };
 
   const handleDeleteAll = async () => {
-    const confirmMessage = `Are you sure you want to delete ALL ${pagination.totalCount} video call recordings? This action cannot be undone.`;
+    const confirmMessage = `Are you sure you want to delete ALL ${pagination.totalCount} virtual call recordings? This action cannot be undone.`;
 
     if (!confirm(confirmMessage)) {
       return;
@@ -423,7 +424,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
         hasPrevPage: false
       });
 
-      toast.success(`Deleted all video call recordings`);
+      toast.success(`Deleted all virtual call recordings`);
 
       // Refresh spreadsheet to update inventory items
       if (refreshSpreadsheet) {
@@ -554,7 +555,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
   };
 
   const formatMeetingName = (participants) => {
-    if (!participants || participants.length === 0) return projectName || 'Video Call';
+    if (!participants || participants.length === 0) return projectName || 'Virtual Call';
 
     const agent = participants.find(p => p.type === 'agent');
     const agentName = agent?.name || 'Agent';
@@ -587,7 +588,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-        <span className="ml-2 text-gray-600">Loading video calls...</span>
+        <span className="ml-2 text-gray-600">Loading virtual calls...</span>
       </div>
     );
   }
@@ -609,7 +610,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-gray-900">Customer Video Calls</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Customer Virtual Calls</h3>
           <p className="text-sm text-gray-600 mt-1">
             {pagination.totalCount} recording{pagination.totalCount !== 1 ? 's' : ''} found
           </p>
@@ -667,7 +668,7 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
             <FileVideo className="mx-auto h-12 w-12 text-gray-400" />
             <h3 className="mt-2 text-sm font-medium text-gray-900">No recordings</h3>
             <p className="mt-1 text-sm text-gray-500">
-              Video calls will automatically be recorded and appear here.
+              Virtual calls will automatically be recorded and appear here.
             </p>
           </div>
         </div>

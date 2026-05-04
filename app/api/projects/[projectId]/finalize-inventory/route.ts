@@ -128,6 +128,7 @@ export async function POST(
         organizationId: recording.organizationId,
         sourceVideoRecordingId: new mongoose.Types.ObjectId(videoRecordingId),
         sourceRecordingSessionId: recording.customerEgressId || recording.egressId,
+        sourceType: recording.source === 'self_serve' ? 'self_serve' : 'video_call',
         // Consolidated tracking fields
         sourceSegmentIndices: item.sourceSegmentIndices || [],
         videoTimestamps: item.videoTimestamps || [],

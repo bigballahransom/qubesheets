@@ -128,7 +128,7 @@ export default function ShareVideoLinkModal({ isOpen, onClose, roomId, projectId
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold flex items-center gap-2">
               <Video className="text-green-500" size={24} />
-              Send Video Call Link
+              Send Virtual Call Link
             </h2>
             <button
               onClick={handleClose}
@@ -151,12 +151,12 @@ export default function ShareVideoLinkModal({ isOpen, onClose, roomId, projectId
                   Video Link Sent Successfully!
                 </h3>
                 <p className="text-gray-600">
-                  {customerName} will receive a text message with the video call link.
+                  {customerName} will receive a text message with the virtual call link.
                 </p>
               </div>
               <div className="bg-green-50 p-4 rounded-lg">
                 <p className="text-sm text-green-800">
-                  <strong>Video Call URL:</strong>
+                  <strong>Virtual Call URL:</strong>
                 </p>
                 <p className="text-xs text-green-600 break-all mt-1">
                   {videoUrl}
@@ -187,7 +187,7 @@ export default function ShareVideoLinkModal({ isOpen, onClose, roomId, projectId
                   <strong>Project:</strong> {projectName}
                 </p>
                 <p className="text-xs text-green-600 mt-1">
-                  Customer will join a video call to walk through their items
+                  Customer will join a virtual call to walk through their items
                 </p>
               </div>
 
@@ -251,7 +251,7 @@ export default function ShareVideoLinkModal({ isOpen, onClose, roomId, projectId
                     </p>
                     <ul className="text-xs text-yellow-700 mt-1 space-y-1">
                       <li>• Personalized greeting with customer name</li>
-                      <li>• Direct link to join the video call</li>
+                      <li>• Direct link to join the virtual call</li>
                       <li>• Project name for reference</li>
                     </ul>
                   </div>
@@ -271,7 +271,7 @@ export default function ShareVideoLinkModal({ isOpen, onClose, roomId, projectId
                 ) : (
                   <>
                     <Send size={16} />
-                    Send Video Call Link
+                    Send Virtual Call Link
                   </>
                 )}
               </button>

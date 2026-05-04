@@ -47,7 +47,7 @@ export async function GET(
             'analysisResult.status': { $nin: ['completed', 'failed'] }
           }
         ]
-      }).select('_id roomId analysisResult customerEgressStatus createdAt').lean()
+      }).select('_id roomId analysisResult customerEgressStatus createdAt source').lean()
     ]);
     
     // Format for consistent response
@@ -68,14 +68,22 @@ export async function GET(
         startTime: new Date(vid.createdAt).getTime(),
         source: vid.source || 'video_upload'
       })),
-      ...processingCalls.map((call: any) => ({
-        id: call._id.toString(),
-        name: `Call ${call.roomId?.split('-').pop() || 'Recording'}`,
-        type: 'call' as const,
-        status: 'processing',
-        startTime: new Date(call.createdAt).getTime(),
-        source: 'video_call'
-      }))
+      ...processingCalls.map((call: any) => {
+        // Self-serve recordings are videos, not calls. Reclassify so the UI
+        // says "Processing 1 video..." instead of "Processing 1 call..." for
+        // customer self-serve walkthroughs.
+        const isSelfServe = call.source === 'self_serve';
+        return {
+          id: call._id.toString(),
+          name: isSelfServe
+            ? `Self-Serve Recording`
+            : `Call ${call.roomId?.split('-').pop() || 'Recording'}`,
+          type: (isSelfServe ? 'video' : 'call') as 'video' | 'call',
+          status: 'processing',
+          startTime: new Date(call.createdAt).getTime(),
+          source: isSelfServe ? 'self_serve' : 'video_call'
+        };
+      })
     ];
 
     console.log(`📊 Database result: ${processingItems.length} items processing (${processingImages.length} images, ${processingVideos.length} videos, ${processingCalls.length} calls)`);
