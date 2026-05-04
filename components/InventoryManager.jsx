@@ -3821,15 +3821,15 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Volume</p>
-                <p className="text-2xl font-bold text-slate-800">{totalCubicFeetWithoutRecommended} <span className="text-sm font-medium text-slate-500">cuft</span></p>
+                <p className="text-2xl font-bold text-slate-800">{totalCubicFeet} <span className="text-sm font-medium text-slate-500">cuft</span></p>
                 <div className="flex items-center gap-1">
-                  <p className="text-xs text-slate-500">Total w/ rec: {totalCubicFeet} cuft</p>
+                  <p className="text-xs text-slate-500">Without rec: {totalCubicFeetWithoutRecommended} cuft</p>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Info className="h-3 w-3 text-slate-400 cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p className="text-xs">Total volume including recommended boxes needed for packing</p>
+                      <p className="text-xs">Total volume excluding recommended boxes needed for packing</p>
                     </TooltipContent>
                   </Tooltip>
                 </div>
@@ -3843,15 +3843,15 @@ const ProcessingNotification = () => {
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-500">Weight</p>
-                <p className="text-2xl font-bold text-slate-800">{totalWeightWithoutRecommended} <span className="text-sm font-medium text-slate-500">lbs</span></p>
+                <p className="text-2xl font-bold text-slate-800">{totalWeight} <span className="text-sm font-medium text-slate-500">lbs</span></p>
                 <div className="flex items-center gap-1">
-                  <p className="text-xs text-slate-500">Total w/ rec: {totalWeight} lbs</p>
+                  <p className="text-xs text-slate-500">Without rec: {totalWeightWithoutRecommended} lbs</p>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Info className="h-3 w-3 text-slate-400 cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p className="text-xs">Total weight including recommended boxes needed for packing</p>
+                      <p className="text-xs">Total weight excluding recommended boxes needed for packing</p>
                     </TooltipContent>
                   </Tooltip>
                 </div>

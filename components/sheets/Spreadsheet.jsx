@@ -211,7 +211,7 @@ export default function Spreadsheet({
   // State for UI controls
   const [activeCell, setActiveCell] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [viewMode, setViewMode] = useState('By Media');
+  const [viewMode, setViewMode] = useState('By Room');
   const [itemTypeFilter, setItemTypeFilter] = useState('All Items');
   const [columnCount, setColumnCount] = useState(`${columns.length}/6 columns`);
   const [rowCount, setRowCount] = useState(`${rows.length}/${rows.length} rows`);
