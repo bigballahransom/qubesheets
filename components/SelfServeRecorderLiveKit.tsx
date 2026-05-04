@@ -175,7 +175,7 @@ export function SelfServeRecorderLiveKit({
         className="fixed inset-0 flex flex-col bg-gray-900 text-white p-4 overflow-auto"
         style={{
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
           minHeight: '-webkit-fill-available'
         }}
       >
@@ -258,7 +258,7 @@ export function SelfServeRecorderLiveKit({
         className="fixed inset-0 flex flex-col bg-gray-900 text-white p-4 items-center justify-center"
         style={{
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
           minHeight: '-webkit-fill-available'
         }}
       >
@@ -285,7 +285,7 @@ export function SelfServeRecorderLiveKit({
         className="fixed inset-0 flex flex-col bg-gray-900 text-white items-center justify-center"
         style={{
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
           minHeight: '-webkit-fill-available'
         }}
       >
@@ -306,7 +306,7 @@ export function SelfServeRecorderLiveKit({
         className="fixed inset-0 flex flex-col bg-gray-900 text-white p-6 items-center justify-center"
         style={{
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
           minHeight: '-webkit-fill-available'
         }}
       >
@@ -356,7 +356,7 @@ export function SelfServeRecorderLiveKit({
         className="fixed inset-0 flex flex-col bg-gray-900 text-white items-center justify-center p-4"
         style={{
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
           minHeight: '-webkit-fill-available'
         }}
       >
@@ -379,7 +379,7 @@ export function SelfServeRecorderLiveKit({
       className="fixed inset-0 bg-[#111827]"
       style={{
         width: '100vw',
-        height: '100vh',
+        height: '100dvh',
         // iOS Safari fix - extend beyond safe areas
         minHeight: '-webkit-fill-available'
       }}
@@ -399,7 +399,7 @@ export function SelfServeRecorderLiveKit({
           right: 0,
           bottom: 0,
           width: '100vw',
-          height: '100vh',
+          height: '100dvh',
           minHeight: '-webkit-fill-available'
         }}
       />
@@ -414,7 +414,7 @@ export function SelfServeRecorderLiveKit({
             right: 0,
             bottom: 0,
             width: '100vw',
-            height: '100vh',
+            height: '100dvh',
             minHeight: '-webkit-fill-available'
           }}
         >

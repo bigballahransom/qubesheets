@@ -318,7 +318,7 @@ export function CustomerPhotoSessionScreen({
     return (
       <div
         className="fixed inset-0 flex flex-col bg-gray-900 text-white p-6 items-center justify-center"
-        style={{ width: '100vw', height: '100vh', minHeight: '-webkit-fill-available' }}
+        style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
       >
         <div className="w-full max-w-sm flex flex-col items-center text-center">
           <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mb-6">
@@ -353,7 +353,7 @@ export function CustomerPhotoSessionScreen({
     return (
       <div
         className="fixed inset-0 flex flex-col bg-gray-900 text-white items-center justify-center p-6"
-        style={{ width: '100vw', height: '100vh', minHeight: '-webkit-fill-available' }}
+        style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
       >
         <Loader2 className="w-12 h-12 animate-spin text-blue-500 mb-4" />
         <p className="text-gray-300">Wrapping up…</p>
@@ -376,7 +376,7 @@ export function CustomerPhotoSessionScreen({
   return (
     <div
       className="fixed inset-0 bg-[#111827] text-white"
-      style={{ width: '100vw', height: '100vh', minHeight: '-webkit-fill-available' }}
+      style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
     >
       {/* Full-screen camera preview, edge-to-edge into the safe areas */}
       <video
@@ -388,7 +388,7 @@ export function CustomerPhotoSessionScreen({
           'absolute inset-0 w-full h-full object-cover transition-opacity duration-200',
           cameraReady ? 'opacity-100' : 'opacity-0'
         )}
-        style={{ width: '100vw', height: '100vh', minHeight: '-webkit-fill-available' }}
+        style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
       />
 
       {/* Camera-status overlays (busy / unavailable) */}
