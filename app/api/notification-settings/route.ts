@@ -41,12 +41,14 @@ export async function GET(request: NextRequest) {
       // Return default settings if none exist
       return NextResponse.json({
         enableInventoryUpdates: false,
+        notificationScope: 'all',
         phoneNumber: null
       });
     }
 
     return NextResponse.json({
       enableInventoryUpdates: settings.enableInventoryUpdates,
+      notificationScope: settings.notificationScope || 'all',
       phoneNumber: settings.phoneNumber
     });
   } catch (error) {
@@ -96,9 +98,18 @@ export async function POST(request: NextRequest) {
       userId: authContext.userId
     };
     
+    // Validate notificationScope (default 'all'). Mirrors the sidebar filter
+    // semantics — see NotificationSettings model for the predicate definitions.
+    const allowedScopes = ['all', 'unassigned-and-mine', 'mine'] as const;
+    const incomingScope = typeof data.notificationScope === 'string' ? data.notificationScope : 'all';
+    const notificationScope = (allowedScopes as readonly string[]).includes(incomingScope)
+      ? incomingScope
+      : 'all';
+
     const settingsData: any = {
       userId: authContext.userId,
       enableInventoryUpdates: Boolean(data.enableInventoryUpdates),
+      notificationScope,
       phoneNumber: formattedPhoneNumber
     };
     
@@ -129,6 +140,7 @@ export async function POST(request: NextRequest) {
     console.log('✅ Notification settings saved:', settings);
     return NextResponse.json({
       enableInventoryUpdates: settings.enableInventoryUpdates,
+      notificationScope: settings.notificationScope || 'all',
       phoneNumber: settings.phoneNumber
     }, { status: 200 });
   } catch (error) {

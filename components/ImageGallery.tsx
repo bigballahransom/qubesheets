@@ -138,6 +138,27 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
   const [deletingAll, setDeletingAll] = useState(false);
   const [downloadingAll, setDownloadingAll] = useState(false);
 
+  // Custom confirm-dialog state. Replaces window.confirm(), which iOS Safari
+  // silently suppresses when triggered from a Radix DropdownMenu item — the
+  // dropdown's click isn't treated as a "direct user gesture," so the native
+  // confirm dialog never shows and the user assumes the action is broken.
+  // This Dialog-based replacement renders inline and works on every device.
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+    resolve: (ok: boolean) => void;
+  } | null>(null);
+
+  const askConfirm = (opts: {
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+  }): Promise<boolean> =>
+    new Promise((resolve) => setConfirmState({ ...opts, resolve }));
+
   // Fetch only images (videos are handled by VideoGallery in separate tab)
   const fetchMedia = async (page = 1) => {
     setLoading(true);
@@ -186,9 +207,13 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
 
   // Delete media item
   const handleDeleteItem = async (item: MediaItem) => {
-    if (!confirm(`Are you sure you want to delete "${item.originalName}"? This action cannot be undone.`)) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: `Delete ${isVideo(item) ? 'video' : 'image'}?`,
+      message: `Are you sure you want to delete "${item.originalName}"? This action cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true
+    });
+    if (!ok) return;
 
     try {
       const endpoint = isVideo(item) 
@@ -233,16 +258,27 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
   };
 
   const handleDeleteAll = async () => {
-    const confirmMessage = `Are you sure you want to delete ALL ${pagination.totalItems} images? This will delete images from all pages, not just the current page. This action cannot be undone.`;
-    
-    if (!confirm(confirmMessage)) {
-      return;
-    }
-    
+    const ok1 = await askConfirm({
+      title: `Delete all ${pagination.totalItems} images?`,
+      message: `This will delete images from all pages, not just the current page. This action cannot be undone.`,
+      confirmLabel: 'Continue',
+      danger: true
+    });
+    if (!ok1) return;
+
+    // Let the first dialog fully animate out before opening the second one.
+    // Radix Dialog's exit animation is ~150ms; this small delay keeps the
+    // back-to-back prompts visually clean on every browser.
+    await new Promise((r) => setTimeout(r, 200));
+
     // Double confirmation for safety
-    if (!confirm(`This will permanently delete ${pagination.totalItems} images and all associated inventory items. Are you absolutely sure?`)) {
-      return;
-    }
+    const ok2 = await askConfirm({
+      title: 'Are you absolutely sure?',
+      message: `This will permanently delete ${pagination.totalItems} images and all associated inventory items.`,
+      confirmLabel: 'Yes, delete everything',
+      danger: true
+    });
+    if (!ok2) return;
     
     setDeletingAll(true);
     
@@ -1141,7 +1177,50 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
           )}
         </DialogContent>
       </Dialog>
-      
+
+      {/* Custom confirm dialog. Replaces window.confirm() so taps from the
+          per-card dropdown menu actually surface a prompt on iOS Safari. */}
+      <Dialog
+        open={!!confirmState}
+        onOpenChange={(open) => {
+          if (!open && confirmState) {
+            confirmState.resolve(false);
+            setConfirmState(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          {confirmState && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{confirmState.title}</DialogTitle>
+                <DialogDescription>{confirmState.message}</DialogDescription>
+              </DialogHeader>
+              <div className="flex justify-end gap-2 pt-4">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    confirmState.resolve(false);
+                    setConfirmState(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant={confirmState.danger ? 'destructive' : 'default'}
+                  onClick={() => {
+                    confirmState.resolve(true);
+                    setConfirmState(null);
+                  }}
+                >
+                  {confirmState.confirmLabel || 'OK'}
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

@@ -10,6 +10,16 @@ export interface INotificationSettings extends Document {
 
   // Notification preferences
   enableInventoryUpdates: boolean;
+  /** Which projects this user wants inventory-update SMSes for. Mirrors the
+   *  sidebar/projects-page filter semantics:
+   *   - 'all'                 → every project in the org (default).
+   *   - 'unassigned-and-mine' → projects assigned to (or created by) me,
+   *                             plus projects with no assignedTo that came
+   *                             from synthetic sources (api-created,
+   *                             smartmoving-webhook, global-self-survey-link).
+   *   - 'mine'                → only projects where assignedTo.userId is me,
+   *                             or (no assignedTo) the project was created by me. */
+  notificationScope: 'all' | 'unassigned-and-mine' | 'mine';
   phoneNumber?: string; // Formatted as +1XXXXXXXXXX for Twilio
 
   // Metadata
@@ -32,6 +42,11 @@ const NotificationSettingsSchema: Schema = new Schema(
     enableInventoryUpdates: {
       type: Boolean,
       default: false
+    },
+    notificationScope: {
+      type: String,
+      enum: ['all', 'unassigned-and-mine', 'mine'],
+      default: 'all'
     },
     phoneNumber: {
       type: String,
