@@ -1232,6 +1232,29 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
         console.log(`⚠️ AWS_SQS_CALL_QUEUE_URL not configured - skipping AI analysis`);
         session.analysisStatus = 'pending';
       }
+
+      // Fire the inventory-update SMS exactly once per self-serve recording
+      // — guarded by `wasOurInsert` so duplicate egress_ended webhook
+      // deliveries don't double-send. Mirrors the photo-session SMS in copy
+      // and uses the shared helper for scope filtering + URL appending.
+      try {
+        const { sendInventoryUpdateNotification } = await import('@/lib/inventoryUpdateNotifications');
+        const ProjectModel = (await import('@/models/Project')).default;
+        const CustomerUploadModel = (await import('@/models/CustomerUpload')).default;
+        const [project, customerUpload] = await Promise.all([
+          ProjectModel.findById(session.projectId).select('name').lean(),
+          CustomerUploadModel.findById(session.customerUploadId).select('customerName').lean()
+        ]);
+        const projectName = (project as any)?.name || 'a project';
+        const customerName = (customerUpload as any)?.customerName || 'A customer';
+        await sendInventoryUpdateNotification({
+          projectId: String(session.projectId),
+          body: `${customerName} just finished a video walkthrough for ${projectName}. Inventory analysis is in progress.`,
+          source: 'self-serve-recording'
+        });
+      } catch (smsErr) {
+        console.error('inventory-update SMS (self-serve recording) failed (non-fatal):', smsErr);
+      }
     }
   } else if (session.s3Key) {
     // No file result but we have stored S3 key from when egress started
@@ -1307,6 +1330,27 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           session.analysisStatus = 'failed';
           session.analysisError = 'Failed to queue for processing';
         }
+      }
+
+      // SMS to project's notification recipients — same idempotency guard as
+      // the primary file-result branch above.
+      try {
+        const { sendInventoryUpdateNotification } = await import('@/lib/inventoryUpdateNotifications');
+        const ProjectModel = (await import('@/models/Project')).default;
+        const CustomerUploadModel = (await import('@/models/CustomerUpload')).default;
+        const [project, customerUpload] = await Promise.all([
+          ProjectModel.findById(session.projectId).select('name').lean(),
+          CustomerUploadModel.findById(session.customerUploadId).select('customerName').lean()
+        ]);
+        const projectName = (project as any)?.name || 'a project';
+        const customerName = (customerUpload as any)?.customerName || 'A customer';
+        await sendInventoryUpdateNotification({
+          projectId: String(session.projectId),
+          body: `${customerName} just finished a video walkthrough for ${projectName}. Inventory analysis is in progress.`,
+          source: 'self-serve-recording'
+        });
+      } catch (smsErr) {
+        console.error('inventory-update SMS (self-serve recording fallback) failed (non-fatal):', smsErr);
       }
     }
   } else {

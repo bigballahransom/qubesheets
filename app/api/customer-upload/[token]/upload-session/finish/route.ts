@@ -16,8 +16,7 @@ import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import Project from '@/models/Project';
 import Image from '@/models/Image';
-import NotificationSettings from '@/models/NotificationSettings';
-import { sendSmsWithRetry } from '@/lib/twilio';
+import { sendInventoryUpdateNotification } from '@/lib/inventoryUpdateNotifications';
 
 export async function POST(
   request: NextRequest,
@@ -82,52 +81,21 @@ export async function POST(
     const projectName = project?.name || 'your project';
     const customerName = customerUpload.customerName || 'A customer';
 
-    // Resolve recipients: project owner + any teammates with
-    // enableInventoryUpdates and a phone number. Scoped to the project's
-    // organizationId when present so personal-account settings don't leak.
-    const orgId = customerUpload.organizationId || project?.organizationId;
-    const notifQuery: any = {
-      enableInventoryUpdates: true,
-      phoneNumber: { $exists: true, $ne: null, $regex: /^\+1\d{10}$/ }
-    };
-    if (orgId) {
-      notifQuery.organizationId = orgId;
-    } else {
-      // Personal account: only the project owner.
-      notifQuery.userId = customerUpload.userId;
-      notifQuery.organizationId = { $exists: false };
-    }
-
-    const recipients = await NotificationSettings.find(notifQuery)
-      .select('userId phoneNumber')
-      .lean();
-
-    // De-dupe by phone number in case of overlapping settings docs.
-    const uniqPhones = Array.from(
-      new Set(
-        recipients
-          .map((r: any) => r.phoneNumber)
-          .filter((p: any) => typeof p === 'string' && p.length > 0)
-      )
-    );
-
-    const smsBody = matchedCount > 0
-      ? `${customerName} just finished uploading ${matchedCount} photo${matchedCount === 1 ? '' : 's'} for ${projectName}. Inventory analysis is in progress.`
-      : '';
-
+    // Compose the SMS body (the helper appends the project URL on its own
+    // line). Skip sending entirely if zero images actually landed.
     let smsSent = 0;
     let smsFailed = 0;
-    if (smsBody) {
-      const sends = uniqPhones.map(async (phone) => {
-        const result = await sendSmsWithRetry(smsBody, phone, 2);
-        if (result.success) {
-          smsSent++;
-        } else {
-          smsFailed++;
-          console.warn(`⚠️ upload-session/finish: SMS to ${phone.slice(0, 5)}… failed:`, result.errorCode, result.error);
-        }
+    let recipients = 0;
+    if (matchedCount > 0) {
+      const body = `${customerName} just finished uploading ${matchedCount} photo${matchedCount === 1 ? '' : 's'} for ${projectName}. Inventory analysis is in progress.`;
+      const r = await sendInventoryUpdateNotification({
+        projectId: String(customerUpload.projectId),
+        body,
+        source: 'photo-session'
       });
-      await Promise.all(sends);
+      smsSent = r.sent;
+      smsFailed = r.failed;
+      recipients = r.matched;
     }
 
     // Record the finalization on the CustomerUpload doc so duplicate POSTs
@@ -155,7 +123,7 @@ export async function POST(
       reportedPhotoCount: photoCount,
       smsSent,
       smsFailed,
-      recipients: uniqPhones.length
+      recipients
     });
   } catch (err) {
     console.error('❌ upload-session/finish error:', err);

@@ -60,6 +60,7 @@ export default function NotificationsPage() {
   
   // Individual settings
   const [enableInventoryUpdates, setEnableInventoryUpdates] = useState(false);
+  const [notificationScope, setNotificationScope] = useState<'all' | 'unassigned-and-mine' | 'mine'>('all');
   const [phoneNumber, setPhoneNumber] = useState('');
   
   // Organization settings
@@ -95,10 +96,12 @@ export default function NotificationsPage() {
       if (response.ok) {
         const settings = await response.json();
         setEnableInventoryUpdates(settings.enableInventoryUpdates || false);
+        setNotificationScope(settings.notificationScope || 'all');
         setPhoneNumber(formatPhoneForDisplay(settings.phoneNumber || ''));
       } else {
         // Use defaults if no settings exist
         setEnableInventoryUpdates(false);
+        setNotificationScope('all');
         setPhoneNumber('');
       }
       
@@ -132,6 +135,7 @@ export default function NotificationsPage() {
           },
           body: JSON.stringify({
             enableInventoryUpdates,
+            notificationScope,
             phoneNumber: phoneNumber.trim() || null,
           }),
         });
@@ -240,26 +244,66 @@ export default function NotificationsPage() {
                   </div>
                   
                   {enableInventoryUpdates && (
-                    <div className="pt-4 border-t">
-                      <label className="block text-sm font-medium mb-2">
-                        Phone Number <span className="text-red-500">*</span>
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                          <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                          <Input
-                            type="tel"
-                            value={phoneNumber}
-                            onChange={handlePhoneChange}
-                            placeholder="(555) 123-4567"
-                            className="pl-10"
-                          />
+                    <>
+                      <div className="pt-4 border-t">
+                        <label className="block text-sm font-medium mb-2">
+                          Which projects?
+                        </label>
+                        <div className="space-y-2">
+                          {([
+                            { value: 'all', title: 'All projects', desc: 'Notify on every project in the org (default).' },
+                            { value: 'unassigned-and-mine', title: 'Unassigned projects and my projects', desc: 'Projects assigned to or created by me, plus projects from automated sources (Smart Moving, API, the global self-survey link) that haven\'t been assigned yet.' },
+                            { value: 'mine', title: 'My projects only', desc: 'Only projects assigned to me, or projects I created if no one else is assigned.' }
+                          ] as const).map((opt) => (
+                            <label
+                              key={opt.value}
+                              className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                                notificationScope === opt.value
+                                  ? 'border-blue-500 bg-blue-50'
+                                  : 'border-gray-200 hover:border-gray-300 bg-white'
+                              }`}
+                            >
+                              <input
+                                type="radio"
+                                name="notificationScope"
+                                value={opt.value}
+                                checked={notificationScope === opt.value}
+                                onChange={() => {
+                                  setNotificationScope(opt.value);
+                                  setHasUnsavedChanges(true);
+                                }}
+                                className="mt-1"
+                              />
+                              <div className="flex-1">
+                                <div className="font-medium text-sm">{opt.title}</div>
+                                <div className="text-xs text-gray-600 mt-0.5">{opt.desc}</div>
+                              </div>
+                            </label>
+                          ))}
                         </div>
                       </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        US phone number required for SMS notifications
-                      </p>
-                    </div>
+
+                      <div className="pt-4 border-t">
+                        <label className="block text-sm font-medium mb-2">
+                          Phone Number <span className="text-red-500">*</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input
+                              type="tel"
+                              value={phoneNumber}
+                              onChange={handlePhoneChange}
+                              placeholder="(555) 123-4567"
+                              className="pl-10"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          US phone number required for SMS notifications
+                        </p>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
