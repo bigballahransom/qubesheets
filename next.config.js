@@ -6,6 +6,7 @@ const nextConfig = {
       '10.0.0.32:3000',
       '*.ngrok.io',
       '*.ngrok-free.app',
+      '*.ngrok-free.dev',
       'localhost:3000'
     ]
   }),

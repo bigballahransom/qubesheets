@@ -33,6 +33,11 @@ export interface IImage extends Document {
     uploadedAt: Date;
     contentType: string;
   };
+  // Customer batched upload session — set when this image is part of a
+  // CustomerPhotoSessionScreen batch. The session is finalized via
+  // /api/customer-upload/[token]/upload-session/finish which fires exactly
+  // one notification SMS regardless of how many photos were in the batch.
+  uploadSessionId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,7 +79,9 @@ const ImageSchema: Schema = new Schema(
       etag: { type: String },
       uploadedAt: { type: Date },
       contentType: { type: String }
-    }
+    },
+    // Customer batched upload session — see interface comment.
+    uploadSessionId: { type: String, required: false, index: true }
   },
   { timestamps: true }
 );

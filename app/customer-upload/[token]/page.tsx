@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { CheckCircle, Loader2, ImageIcon, Clock, Building2, User, Upload as UploadIcon, ArrowRight, Video } from 'lucide-react';
 import CustomerPhotoUploader from '@/components/CustomerPhotoUploader';
+import CustomerPhotoSessionScreen from '@/components/CustomerPhotoSessionScreen';
 import InventoryInstructionsModal from '@/components/InventoryInstructionsModal';
 import SelfServeRecorderLiveKit from '@/components/SelfServeRecorderLiveKit';
 import DesktopQRCodeView from '@/components/DesktopQRCodeView';
@@ -124,6 +125,20 @@ export default function CustomerUploadPage() {
       setShowInstructionsModal(true);
     }
   }, [viewMode, loading, validation]);
+
+  // Auto-route mobile customers when their link only supports a single mode.
+  // 'files'-only links → straight to the photo session screen.
+  // 'recording'-only links → straight to the recorder.
+  // 'both' stays on the choice screen.
+  useEffect(() => {
+    if (loading || !validation || isDesktop) return;
+    if (viewMode !== 'choice') return;
+    if (validation.uploadMode === 'files') {
+      setViewMode('upload');
+    } else if (validation.uploadMode === 'recording') {
+      setViewMode('recording');
+    }
+  }, [loading, validation, isDesktop, viewMode]);
 
   // Skip validation but fetch branding data for display
   useEffect(() => {
@@ -656,6 +671,21 @@ export default function CustomerUploadPage() {
     );
   }
 
+  // Mobile Photo Upload View — combined camera + picker + batched finalize.
+  // Renders for both `uploadMode: 'both'` (after tapping "Upload Photos" on
+  // the choice screen) and `uploadMode: 'files'` (which lands here directly).
+  // The session ends with exactly ONE notification SMS regardless of how
+  // many photos were uploaded.
+  if (viewMode === 'upload' && !isDesktop) {
+    return (
+      <CustomerPhotoSessionScreen
+        uploadToken={token}
+        companyName={validation.branding?.companyName}
+        onUploadMore={() => setViewMode('choice')}
+      />
+    );
+  }
+
   // Mobile Choice View - choose between recording and upload
   if (viewMode === 'choice' && !isDesktop) {
     const canRecord = supportsRecording && validation.uploadMode !== 'files';
@@ -665,19 +695,25 @@ export default function CustomerUploadPage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100 flex flex-col">
         {/* Header */}
         <header className="p-4 flex items-center justify-between border-b border-slate-200/50 bg-white/80 backdrop-blur-md">
-          {validation.branding?.companyLogo ? (
-            <img
-              src={validation.branding.companyLogo}
-              alt={validation.branding.companyName}
-              className="h-8 object-contain"
-            />
-          ) : validation.branding?.companyName ? (
-            <span className="text-lg font-semibold text-slate-800">{validation.branding.companyName}</span>
-          ) : (
-            <div className="scale-75 origin-left">
-              <Logo />
+          <div className="flex items-center gap-3">
+            {validation.branding?.companyLogo ? (
+              <img
+                src={validation.branding.companyLogo}
+                alt={validation.branding.companyName}
+                className="w-10 h-10 object-contain rounded-lg"
+              />
+            ) : (
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Building2 className="w-5 h-5 text-blue-600" />
+              </div>
+            )}
+            <div>
+              <p className="font-medium text-slate-800">
+                {validation.branding?.companyName || 'Moving Company'}
+              </p>
+              <p className="text-sm text-slate-500">Self-Serve Inventory Upload</p>
             </div>
-          )}
+          </div>
         </header>
 
         {/* Main Content */}
@@ -688,7 +724,7 @@ export default function CustomerUploadPage() {
               Hi {validation.customerName}!
             </h1>
             <p className="text-slate-600 mb-8">
-              Help us prepare your moving inventory for <strong>{validation.projectName}</strong>
+              Help us ensure a wonderful moving experience by preparing your moving inventory
             </p>
 
             {/* Option Cards */}
@@ -730,9 +766,9 @@ export default function CustomerUploadPage() {
                       <ImageIcon className="w-7 h-7 text-slate-600" />
                     </div>
                     <div>
-                      <h2 className="text-lg font-semibold mb-1">Upload Photos</h2>
+                      <h2 className="text-lg font-semibold mb-1">Take or Upload Photos</h2>
                       <p className="text-slate-500 text-sm">
-                        Take individual photos of items and rooms
+                        Snap photos in-app or pick from your photo library
                       </p>
                     </div>
                   </div>
@@ -798,7 +834,7 @@ export default function CustomerUploadPage() {
                 <p className="font-medium text-slate-800">
                   {validation.branding?.companyName || 'Moving Company'}
                 </p>
-                <p className="text-sm text-slate-500">Inventory Upload</p>
+                <p className="text-sm text-slate-500">Self-Serve Inventory Upload</p>
               </div>
             </div>
 

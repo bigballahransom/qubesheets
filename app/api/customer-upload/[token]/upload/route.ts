@@ -193,8 +193,16 @@ export async function POST(
     // Parse the form data
     const formData = await request.formData();
     const image = formData.get('image') as File;
+    // Optional: customer batched-upload session id. When present, this image
+    // belongs to a CustomerPhotoSessionScreen batch; the moving company gets
+    // exactly one "finished uploading N photos" SMS at session-finish time
+    // instead of per-photo notifications.
+    const uploadSessionIdRaw = formData.get('uploadSessionId');
+    const uploadSessionId = typeof uploadSessionIdRaw === 'string' && uploadSessionIdRaw.length > 0
+      ? uploadSessionIdRaw
+      : undefined;
 
-    console.log('📁 File received:', image?.name, 'Size:', image?.size);
+    console.log('📁 File received:', image?.name, 'Size:', image?.size, uploadSessionId ? `(session=${uploadSessionId.slice(0, 8)}…)` : '');
 
     if (!image) {
       return NextResponse.json(
@@ -209,6 +217,15 @@ export async function POST(
     const isHeic = isHeicFile(image);
     const hasImageExtension = /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(image.name);
     const isPotentialMobileImage = (image.type === '' || image.type === 'application/octet-stream') && hasImageExtension;
+
+    // Photo-session uploads are photos-only by contract. If a video slips in
+    // via this path (e.g. someone curling the endpoint), reject early.
+    if (uploadSessionId && isVideo) {
+      return NextResponse.json(
+        { error: 'This upload session only accepts photos, not videos.' },
+        { status: 400 }
+      );
+    }
     
     console.log('📱 Customer upload file validation:', {
       fileName: image.name,
@@ -587,6 +604,9 @@ export async function POST(
         organizationId,
         description: `Image uploaded by ${customerName}`,
         source: 'customer_upload',
+        // Tag with the customer's batched-upload session if present. The
+        // /upload-session/finish endpoint groups photos by this id.
+        ...(uploadSessionId ? { uploadSessionId } : {}),
         s3RawFile: {
           key: s3Result.key,
           bucket: s3Result.bucket,

@@ -1,17 +1,11 @@
 // app/api/self-serve/[token]/video/start-recording/route.ts
 // Start LiveKit Egress recording for a self-serve session
 import { NextRequest, NextResponse } from 'next/server';
-import { EgressClient } from 'livekit-server-sdk';
 import { EncodedFileOutput, S3Upload, EncodedFileType } from '@livekit/protocol';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
-
-const egressClient = new EgressClient(
-  process.env.LIVEKIT_URL!,
-  process.env.LIVEKIT_API_KEY!,
-  process.env.LIVEKIT_API_SECRET!
-);
+import { egressClient } from '@/lib/selfServeEgress';
 
 export async function POST(
   request: NextRequest,

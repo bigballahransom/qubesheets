@@ -124,6 +124,45 @@ export function canRecordVideo(): boolean {
 }
 
 /**
+ * Detect known in-app browsers (webviews embedded in social/messaging apps).
+ * These typically have broken or partial WebRTC / getUserMedia / RTCPeerConnection
+ * support and will fail with cryptic errors during LiveKit room.connect()
+ * BEFORE the camera permission prompt ever appears.
+ *
+ * Returns the app name if detected, null if it's a real browser.
+ */
+export function detectInAppBrowser(): string | null {
+  if (typeof window === 'undefined') return null;
+  const ua = navigator.userAgent || '';
+
+  // Facebook / Messenger / Instagram all share the FB family of webviews.
+  if (/FBAN|FBAV|FB_IAB|FBIOS/i.test(ua)) return 'Facebook';
+  if (/Instagram/i.test(ua)) return 'Instagram';
+  if (/Messenger/i.test(ua)) return 'Messenger';
+  // TikTok
+  if (/musical_ly|BytedanceWebview|TikTok/i.test(ua)) return 'TikTok';
+  // Snapchat
+  if (/Snapchat/i.test(ua)) return 'Snapchat';
+  // Twitter / X
+  if (/Twitter/i.test(ua)) return 'Twitter';
+  // LinkedIn
+  if (/LinkedInApp/i.test(ua)) return 'LinkedIn';
+  // Telegram, WhatsApp, Line, KakaoTalk, WeChat
+  if (/Telegram/i.test(ua)) return 'Telegram';
+  if (/WhatsApp/i.test(ua)) return 'WhatsApp';
+  if (/Line\//i.test(ua)) return 'Line';
+  if (/KAKAOTALK/i.test(ua)) return 'KakaoTalk';
+  if (/MicroMessenger/i.test(ua)) return 'WeChat';
+  // Pinterest
+  if (/Pinterest/i.test(ua)) return 'Pinterest';
+  // Generic Android WebView marker (a chat app embedding the system webview).
+  // Real Chrome/Firefox/Samsung Browser don't have "; wv)" in the UA.
+  if (/Android.*; wv\)/i.test(ua)) return 'In-App Browser';
+
+  return null;
+}
+
+/**
  * Check if device should show QR code (desktop) or recording UI (mobile)
  */
 export function shouldShowQRCode(): boolean {

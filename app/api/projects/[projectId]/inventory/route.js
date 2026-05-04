@@ -40,7 +40,7 @@ export async function GET(request, { params }) {
     )
     .populate('sourceImageId', 'name originalName mimeType manualRoomEntry') // Populate basic image info
     .populate('sourceVideoId', 'originalName mimeType duration manualRoomEntry') // Populate basic video info
-    .populate('sourceVideoRecordingId', 'roomId duration status s3Key createdAt') // Populate video call recording info
+    .populate('sourceVideoRecordingId', 'roomId duration status s3Key createdAt source') // Populate video call recording info (source distinguishes self-serve from video_call)
     .sort({ createdAt: -1 });
     
     console.log(`✅ Found ${items.length} inventory items`);

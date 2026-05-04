@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Camera, Video, CheckCircle, Lightbulb, Heart } from 'lucide-react';
+import { X, Camera, CheckCircle, Lightbulb, Heart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -70,24 +70,6 @@ export default function InventoryInstructionsModal({ isOpen, onClose }: Inventor
                 <h3 className="font-semibold text-slate-800 mb-1 sm:mb-2 text-sm sm:text-base">Take and upload photos or videos of the items you're moving</h3>
                 <p className="text-slate-600 leading-relaxed text-sm">
                   Capture clear images of everything that will be part of your move. The more we see, the better we can help you!
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3 p-3 sm:p-4 bg-amber-50 rounded-lg border border-amber-200">
-              <div className="w-7 h-7 sm:w-8 sm:h-8 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
-                <Video className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-amber-900 mb-1 sm:mb-2 text-sm sm:text-base">For videos: Upload 1 short video per room</h3>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-md">
-                    ⏱️ Max 1 minute
-                  </span>
-                  <span className="text-xs text-amber-700 font-medium">Extremely important!</span>
-                </div>
-                <p className="text-slate-600 leading-relaxed text-sm">
-                  We can't accept videos longer than 1 minute in duration for quality processing.
                 </p>
               </div>
             </div>

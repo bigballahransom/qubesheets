@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { WebhookReceiver, RoomServiceClient } from 'livekit-server-sdk';
 import connectMongoDB from '@/lib/mongodb';
 import { startRecording, stopRecording, startCustomerEgress, stopCustomerEgress, clearRecordingState } from '@/lib/livekitEgress';
+import { safeStopOrphan } from '@/lib/selfServeEgress';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
 
 // Room service client for checking active participants
@@ -588,23 +589,29 @@ async function handleEgressStarted(event: WebhookEvent) {
     return;
   }
 
-  // Check if this is a self-serve recording egress
-  // First try by egressId, then by roomName (in case webhook arrives before DB update)
-  let selfServeSession = await SelfServeRecordingSession.findOne({
-    egressId: egressId
-  });
+  // Check if this is a self-serve recording egress.
+  // STRICT POSITIVE ALLOWLIST: only egressIds we've already written to a
+  // session are recognized as ours. The previous "find by roomName" fallback
+  // claimed LiveKit's project-level auto-egress as ours and corrupted the
+  // session's egressId, which then poisoned downstream egress_ended handling.
+  let selfServeSession = await SelfServeRecordingSession.findOne({ egressId });
 
   if (!selfServeSession && roomName.startsWith('self-serve-')) {
-    // Fallback: find by roomName for self-serve rooms
-    // Include 'starting_egress' status which is set by atomic transition in start-recording API
-    selfServeSession = await SelfServeRecordingSession.findOne({
-      livekitRoomName: roomName,
-      status: { $in: ['initialized', 'connecting', 'starting_egress', 'recording'] }
-    });
+    // Race window: /start-recording returned the egressId from LiveKit and is
+    // about to write it to the session, but the egress_started webhook beat
+    // the write. Recheck once after a short delay before declaring orphan.
+    await new Promise(resolve => setTimeout(resolve, 250));
+    selfServeSession = await SelfServeRecordingSession.findOne({ egressId });
 
-    if (selfServeSession) {
-      // Update the egressId since we found it by roomName
-      selfServeSession.egressId = egressId;
+    if (!selfServeSession) {
+      // Unknown egress on a self-serve room == LiveKit auto-egress orphan.
+      // Stop it immediately and return. Never claim, never write to DB.
+      // This catches any orphan that escaped /start-recording's pre-flight
+      // listEgress sweep, including LiveKit's retry of auto-egress that fires
+      // after we stop the first one.
+      console.warn(`🔎 ORPHAN AUTO-EGRESS on ${roomName}: ${egressId} — stopping`);
+      await safeStopOrphan(egressId, 'unknown self-serve egress on egress_started');
+      return;
     }
   }
 
@@ -672,19 +679,13 @@ async function handleEgressEnded(event: WebhookEvent) {
     return;
   }
 
-  // Check if this is a self-serve recording egress
-  // First try by egressId, then by roomName
-  let selfServeSession = await SelfServeRecordingSession.findOne({
-    egressId: egressId
-  });
-
-  if (!selfServeSession && roomName && roomName.startsWith('self-serve-')) {
-    // Fallback: find by roomName for self-serve rooms
-    selfServeSession = await SelfServeRecordingSession.findOne({
-      livekitRoomName: roomName,
-      status: { $in: ['initialized', 'connecting', 'recording', 'processing'] }
-    });
-  }
+  // Check if this is a self-serve recording egress.
+  // STRICT POSITIVE ALLOWLIST: only egressIds we've registered on a session
+  // are processed. Any other egress_ended on a self-serve room is from
+  // LiveKit's project-level auto-egress (which we stopped in handleEgressStarted)
+  // and must be ignored — its fileResults are typically empty/aborted and
+  // would otherwise create a VideoRecording with empty s3Key.
+  const selfServeSession = await SelfServeRecordingSession.findOne({ egressId });
 
   if (selfServeSession) {
     console.log(`📹 Self-serve egress ended: ${egressId}, session=${selfServeSession.sessionId}`);
@@ -692,10 +693,10 @@ async function handleEgressEnded(event: WebhookEvent) {
     return;
   }
 
-  // Skip room composite egress for self-serve rooms (they're handled above)
-  // This prevents creating duplicate VideoRecording without source='self_serve'
+  // Unknown egress on a self-serve room: orphan auto-egress that just ended.
+  // Do not create a VideoRecording. Do not queue SQS. Just log.
   if (roomName && roomName.startsWith('self-serve-')) {
-    console.log(`📹 Skipping room composite egress for self-serve room: ${roomName}`);
+    console.log(`⏭️ Ignoring egress_ended for unknown self-serve egress ${egressId} on room ${roomName} (orphan)`);
     return;
   }
 
@@ -1096,44 +1097,37 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
   console.log(`   Status: ${isSuccess ? 'SUCCESS' : 'FAILED'}, Error: ${event.egressInfo!.error || 'None'}`);
   console.log(`   Session egressId: ${session.egressId || 'none'}`);
 
-  // IMPORTANT: Skip processing if this egress doesn't match the session's egressId
-  // This prevents duplicate processing when multiple egresses exist for the same room
-  // (e.g., if LiveKit auto-recording is enabled or there's a race condition)
-  if (session.egressId && session.egressId !== egressId) {
-    console.log(`⚠️ Egress ${egressId} doesn't match session's egress ${session.egressId} - skipping`);
+  // STRICT GUARD: only process the session's own egressId. Bail BEFORE any
+  // session mutation, backfill, or upsert — otherwise an aborted orphan's
+  // egress_ended (which carries empty fileResults) corrupts state and creates
+  // a VideoRecording with s3Key:'' that crashes the Railway analyzer.
+  if (!session.egressId) {
+    console.warn(`⚠️ Session ${session.sessionId} has no egressId — refusing to process egress_ended for ${egressId}`);
+    return;
+  }
+  if (session.egressId !== egressId) {
+    console.warn(`⏭️ egress_ended ${egressId} ≠ session.egressId ${session.egressId} — ignoring`);
     return;
   }
 
-  // Backfill migration: Fix any existing VideoRecordings with self-serve roomId but missing source field
-  // This handles legacy records created before the source field was properly set
-  try {
-    const backfillResult = await VideoRecording.updateMany(
-      {
-        roomId: { $regex: '^self-serve-' },
-        $or: [
-          { source: { $exists: false } },
-          { source: null },
-          { source: { $ne: 'self_serve' } }
-        ]
-      },
-      {
-        $set: { source: 'self_serve' }
-      }
-    );
-    if (backfillResult.modifiedCount > 0) {
-      console.log(`🔧 Backfilled ${backfillResult.modifiedCount} VideoRecordings with source='self_serve'`);
-    }
-  } catch (backfillError) {
-    console.error('⚠️ Backfill migration error (non-fatal):', backfillError);
+  // Empty-fileResult safeguard: an aborted egress can deliver fileResults[0]
+  // with location:'' and size:'0'. Treat that as "no file" so we never write
+  // s3Key:'' downstream.
+  const fileResult = event.egressInfo!.fileResults?.[0];
+  const hasUsableFileResult = !!(
+    fileResult &&
+    fileResult.location &&
+    fileResult.size &&
+    String(fileResult.size) !== '0'
+  );
+  if (fileResult && !hasUsableFileResult) {
+    console.warn(`⚠️ Empty/unusable fileResult on egress_ended for session ${session.sessionId} — treating as no file`);
   }
 
   // Update session egress status
   session.egressStatus = isSuccess ? 'completed' : 'failed';
 
-  // Handle file result
-  const fileResult = event.egressInfo!.fileResults?.[0];
-
-  if (fileResult) {
+  if (hasUsableFileResult) {
     console.log('📁 Self-serve MP4 file result received:', {
       filename: fileResult.filename,
       location: fileResult.location,

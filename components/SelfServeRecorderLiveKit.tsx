@@ -6,6 +6,35 @@ import React, { useEffect, useState } from 'react';
 import { useSelfServeRecordingLiveKit } from '@/lib/hooks/useSelfServeRecordingLiveKit';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDetection';
+
+// Fire-and-forget telemetry helper (mirrors the one in the hook). Tells the
+// server "this device opened the recorder UI" so we can see what hardware
+// is hitting the page even if recording never starts.
+function pingTelemetry(uploadToken: string, payload: Record<string, unknown>) {
+  if (typeof window === 'undefined') return;
+  try {
+    const body = JSON.stringify({
+      ...payload,
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      screenWidth: window.screen?.width,
+      screenHeight: window.screen?.height,
+      url: window.location?.href
+    });
+    if (navigator.sendBeacon) {
+      const blob = new Blob([body], { type: 'application/json' });
+      navigator.sendBeacon(`/api/self-serve/${uploadToken}/video/telemetry`, blob);
+    } else {
+      fetch(`/api/self-serve/${uploadToken}/video/telemetry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true
+      }).catch(() => {});
+    }
+  } catch {}
+}
 
 interface SelfServeRecorderLiveKitProps {
   uploadToken: string;
@@ -27,6 +56,18 @@ export function SelfServeRecorderLiveKit({
   const [showInstructions, setShowInstructions] = useState(true);
 
   const [videoReady, setVideoReady] = useState(false);
+
+  // Tell the server "the recorder UI mounted on this device" so we can see
+  // who's hitting the page even if they never tap Start (or if init crashes
+  // somewhere we don't catch).
+  useEffect(() => {
+    pingTelemetry(uploadToken, {
+      event: 'recorder_mounted',
+      browser: getBrowser(),
+      platform: isIOS() ? 'iOS' : isAndroid() ? 'Android' : 'Other',
+      inAppBrowser: detectInAppBrowser()
+    });
+  }, [uploadToken]);
 
   // Set body/html background color to match iOS Safari dark mode
   useEffect(() => {
@@ -61,6 +102,7 @@ export function SelfServeRecorderLiveKit({
   const {
     status,
     isRecording,
+    recordingStarted,
     duration,
     durationWarning,
     remainingTime,
@@ -255,33 +297,54 @@ export function SelfServeRecorderLiveKit({
     );
   }
 
-  // Complete state
+  // Complete state — recording finished. Camera/mic are released by the
+  // hook's cleanup() (called by stopRecording before transitioning here),
+  // so this screen no longer holds any media permissions.
   if (status === 'complete') {
     return (
       <div
-        className="fixed inset-0 flex flex-col bg-gray-900 text-white p-4 items-center justify-center"
+        className="fixed inset-0 flex flex-col bg-gray-900 text-white p-6 items-center justify-center"
         style={{
           width: '100vw',
           height: '100vh',
           minHeight: '-webkit-fill-available'
         }}
       >
-        <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mb-6">
-          <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
+        <div className="w-full max-w-sm flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mb-6">
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-semibold mb-2">Recording Complete!</h2>
+          <p className="text-gray-400 mb-4">
+            Your video has been uploaded. Our AI is now analyzing it to create your inventory.
+          </p>
+          <div className="bg-gray-800 rounded-lg p-4 mb-6 w-full">
+            <p className="text-sm text-gray-400">Recording duration</p>
+            <p className="text-2xl font-mono">{formatDuration(duration)}</p>
+          </div>
+          <p className="text-sm text-gray-500 mb-8">
+            You'll receive a notification when your inventory is ready.
+          </p>
+
+          {/* "Not finished?" path — sends the user back to the upload-link
+              landing screen (Record Video / Upload Photos choice) so they can
+              add another video or upload supplemental photos. */}
+          {onCancel && (
+            <div className="w-full pt-6 border-t border-gray-800">
+              <p className="text-sm text-gray-400 mb-3">Not finished?</p>
+              <Button
+                onClick={onCancel}
+                variant="outline"
+                size="lg"
+                className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+              >
+                Upload more
+              </Button>
+            </div>
+          )}
         </div>
-        <h2 className="text-xl font-semibold mb-2">Recording Complete!</h2>
-        <p className="text-gray-400 mb-4 text-center max-w-sm">
-          Your video has been uploaded. Our AI is now analyzing it to create your inventory.
-        </p>
-        <div className="bg-gray-800 rounded-lg p-4 mb-6 text-center">
-          <p className="text-sm text-gray-400">Recording duration</p>
-          <p className="text-2xl font-mono">{formatDuration(duration)}</p>
-        </div>
-        <p className="text-sm text-gray-500">
-          You'll receive a notification when your inventory is ready.
-        </p>
       </div>
     );
   }
@@ -362,8 +425,16 @@ export function SelfServeRecorderLiveKit({
 
       {/* Top overlay - minimal, just REC indicator and time */}
       <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8px)' }}>
-        {/* Recording indicator */}
-        {isRecording && (
+        {/* Recording indicator. Show "STARTING…" while /start-recording is in
+            flight so the user doesn't think the recording has begun and tap
+            Stop too early (which would race the egress and produce a 0s file). */}
+        {isRecording && !recordingStarted && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 border-2 border-white/70 border-t-white rounded-full animate-spin" />
+            <span className="text-white text-sm font-medium drop-shadow-lg">STARTING…</span>
+          </div>
+        )}
+        {isRecording && recordingStarted && (
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
             <span className="text-white text-sm font-medium drop-shadow-lg">REC</span>
@@ -412,10 +483,20 @@ export function SelfServeRecorderLiveKit({
         {isRecording && (
           <button
             onClick={stopRecording}
-            className="w-[72px] h-[72px] bg-red-500 hover:bg-red-600 active:bg-red-700 rounded-full flex items-center justify-center shadow-lg border-4 border-white/30"
-            aria-label="Stop recording"
+            disabled={!recordingStarted}
+            className={cn(
+              'w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-lg border-4 border-white/30',
+              recordingStarted
+                ? 'bg-red-500 hover:bg-red-600 active:bg-red-700'
+                : 'bg-gray-500/60 cursor-not-allowed'
+            )}
+            aria-label={recordingStarted ? 'Stop recording' : 'Recording is starting, please wait'}
           >
-            <div className="w-6 h-6 bg-white rounded-[4px]" />
+            {recordingStarted ? (
+              <div className="w-6 h-6 bg-white rounded-[4px]" />
+            ) : (
+              <div className="w-6 h-6 border-2 border-white/70 border-t-white rounded-full animate-spin" />
+            )}
           </button>
         )}
       </div>

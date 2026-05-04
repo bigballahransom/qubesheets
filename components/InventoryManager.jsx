@@ -402,6 +402,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
   const convertItemsToRows = useCallback((items) => {
     // PERFORMANCE: Only log summary, not individual items
     console.log(`🔄 Converting ${items.length} items to rows (weightMode: ${weightConfig.weightMode})`);
+
     return items.map(item => {
       const quantity = item.quantity || 1;
 
@@ -413,6 +414,20 @@ const inventoryDataChanged = (oldItems, newItems) => {
         ? perUnitCuft * weightConfig.customWeightMultiplier
         : (item.weight || 0);
 
+      // Derive sourceType so the spreadsheet can pick the right icon / tooltip.
+      // The linked VideoRecording.source is the source of truth — older items
+      // were stamped with `sourceType: 'video_call'` by railway-call-service
+      // even when they came from a self-serve recording, so we MUST let the
+      // recording's source override the stale stamped value.
+      const recordingSource = item.sourceVideoRecordingId?.source;
+      const derivedSourceType =
+        (recordingSource === 'self_serve' ? 'self_serve' : null)
+        || item.sourceType
+        || (item.sourceVideoRecordingId ? 'video_call' : null)
+        || (item.sourceVideoId ? 'video' : null)
+        || (item.sourceImageId ? 'image' : null)
+        || undefined;
+
       const row = {
         id: generateId(),
         inventoryItemId: item._id, // Preserve inventory item ID for deletion
@@ -420,6 +435,8 @@ const inventoryDataChanged = (oldItems, newItems) => {
         sourceVideoId: item.sourceVideoId?._id || item.sourceVideoId, // Handle both populated and unpopulated
         sourceVideoRecordingId: item.sourceVideoRecordingId?._id || item.sourceVideoRecordingId, // Handle both populated and unpopulated
         sourceRecordingSessionId: item.sourceRecordingSessionId, // Legacy: kept for backwards compat
+        sourceType: derivedSourceType, // Drives icon + tooltip in Spreadsheet.jsx
+        videoTimestamp: item.videoTimestamp, // "MM:SS" for video-call/self-serve items
         stockItemId: item.stockItemId, // Reference to stock inventory item
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
@@ -2158,7 +2175,11 @@ useEffect(() => {
   }, [inventoryItems]);
 
   const videoInventoryItems = useMemo(() => {
-    return inventoryItems.filter(item => item.sourceVideoId);
+    // Include both uploaded Video items (sourceVideoId) AND self-serve recording
+    // items (sourceVideoRecordingId). Without the second filter, self-serve cards
+    // in VideoGallery never get an inventoryByVideoId match and the items/boxes/
+    // recommended badges don't render.
+    return inventoryItems.filter(item => item.sourceVideoId || item.sourceVideoRecordingId);
   }, [inventoryItems]);
 
   // Calculate stats based on what's displayed in the spreadsheet (source of truth)

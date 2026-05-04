@@ -1,16 +1,11 @@
 // app/api/self-serve/[token]/video/stop/route.ts
 // Stop LiveKit Egress recording for a self-serve session
 import { NextRequest, NextResponse } from 'next/server';
-import { EgressClient, RoomServiceClient } from 'livekit-server-sdk';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
-
-const egressClient = new EgressClient(
-  process.env.LIVEKIT_URL!,
-  process.env.LIVEKIT_API_KEY!,
-  process.env.LIVEKIT_API_SECRET!
-);
+import { egressClient, safeStopOrphan } from '@/lib/selfServeEgress';
 
 const roomServiceClient = new RoomServiceClient(
   process.env.LIVEKIT_URL!,
@@ -109,6 +104,23 @@ export async function POST(
       } else {
         console.error('Error stopping egress:', egressError);
         // Continue anyway - the egress might have ended naturally
+      }
+    }
+
+    // Defense-in-depth: reap any other active egresses on this room. LiveKit
+    // project-level auto-egress can re-fire after we stop one; if any survived
+    // the webhook stop in handleEgressStarted, kill them here so they don't
+    // keep running (and billing) after the user is done.
+    if (session.livekitRoomName) {
+      try {
+        const others = await egressClient.listEgress({ roomName: session.livekitRoomName, active: true });
+        for (const eg of others) {
+          if (eg.egressId === session.egressId) continue;
+          console.warn(`🔎 Reaping additional active egress on /stop: ${eg.egressId}`);
+          await safeStopOrphan(eg.egressId, 'reaped on /stop');
+        }
+      } catch (reapErr) {
+        console.error('⚠️ Reap-on-stop listEgress failed (non-fatal):', reapErr);
       }
     }
 

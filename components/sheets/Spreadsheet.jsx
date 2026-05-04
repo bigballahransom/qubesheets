@@ -1739,7 +1739,11 @@ export default function Spreadsheet({
               }
             }}
             className="text-blue-600 hover:text-blue-800 underline text-left truncate flex-1"
-            title={row.sourceVideoRecordingId ? "Click to view video call" : "Click to view source media"}
+            title={
+              row.sourceVideoRecordingId
+                ? (row.sourceType === 'self_serve' ? 'Click to play recording' : 'Click to view video call')
+                : 'Click to view source media'
+            }
           >
             {value}
           </button>
@@ -1818,9 +1822,10 @@ export default function Spreadsheet({
               </Tooltip>
             </TooltipProvider>
           )}
-          {row.videoTimestamp && row.sourceVideoRecordingId && (
-            <span className="text-xs text-gray-500 flex-shrink-0">{row.videoTimestamp}</span>
-          )}
+          {/* videoTimestamp is intentionally NOT rendered here.
+              The click handler still passes `row` (with row.videoTimestamp) to
+              VideoRecordingModal via initialItem, which auto-seeks to the
+              timestamp on open. We just don't clutter the row with it. */}
           {row.sourceType === 'self_serve' ? (
             <Video size={14} className="text-purple-500 flex-shrink-0" />
           ) : row.sourceVideoRecordingId ? (

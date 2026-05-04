@@ -7,6 +7,7 @@ const isPublicRoute = createRouteMatcher([
   '/video-call(.*)',
   '/call-complete(.*)',
   '/customer-upload(.*)',
+  '/upload(.*)',  // Global org-level self-survey landing page
   '/inventory-review(.*)',
   '/crew-review(.*)',
   '/form(.*)',
@@ -17,6 +18,8 @@ const isPublicRoute = createRouteMatcher([
 
 const isPublicApiRoute = createRouteMatcher([
   '/api/customer-upload/(.*)',
+  '/api/upload/(.*)',  // Global self-survey link API (config + create-project)
+  '/api/self-serve/(.*)',  // Customer self-serve recording endpoints (init, start, stop, telemetry) — auth checked via uploadToken
   '/api/inventory-review/(.*)',
   '/api/crew-review/(.*)',
   '/api/livekit/token(.*)',

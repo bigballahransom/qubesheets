@@ -19,6 +19,17 @@ export interface ICustomerUpload extends Document {
   // Reference to completed recording session
   completedRecordingSessionId?: mongoose.Types.ObjectId | string;
 
+  // Customer batched-photo upload sessions that have been finalized
+  // (CustomerPhotoSessionScreen "I'm Done" was tapped). One entry per
+  // session, idempotent on uploadSessionId so a double-tap won't double-SMS.
+  completedUploadSessions?: Array<{
+    uploadSessionId: string;
+    photoCount: number;
+    finishedAt: Date;
+    smsSent?: number;
+    smsFailed?: number;
+  }>;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,6 +70,15 @@ const CustomerUploadSchema: Schema = new Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'SelfServeRecordingSession'
     },
+
+    // Finalized photo-batch sessions (see interface comment).
+    completedUploadSessions: [{
+      uploadSessionId: { type: String, required: true },
+      photoCount: { type: Number, default: 0 },
+      finishedAt: { type: Date, default: Date.now },
+      smsSent: { type: Number, default: 0 },
+      smsFailed: { type: Number, default: 0 }
+    }],
   },
   { timestamps: true }
 );

@@ -57,30 +57,43 @@ export async function GET(
 
       // Check if this is a self-serve recording (has selfServeSessionId)
       if (liveKitRecording.selfServeSessionId) {
-        // Look up the S3 key from SelfServeRecordingSession
+        // Look up the S3 key from SelfServeRecordingSession.
+        // The LiveKit-egress flow writes the final MP4 path to `session.s3Key`
+        // (set in /start-recording, finalized in webhook). The legacy chunked
+        // flow used `session.mergedS3Key` instead. Fall back to the recording's
+        // own s3Key (set by webhook) so streaming works in any state.
         const selfServeSession = await SelfServeRecordingSession.findOne({
           sessionId: liveKitRecording.selfServeSessionId
         });
 
-        if (selfServeSession?.mergedS3Key) {
-          s3Key = selfServeSession.mergedS3Key;
-          bucket = process.env.AWS_S3_BUCKET_NAME;
-          console.log('📹 Found self-serve recording S3 key from session:', {
-            recordingId: liveKitRecording._id,
-            sessionId: liveKitRecording.selfServeSessionId,
-            s3Key
-          });
-        } else {
-          console.error('📹 Self-serve session not found or missing mergedS3Key:', {
+        s3Key = selfServeSession?.s3Key
+          || selfServeSession?.mergedS3Key
+          || liveKitRecording.s3Key;
+        bucket = selfServeSession?.s3Bucket
+          || process.env.AWS_S3_BUCKET_NAME;
+
+        if (!s3Key) {
+          console.error('📹 Self-serve recording missing S3 key:', {
             selfServeSessionId: liveKitRecording.selfServeSessionId,
             sessionFound: !!selfServeSession,
-            mergedS3Key: selfServeSession?.mergedS3Key
+            sessionS3Key: selfServeSession?.s3Key,
+            sessionMergedS3Key: selfServeSession?.mergedS3Key,
+            recordingS3Key: liveKitRecording.s3Key
           });
           return NextResponse.json({
             error: 'Recording not ready for streaming',
             message: 'Video is still being processed'
           }, { status: 400 });
         }
+
+        console.log('📹 Resolved self-serve recording S3 key:', {
+          recordingId: liveKitRecording._id,
+          sessionId: liveKitRecording.selfServeSessionId,
+          s3Key,
+          source: selfServeSession?.s3Key ? 'session.s3Key'
+            : selfServeSession?.mergedS3Key ? 'session.mergedS3Key'
+            : 'recording.s3Key'
+        });
       } else {
         // Regular LiveKit recording - use s3Key directly
         s3Key = liveKitRecording.s3Key;

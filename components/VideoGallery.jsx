@@ -615,43 +615,37 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
     try {
       setLoading(true);
 
-      // Fetch both uploaded videos and self-serve recordings in parallel
-      const [videosResponse, selfServeResponse] = await Promise.all([
-        fetch(`/api/projects/${projectId}/videos/all?page=${page}&limit=20`, {
-          signal: AbortSignal.timeout(30000)
-        }),
-        fetch(`/api/projects/${projectId}/video-recordings?source=self_serve&sortBy=createdAt&sortOrder=desc`, {
-          signal: AbortSignal.timeout(30000)
-        })
-      ]);
+      // /videos/all already returns both uploaded Videos AND self-serve
+      // VideoRecordings tagged with `_type: 'self_serve_recording'`. A previous
+      // version also fetched /video-recordings?source=self_serve and merged the
+      // results, which caused every self-serve recording to appear twice with
+      // the same _id (React duplicate-key warning).
+      const videosResponse = await fetch(
+        `/api/projects/${projectId}/videos/all?page=${page}&limit=20`,
+        { signal: AbortSignal.timeout(30000) }
+      );
 
       if (!videosResponse.ok) {
         throw new Error('Failed to fetch videos');
       }
 
       const videosData = await videosResponse.json();
-      console.log('🎬 VideoGallery received uploaded videos:', videosData);
+      console.log('🎬 VideoGallery received videos:', videosData);
 
       if (videosData.error) {
         throw new Error(videosData.error);
       }
 
-      // Parse self-serve recordings (don't fail if this request fails)
-      let selfServeRecordings = [];
-      if (selfServeResponse.ok) {
-        const selfServeData = await selfServeResponse.json();
-        console.log('🎬 VideoGallery received self-serve recordings:', selfServeData);
-        selfServeRecordings = (selfServeData.recordings || []).map(r => ({
-          ...r,
-          _type: 'self_serve_recording'  // Mark for rendering differentiation
-        }));
-      }
-
-      // Combine uploaded videos and self-serve recordings
-      const uploadedVideos = videosData.videos || [];
-      const allVideos = [...uploadedVideos, ...selfServeRecordings].sort(
-        (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-      );
+      // Defensive de-dupe by _id. /videos/all should never return duplicates,
+      // but if it ever does (data migration weirdness, etc.) we don't want
+      // React duplicate-key warnings to surface to the user.
+      const seen = new Set();
+      const allVideos = (videosData.videos || []).filter(v => {
+        if (!v?._id) return true;
+        if (seen.has(v._id)) return false;
+        seen.add(v._id);
+        return true;
+      });
 
       // Update videos and pagination state
       setVideos(allVideos);
