@@ -1237,21 +1237,31 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
       // — guarded by `wasOurInsert` so duplicate egress_ended webhook
       // deliveries don't double-send. Mirrors the photo-session SMS in copy
       // and uses the shared helper for scope filtering + URL appending.
+      // Suppressed for on-site walkthroughs (employee is recording, would
+      // SMS themselves). Falls back to checking the magic customerName so
+      // we still suppress if the dev-server schema cache dropped
+      // isWalkthrough during insert.
       try {
         const { sendInventoryUpdateNotification } = await import('@/lib/inventoryUpdateNotifications');
         const ProjectModel = (await import('@/models/Project')).default;
         const CustomerUploadModel = (await import('@/models/CustomerUpload')).default;
         const [project, customerUpload] = await Promise.all([
           ProjectModel.findById(session.projectId).select('name').lean(),
-          CustomerUploadModel.findById(session.customerUploadId).select('customerName').lean()
+          CustomerUploadModel.findById(session.customerUploadId).lean()
         ]);
         const projectName = (project as any)?.name || 'a project';
-        const customerName = (customerUpload as any)?.customerName || 'A customer';
-        await sendInventoryUpdateNotification({
-          projectId: String(session.projectId),
-          body: `${customerName} just finished a video walkthrough for ${projectName}. Inventory analysis is in progress.`,
-          source: 'self-serve-recording'
-        });
+        const isWalkthrough =
+          !!(customerUpload as any)?.isWalkthrough ||
+          (customerUpload as any)?.customerName === 'On-site walkthrough';
+        if (isWalkthrough) {
+          console.log(`[walkthrough] livekit/webhook: suppressing self-serve recording SMS for session ${session.sessionId}`);
+        } else {
+          await sendInventoryUpdateNotification({
+            projectId: String(session.projectId),
+            body: `New video walkthrough for ${projectName}. Inventory analysis is in progress.`,
+            source: 'self-serve-recording'
+          });
+        }
       } catch (smsErr) {
         console.error('inventory-update SMS (self-serve recording) failed (non-fatal):', smsErr);
       }
@@ -1333,22 +1343,29 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
       }
 
       // SMS to project's notification recipients — same idempotency guard as
-      // the primary file-result branch above.
+      // the primary file-result branch above. Suppressed for on-site
+      // walkthroughs.
       try {
         const { sendInventoryUpdateNotification } = await import('@/lib/inventoryUpdateNotifications');
         const ProjectModel = (await import('@/models/Project')).default;
         const CustomerUploadModel = (await import('@/models/CustomerUpload')).default;
         const [project, customerUpload] = await Promise.all([
           ProjectModel.findById(session.projectId).select('name').lean(),
-          CustomerUploadModel.findById(session.customerUploadId).select('customerName').lean()
+          CustomerUploadModel.findById(session.customerUploadId).lean()
         ]);
         const projectName = (project as any)?.name || 'a project';
-        const customerName = (customerUpload as any)?.customerName || 'A customer';
-        await sendInventoryUpdateNotification({
-          projectId: String(session.projectId),
-          body: `${customerName} just finished a video walkthrough for ${projectName}. Inventory analysis is in progress.`,
-          source: 'self-serve-recording'
-        });
+        const isWalkthrough =
+          !!(customerUpload as any)?.isWalkthrough ||
+          (customerUpload as any)?.customerName === 'On-site walkthrough';
+        if (isWalkthrough) {
+          console.log(`[walkthrough] livekit/webhook (fallback): suppressing self-serve recording SMS for session ${session.sessionId}`);
+        } else {
+          await sendInventoryUpdateNotification({
+            projectId: String(session.projectId),
+            body: `New video walkthrough for ${projectName}. Inventory analysis is in progress.`,
+            source: 'self-serve-recording'
+          });
+        }
       } catch (smsErr) {
         console.error('inventory-update SMS (self-serve recording fallback) failed (non-fatal):', smsErr);
       }

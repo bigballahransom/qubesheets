@@ -79,15 +79,23 @@ export async function POST(
     // Look up the project so we can include its name in the SMS copy.
     const project = await Project.findById(customerUpload.projectId);
     const projectName = project?.name || 'your project';
-    const customerName = customerUpload.customerName || 'A customer';
 
     // Compose the SMS body (the helper appends the project URL on its own
-    // line). Skip sending entirely if zero images actually landed.
+    // line). Skip sending entirely if zero images actually landed, or if
+    // this CustomerUpload is an employee on-site walkthrough — the employee
+    // doing the upload is the one who would receive the SMS.
+    //
+    // Belt-and-suspenders: also treat the magic customerName as a walkthrough
+    // signal in case the dev-server schema cache dropped the isWalkthrough
+    // field on insert.
     let smsSent = 0;
     let smsFailed = 0;
     let recipients = 0;
-    if (matchedCount > 0) {
-      const body = `${customerName} just finished uploading ${matchedCount} photo${matchedCount === 1 ? '' : 's'} for ${projectName}. Inventory analysis is in progress.`;
+    const isWalkthrough =
+      !!(customerUpload as any).isWalkthrough ||
+      customerUpload.customerName === 'On-site walkthrough';
+    if (matchedCount > 0 && !isWalkthrough) {
+      const body = `${matchedCount} new photo${matchedCount === 1 ? '' : 's'} uploaded for ${projectName}. Inventory analysis is in progress.`;
       const r = await sendInventoryUpdateNotification({
         projectId: String(customerUpload.projectId),
         body,
@@ -96,6 +104,8 @@ export async function POST(
       smsSent = r.sent;
       smsFailed = r.failed;
       recipients = r.matched;
+    } else if (isWalkthrough) {
+      console.log(`[walkthrough] upload-session/finish: suppressing SMS for session ${uploadSessionId.slice(0, 8)}…`);
     }
 
     // Record the finalization on the CustomerUpload doc so duplicate POSTs

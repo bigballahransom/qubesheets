@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization, useAuth } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload, MapPin
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -3681,7 +3681,29 @@ const ProcessingNotification = () => {
               <Clock size={16} className="mr-1" /> Schedule Virtual Call
             </MenubarItem>
             <MenubarItem onClick={() => setIsUploaderOpen(true)}>
-              <Upload size={16} className="mr-1" />Upload Inventory (on-site)
+              <Upload size={16} className="mr-1" />Upload Inventory
+            </MenubarItem>
+            <MenubarItem
+              onClick={async () => {
+                if (!currentProject?._id) return;
+                try {
+                  const r = await fetch(`/api/projects/${currentProject._id}/walkthrough`, {
+                    method: 'POST',
+                  });
+                  if (!r.ok) {
+                    toast.error('Could not start walkthrough');
+                    return;
+                  }
+                  const { uploadToken } = await r.json();
+                  router.push(`/customer-upload/${uploadToken}`);
+                } catch (err) {
+                  console.error('Start walkthrough failed:', err);
+                  toast.error('Could not start walkthrough');
+                }
+              }}
+            >
+              <MapPin size={16} className="mr-1" />
+              Start On-Site Walkthrough
             </MenubarItem>
             <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
               <MessageSquare size={16} className="mr-1" />

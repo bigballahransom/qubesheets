@@ -13,6 +13,10 @@ interface DesktopQRCodeViewProps {
   companyLogo?: string;
   onSessionComplete?: (sessionId?: string) => void;
   onSwitchToUpload?: () => void;
+  /** Set when this token was minted as an employee on-site walkthrough.
+   *  Replaces the customer-style "Hi {customerName}!" greeting and
+   *  instructions with employee-flavored copy. */
+  isWalkthrough?: boolean;
 }
 
 interface SessionStatus {
@@ -30,7 +34,8 @@ export function DesktopQRCodeView({
   companyName,
   companyLogo,
   onSessionComplete,
-  onSwitchToUpload
+  onSwitchToUpload,
+  isWalkthrough
 }: DesktopQRCodeViewProps) {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [isPolling, setIsPolling] = useState(true);
@@ -157,12 +162,25 @@ export function DesktopQRCodeView({
         <div className="max-w-lg w-full">
           {/* Greeting */}
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              Hi {customerName}!
-            </h1>
-            <p className="text-gray-600">
-              Record a walkthrough of your home for <strong>{projectName}</strong>
-            </p>
+            {isWalkthrough ? (
+              <>
+                <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                  On-site walkthrough
+                </h1>
+                <p className="text-gray-600">
+                  Scan with your phone to record or capture photos for <strong>{projectName}</strong>
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                  Hi {customerName}!
+                </h1>
+                <p className="text-gray-600">
+                  Record a walkthrough of your home for <strong>{projectName}</strong>
+                </p>
+              </>
+            )}
           </div>
 
           {/* QR Code Card */}
@@ -217,7 +235,7 @@ export function DesktopQRCodeView({
                   <li>1. Open your phone camera</li>
                   <li>2. Point at the QR code</li>
                   <li>3. Tap the link that appears</li>
-                  <li>4. Record a walkthrough of your home</li>
+                  <li>4. {isWalkthrough ? 'Record or capture photos of the home' : 'Record a walkthrough of your home'}</li>
                 </ol>
               </div>
             )}

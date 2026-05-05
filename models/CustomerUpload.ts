@@ -30,6 +30,13 @@ export interface ICustomerUpload extends Document {
     smsFailed?: number;
   }>;
 
+  // True when this CustomerUpload was created by an authenticated employee
+  // tapping "Start On-Site Walkthrough" on the project page (rather than by a
+  // customer following an SMS link). Server-side flag so completion APIs can
+  // suppress the "you have new uploads" SMS — the employee doing the
+  // walkthrough is already the one who would receive it.
+  isWalkthrough?: boolean;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -79,6 +86,8 @@ const CustomerUploadSchema: Schema = new Schema(
       smsSent: { type: Number, default: 0 },
       smsFailed: { type: Number, default: 0 }
     }],
+
+    isWalkthrough: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );

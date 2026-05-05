@@ -153,6 +153,11 @@ export async function GET(
       uploadMode: customerUpload.uploadMode || 'both',
       recordingInstructions: customerUpload.recordingInstructions,
       maxRecordingDuration: customerUpload.maxRecordingDuration || 1200,
+
+      // True when this token was minted for an employee on-site walkthrough.
+      // Page uses this to swap "Upload more" → "Back to project" CTAs and
+      // server-side SMS suppression is keyed on the same flag.
+      isWalkthrough: !!customerUpload.isWalkthrough,
     });
 
   } catch (error) {

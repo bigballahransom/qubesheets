@@ -14,6 +14,7 @@
 // company, regardless of how many photos were in the batch.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Camera,
   Images,
@@ -37,6 +38,11 @@ interface CustomerPhotoSessionScreenProps {
    *  (Record Video / Take or Upload Photos). For 'files'-mode links the
    *  page will auto-route the user back here with a fresh component instance. */
   onUploadMore?: () => void;
+  /** Set when this token was minted as an employee on-site walkthrough.
+   *  Replaces the customer-style "Photos uploaded! / Upload more" success
+   *  screen with a "Walkthrough saved! / Back to project" one that routes
+   *  to the URL passed in. */
+  walkthroughReturnUrl?: string;
 }
 
 type StagedPhotoStatus = 'queued' | 'uploading' | 'uploaded' | 'failed';
@@ -71,8 +77,11 @@ function newLocalId(): string {
 export function CustomerPhotoSessionScreen({
   uploadToken,
   companyName,
-  onUploadMore
+  onUploadMore,
+  walkthroughReturnUrl
 }: CustomerPhotoSessionScreenProps) {
+  const router = useRouter();
+
   // Session id — regenerated when the customer taps "Upload more" after
   // finishing, so each finalize-fire is its own session.
   const [uploadSessionId, setUploadSessionId] = useState<string>(() => newSessionId());
@@ -324,23 +333,49 @@ export function CustomerPhotoSessionScreen({
           <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mb-6">
             <CheckCircle2 className="w-9 h-9" />
           </div>
-          <h2 className="text-2xl font-semibold mb-2">Photos uploaded!</h2>
-          <p className="text-gray-400 mb-6">
-            We&apos;ve received your {finalizedCount} photo{finalizedCount === 1 ? '' : 's'}.
-            {' '}{companyName || 'Your moving company'} has been notified and will reach out soon.
-          </p>
+          {walkthroughReturnUrl ? (
+            <>
+              <h2 className="text-2xl font-semibold mb-2">Walkthrough saved!</h2>
+              <p className="text-gray-400 mb-6">
+                We&apos;ve added your {finalizedCount} photo{finalizedCount === 1 ? '' : 's'} to the project.
+              </p>
+              <Button
+                onClick={() => router.push(walkthroughReturnUrl)}
+                size="lg"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white mb-3"
+              >
+                Back to project
+              </Button>
+              <Button
+                onClick={handleUploadMore}
+                variant="outline"
+                size="lg"
+                className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+              >
+                Upload more
+              </Button>
+            </>
+          ) : (
+            <>
+              <h2 className="text-2xl font-semibold mb-2">Photos uploaded!</h2>
+              <p className="text-gray-400 mb-6">
+                We&apos;ve received your {finalizedCount} photo{finalizedCount === 1 ? '' : 's'}.
+                {' '}{companyName || 'Your moving company'} has been notified and will reach out soon.
+              </p>
 
-          <div className="w-full pt-6 border-t border-gray-800">
-            <p className="text-sm text-gray-400 mb-3">Not finished?</p>
-            <Button
-              onClick={handleUploadMore}
-              variant="outline"
-              size="lg"
-              className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
-            >
-              Upload more
-            </Button>
-          </div>
+              <div className="w-full pt-6 border-t border-gray-800">
+                <p className="text-sm text-gray-400 mb-3">Not finished?</p>
+                <Button
+                  onClick={handleUploadMore}
+                  variant="outline"
+                  size="lg"
+                  className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+                >
+                  Upload more
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

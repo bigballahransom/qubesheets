@@ -30,6 +30,10 @@ interface UploadValidation {
   uploadMode?: 'files' | 'recording' | 'both';
   recordingInstructions?: string;
   maxRecordingDuration?: number;
+  // True when minted as an employee on-site walkthrough — completion CTA
+  // redirects back to /projects/{projectId} instead of looping back to the
+  // upload choice screen.
+  isWalkthrough?: boolean;
 }
 
 type ViewMode = 'choice' | 'recording' | 'upload' | 'qr';
@@ -161,7 +165,8 @@ export default function CustomerUploadPage() {
             // Self-serve recording settings
             uploadMode: data.uploadMode || 'both',
             recordingInstructions: data.recordingInstructions,
-            maxRecordingDuration: data.maxRecordingDuration || 1200
+            maxRecordingDuration: data.maxRecordingDuration || 1200,
+            isWalkthrough: !!data.isWalkthrough
           });
           
           // Set project ID for SSE connection
@@ -642,6 +647,14 @@ export default function CustomerUploadPage() {
     // Optionally switch to a completion view or refresh
   };
 
+  // For employee on-site walkthroughs, completion routes back to the project
+  // page instead of looping the user back to the customer upload choice
+  // screen. Null for normal customer uploads.
+  const walkthroughReturnUrl =
+    validation.isWalkthrough && validation.projectId
+      ? `/projects/${validation.projectId}`
+      : undefined;
+
   // Desktop QR Code View - shows QR for mobile handoff
   if (viewMode === 'qr' && isDesktop) {
     return (
@@ -653,6 +666,7 @@ export default function CustomerUploadPage() {
         companyLogo={validation.branding?.companyLogo}
         onSessionComplete={handleRecordingComplete}
         onSwitchToUpload={() => setViewMode('upload')}
+        isWalkthrough={!!validation.isWalkthrough}
       />
     );
   }
@@ -667,6 +681,7 @@ export default function CustomerUploadPage() {
         companyName={validation.branding?.companyName}
         onComplete={handleRecordingComplete}
         onCancel={() => setViewMode('choice')}
+        walkthroughReturnUrl={walkthroughReturnUrl}
       />
     );
   }
@@ -682,6 +697,7 @@ export default function CustomerUploadPage() {
         uploadToken={token}
         companyName={validation.branding?.companyName}
         onUploadMore={() => setViewMode('choice')}
+        walkthroughReturnUrl={walkthroughReturnUrl}
       />
     );
   }
@@ -720,12 +736,25 @@ export default function CustomerUploadPage() {
         <main className="flex-1 flex flex-col items-center justify-center p-6">
           <div className="max-w-sm w-full text-center">
             {/* Greeting */}
-            <h1 className="text-2xl font-bold text-slate-800 mb-2">
-              Hi {validation.customerName}!
-            </h1>
-            <p className="text-slate-600 mb-8">
-              Help us ensure a wonderful moving experience by preparing your moving inventory
-            </p>
+            {validation.isWalkthrough ? (
+              <>
+                <h1 className="text-2xl font-bold text-slate-800 mb-2">
+                  On-site walkthrough
+                </h1>
+                <p className="text-slate-600 mb-8">
+                  Capturing inventory for <strong>{validation.projectName}</strong>
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-2xl font-bold text-slate-800 mb-2">
+                  Hi {validation.customerName}!
+                </h1>
+                <p className="text-slate-600 mb-8">
+                  Help us ensure a wonderful moving experience by preparing your moving inventory
+                </p>
+              </>
+            )}
 
             {/* Option Cards */}
             <div className="space-y-4">

@@ -3,6 +3,7 @@
 // components/SelfServeRecorderLiveKit.tsx
 // Self-serve video recording using LiveKit (server-side recording via Egress)
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useSelfServeRecordingLiveKit } from '@/lib/hooks/useSelfServeRecordingLiveKit';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,10 @@ interface SelfServeRecorderLiveKitProps {
   onComplete?: (sessionId?: string) => void;
   onCancel?: () => void;
   companyName?: string;
+  /** Set when the recorder is mounted under an employee on-site walkthrough.
+   *  Replaces the "Recording Complete! / Upload more" CTA on the complete
+   *  screen with a "Back to project" button that routes to this URL. */
+  walkthroughReturnUrl?: string;
 }
 
 export function SelfServeRecorderLiveKit({
@@ -51,8 +56,10 @@ export function SelfServeRecorderLiveKit({
   instructions,
   onComplete,
   onCancel,
-  companyName
+  companyName,
+  walkthroughReturnUrl
 }: SelfServeRecorderLiveKitProps) {
+  const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
 
   const [videoReady, setVideoReady] = useState(false);
@@ -186,9 +193,15 @@ export function SelfServeRecorderLiveKit({
             </svg>
           </div>
 
-          <h1 className="text-2xl font-bold mb-2">Record Your Home</h1>
+          <h1 className="text-2xl font-bold mb-2">
+            {walkthroughReturnUrl ? 'Record walkthrough' : 'Record Your Home'}
+          </h1>
           <p className="text-gray-400 mb-6">
-            {companyName ? `${companyName} is ready to help with your move!` : 'Help us prepare your moving quote'}
+            {walkthroughReturnUrl
+              ? 'Walk through each room slowly to capture inventory.'
+              : companyName
+                ? `${companyName} is ready to help with your move!`
+                : 'Help us prepare your moving quote'}
           </p>
 
           <div className="bg-gray-800 rounded-lg p-4 mb-6 text-left w-full">
@@ -316,7 +329,9 @@ export function SelfServeRecorderLiveKit({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h2 className="text-2xl font-semibold mb-2">Recording Complete!</h2>
+          <h2 className="text-2xl font-semibold mb-2">
+            {walkthroughReturnUrl ? 'Walkthrough recorded!' : 'Recording Complete!'}
+          </h2>
           <p className="text-gray-400 mb-4">
             Your video has been uploaded. Our AI is now analyzing it to create your inventory.
           </p>
@@ -324,25 +339,49 @@ export function SelfServeRecorderLiveKit({
             <p className="text-sm text-gray-400">Recording duration</p>
             <p className="text-2xl font-mono">{formatDuration(duration)}</p>
           </div>
-          <p className="text-sm text-gray-500 mb-8">
-            You'll receive a notification when your inventory is ready.
-          </p>
+          {!walkthroughReturnUrl && (
+            <p className="text-sm text-gray-500 mb-8">
+              You'll receive a notification when your inventory is ready.
+            </p>
+          )}
 
-          {/* "Not finished?" path — sends the user back to the upload-link
-              landing screen (Record Video / Upload Photos choice) so they can
-              add another video or upload supplemental photos. */}
-          {onCancel && (
-            <div className="w-full pt-6 border-t border-gray-800">
-              <p className="text-sm text-gray-400 mb-3">Not finished?</p>
+          {walkthroughReturnUrl ? (
+            <>
               <Button
-                onClick={onCancel}
-                variant="outline"
+                onClick={() => router.push(walkthroughReturnUrl)}
                 size="lg"
-                className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white mb-3"
               >
-                Upload more
+                Back to project
               </Button>
-            </div>
+              {onCancel && (
+                <Button
+                  onClick={onCancel}
+                  variant="outline"
+                  size="lg"
+                  className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+                >
+                  Upload more
+                </Button>
+              )}
+            </>
+          ) : (
+            // "Not finished?" path — sends the user back to the upload-link
+            // landing screen (Record Video / Upload Photos choice) so they can
+            // add another video or upload supplemental photos.
+            onCancel && (
+              <div className="w-full pt-6 border-t border-gray-800">
+                <p className="text-sm text-gray-400 mb-3">Not finished?</p>
+                <Button
+                  onClick={onCancel}
+                  variant="outline"
+                  size="lg"
+                  className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+                >
+                  Upload more
+                </Button>
+              </div>
+            )
           )}
         </div>
       </div>
