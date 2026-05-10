@@ -190,11 +190,15 @@ export async function POST(request: NextRequest) {
       const inventoryItems = allInventoryItems.filter((item: any) => {
         if (item.going === 'not going') return false;
         const itemType = item.itemType || 'regular_item';
+        const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
+        // Boxes default to PBO when packed_by is N/A; Crated also counts as labeled
+        const isCpOrPbo = item.packed_by === 'CP' || item.packed_by === 'PBO' || item.packed_by === 'Crated' ||
+          (isBox && (!item.packed_by || item.packed_by === 'N/A'));
 
         if (syncOption === 'items_only') {
-          if (['packed_box', 'existing_box', 'boxes_needed'].includes(itemType)) return false;
+          if (isBox && !isCpOrPbo) return false;
         } else if (syncOption === 'items_and_existing') {
-          if (itemType === 'boxes_needed') return false;
+          if (itemType === 'boxes_needed' && !isCpOrPbo) return false;
         }
         return true;
       });
@@ -629,16 +633,20 @@ export async function POST(request: NextRequest) {
       }
 
       const itemType = item.itemType || 'regular_item';
+      const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
+      // Boxes default to PBO when packed_by is N/A; Crated also counts as labeled
+      const isCpOrPbo = item.packed_by === 'CP' || item.packed_by === 'PBO' || item.packed_by === 'Crated' ||
+        (isBox && (!item.packed_by || item.packed_by === 'N/A'));
 
       if (syncOption === 'items_only') {
-        // Only include regular items and furniture, exclude all box types
-        if (['packed_box', 'existing_box', 'boxes_needed'].includes(itemType)) {
+        // Only include regular items and furniture; exclude boxes unless labeled
+        if (isBox && !isCpOrPbo) {
           console.log(`⏭️ [SYNC-FROM-LEAD] Skipping ${item.name}: ${itemType} not included in items_only mode`);
           return false;
         }
       } else if (syncOption === 'items_and_existing') {
-        // Include items and existing/packed boxes, but not recommended boxes
-        if (itemType === 'boxes_needed') {
+        // Include items and existing/packed boxes; exclude recommended boxes unless CP/PBO labeled
+        if (itemType === 'boxes_needed' && !isCpOrPbo) {
           console.log(`⏭️ [SYNC-FROM-LEAD] Skipping ${item.name}: ${itemType} not included in items_and_existing mode`);
           return false;
         }

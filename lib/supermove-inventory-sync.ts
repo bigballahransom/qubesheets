@@ -141,15 +141,20 @@ export async function syncInventoryToSupermove(
       
       // Apply sync options filter
       const itemType = item.itemType || 'regular_item';
+      const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
+      // Boxes default to PBO when packed_by is N/A; Crated also counts as labeled
+      const isCpOrPbo = item.packed_by === 'CP' || item.packed_by === 'PBO' || item.packed_by === 'Crated' ||
+        (isBox && (!item.packed_by || item.packed_by === 'N/A'));
+
       if (syncOptions === 'items_only') {
-        // Only include regular items and furniture, exclude all box types
-        if (['packed_box', 'existing_box', 'boxes_needed'].includes(itemType)) {
+        // Only include regular items and furniture; exclude boxes unless labeled
+        if (isBox && !isCpOrPbo) {
           console.log(`⏭️ [SUPERMOVE-SYNC] Skipping ${item.name}: ${itemType} not included in items_only mode`);
           return false;
         }
       } else if (syncOptions === 'items_and_existing') {
-        // Include items and existing/packed boxes, but not recommended boxes
-        if (itemType === 'boxes_needed') {
+        // Include items and existing/packed boxes; exclude recommended boxes unless CP/PBO labeled
+        if (itemType === 'boxes_needed' && !isCpOrPbo) {
           console.log(`⏭️ [SUPERMOVE-SYNC] Skipping ${item.name}: ${itemType} not included in items_and_existing mode`);
           return false;
         }
@@ -431,8 +436,23 @@ function transformItemToSupermove(item: IInventoryItem, weightConfig: WeightConf
     ? unitVolume * weightConfig.customWeightMultiplier
     : (item.weight || 0);
 
+  // Prefix packing label to names so the packing responsibility shows up in Supermove.
+  // Crated applies to any item; CP/PBO apply to boxes; boxes default to PBO when packed_by is N/A.
+  const itemType = item.itemType || '';
+  const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
+  let displayName = item.name;
+  if (item.packed_by === 'Crated') {
+    displayName = `Crated - ${item.name}`;
+  } else if (isBox) {
+    if (item.packed_by === 'CP') {
+      displayName = `CP - ${item.name}`;
+    } else if (item.packed_by === 'PBO' || !item.packed_by || item.packed_by === 'N/A') {
+      displayName = `PBO - ${item.name}`;
+    }
+  }
+
   return {
-    name: item.name,
+    name: displayName,
     description: item.description || undefined,
     take_count: takeCount,
     volume: unitVolume > 0 ? Math.round(unitVolume) : undefined,

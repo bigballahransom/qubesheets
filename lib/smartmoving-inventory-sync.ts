@@ -235,8 +235,23 @@ export async function syncInventoryToSmartMoving(
           : (item.weight || 0);
         const perItemWeight = Math.round(rawWeight * 100) / 100;
 
+        // Prefix packing label to names so the packing responsibility shows up in SmartMoving.
+        // Crated applies to any item; CP/PBO apply to boxes; boxes default to PBO when packed_by is N/A.
+        const itemType = item.itemType || '';
+        const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
+        let displayName = item.name;
+        if (item.packed_by === 'Crated') {
+          displayName = `Crated - ${item.name}`;
+        } else if (isBox) {
+          if (item.packed_by === 'CP') {
+            displayName = `CP - ${item.name}`;
+          } else if (item.packed_by === 'PBO' || !item.packed_by || item.packed_by === 'N/A') {
+            displayName = `PBO - ${item.name}`;
+          }
+        }
+
         return {
-          name: item.name,
+          name: displayName,
           description: item.description || '',
           notes: item.special_handling || '',
           volume: perItemVolume,
@@ -526,6 +541,35 @@ async function updateJobCrewNotes(
 }
 
 /**
+ * Returns the active CrewReviewLink for a project, auto-creating one if none exists.
+ * Sources userId/organizationId from the Project so the auto-created link satisfies
+ * the schema's required userId field (the manual /api/.../crew-review-link route gets
+ * userId from the auth context, which is unavailable in the sync flow).
+ */
+async function getOrCreateActiveCrewReviewLink(projectId: string) {
+  const existing = await CrewReviewLink.findOne({ projectId, isActive: true });
+  if (existing) return existing;
+
+  const project = await Project.findById(projectId).select('userId organizationId').lean<{ userId: string; organizationId?: string }>();
+  if (!project) {
+    throw new Error(`Project ${projectId} not found - cannot auto-generate crew review link`);
+  }
+
+  const reviewToken = crypto.randomBytes(32).toString('hex');
+  const linkData: any = {
+    projectId,
+    userId: project.userId,
+    reviewToken,
+    isActive: true,
+    accessCount: 0,
+  };
+  if (project.organizationId) {
+    linkData.organizationId = project.organizationId;
+  }
+  return CrewReviewLink.create(linkData);
+}
+
+/**
  * Syncs the crew review link to SmartMoving's Job Notes "Crew Notes" field
  * This updates the crewNotes field for ALL jobs in the opportunity
  *
@@ -547,27 +591,7 @@ export async function syncCrewReviewLinkToSmartMoving(
     await connectMongoDB();
 
     // Get the active crew review link for this project, or auto-generate one
-    let crewReviewLink = await CrewReviewLink.findOne({
-      projectId,
-      isActive: true
-    });
-
-    if (!crewReviewLink) {
-      console.log(`📝 [SMARTMOVING-CREW-LINK] No active crew review link found - auto-generating one`);
-
-      // Generate unique review token
-      const reviewToken = crypto.randomBytes(32).toString('hex');
-
-      // Create the crew review link
-      crewReviewLink = await CrewReviewLink.create({
-        projectId,
-        reviewToken,
-        isActive: true,
-        accessCount: 0
-      });
-
-      console.log(`✅ [SMARTMOVING-CREW-LINK] Auto-generated crew review link for project ${projectId}`);
-    }
+    const crewReviewLink = await getOrCreateActiveCrewReviewLink(projectId);
 
     // Construct the crew review URL
     const crewReviewUrl = `${getBaseUrl()}/crew-review/${crewReviewLink.reviewToken}`;
@@ -773,23 +797,8 @@ export async function syncNotesToSmartMoving(
     // For crew notes, also include the crew review link
     let crewNotesContent = buildNotesContent(groupedNotes.crew);
 
-    // Get crew review link
-    let crewReviewLink = await CrewReviewLink.findOne({
-      projectId,
-      isActive: true
-    });
-
-    if (!crewReviewLink) {
-      // Auto-generate crew review link
-      const reviewToken = crypto.randomBytes(32).toString('hex');
-      crewReviewLink = await CrewReviewLink.create({
-        projectId,
-        reviewToken,
-        isActive: true,
-        accessCount: 0
-      });
-      console.log(`📝 [SMARTMOVING-NOTES-SYNC] Auto-generated crew review link`);
-    }
+    // Get crew review link (auto-generated if none exists)
+    const crewReviewLink = await getOrCreateActiveCrewReviewLink(projectId);
 
     const crewReviewUrl = `${getBaseUrl()}/crew-review/${crewReviewLink.reviewToken}`;
 

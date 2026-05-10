@@ -3489,6 +3489,108 @@ const ProcessingNotification = () => {
     );
   }
   
+  const assignProjectUI = (organization && !hasCrmAddOn && currentProject) ? (() => {
+    const effectiveOwnerId = currentProject.assignedTo?.userId || currentProject.userId;
+    const isRealUser = effectiveOwnerId && !['api-created', 'smartmoving-webhook'].includes(effectiveOwnerId);
+    const ownerMember = orgMembers.find(m => m.userId === effectiveOwnerId);
+    const ownerName = currentProject.assignedTo?.name ||
+      (ownerMember ? `${ownerMember.firstName} ${ownerMember.lastName}`.trim() || ownerMember.identifier : null);
+
+    return (
+      <div className="flex items-center">
+        {isRealUser && ownerName ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium transition-colors cursor-pointer">
+                <User size={14} />
+                <span className="max-w-[100px] truncate">{ownerName}</span>
+                <ChevronDown size={12} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuLabel>Reassign Project</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {orgMembers.map((member) => {
+                const displayName = (member.firstName || member.lastName)
+                  ? `${member.firstName} ${member.lastName}`.trim()
+                  : member.identifier;
+                return (
+                  <DropdownMenuItem
+                    key={member.userId}
+                    onClick={() => handleAssignProject(member.userId)}
+                    disabled={assigningProject || member.userId === effectiveOwnerId}
+                    className="cursor-pointer"
+                  >
+                    <User size={14} className="mr-2" />
+                    {displayName}
+                    {member.userId === effectiveOwnerId && (
+                      <span className="ml-auto text-xs text-gray-400">(Current)</span>
+                    )}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <div className="flex items-center gap-1">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleClaimProject}
+                    disabled={claimingProject}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-green-50 hover:bg-green-100 text-green-700 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {claimingProject ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <UserPlus size={14} />
+                    )}
+                    <span>Claim</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Assign this project to yourself</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium transition-colors cursor-pointer">
+                  <Users size={14} />
+                  <ChevronDown size={12} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuLabel>Assign to Team Member</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {orgMembers.map((member) => {
+                  const displayName = (member.firstName || member.lastName)
+                    ? `${member.firstName} ${member.lastName}`.trim()
+                    : member.identifier;
+                  return (
+                    <DropdownMenuItem
+                      key={member.userId}
+                      onClick={() => handleAssignProject(member.userId)}
+                      disabled={assigningProject}
+                      className="cursor-pointer"
+                    >
+                      <User size={14} className="mr-2" />
+                      {displayName}
+                      {member.userId === userId && (
+                        <span className="ml-auto text-xs text-gray-400">(You)</span>
+                      )}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+      </div>
+    );
+  })() : null;
+
   // Main content - show an empty editable spreadsheet if no items yet
   return (
     <div className="min-h-screen bg-slate-50">
@@ -3529,111 +3631,12 @@ const ProcessingNotification = () => {
           </TooltipProvider>
         </>
       )}
-      {/* Project Assignment - only shown for non-CRM organization users */}
-      {organization && !hasCrmAddOn && currentProject && (() => {
-        // Determine the effective owner: assignedTo if exists, otherwise fall back to creator (userId)
-        const effectiveOwnerId = currentProject.assignedTo?.userId || currentProject.userId;
-        const isRealUser = effectiveOwnerId && !['api-created', 'smartmoving-webhook'].includes(effectiveOwnerId);
-        const ownerMember = orgMembers.find(m => m.userId === effectiveOwnerId);
-        const ownerName = currentProject.assignedTo?.name ||
-          (ownerMember ? `${ownerMember.firstName} ${ownerMember.lastName}`.trim() || ownerMember.identifier : null);
-
-        return (
-          <div className="ml-2 flex items-center">
-            {isRealUser && ownerName ? (
-              // Show owner with dropdown to reassign
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium transition-colors cursor-pointer">
-                    <User size={14} />
-                    <span className="max-w-[100px] truncate">{ownerName}</span>
-                    <ChevronDown size={12} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuLabel>Reassign Project</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {orgMembers.map((member) => {
-                    const displayName = (member.firstName || member.lastName)
-                      ? `${member.firstName} ${member.lastName}`.trim()
-                      : member.identifier;
-                    return (
-                      <DropdownMenuItem
-                        key={member.userId}
-                        onClick={() => handleAssignProject(member.userId)}
-                        disabled={assigningProject || member.userId === effectiveOwnerId}
-                        className="cursor-pointer"
-                      >
-                        <User size={14} className="mr-2" />
-                        {displayName}
-                        {member.userId === effectiveOwnerId && (
-                          <span className="ml-auto text-xs text-gray-400">(Current)</span>
-                        )}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              // Show claim button and assign dropdown for unassigned projects (API/webhook created)
-              <div className="flex items-center gap-1">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={handleClaimProject}
-                        disabled={claimingProject}
-                        className="flex items-center gap-1 px-2 py-1 rounded-md bg-green-50 hover:bg-green-100 text-green-700 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
-                      >
-                        {claimingProject ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <UserPlus size={14} />
-                        )}
-                        <span>Claim</span>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Assign this project to yourself</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-medium transition-colors cursor-pointer">
-                      <Users size={14} />
-                      <ChevronDown size={12} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuLabel>Assign to Team Member</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {orgMembers.map((member) => {
-                      const displayName = (member.firstName || member.lastName)
-                        ? `${member.firstName} ${member.lastName}`.trim()
-                        : member.identifier;
-                      return (
-                        <DropdownMenuItem
-                          key={member.userId}
-                          onClick={() => handleAssignProject(member.userId)}
-                          disabled={assigningProject}
-                          className="cursor-pointer"
-                        >
-                          <User size={14} className="mr-2" />
-                          {displayName}
-                          {member.userId === userId && (
-                            <span className="ml-auto text-xs text-gray-400">(You)</span>
-                          )}
-                        </DropdownMenuItem>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {/* Project Assignment - desktop only (mobile shown on a separate row below) */}
+      {assignProjectUI && (
+        <div className="hidden sm:flex ml-2">
+          {assignProjectUI}
+        </div>
+      )}
       {/* Link to Customer Record - only shown for CRM add-on users */}
       {hasCrmAddOn && currentProject?.customerId && (
         <TooltipProvider>
@@ -3794,6 +3797,11 @@ const ProcessingNotification = () => {
       </Menubar>
     </div>
   </div>
+  {assignProjectUI && (
+    <div className="sm:hidden max-w-7xl mx-auto px-4 pb-2">
+      {assignProjectUI}
+    </div>
+  )}
 </header>
         
         {/* Main content container */}
