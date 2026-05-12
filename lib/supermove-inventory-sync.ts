@@ -128,39 +128,38 @@ export async function syncInventoryToSupermove(
       };
     }
     
-    // 4. Filter and map inventory items for Supermove
+    // 4. Filter and map inventory items for Supermove.
+    // Sync option controls which item categories are sent; the CP/PBO/Crated labels
+    // are display prefixes only and must not affect filtering.
     console.log(`🔍 [SUPERMOVE-SYNC] Filtering items for sync eligibility with option: ${syncOptions}`);
     const itemsToSync = inventoryItems.filter(item => {
       // Only include items that are going
       const isGoing = item.going !== 'not going';
-      
+
       if (!isGoing) {
         console.log(`⏭️ [SUPERMOVE-SYNC] Skipping item ${item.name}: not going (going: ${item.going})`);
         return false;
       }
-      
-      // Apply sync options filter
+
       const itemType = item.itemType || 'regular_item';
-      const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
-      // Boxes default to PBO when packed_by is N/A; Crated also counts as labeled
-      const isCpOrPbo = item.packed_by === 'CP' || item.packed_by === 'PBO' || item.packed_by === 'Crated' ||
-        (isBox && (!item.packed_by || item.packed_by === 'N/A'));
+      const isExistingBox = itemType === 'packed_box' || itemType === 'existing_box';
+      const isRecommendedBox = itemType === 'boxes_needed';
 
       if (syncOptions === 'items_only') {
-        // Only include regular items and furniture; exclude boxes unless labeled
-        if (isBox && !isCpOrPbo) {
+        // Only sync furniture / regular items; exclude all boxes
+        if (isExistingBox || isRecommendedBox) {
           console.log(`⏭️ [SUPERMOVE-SYNC] Skipping ${item.name}: ${itemType} not included in items_only mode`);
           return false;
         }
       } else if (syncOptions === 'items_and_existing') {
-        // Include items and existing/packed boxes; exclude recommended boxes unless CP/PBO labeled
-        if (itemType === 'boxes_needed' && !isCpOrPbo) {
+        // Sync items + already-packed boxes; exclude recommended packing boxes
+        if (isRecommendedBox) {
           console.log(`⏭️ [SUPERMOVE-SYNC] Skipping ${item.name}: ${itemType} not included in items_and_existing mode`);
           return false;
         }
       }
       // 'all' option includes everything that's going
-      
+
       console.log(`✅ [SUPERMOVE-SYNC] Including item ${item.name}: ${itemType} with quantity ${item.goingQuantity || item.quantity}`);
       return true;
     });

@@ -186,19 +186,19 @@ export async function POST(request: NextRequest) {
       // Sync inventory to the existing opportunity
       const allInventoryItems = await InventoryItem.find({ projectId });
 
-      // Filter inventory based on syncOption
+      // Filter inventory based on syncOption.
+      // Sync option controls which item categories are sent; the CP/PBO/Crated labels
+      // are display prefixes only and must not affect filtering.
       const inventoryItems = allInventoryItems.filter((item: any) => {
         if (item.going === 'not going') return false;
         const itemType = item.itemType || 'regular_item';
-        const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
-        // Boxes default to PBO when packed_by is N/A; Crated also counts as labeled
-        const isCpOrPbo = item.packed_by === 'CP' || item.packed_by === 'PBO' || item.packed_by === 'Crated' ||
-          (isBox && (!item.packed_by || item.packed_by === 'N/A'));
+        const isExistingBox = itemType === 'packed_box' || itemType === 'existing_box';
+        const isRecommendedBox = itemType === 'boxes_needed';
 
         if (syncOption === 'items_only') {
-          if (isBox && !isCpOrPbo) return false;
+          if (isExistingBox || isRecommendedBox) return false;
         } else if (syncOption === 'items_and_existing') {
-          if (itemType === 'boxes_needed' && !isCpOrPbo) return false;
+          if (isRecommendedBox) return false;
         }
         return true;
       });
@@ -625,7 +625,9 @@ export async function POST(request: NextRequest) {
     console.log(`🔄 [SYNC-FROM-LEAD] Syncing inventory to opportunity with option: ${syncOption}`);
     const allInventoryItems = await InventoryItem.find({ projectId });
 
-    // Filter inventory based on syncOption
+    // Filter inventory based on syncOption.
+    // Sync option controls which item categories are sent; the CP/PBO/Crated labels
+    // are display prefixes only and must not affect filtering.
     const inventoryItems = allInventoryItems.filter((item: any) => {
       // Only include items that are going
       if (item.going === 'not going') {
@@ -633,20 +635,18 @@ export async function POST(request: NextRequest) {
       }
 
       const itemType = item.itemType || 'regular_item';
-      const isBox = ['packed_box', 'existing_box', 'boxes_needed'].includes(itemType);
-      // Boxes default to PBO when packed_by is N/A; Crated also counts as labeled
-      const isCpOrPbo = item.packed_by === 'CP' || item.packed_by === 'PBO' || item.packed_by === 'Crated' ||
-        (isBox && (!item.packed_by || item.packed_by === 'N/A'));
+      const isExistingBox = itemType === 'packed_box' || itemType === 'existing_box';
+      const isRecommendedBox = itemType === 'boxes_needed';
 
       if (syncOption === 'items_only') {
-        // Only include regular items and furniture; exclude boxes unless labeled
-        if (isBox && !isCpOrPbo) {
+        // Only sync furniture / regular items; exclude all boxes
+        if (isExistingBox || isRecommendedBox) {
           console.log(`⏭️ [SYNC-FROM-LEAD] Skipping ${item.name}: ${itemType} not included in items_only mode`);
           return false;
         }
       } else if (syncOption === 'items_and_existing') {
-        // Include items and existing/packed boxes; exclude recommended boxes unless CP/PBO labeled
-        if (itemType === 'boxes_needed' && !isCpOrPbo) {
+        // Sync items + already-packed boxes; exclude recommended packing boxes
+        if (isRecommendedBox) {
           console.log(`⏭️ [SYNC-FROM-LEAD] Skipping ${item.name}: ${itemType} not included in items_and_existing mode`);
           return false;
         }
