@@ -118,6 +118,7 @@ export default function InventoryManager() {
 
   // Assignment state (for non-CRM orgs)
   const [orgMembers, setOrgMembers] = useState([]);
+  const [orgTags, setOrgTags] = useState([]); // Organization-defined tags for the Tags column
   const [claimingProject, setClaimingProject] = useState(false);
   const [assigningProject, setAssigningProject] = useState(false);
 
@@ -213,6 +214,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
     { id: 'col5', name: 'Weight', type: 'url' },
     { id: 'col6', name: 'Going', type: 'select' },
     { id: 'col7', name: 'PBO/CP', type: 'select' },
+    { id: 'col8', name: 'Tags', type: 'tags' },
   ];
   
   // Initialize with default empty spreadsheet
@@ -445,6 +447,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
         perUnitWeight: perUnitWeight, // Store per-unit weight (calculated based on weight mode)
         originalAiWeight: item.weight || 0, // Preserve original AI weight for reference
         special_handling: item.special_handling || '', // Preserve special handling notes
+        tags: Array.isArray(item.tags) ? item.tags : [], // Top-level so TagsCell can render without parsing strings
         cells: {
           col1: (() => {
             // Prioritize manual room entry from source image/video over AI-generated location
@@ -488,6 +491,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
             }
           })(),
           col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
+          col8: '', // Tags column cell value (kept empty string; actual tags live on row.tags)
         }
       };
       return row;
@@ -593,6 +597,26 @@ const inventoryDataChanged = (oldItems, newItems) => {
       fetchOrgMembers();
     }
   }, [organization, hasCrmAddOn, fetchOrgMembers]);
+
+  // Fetch organization-defined tags (for the Tags column picker)
+  const fetchOrgTags = useCallback(async () => {
+    if (!organization) return;
+    try {
+      const response = await fetch('/api/settings/tags');
+      if (response.ok) {
+        const data = await response.json();
+        setOrgTags(Array.isArray(data.tags) ? data.tags : []);
+      }
+    } catch (error) {
+      console.error('Error fetching org tags:', error);
+    }
+  }, [organization]);
+
+  useEffect(() => {
+    if (organization) {
+      fetchOrgTags();
+    }
+  }, [organization, fetchOrgTags]);
 
   useEffect(() => {
     if (!currentProject) return;
@@ -931,12 +955,13 @@ useEffect(() => {
         let rowsAlreadyMigrated = false;
         
         if (spreadsheetData.columns && spreadsheetData.columns.length > 0) {
-          // Check if we need to migrate columns to include Count, Going, and Packed By columns
+          // Check if we need to migrate columns to include Count, Going, Packed By, and Tags columns
           hasCountColumn = spreadsheetData.columns.some(col => col.name === 'Count');
           const hasGoingColumn = spreadsheetData.columns.some(col => col.name === 'Going');
           const hasPackedByColumn = spreadsheetData.columns.some(col => col.name === 'PBO/CP' || col.name === 'Packed By');
-          
-          if (!hasCountColumn || !hasGoingColumn || !hasPackedByColumn) {
+          const hasTagsColumn = spreadsheetData.columns.some(col => col.name === 'Tags');
+
+          if (!hasCountColumn || !hasGoingColumn || !hasPackedByColumn || !hasTagsColumn) {
             // Migrate existing columns by inserting Count and Going columns
             let migratedColumns = [...spreadsheetData.columns];
             
@@ -985,8 +1010,15 @@ useEffect(() => {
                 migratedColumns.push({ id: 'col7', name: 'PBO/CP', type: 'select' });
               }
             }
-            
-            // Migrate existing rows to include Count, Going, and Packed By columns
+
+            // Add Tags column if missing (should be at position 8, after PBO/CP)
+            if (!hasTagsColumn) {
+              if (!migratedColumns.find(col => col.name === 'Tags')) {
+                migratedColumns.push({ id: 'col8', name: 'Tags', type: 'tags' });
+              }
+            }
+
+            // Migrate existing rows to include Count, Going, Packed By, and Tags columns
             const migratedRows = spreadsheetData.rows?.map(row => {
               let newCells = { ...row.cells };
               
@@ -1019,9 +1051,15 @@ useEffect(() => {
               if (!newCells.col7) {
                 newCells.col7 = 'N/A'; // Default to N/A
               }
-              
+
+              // Ensure Tags column cell exists (col8) — actual tags live on row.tags
+              if (newCells.col8 === undefined) {
+                newCells.col8 = '';
+              }
+
               return {
                 ...row,
+                tags: Array.isArray(row.tags) ? row.tags : [],
                 cells: newCells
               };
             }) || [];
@@ -3988,6 +4026,9 @@ const ProcessingNotification = () => {
                       inventoryItems={inventoryItems}
                       weightConfig={weightConfig}
                       onWeightConfigChange={handleWeightConfigChange}
+                      orgTags={orgTags}
+                      refreshOrgTags={fetchOrgTags}
+                      isPersonalAccount={!organization}
                     />
                   )}
                 </div>

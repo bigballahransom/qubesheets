@@ -66,6 +66,24 @@ const DEFAULT_HOURLY_RATES: IHourlyRates = {
 
 export { DEFAULT_HOURLY_RATES };
 
+// Box Type interface and defaults
+export interface IBoxType {
+  name: string;
+  cuft: number;
+  description?: string;
+}
+
+export const DEFAULT_BOX_TYPES: IBoxType[] = [
+  { name: 'Book Box', cuft: 1.0, description: 'books, tools, heavy items >40 lbs or >7 lbs/cuft' },
+  { name: 'Small Box', cuft: 1.5, description: 'canned goods, small heavy items, files' },
+  { name: 'Medium Box', cuft: 3.0, description: 'kitchen items, toys, small appliances, general items' },
+  { name: 'Large Box', cuft: 4.5, description: 'lightweight bulky items, linens, lampshades' },
+  { name: 'Extra Large Box', cuft: 6.0, description: 'comforters, pillows, coats, very light items' },
+  { name: 'Wardrobe Box', cuft: 12.0, description: 'hanging clothes only' },
+  { name: 'Dish Pack', cuft: 5.2, description: 'dishes, glassware, fragile kitchen items' },
+  { name: 'Picture Box', cuft: 4.5, description: 'artwork, mirrors, framed pictures, flat items' },
+];
+
 
 export interface IOrganizationSettings extends Document {
   organizationId: string;
@@ -101,9 +119,21 @@ export interface IOrganizationSettings extends Document {
   weightMode?: 'actual' | 'custom';
   customWeightMultiplier?: number;
 
+  // Organization-wide tags (used to auto-tag items in videos)
+  tags?: IOrganizationTag[];
+  aiTaggingEnabled?: boolean;
+
+  // Box Types (used for packing recommendations)
+  boxTypes?: IBoxType[];
+
   // Metadata
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IOrganizationTag {
+  name: string;
+  prompt?: string;
 }
 
 const OrganizationSettingsSchema: Schema = new Schema(
@@ -202,6 +232,27 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: 7,
       min: 4,
       max: 8
+    },
+    // Organization-wide tags (used to auto-tag items in videos)
+    tags: {
+      type: [{
+        name: { type: String, required: true },
+        prompt: { type: String, required: false, maxlength: 500 }
+      }],
+      default: []
+    },
+    aiTaggingEnabled: {
+      type: Boolean,
+      default: false
+    },
+    // Box Types (packing recommendations)
+    boxTypes: {
+      type: [{
+        name: { type: String, required: true },
+        cuft: { type: Number, required: true, min: 0 },
+        description: { type: String, required: false }
+      }],
+      default: DEFAULT_BOX_TYPES
     }
   },
   { 

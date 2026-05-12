@@ -8,63 +8,69 @@ import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || '');
 
 // Build the Gemini prompt for consolidation
-function buildConsolidationPrompt(allItems: any[]): string {
+function buildConsolidationPrompt(allItems: any[], roomCatalog: any[] = []): string {
+  const hasCatalog = Array.isArray(roomCatalog) && roomCatalog.length > 0;
+  const catalogBlock = hasCatalog
+    ? `\nCANONICAL ROOM CATALOG (produced by a full-video pre-pass — each name refers to ONE distinct physical room; if the customer re-enters the same room later, the items still belong to this same canonical room):\n${JSON.stringify(
+        roomCatalog.map((r: any) => ({ canonicalName: r.canonicalName, description: r.description })),
+        null,
+        2
+      )}\n`
+    : '';
+
   return `You are analyzing inventory items detected across multiple video segments of a moving walkthrough call.
 
-Your task: Identify DUPLICATE FURNITURE items that were counted multiple times as the camera moved through different rooms/angles.
+Your task: Identify DUPLICATE FURNITURE items that were counted multiple times as the camera revisited rooms or saw items from different angles.
 
 IMPORTANT CONTEXT:
-- Each segment is ~5 minutes of video from a continuous call
-- segmentIndex: 0, 1, 2... indicates order in time
-- videoTimestamp: "MM:SS" when item was first seen IN THAT SEGMENT
-- Items can legitimately appear multiple times (e.g., 2 identical sofas)
-- BUT the same single item can also be seen from segment 0 AND segment 1
-
-CRITICAL ROOM HANDLING RULES:
-- NEVER combine or merge room names (e.g., DON'T create "Bedroom/Office" or "Living/Kitchen")
-- Keep each room as its own separate location exactly as detected in each segment
-- If a segment detected "Upstairs Bedroom" and another detected "Upstairs Office", these are TWO SEPARATE ROOMS
-- Only merge duplicate items if they are in the SAME EXACT room name
+- Each segment is ~5 minutes of video from a continuous call.
+- segmentIndex: 0, 1, 2... indicates order in time.
+- videoTimestamp: "MM:SS" when item was first seen IN THAT SEGMENT.
+- The customer often walks INTO the same room more than once (e.g. at minute 1 and again at minute 16). The same physical items can appear in multiple, non-adjacent segments. THIS IS THE PRIMARY DUPLICATE PATTERN — be aggressive about merging these.
+- Items can also legitimately appear multiple times (e.g. 2 matching nightstands in one bedroom). Quantity comes from the segment that saw the most of them at once.
+${catalogBlock}
+ROOM HANDLING RULES:
+- NEVER combine or merge ROOM NAMES (e.g., DON'T create "Bedroom/Office", DON'T rename "Bedroom 1" to "Bedroom").
+- Two items are in the SAME ROOM if and only if their "location" strings are EXACTLY equal (case-sensitive, including any numeric suffix like "Bedroom 1" vs "Bedroom 2").
+- "Bedroom 1" and "Bedroom 2" are DIFFERENT physical rooms — never merge items across them.
+${hasCatalog ? '- Use the CANONICAL ROOM CATALOG above to understand what each canonical room looks like (its description is for context only — do not change item locations).' : ''}
 
 INVENTORY ITEMS FROM THIS RECORDING:
 ${JSON.stringify(allItems, null, 2)}
 
 DUPLICATE DETECTION RULES:
 
-1. FURNITURE ITEMS ONLY - Apply duplicate detection:
-   - Same name (or very similar: "Sofa" vs "Couch")
-   - EXACT same room/location (must match exactly, never combine room names)
-   - Similar cuft/weight (within 20%)
-   - Adjacent segments (segmentIndex differs by 1-2)
-   - LIKELY the camera saw the same item again
+1. FURNITURE ITEMS — aggressive dedup WITHIN the same exact room:
+   - If two furniture entries share the EXACT same "location" string and refer to the SAME physical object, they are a duplicate.
+   - "Same physical object" criteria:
+     * Same or semantically-equivalent name (e.g., "Sofa" / "Couch", "TV Stand" / "Entertainment Center", "Black Tower Fan" / "Tower Fan", "Desk Chair" / "Office Chair", "Futon" / "White Futon Sofa", "Acoustic Guitar" / "Acoustic Guitar")
+     * cuft and weight within ~30% of each other (be lenient — different segments estimate differently)
+   - **Segment distance is IRRELEVANT for same-canonical-room merging.** A "Sofa" in Office at segment 0 and a "Sofa" in Office at segment 5 are almost certainly the SAME sofa. Merge them.
+   - For quantity: when merging duplicate furniture entries that share an exact location, output **MAX(quantity)** across the merged entries — NOT the sum. Example: Office has "Acoustic Guitar qty 1" in segment 0 and "Acoustic Guitar qty 1" in segment 3 → final: "Acoustic Guitar qty 1" (one guitar seen twice), NOT qty 2.
+   - The only exception where you keep them separate within one room: when the customer explicitly says "and here's another one" / "the other sofa" / "two matching nightstands" AND the original segment also reported quantity > 1 — then trust the higher single-segment quantity.
 
 2. DIFFERENT FURNITURE ITEMS criteria (keep separate):
-   - Different rooms/locations
-   - Significantly different dimensions
-   - Segments far apart AND clearly different context
-   - Customer explicitly mentioned "another one" or "the other sofa"
+   - Different "location" strings — never merge across rooms.
+   - Same room but significantly different dimensions (cuft differs by >50%) AND the customer's quotes describe two separate items.
+   - Customer explicitly mentioned "another one" or "the other sofa" AND the higher quantity was already captured in a single segment.
 
-3. CRITICAL - BOXES_NEEDED: DO NOT REMOVE OR REDUCE!
-   - NEVER remove boxes_needed items - they are packing estimates, not physical items
-   - NEVER reduce quantities of boxes_needed - each segment's estimate is additive
-   - Same box_type + same room = SUM the quantities together (don't reduce!)
-   - Same box_type + different room = keep separate
-   - Example: Segment 0 has 5 Medium Boxes for Kitchen, Segment 1 has 3 Medium Boxes for Kitchen
-     → Result: 8 Medium Boxes for Kitchen (SUM them, don't pick one)
-   - We want MORE boxes estimated, not fewer - overestimating is better than underestimating
+3. CRITICAL — BOXES_NEEDED: DO NOT REMOVE OR REDUCE!
+   - NEVER remove boxes_needed items — they are packing estimates, not physical items.
+   - Same box_type + same EXACT location string = SUM the quantities together (don't reduce!).
+   - Same box_type + different location = keep separate.
+   - Example: Segment 0 has 5 Medium Boxes for "Kitchen", Segment 1 has 3 Medium Boxes for "Kitchen" → Result: 8 Medium Boxes for "Kitchen" (SUM, don't pick one).
+   - We want MORE boxes estimated, not fewer — overestimating is better than underestimating.
 
-4. CRITICAL - PACKED_BOXES / EXISTING_BOX: DO NOT REMOVE!
-   - NEVER remove packed_boxes - they are physical items the customer already has
-   - Be VERY conservative - only merge if CLEARLY the same box
-   - Similar size + same room + adjacent segments + same label = MAYBE duplicate
-   - Different labels = DEFINITELY different boxes (keep separate)
-   - When in doubt, keep them separate - it's better to overcount than undercount
+4. PACKED_BOXES / EXISTING_BOX: physical objects, treat like furniture but conservatively:
+   - Same EXACT location + same size + similar label + similar segment proximity = likely the same physical box, merge (use MAX quantity, like furniture).
+   - Different labels on the boxes = DIFFERENT boxes, keep separate.
+   - When in doubt with packed_boxes, keep them separate — under-counting boxes is worse than over-counting.
 
 5. For GOING STATUS:
-   - Default ALL items to "going" if not explicitly set
-   - If ANY detection of an item has going: "not going", preserve it
-   - If same item was discussed multiple times, use the MOST RECENT statement
-   - Preserve customerQuote and quoteTimestamp for the relevant statement
+   - Default ALL items to "going" if not explicitly set.
+   - If ANY detection of an item has going: "not going", preserve it.
+   - If same item was discussed multiple times, use the MOST RECENT statement.
+   - Preserve customerQuote and quoteTimestamp for the relevant statement.
 
 RETURN ONLY VALID JSON (no markdown):
 {
@@ -344,8 +350,12 @@ export async function POST(
       });
     }
 
-    // Build prompt and call Gemini for consolidation
-    const prompt = buildConsolidationPrompt(allItems);
+    // Build prompt and call Gemini for consolidation. Pass the room catalog
+    // produced by the railway service's pre-pass so the consolidator
+    // understands which canonical rooms are which, and won't second-guess
+    // numbered room labels.
+    const roomCatalog = (recording.analysisResult as any)?.roomCatalog || [];
+    const prompt = buildConsolidationPrompt(allItems, roomCatalog);
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',

@@ -35,10 +35,13 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    // Find existing active upload link
+    // Find existing active upload link. Exclude on-site walkthrough docs —
+    // those are minted independently when an employee taps "Start On-Site
+    // Walkthrough" and shouldn't surface in the customer-link modal.
     const existingLink = await CustomerUpload.findOne({
       projectId,
-      isActive: true
+      isActive: true,
+      isWalkthrough: { $ne: true }
     });
 
     if (!existingLink) {
@@ -100,9 +103,11 @@ export async function POST(
       );
     }
 
-    // Deactivate any existing active links for this project
+    // Deactivate any existing active customer links for this project. Leave
+    // walkthrough docs alone — they're independent and an in-progress
+    // walkthrough shouldn't be killed by generating a new customer link.
     await CustomerUpload.updateMany(
-      { projectId, isActive: true },
+      { projectId, isActive: true, isWalkthrough: { $ne: true } },
       { $set: { isActive: false } }
     );
 

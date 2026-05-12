@@ -61,6 +61,7 @@ export interface IInventoryItem extends Document {
   videoTimestamps?: string[]; // All timestamps where this item was seen
   consolidatedFromCount?: number; // How many raw detections merged into this
   stockItemId?: mongoose.Types.ObjectId | string; // Reference to stock inventory item
+  tags?: string[]; // Tag names applied to this item (org-defined or one-time)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -193,6 +194,10 @@ const InventoryItemSchema: Schema = new Schema(
       ref: 'StockInventory',
       required: false,
       index: true
+    },
+    tags: {
+      type: [String],
+      default: []
     },
   },
   { timestamps: true }

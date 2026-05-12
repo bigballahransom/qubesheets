@@ -87,7 +87,29 @@ export async function PATCH(
         );
       }
     }
-    
+
+    // Validate and normalize tags
+    if (data.tags !== undefined) {
+      if (!Array.isArray(data.tags) || data.tags.some(t => typeof t !== 'string')) {
+        return NextResponse.json(
+          { error: 'tags must be an array of strings' },
+          { status: 400 }
+        );
+      }
+      const seen = new Set();
+      const normalized = [];
+      for (const raw of data.tags) {
+        const trimmed = raw.trim().slice(0, 50);
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        normalized.push(trimmed);
+        if (normalized.length >= 50) break;
+      }
+      data.tags = normalized;
+    }
+
     // Handle migration and validation for goingQuantity
     let needCurrentQuantity = false;
     if (data.goingQuantity !== undefined || data.going !== undefined) {

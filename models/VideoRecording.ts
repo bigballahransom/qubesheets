@@ -56,6 +56,11 @@ export interface IVideoRecording extends Document {
     totalBoxes: number;
     summary: string;
     error?: string;
+    roomCatalog?: Array<{
+      canonicalName: string;
+      description: string;
+      firstSeenTimestamp: string;
+    }>;
   };
   // Transcript analysis results (processed after video analysis)
   transcriptAnalysisResult?: {
@@ -247,7 +252,12 @@ const VideoRecordingSchema: Schema = new Schema(
       itemsCount: { type: Number, default: 0 },
       totalBoxes: { type: Number, default: 0 },
       summary: { type: String },
-      error: { type: String }
+      error: { type: String },
+      roomCatalog: [{
+        canonicalName: { type: String },
+        description: { type: String },
+        firstSeenTimestamp: { type: String }
+      }]
     },
     // Transcript analysis results (processed after video analysis)
     transcriptAnalysisResult: {

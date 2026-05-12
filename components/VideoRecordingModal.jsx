@@ -34,6 +34,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { toast } from 'sonner';
 import VideoCallNotes from './VideoCallNotes';
+import RecordingSnapshotsGrid from './RecordingSnapshotsGrid';
 import { ToggleGoingBadge } from './ui/ToggleGoingBadge';
 
 // Helper to group items by location/room
@@ -409,9 +410,10 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
         </DialogHeader>
 
         <Tabs defaultValue="watch" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="watch">Watch</TabsTrigger>
             <TabsTrigger value="notes">Notes</TabsTrigger>
+            <TabsTrigger value="snapshots">Snapshots</TabsTrigger>
           </TabsList>
           
           <TabsContent value="watch" className="space-y-4 mt-4">
@@ -829,6 +831,24 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                 projectId={projectId}
                 recordingId={recording._id}
                 roomId={recording.roomId}
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="snapshots" className="mt-4 h-[600px]">
+            <div className="h-full rounded-lg border bg-white overflow-hidden p-4">
+              <RecordingSnapshotsGrid
+                projectId={projectId}
+                recordingId={recording._id}
+                onSeek={(sec) => {
+                  if (videoRef.current && typeof sec === 'number') {
+                    try {
+                      videoRef.current.currentTime = sec;
+                    } catch (e) {
+                      console.warn('Snapshot seek failed:', e);
+                    }
+                  }
+                }}
               />
             </div>
           </TabsContent>

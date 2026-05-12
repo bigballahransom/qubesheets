@@ -24,6 +24,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import StockInventoryPickerModal from '@/components/modals/StockInventoryPickerModal';
+import TagsCell from './TagsCell';
 
 // Helper to group items by location/room
 const groupByRoom = (items) => {
@@ -189,17 +190,21 @@ export default function Spreadsheet({
   projectId = null,
   inventoryItems = [],
   weightConfig = { weightMode: 'actual', customWeightMultiplier: 7 },
-  onWeightConfigChange = null
+  onWeightConfigChange = null,
+  orgTags = [],
+  refreshOrgTags = null,
+  isPersonalAccount = false
 }) {
   // State for spreadsheet data
   const [columns, setColumns] = useState(
     initialColumns.length > 0 
-      ? initialColumns 
+      ? initialColumns
       : [
           { id: 'col1', name: 'Location', type: 'text' },
           { id: 'col2', name: 'Item', type: 'company' },
           { id: 'col3', name: 'Cuft', type: 'url' },
           { id: 'col4', name: 'Weight', type: 'url' },
+          { id: 'col8', name: 'Tags', type: 'tags' },
         ]
   );
   
@@ -1629,8 +1634,8 @@ export default function Spreadsheet({
   }, [rows, setSaveStatus, onRowsChange, onLocationChange]);
 
   const renderCellContent = useCallback((colType, value, rowId, colId, row, column) => {
-    // Skip activeCell editing mode for col3 - it has its own inline input with +/- buttons
-    if (activeCell && activeCell.rowId === rowId && activeCell.colId === colId && colId !== 'col3') {
+    // Skip activeCell editing mode for col3 (CountInput) and tags columns (TagsCell popover)
+    if (activeCell && activeCell.rowId === rowId && activeCell.colId === colId && colId !== 'col3' && colType !== 'tags') {
       return (
         <input
           ref={cellInputRef}
@@ -2140,6 +2145,40 @@ export default function Spreadsheet({
             <ChevronDown size={12} className="absolute right-1 top-1/2 transform -translate-y-1/2 pointer-events-none text-gray-400" />
           </div>
         );
+      case 'tags': {
+        const currentTags = Array.isArray(row?.tags) ? row.tags : [];
+        const handleTagsChange = (newTags) => {
+          const updatedRows = rows.map(r =>
+            r.id === rowId ? { ...r, tags: newTags } : r
+          );
+          setRows(updatedRows);
+          onRowsChange(updatedRows);
+          setSaveStatus('saving');
+
+          if (projectId && row?.inventoryItemId) {
+            fetch(`/api/projects/${projectId}/inventory/${row.inventoryItemId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tags: newTags }),
+            })
+              .then(() => setSaveStatus('saved'))
+              .catch(err => {
+                console.error('Failed to persist tags change:', err);
+                setSaveStatus('error');
+              });
+          }
+        };
+        return (
+          <TagsCell
+            tags={currentTags}
+            orgTags={orgTags}
+            onTagsChange={handleTagsChange}
+            refreshOrgTags={refreshOrgTags}
+            isPersonalAccount={isPersonalAccount}
+            disabled={!row?.inventoryItemId}
+          />
+        );
+      }
       default:
         // Special rendering for Count column (col3) with CountInput component
         if (colId === 'col3') {
@@ -2156,7 +2195,7 @@ export default function Spreadsheet({
         }
         return <span className="block truncate">{value}</span>;
     }
-  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, setRows, onRowsChange, setSaveStatus, cuftMode, weightMode, handleCountInputChange]);
+  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, setRows, onRowsChange, setSaveStatus, cuftMode, weightMode, handleCountInputChange, orgTags, refreshOrgTags, isPersonalAccount, projectId]);
   
   // Render loading state
   if (isLoading) {

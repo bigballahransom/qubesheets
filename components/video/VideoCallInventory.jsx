@@ -71,6 +71,7 @@ import { Button } from '../ui/button';
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 import VideoCallNotes from '../VideoCallNotes';
 import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimizedRoomOptions } from '@/lib/webrtc-compatibility';
+import { extractFrameFromTrack } from '@/lib/livekit';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
@@ -375,7 +376,7 @@ function useAdvancedCameraSwitching() {
   const switchCamera = useCallback(async () => {
     if (!localParticipant || isSwitching) {
       console.log('📹 Camera switching not available');
-      return;
+      return { success: false, reason: 'unavailable' };
     }
 
     setIsSwitching(true);
@@ -423,6 +424,7 @@ function useAdvancedCameraSwitching() {
         await localParticipant.publishTrack(newTrack);
         setCurrentFacingMode(newFacingMode);
         console.log('📹 Camera switched successfully to', newFacingMode);
+        return { success: true, facingMode: newFacingMode };
       } else {
         throw new Error('All camera constraints failed');
       }
@@ -443,6 +445,7 @@ function useAdvancedCameraSwitching() {
         console.error('📹 Failed to restore camera:', restoreError);
         toast.error('Camera error. Please rejoin the call.');
       }
+      return { success: false, reason: 'switch-failed' };
     } finally {
       setIsSwitching(false);
     }
@@ -579,17 +582,76 @@ function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
 }
 
+// Renders a snap-photo button overlay on the customer's video tile only.
+// Designed to be used as a child of LiveKit's <ParticipantTile>, which
+// provides ParticipantContext to its descendants.
+function CustomerTileSnapOverlay({ onSnap, disabled }) {
+  const participant = useParticipantContext();
+  if (!participant || isAgent(participant.identity)) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onSnap?.();
+      }}
+      disabled={disabled}
+      title="Snap photo of customer"
+      aria-label="Snap photo of customer"
+      className="absolute top-3 right-3 z-30 w-11 h-11 rounded-full bg-white/90 hover:bg-white text-gray-900 shadow-lg flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
+    >
+      {disabled ? (
+        <Loader2 className="w-5 h-5 animate-spin" />
+      ) : (
+        <Camera className="w-5 h-5" />
+      )}
+    </button>
+  );
+}
+
 const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   const [showControls, setShowControls] = useState(true);
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   const connectionState = useConnectionState();
+  const room = useRoomContext();
 
   // Custom control states
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isCameraEnabled, setIsCameraEnabled] = useState(true);
   const [isLeaving, setIsLeaving] = useState(false);
   const { switchCamera, isSwitching: isCameraSwitching, canSwitchCamera } = useAdvancedCameraSwitching();
+
+  // Allow the agent to flip this customer's camera remotely via LiveKit RPC.
+  // Re-register cleanly if room changes; switchCamera is read through a ref so we
+  // don't tear down the registration every time the hook recreates the callback.
+  const switchCameraRef = useRef(switchCamera);
+  useEffect(() => {
+    switchCameraRef.current = switchCamera;
+  }, [switchCamera]);
+
+  useEffect(() => {
+    if (!room) return;
+    const handler = async () => {
+      const result = await switchCameraRef.current();
+      if (result?.success) {
+        return result.facingMode || 'flipped';
+      }
+      throw new Error(result?.reason || 'flip-failed');
+    };
+    try {
+      room.registerRpcMethod('flipCamera', handler);
+    } catch (e) {
+      console.warn('Could not register flipCamera RPC:', e);
+    }
+    return () => {
+      try {
+        room.unregisterRpcMethod('flipCamera');
+      } catch (e) {
+        // Safe to ignore — room may already be disconnected.
+      }
+    };
+  }, [room]);
 
   // Show loading screen while connecting
   const isConnecting = connectionState === ConnectionState.Connecting || connectionState === ConnectionState.Reconnecting;
@@ -1015,6 +1077,11 @@ const AgentView = React.memo(({
   const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isCameraEnabled, setIsCameraEnabled] = useState(true);
   const [isLeaving, setIsLeaving] = useState(false);
+  const [isFlippingCustomerCamera, setIsFlippingCustomerCamera] = useState(false);
+  const [isSnapping, setIsSnapping] = useState(false);
+  // Snapshots taken during this session (newest first). Used by the live
+  // Snapshots tab so captures appear instantly without a network round-trip.
+  const [sessionSnapshots, setSessionSnapshots] = useState([]);
 
   // Get participant identity for audio processor
   const { localParticipant } = useLocalParticipant();
@@ -1062,6 +1129,83 @@ const AgentView = React.memo(({
       console.error('Failed to toggle camera:', error);
     }
   }, [localParticipant, isCameraEnabled]);
+
+  // Capture a snapshot of the customer's camera feed by extracting a frame
+  // from their LiveKit video track and uploading it to /snapshots. The server
+  // links the snapshot to the active VideoRecording for this room so it shows
+  // up under the recording in the Virtual Calls tab.
+  const captureCustomerSnapshot = useCallback(async () => {
+    if (isSnapping) return;
+    const customer = remoteParticipants.find(p => !isAgent(p.identity));
+    if (!customer) {
+      toast.error('No customer in call');
+      return;
+    }
+    const cameraPub = Array.from(customer.videoTrackPublications?.values?.() || [])
+      .find(p => p.source === Track.Source.Camera);
+    if (!cameraPub?.track) {
+      toast.error('Customer camera not ready');
+      return;
+    }
+
+    setIsSnapping(true);
+    try {
+      const blob = await extractFrameFromTrack(cameraPub.track);
+      if (!blob) throw new Error('Failed to capture frame');
+
+      const fd = new FormData();
+      fd.append('image', blob, `snapshot-${Date.now()}.jpg`);
+      fd.append('roomId', roomId);
+      if (customer.identity) fd.append('customerIdentity', customer.identity);
+
+      const res = await fetch(`/api/projects/${projectId}/snapshots`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const saved = await res.json();
+      setSessionSnapshots(prev => [saved, ...prev]);
+      toast.success('Snapshot saved');
+    } catch (err) {
+      console.error('Snapshot capture failed:', err);
+      toast.error('Could not save snapshot');
+    } finally {
+      setIsSnapping(false);
+    }
+  }, [isSnapping, remoteParticipants, projectId, roomId]);
+
+  // Flip the customer's camera by invoking the `flipCamera` RPC method on
+  // their participant. Always available to click; surfaces a clear message
+  // when no customer is connected or the device can't switch cameras.
+  const flipCustomerCamera = useCallback(async () => {
+    if (isFlippingCustomerCamera) return;
+    if (!localParticipant) {
+      toast.error("Unable to flip customer's camera");
+      return;
+    }
+    const customer = remoteParticipants.find(p => !isAgent(p.identity));
+    if (!customer) {
+      toast.error("Unable to flip — customer hasn't joined yet");
+      return;
+    }
+    setIsFlippingCustomerCamera(true);
+    try {
+      await localParticipant.performRpc({
+        destinationIdentity: customer.identity,
+        method: 'flipCamera',
+        responseTimeout: 10_000,
+      });
+      toast.success("Flipped customer's camera");
+    } catch (err) {
+      console.error('Failed to flip customer camera:', err);
+      toast.error("Unable to flip customer's camera");
+    } finally {
+      setIsFlippingCustomerCamera(false);
+    }
+  }, [localParticipant, remoteParticipants, isFlippingCustomerCamera]);
 
   // Leave call with loading state
   const leaveCall = useCallback(() => {
@@ -1164,11 +1308,16 @@ const AgentView = React.memo(({
       <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900 relative overflow-hidden">
         {/* Video area - Full screen */}
         <div className="absolute inset-0 z-10">
-          <GridLayout 
+          <GridLayout
             tracks={tracks}
             style={{ height: '100%', width: '100%' }}
           >
-            <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
+            <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }}>
+              <CustomerTileSnapOverlay
+                onSnap={captureCustomerSnapshot}
+                disabled={isSnapping}
+              />
+            </ParticipantTile>
           </GridLayout>
         </div>
 
@@ -1274,6 +1423,26 @@ const AgentView = React.memo(({
                   )}
                 </button>
               )}
+
+              {/* Flip Customer's Camera - always visible for agent */}
+              <button
+                onClick={flipCustomerCamera}
+                disabled={isFlippingCustomerCamera}
+                title="Flip customer's camera"
+                aria-label="Flip customer's camera"
+                className="relative w-14 h-14 rounded-full bg-indigo-500/30 backdrop-blur-lg border border-indigo-400/40 flex items-center justify-center transition-all duration-200 active:scale-95 disabled:opacity-50"
+              >
+                {isFlippingCustomerCamera ? (
+                  <Loader2 className="w-6 h-6 text-white animate-spin" />
+                ) : (
+                  <>
+                    <SwitchCamera className="w-6 h-6 text-white" />
+                    <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-indigo-600 border border-white/40 flex items-center justify-center">
+                      <Users className="w-3 h-3 text-white" />
+                    </span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
@@ -1338,6 +1507,10 @@ const AgentView = React.memo(({
                 onInventoryUpdate={handleInventoryUpdate}
                 participantName={participantName}
                 roomId={roomId}
+                sessionSnapshots={sessionSnapshots}
+                onSnapshotDeleted={(id) =>
+                  setSessionSnapshots(prev => prev.filter(s => s._id !== id))
+                }
                 onRemoveItem={async (id) => {
                   // Remove from database via API
                   try {
@@ -1434,14 +1607,19 @@ const AgentView = React.memo(({
                   justifyContent: 'center'
                 }}
               >
-                <ParticipantTile 
-                  style={{ 
+                <ParticipantTile
+                  style={{
                     borderRadius: '16px',
                     overflow: 'hidden',
                     backgroundColor: '#374151',
                     border: '1px solid rgba(255,255,255,0.1)'
                   }}
-                />
+                >
+                  <CustomerTileSnapOverlay
+                    onSnap={captureCustomerSnapshot}
+                    disabled={isSnapping}
+                  />
+                </ParticipantTile>
               </GridLayout>
             </div>
           </div>
@@ -1451,10 +1629,26 @@ const AgentView = React.memo(({
             <div className="flex justify-center items-center gap-4">
               {/* Recording is now automatic - starts when both join, stops when either leaves */}
               <ControlBar />
+
+              {/* Flip Customer's Camera - always visible for agent */}
+              <button
+                onClick={flipCustomerCamera}
+                disabled={isFlippingCustomerCamera}
+                title="Flip customer's camera"
+                aria-label="Flip customer's camera"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isFlippingCustomerCamera ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <SwitchCamera className="w-4 h-4" />
+                )}
+                Flip customer's camera
+              </button>
             </div>
           </div>
         </div>
-        
+
         {/* Desktop Sidebar - Always visible */}
         {showInventory && (
           <div className="w-96 h-full flex-shrink-0 border-l border-gray-200 bg-white">
@@ -1465,6 +1659,10 @@ const AgentView = React.memo(({
               onInventoryUpdate={handleInventoryUpdate}
               participantName={participantName}
               roomId={roomId}
+              sessionSnapshots={sessionSnapshots}
+              onSnapshotDeleted={(id) =>
+                setSessionSnapshots(prev => prev.filter(s => s._id !== id))
+              }
               onRemoveItem={async (id) => {
                 // Remove from database via API
                 try {
@@ -1521,6 +1719,8 @@ const InventorySidebar = ({
   onInventoryUpdate,
   participantName,
   roomId,
+  sessionSnapshots = [],
+  onSnapshotDeleted,
 }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1618,8 +1818,18 @@ const InventorySidebar = ({
             }`}
           >
             <MessageSquare className="w-4 h-4" />
-            <span className="hidden sm:inline">Notes</span>
-            <span className="sm:hidden">Notes</span>
+            <span>Notes</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('snapshots')}
+            className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
+              activeTab === 'snapshots'
+                ? 'text-blue-600 bg-white border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <Camera className="w-4 h-4" />
+            <span>Snapshots</span>
           </button>
         </div>
       </div>
@@ -1680,7 +1890,162 @@ const InventorySidebar = ({
         />
       </div>
 
+      {/* Snapshots Section */}
+      <div className={`flex-1 min-h-0 overflow-y-auto bg-white ${activeTab === 'snapshots' ? '' : 'hidden'}`}>
+        <SnapshotsList
+          projectId={projectId}
+          roomId={roomId}
+          sessionSnapshots={sessionSnapshots}
+          onSnapshotDeleted={onSnapshotDeleted}
+        />
+      </div>
 
+    </div>
+  );
+};
+
+// Renders snapshots taken during the current call. Loads existing snapshots for
+// this room on mount and merges them with the in-memory `sessionSnapshots`
+// from props (so just-captured items appear immediately without a re-fetch).
+const SnapshotsList = ({ projectId, roomId, sessionSnapshots = [], onSnapshotDeleted }) => {
+  const [serverSnapshots, setServerSnapshots] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState(null);
+
+  useEffect(() => {
+    if (!projectId || !roomId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/projects/${projectId}/snapshots?roomId=${encodeURIComponent(roomId)}`
+        );
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (!cancelled) setServerSnapshots(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error('Failed to load snapshots:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, roomId]);
+
+  const merged = useMemo(() => {
+    const seen = new Set();
+    const all = [];
+    for (const s of sessionSnapshots) {
+      if (s?._id && !seen.has(s._id)) { seen.add(s._id); all.push(s); }
+    }
+    for (const s of serverSnapshots) {
+      if (s?._id && !seen.has(s._id)) { seen.add(s._id); all.push(s); }
+    }
+    return all.sort((a, b) =>
+      new Date(b.capturedAt || b.createdAt || 0).getTime() -
+      new Date(a.capturedAt || a.createdAt || 0).getTime()
+    );
+  }, [sessionSnapshots, serverSnapshots]);
+
+  const handleDelete = useCallback(async (id) => {
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/snapshots/${id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setServerSnapshots(prev => prev.filter(s => s._id !== id));
+      onSnapshotDeleted?.(id);
+      toast.success('Snapshot deleted');
+    } catch (err) {
+      console.error('Failed to delete snapshot:', err);
+      toast.error('Could not delete snapshot');
+    }
+  }, [projectId, onSnapshotDeleted]);
+
+  if (loading) {
+    return (
+      <div className="p-6 flex items-center justify-center text-gray-500">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+        Loading snapshots...
+      </div>
+    );
+  }
+
+  if (merged.length === 0) {
+    return (
+      <div className="p-6 text-center text-gray-500">
+        <Camera className="w-10 h-10 mx-auto mb-3 text-gray-300" />
+        <p className="text-sm">No snapshots yet.</p>
+        <p className="text-xs mt-1">Tap the camera icon on the customer's video to capture one.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3">
+      <div className="grid grid-cols-2 gap-3">
+        {merged.map((snap) => (
+          <div
+            key={snap._id}
+            className="group relative aspect-video bg-gray-100 rounded-lg overflow-hidden border border-gray-200 cursor-pointer"
+            onClick={() => setLightbox(snap)}
+          >
+            {snap.dataUrl ? (
+              <img
+                src={snap.dataUrl}
+                alt="Snapshot"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-gray-400">
+                <Camera className="w-6 h-6" />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleDelete(snap._id); }}
+              className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/60 hover:bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Delete snapshot"
+              aria-label="Delete snapshot"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent text-white text-xs px-2 py-1">
+              {new Date(snap.capturedAt || snap.createdAt).toLocaleTimeString([], {
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 text-white hover:text-gray-300"
+            onClick={() => setLightbox(null)}
+            aria-label="Close"
+          >
+            <X className="w-8 h-8" />
+          </button>
+          <img
+            src={lightbox.dataUrl}
+            alt="Snapshot"
+            className="max-w-full max-h-full object-contain rounded"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 };
