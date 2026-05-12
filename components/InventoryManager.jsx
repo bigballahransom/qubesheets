@@ -2651,339 +2651,422 @@ useEffect(() => {
   };
 
   // Handle downloading project as PDF
-  const handleDownloadProject = () => {
-    // Dynamic import to ensure jspdf-autotable is loaded
+  const handleDownloadProject = async () => {
+    // Fetch branding (logo + company name) so the PDF carries the user's brand.
+    // Any failure falls back to an unbranded layout.
+    let brandingInfo = null;
+    try {
+      const res = await fetch('/api/branding');
+      if (res.ok) brandingInfo = await res.json();
+    } catch (e) {
+      console.warn('Branding fetch failed; continuing without it:', e);
+    }
+
+    // Loads a logo source (data URL or remote URL) and returns its data URL +
+    // natural dimensions so jsPDF can embed it without distortion.
+    const loadLogo = async (src) => {
+      if (!src || typeof src !== 'string') return null;
+      try {
+        let dataUrl = src;
+        if (!src.startsWith('data:')) {
+          const r = await fetch(src);
+          if (!r.ok) return null;
+          const blob = await r.blob();
+          dataUrl = await new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(fr.result);
+            fr.onerror = reject;
+            fr.readAsDataURL(blob);
+          });
+        }
+        const fmtMatch = dataUrl.match(/^data:image\/([\w+]+);/);
+        let format = (fmtMatch ? fmtMatch[1] : 'png').toUpperCase();
+        if (format === 'JPG') format = 'JPEG';
+        if (format === 'SVG+XML' || format === 'SVG') return null; // jsPDF can't embed SVG natively
+        const dims = await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+          img.onerror = () => resolve(null);
+          img.src = dataUrl;
+        });
+        if (!dims?.w || !dims?.h) return null;
+        return { dataUrl, format, naturalW: dims.w, naturalH: dims.h };
+      } catch (e) {
+        console.warn('Logo load failed:', e);
+        return null;
+      }
+    };
+
+    const logo = await loadLogo(brandingInfo?.companyLogo);
+    const companyName = brandingInfo?.companyName || '';
+
+    // Create the PDF document
     const doc = new jsPDF();
-    
-    // Set up fonts and colors
-    const primaryColor = [59, 130, 246]; // blue-500
-    const textColor = [71, 85, 105]; // slate-600
-    const lightGray = [248, 250, 252]; // slate-50
-    
-    // Add header with project name
-    doc.setFontSize(24);
-    doc.setTextColor(...primaryColor);
-    doc.text(currentProject?.name || 'Inventory Report', 20, 20);
-    
-    // Add date
-    doc.setFontSize(10);
-    doc.setTextColor(...textColor);
-    doc.text(`Generated on ${new Date().toLocaleDateString()}`, 20, 30);
-    
-    // Add stats section
-    let yPosition = 45;
-    doc.setFontSize(16);
-    doc.setTextColor(...primaryColor);
-    doc.text('Summary Statistics', 20, yPosition);
-    
-    yPosition += 15;
-    
-    // Stats grid
-    const stats = [
-      { label: 'Total Items', value: totalItems.toString(), icon: '📦' },
-      { label: 'Total Boxes', value: totalBoxes.toString(), icon: '📦' },
-      { label: 'Total Cu.Ft.', value: totalCubicFeet.toString(), icon: '📐' },
-      { label: 'Total Weight', value: `${totalWeight} lbs`, icon: '⚖️' }
-    ];
-    
-    doc.setFontSize(11);
-    stats.forEach((stat, index) => {
-      const xPos = 20 + (index % 2) * 90;
-      const yPos = yPosition + Math.floor(index / 2) * 20;
-      
-      // Stat box background
-      doc.setFillColor(...lightGray);
-      doc.roundedRect(xPos - 5, yPos - 10, 80, 15, 2, 2, 'F');
-      
-      // Stat label
-      doc.setTextColor(...textColor);
-      doc.setFontSize(9);
-      doc.text(stat.label, xPos, yPos - 3);
-      
-      // Stat value
-      doc.setTextColor(0, 0, 0);
-      doc.setFontSize(12);
+    const pageWidth = doc.internal.pageSize.width;
+    const pageHeight = doc.internal.pageSize.height;
+
+    // Modern color palette. The original variable names are preserved because
+    // existing helpers below close over them.
+    const primaryColor = [37, 99, 235];      // blue-600 — main accent
+    const primaryDark  = [30, 64, 175];      // blue-800 — strong heading
+    const primarySoft  = [219, 234, 254];    // blue-100 — soft accent surfaces
+    const textColor    = [71, 85, 105];      // slate-600 — secondary text
+    const textStrong   = [15, 23, 42];       // slate-900 — primary text
+    const textSubtle   = [148, 163, 184];    // slate-400 — muted
+    const borderColor  = [226, 232, 240];    // slate-200
+    const lightGray    = [248, 250, 252];    // slate-50 — surface
+    const surfaceAlt   = [241, 245, 249];    // slate-100
+    const tableHeaderColor = [30, 41, 59];   // slate-800 — table header bg
+
+    // Layout constants (used by both this function and the helpers below)
+    const marginX = 20;
+    const topMargin = 32;       // continuation pages start content here (under running header)
+    const bottomMargin = 26;    // reserved at the bottom for the running footer
+
+    // ==================== COVER HEADER (page 1) ====================
+    // Top brand band — full-bleed accent strip
+    doc.setFillColor(...primaryColor);
+    doc.rect(0, 0, pageWidth, 6, 'F');
+
+    let coverY = 18;
+    let logoBottom = coverY;
+
+    // Logo top-left — fit inside max 60x24mm bounding box
+    if (logo) {
+      const maxW = 60;
+      const maxH = 24;
+      const scale = Math.min(maxW / logo.naturalW, maxH / logo.naturalH);
+      const w = logo.naturalW * scale;
+      const h = logo.naturalH * scale;
+      try {
+        doc.addImage(logo.dataUrl, logo.format, marginX, coverY, w, h, undefined, 'FAST');
+        logoBottom = coverY + h;
+      } catch (e) {
+        console.warn('Could not embed logo into PDF:', e);
+      }
+    }
+
+    // Company name top-right (right-aligned, bold)
+    if (companyName) {
       doc.setFont('helvetica', 'bold');
-      doc.text(stat.value, xPos, yPos + 4);
-      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(13);
+      doc.setTextColor(...textStrong);
+      doc.text(companyName, pageWidth - marginX, coverY + 5, { align: 'right' });
+    }
+
+    // Generated date — under company name, right-aligned, muted
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...textSubtle);
+    const dateStr = new Date().toLocaleDateString('en-US', {
+      month: 'long', day: 'numeric', year: 'numeric'
     });
-    
-    yPosition += 50;
-    
-    // Add inventory table
-    doc.setFontSize(16);
-    doc.setTextColor(...primaryColor);
-    doc.text('Inventory Items', 20, yPosition);
-    
-    yPosition += 10;
-    
-    // Prepare table data - filter out box items for main inventory table
+    doc.text(`Generated ${dateStr}`, pageWidth - marginX, coverY + 10, { align: 'right' });
+
+    // Drop below the header (logo or branding text, whichever is lower) and
+    // go straight into the info cards — the customer name lives there, and
+    // the project name shows in the running header on continuation pages.
+    coverY = Math.max(logoBottom, coverY + 12) + 12;
+
+    // ==================== INFO CARD ROW ====================
+    // Customer Name | Email | Phone | Move Date — labels above, values below
+    const fmtDate = (d) => {
+      if (!d) return '';
+      try {
+        return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      } catch (e) { return ''; }
+    };
+    const infoFields = [
+      { label: 'Customer Name', value: currentProject?.customerName || '' },
+      { label: 'Phone Number', value: currentProject?.phone || '' },
+      { label: 'E-mail Address', value: currentProject?.customerEmail || '' },
+      { label: 'Move Date', value: fmtDate(currentProject?.jobDate || currentProject?.moveDate) },
+    ];
+    const infoGap = 3;
+    const infoFullW = pageWidth - marginX * 2;
+    const infoCardW = (infoFullW - infoGap * (infoFields.length - 1)) / infoFields.length;
+    const infoCardH = 18;
+    infoFields.forEach((field, i) => {
+      const cardX = marginX + i * (infoCardW + infoGap);
+      doc.setFillColor(...lightGray);
+      doc.roundedRect(cardX, coverY, infoCardW, infoCardH, 1.5, 1.5, 'F');
+      // Label
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(...textSubtle);
+      doc.text(field.label, cardX + 3, coverY + 6);
+      // Value (truncated if too long)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(...textStrong);
+      let v = field.value || '—';
+      const vMax = infoCardW - 6;
+      let truncated = v;
+      while (doc.getTextWidth(truncated) > vMax && truncated.length > 0) truncated = truncated.slice(0, -1);
+      if (truncated !== v && truncated.length > 3) truncated = truncated.slice(0, -3) + '...';
+      doc.text(truncated, cardX + 3, coverY + 14);
+    });
+    coverY += infoCardH + 14;
+
+    // ==================== SHARED RENDERING STATE ====================
+    const startX = marginX;
+    let currentY = coverY;
+    const cellPadding = 2;
+    const rowHeight = 8;
+    // Column widths for the 7-column [Location, Item, Count, Cuft, Weight, Going, PBO/CP] layout
+    const colWidths = [25, 45, 18, 18, 20, 30, 25];
+    const totalWidth = colWidths.reduce((a, b) => a + b, 0); // 181 mm — fits within margins
     const tableHeaders = spreadsheetColumns.map(col => col.name);
+
+    // Section tint palette — light tints used as background fills for the room
+    // banner and the column header row, so each section is color-coded the
+    // same way the project page's box list and stat cards are.
+    const sectionTint = {
+      items:       [219, 234, 254], // blue-100 — matches the Items stat card
+      packed:      [254, 243, 199], // amber-100 — matches packed-box rows
+      recommended: [243, 232, 255], // purple-100 — matches recommended-box rows
+    };
+
+    // Clean modern section header: bold uppercase title + thin underline.
+    // Reserves room for header + ~30pt of content. Adds top padding so the
+    // title never crashes into the previous section's last row.
+    const drawSectionHeader = (title) => {
+      // Need ~40pt total: 12 top pad + 5 title height + 3 underline + 20 reserve
+      if (currentY + 40 > pageHeight - bottomMargin) {
+        doc.addPage();
+        currentY = topMargin;
+      } else {
+        // Top padding so the title is visually separated from prior content
+        currentY += 12;
+      }
+      // Title (baseline at currentY, so text extends slightly above)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.setTextColor(...textStrong);
+      doc.text(title.toUpperCase(), marginX, currentY);
+      // Underline
+      currentY += 3;
+      doc.setDrawColor(...borderColor);
+      doc.setLineWidth(0.3);
+      doc.line(marginX, currentY, pageWidth - marginX, currentY);
+      currentY += 8;
+    };
+
+    // ==================== SUMMARY: title + inline KPI strip ====================
+    // Reserve room
+    if (currentY + 32 > pageHeight - bottomMargin) {
+      doc.addPage();
+      currentY = topMargin;
+    }
+
+    // Light card background spanning full content width
+    const summaryFullW = pageWidth - marginX * 2;
+    const summaryCardH = 26;
+    doc.setFillColor(...lightGray);
+    doc.roundedRect(marginX, currentY, summaryFullW, summaryCardH, 2, 2, 'F');
+
+    // "SUMMARY" big text on left, vertically centered
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(...textStrong);
+    doc.text('SUMMARY', marginX + 5, currentY + 16);
+
+    // KPI strip on right — label (small grey) above value (bold)
+    const kpis = [
+      { label: 'ITEMS',  value: totalItems.toString() },
+      { label: 'BOXES',  value: totalBoxes.toString() },
+      { label: 'CU.FT.', value: totalCubicFeet.toString() },
+      { label: 'WEIGHT', value: `${totalWeight} lbs` },
+    ];
+    const kpiSlotW = 30;
+    const kpiRightEdge = pageWidth - marginX - 4;
+    kpis.forEach((kpi, i) => {
+      const rightX = kpiRightEdge - (kpis.length - 1 - i) * kpiSlotW;
+      // Label
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(...textSubtle);
+      doc.text(kpi.label, rightX, currentY + 9, { align: 'right' });
+      // Value
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(...textStrong);
+      doc.text(kpi.value, rightX, currentY + 18, { align: 'right' });
+    });
+    currentY += summaryCardH;
+
+    // Parses per-row going totals from a spreadsheet row. Returns the going
+    // quantity, going volume (cuft), and going weight, prorated for partial-going rows.
+    const getGoingTotals = (rowData) => {
+      const quantity = parseInt(rowData.cells?.col3) || rowData.quantity || 1;
+      const goingValue = rowData.cells?.col6 || 'going';
+      let goingQty = quantity;
+      if (goingValue === 'not going') {
+        goingQty = 0;
+      } else if (typeof goingValue === 'string' && goingValue.includes('(') && goingValue.includes('/')) {
+        const m = goingValue.match(/going \((\d+)\/\d+\)/);
+        goingQty = m ? parseInt(m[1]) : quantity;
+      }
+      goingQty = Math.max(0, Math.min(quantity, goingQty));
+      const displayCuft = parseFloat(rowData.cells?.col4) || 0;
+      const displayWeight = parseFloat(rowData.cells?.col5) || 0;
+      const goingCuft = quantity > 0 ? (displayCuft * goingQty) / quantity : 0;
+      const goingWeight = quantity > 0 ? (displayWeight * goingQty) / quantity : 0;
+      return { quantity, goingQty, goingCuft, goingWeight };
+    };
+
+    // Renders a flat list of spreadsheet rows grouped by Location (col1), each
+    // room as a self-contained light card with a big room name and an inline
+    // KPI strip (Items / Weight / Cu.Ft.) on the right.
+    const renderFlatRowsByRoom = (rows, sectionTitle, tintColor) => {
+      if (rows.length === 0) return;
+
+      // Group by room
+      const roomGroups = new Map();
+      rows.forEach(row => {
+        const room = String(row.cells?.col1 ?? '').trim() || 'Unspecified';
+        if (!roomGroups.has(room)) roomGroups.set(room, []);
+        roomGroups.get(room).push(row);
+      });
+      // Push "Unspecified" to the end; everything else alphabetical
+      const sortedRooms = Array.from(roomGroups.keys()).sort((a, b) => {
+        if (a === 'Unspecified') return 1;
+        if (b === 'Unspecified') return -1;
+        return a.localeCompare(b);
+      });
+
+      // Section title (clean uppercase + thin underline)
+      drawSectionHeader(sectionTitle);
+
+      // Banner geometry — banner matches the table width below it so the
+      // room banner and column header have the same left/right edges
+      const fullW = totalWidth;
+      const bannerH = 14;
+      // Tinted fill for the room banner + column header; falls back to neutral surface
+      const headerFill = tintColor || surfaceAlt;
+
+      // Draws the room "banner" card: just the room name on the section tint.
+      const drawRoomBanner = (room, _totals, continued = false) => {
+        // Page check
+        if (currentY + bannerH + rowHeight + 6 > pageHeight - bottomMargin) {
+          doc.addPage();
+          currentY = topMargin;
+        }
+        doc.setFillColor(...headerFill);
+        doc.roundedRect(marginX, currentY, fullW, bannerH, 1.5, 1.5, 'F');
+
+        // Room name
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.setTextColor(...textStrong);
+        const label = continued ? `${room}  (continued)` : room;
+        let truncatedName = label;
+        const nameMaxW = fullW - 8;
+        while (doc.getTextWidth(truncatedName) > nameMaxW && truncatedName.length > 0) {
+          truncatedName = truncatedName.slice(0, -1);
+        }
+        if (truncatedName !== label && truncatedName.length > 3) {
+          truncatedName = truncatedName.slice(0, -3) + '...';
+        }
+        doc.text(truncatedName, marginX + 4, currentY + 9);
+
+        currentY += bannerH + 1;
+      };
+
+      // Modern column header — uses the section tint as a fill
+      const drawColumnHeader = () => {
+        doc.setFillColor(...headerFill);
+        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+        doc.setTextColor(...textColor);
+        doc.setFontSize(7.5);
+        doc.setFont('helvetica', 'bold');
+        let xPos = startX;
+        tableHeaders.forEach((header, i) => {
+          doc.text(String(header || '').toUpperCase(), xPos + cellPadding, currentY + rowHeight - 2);
+          xPos += colWidths[i];
+        });
+        currentY += rowHeight;
+        doc.setFont('helvetica', 'normal');
+      };
+
+      sortedRooms.forEach((room, roomIdx) => {
+        const roomRows = roomGroups.get(room);
+
+        // Spacing between rooms
+        if (roomIdx > 0) currentY += 5;
+
+        // Banner + column header
+        drawRoomBanner(room);
+        drawColumnHeader();
+
+        // Item rows
+        roomRows.forEach((rowData, idx) => {
+          const t = getGoingTotals(rowData);
+          const isFullyNotGoing = t.goingQty === 0;
+          const isPartial = t.goingQty > 0 && t.goingQty < t.quantity;
+
+          // Row background — keep status colors but soften
+          if (isFullyNotGoing) {
+            doc.setFillColor(254, 226, 226); // rose-100
+          } else if (isPartial) {
+            doc.setFillColor(254, 243, 199); // amber-100
+          } else if (idx % 2 === 0) {
+            doc.setFillColor(255, 255, 255);
+          } else {
+            doc.setFillColor(...lightGray);
+          }
+          doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+
+          // Thin bottom divider (no vertical lines for a cleaner look)
+          doc.setDrawColor(...borderColor);
+          doc.setLineWidth(0.2);
+          doc.line(startX, currentY + rowHeight, startX + totalWidth, currentY + rowHeight);
+
+          // Cells
+          doc.setTextColor(...textStrong);
+          doc.setFontSize(8);
+          let xPos = startX;
+          spreadsheetColumns.forEach((col, i) => {
+            const raw = rowData.cells?.[col.id];
+            const text = (raw !== null && raw !== undefined) ? String(raw) : '';
+            const maxWidth = colWidths[i] - cellPadding * 2;
+            let displayText = text;
+            while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
+              displayText = displayText.slice(0, -1);
+            }
+            if (displayText !== text && displayText.length > 3) {
+              displayText = displayText.slice(0, -3) + '...';
+            }
+            doc.text(displayText, xPos + cellPadding, currentY + rowHeight - 2);
+            xPos += colWidths[i];
+          });
+          currentY += rowHeight;
+
+          // Mid-room page break: continue room on a new page with banner + header
+          if (currentY + rowHeight > pageHeight - bottomMargin) {
+            // Only break if there are more rows to draw in this room
+            const remainingInRoom = roomRows.length - idx - 1;
+            if (remainingInRoom > 0) {
+              doc.addPage();
+              currentY = topMargin;
+              drawRoomBanner(room, null, true);
+              drawColumnHeader();
+            }
+          }
+        });
+      });
+    };
+
+    // Inventory items — exclude all box types
     const inventoryOnlyRows = spreadsheetRows.filter(row =>
       row.itemType !== 'boxes_needed' &&
       row.itemType !== 'existing_box' &&
       row.itemType !== 'packed_box'
     );
-    const tableRows = inventoryOnlyRows.map(row => {
-      return spreadsheetColumns.map(col => {
-        const value = row.cells[col.id] || '';
-        // Handle going status display
-        if (col.id === 'col6' && value.includes('(')) {
-          return value; // Keep the "going (X/Y)" format
-        }
-        return value;
-      });
-    });
-    
-    // Manual table creation without autoTable
-    const startX = 20;
-    let currentY = yPosition;
-    const cellPadding = 2;
-    const rowHeight = 8;
-    
-    // Column widths - adjusted for 7 columns including new PBO/CP column
-    // [Location, Item, Count, Cuft, Weight, Going, PBO/CP]
-    const colWidths = [25, 45, 18, 18, 20, 30, 25];
-    // Total width: 181 points (fits well within PDF margins)
-    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-    
-    // Draw header
-    doc.setFillColor(...primaryColor);
-    doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    
-    let xPos = startX;
-    tableHeaders.forEach((header, i) => {
-      doc.text(String(header || ''), xPos + cellPadding, currentY + rowHeight - 2);
-      xPos += colWidths[i];
-    });
-    
-    currentY += rowHeight;
-    doc.setFont('helvetica', 'normal');
-    
-    // Draw rows
-    tableRows.forEach((row, rowIndex) => {
-      const rowData = inventoryOnlyRows[rowIndex];
-      const goingValue = rowData.cells?.col6 || 'going';
-      const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
-      
-      let goingCount = quantity;
-      if (goingValue === 'not going') {
-        goingCount = 0;
-      } else if (goingValue.includes('(') && goingValue.includes('/')) {
-        const match = goingValue.match(/going \((\d+)\/\d+\)/);
-        goingCount = match ? parseInt(match[1]) : quantity;
-      }
-      
-      const isFullyNotGoing = goingCount === 0;
-      const isPartial = goingCount > 0 && goingCount < quantity;
-      
-      // Row background
-      if (isFullyNotGoing) {
-        doc.setFillColor(254, 226, 226); // red-100
-      } else if (isPartial) {
-        doc.setFillColor(254, 249, 195); // yellow-100
-      } else if (rowIndex % 2 === 0) {
-        doc.setFillColor(...lightGray);
-      } else {
-        doc.setFillColor(255, 255, 255);
-      }
-      
-      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-      
-      // Draw cell borders
-      doc.setDrawColor(200, 200, 200);
-      doc.rect(startX, currentY, totalWidth, rowHeight, 'S');
-      
-      // Draw cell content
-      doc.setTextColor(...textColor);
-      doc.setFontSize(8);
-      
-      xPos = startX;
-      row.forEach((cell, i) => {
-        // Ensure cell is a string
-        const text = (cell !== null && cell !== undefined) ? String(cell) : '';
-        const maxWidth = colWidths[i] - cellPadding * 2;
-        
-        // Truncate text if too long
-        let displayText = text;
-        while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
-          displayText = displayText.slice(0, -1);
-        }
-        if (displayText !== text && displayText.length > 3) {
-          displayText = displayText.slice(0, -3) + '...';
-        }
-        
-        doc.text(displayText, xPos + cellPadding, currentY + rowHeight - 2);
-        
-        // Draw vertical line
-        if (i < row.length - 1) {
-          doc.line(xPos + colWidths[i], currentY, xPos + colWidths[i], currentY + rowHeight);
-        }
-        
-        xPos += colWidths[i];
-      });
-      
-      currentY += rowHeight;
-      
-      // Check if we need a new page
-      if (currentY > doc.internal.pageSize.height - 30) {
-        doc.addPage();
-        currentY = 20;
-        
-        // Redraw header on new page
-        doc.setFillColor(...primaryColor);
-        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        
-        xPos = startX;
-        tableHeaders.forEach((header, i) => {
-          doc.text(String(header || ''), xPos + cellPadding, currentY + rowHeight - 2);
-          xPos += colWidths[i];
-        });
-        
-        currentY += rowHeight;
-        doc.setFont('helvetica', 'normal');
-      }
-    });
-
-    // Helper function to render detailed box rows (original format)
-    const renderDetailedBoxRows = (boxRows, sectionTitle) => {
-      if (boxRows.length === 0) return;
-
-      // Prepare row data
-      const boxTableRows = boxRows.map(row => {
-        return spreadsheetColumns.map(col => {
-          const value = row.cells[col.id] || '';
-          if (col.id === 'col6' && value.includes('(')) {
-            return value;
-          }
-          return value;
-        });
-      });
-
-      // Check if we need a new page
-      if (currentY > doc.internal.pageSize.height - 60) {
-        doc.addPage();
-        currentY = 20;
-      } else {
-        currentY += 15;
-      }
-
-      // Section header
-      doc.setFontSize(16);
-      doc.setTextColor(...primaryColor);
-      doc.text(sectionTitle, 20, currentY);
-      currentY += 10;
-
-      // Draw header
-      doc.setFillColor(...primaryColor);
-      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-
-      let boxXPos = startX;
-      tableHeaders.forEach((header, i) => {
-        doc.text(String(header || ''), boxXPos + cellPadding, currentY + rowHeight - 2);
-        boxXPos += colWidths[i];
-      });
-
-      currentY += rowHeight;
-      doc.setFont('helvetica', 'normal');
-
-      // Draw rows
-      boxTableRows.forEach((row, rowIndex) => {
-        const rowData = boxRows[rowIndex];
-        const goingValue = rowData.cells?.col6 || 'going';
-        const quantity = rowData.quantity || parseInt(rowData.cells?.col3) || 1;
-
-        let goingCount = quantity;
-        if (goingValue === 'not going') {
-          goingCount = 0;
-        } else if (goingValue.includes('(') && goingValue.includes('/')) {
-          const match = goingValue.match(/going \((\d+)\/\d+\)/);
-          goingCount = match ? parseInt(match[1]) : quantity;
-        }
-
-        const isFullyNotGoing = goingCount === 0;
-        const isPartial = goingCount > 0 && goingCount < quantity;
-
-        // Row background
-        if (isFullyNotGoing) {
-          doc.setFillColor(254, 226, 226); // red-100
-        } else if (isPartial) {
-          doc.setFillColor(254, 249, 195); // yellow-100
-        } else if (rowIndex % 2 === 0) {
-          doc.setFillColor(...lightGray);
-        } else {
-          doc.setFillColor(255, 255, 255);
-        }
-
-        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-
-        // Draw cell borders
-        doc.setDrawColor(200, 200, 200);
-        doc.rect(startX, currentY, totalWidth, rowHeight, 'S');
-
-        // Draw cell content
-        doc.setTextColor(...textColor);
-        doc.setFontSize(8);
-
-        boxXPos = startX;
-        row.forEach((cell, i) => {
-          const text = (cell !== null && cell !== undefined) ? String(cell) : '';
-          const maxWidth = colWidths[i] - cellPadding * 2;
-
-          let displayText = text;
-          while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
-            displayText = displayText.slice(0, -1);
-          }
-          if (displayText !== text && displayText.length > 3) {
-            displayText = displayText.slice(0, -3) + '...';
-          }
-
-          doc.text(displayText, boxXPos + cellPadding, currentY + rowHeight - 2);
-
-          if (i < row.length - 1) {
-            doc.line(boxXPos + colWidths[i], currentY, boxXPos + colWidths[i], currentY + rowHeight);
-          }
-
-          boxXPos += colWidths[i];
-        });
-
-        currentY += rowHeight;
-
-        // Check if we need a new page
-        if (currentY > doc.internal.pageSize.height - 30) {
-          doc.addPage();
-          currentY = 20;
-
-          // Redraw header on new page
-          doc.setFillColor(...primaryColor);
-          doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-          doc.setTextColor(255, 255, 255);
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'bold');
-
-          boxXPos = startX;
-          tableHeaders.forEach((header, i) => {
-            doc.text(String(header || ''), boxXPos + cellPadding, currentY + rowHeight - 2);
-            boxXPos += colWidths[i];
-          });
-
-          currentY += rowHeight;
-          doc.setFont('helvetica', 'normal');
-        }
-      });
-    };
+    renderFlatRowsByRoom(inventoryOnlyRows, 'Inventory Items', sectionTint.items);
 
     // Helper function to render box summary table
-    const renderBoxSummaryTable = (items, sectionTitle, getBoxTypeFn) => {
+    const renderBoxSummaryTable = (items, sectionTitle, getBoxTypeFn, tintColor) => {
       if (items.length === 0) return;
 
       // Aggregate boxes by type (using same logic as BoxesManager)
@@ -3033,55 +3116,46 @@ useEffect(() => {
                   Math.round(data.weight) + ' lbs', goingStr, pboStr];
         });
 
-      // Check if we need a new page
-      if (currentY > doc.internal.pageSize.height - 60) {
-        doc.addPage();
-        currentY = 20;
-      } else {
-        currentY += 10;
-      }
-
-      // Section header
-      doc.setFontSize(12);
-      doc.setTextColor(...primaryColor);
-      doc.text(sectionTitle, 20, currentY);
-      currentY += 8;
+      // Section header (clean style)
+      drawSectionHeader(sectionTitle);
 
       // Summary table columns
       const summaryHeaders = ['Box Type', 'Count', 'Cu.Ft', 'Weight', 'Going', 'PBO/CP'];
       const summaryColWidths = [50, 20, 25, 30, 35, 25];
       const summaryTotalWidth = summaryColWidths.reduce((a, b) => a + b, 0);
+      const headerFill = tintColor || surfaceAlt;
 
-      // Draw header
-      doc.setFillColor(100, 116, 139); // slate-500 for summary
+      // Header row — uses the section tint as the fill
+      doc.setFillColor(...headerFill);
       doc.rect(startX, currentY, summaryTotalWidth, rowHeight, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(8);
+      doc.setTextColor(...textColor);
+      doc.setFontSize(7.5);
       doc.setFont('helvetica', 'bold');
 
       let sumXPos = startX;
       summaryHeaders.forEach((header, i) => {
-        doc.text(String(header), sumXPos + cellPadding, currentY + rowHeight - 2);
+        doc.text(String(header).toUpperCase(), sumXPos + cellPadding, currentY + rowHeight - 2);
         sumXPos += summaryColWidths[i];
       });
 
       currentY += rowHeight;
       doc.setFont('helvetica', 'normal');
 
-      // Draw summary rows
+      // Summary rows — alternating subtle stripes, thin bottom dividers, no vertical lines
       summaryRows.forEach((row, rowIndex) => {
         if (rowIndex % 2 === 0) {
-          doc.setFillColor(241, 245, 249); // slate-100
-        } else {
           doc.setFillColor(255, 255, 255);
+        } else {
+          doc.setFillColor(...lightGray);
         }
 
         doc.rect(startX, currentY, summaryTotalWidth, rowHeight, 'F');
-        doc.setDrawColor(200, 200, 200);
-        doc.rect(startX, currentY, summaryTotalWidth, rowHeight, 'S');
+        doc.setDrawColor(...borderColor);
+        doc.setLineWidth(0.2);
+        doc.line(startX, currentY + rowHeight, startX + summaryTotalWidth, currentY + rowHeight);
 
-        doc.setTextColor(...textColor);
-        doc.setFontSize(7);
+        doc.setTextColor(...textStrong);
+        doc.setFontSize(7.5);
 
         sumXPos = startX;
         row.forEach((cell, i) => {
@@ -3095,13 +3169,29 @@ useEffect(() => {
             displayText = displayText.slice(0, -3) + '...';
           }
           doc.text(displayText, sumXPos + cellPadding, currentY + rowHeight - 2);
-          if (i < row.length - 1) {
-            doc.line(sumXPos + summaryColWidths[i], currentY, sumXPos + summaryColWidths[i], currentY + rowHeight);
-          }
           sumXPos += summaryColWidths[i];
         });
 
         currentY += rowHeight;
+
+        // Page break mid-table
+        if (currentY + rowHeight > pageHeight - bottomMargin && rowIndex < summaryRows.length - 1) {
+          doc.addPage();
+          currentY = topMargin;
+          // Repeat the summary table header
+          doc.setFillColor(...headerFill);
+          doc.rect(startX, currentY, summaryTotalWidth, rowHeight, 'F');
+          doc.setTextColor(...textColor);
+          doc.setFontSize(7.5);
+          doc.setFont('helvetica', 'bold');
+          sumXPos = startX;
+          summaryHeaders.forEach((header, i) => {
+            doc.text(String(header).toUpperCase(), sumXPos + cellPadding, currentY + rowHeight - 2);
+            sumXPos += summaryColWidths[i];
+          });
+          currentY += rowHeight;
+          doc.setFont('helvetica', 'normal');
+        }
       });
     };
 
@@ -3114,293 +3204,239 @@ useEffect(() => {
     const packedBoxRows = spreadsheetRows.filter(row =>
       row.itemType === 'existing_box' || row.itemType === 'packed_box'
     );
-    renderDetailedBoxRows(packedBoxRows, 'Packed Boxes');
+    renderFlatRowsByRoom(packedBoxRows, 'Packed Boxes', sectionTint.packed);
 
     // Packed Boxes Summary
     const packedBoxItems = inventoryItems.filter(item => {
       const itemType = item.itemType || item.item_type;
       return itemType === 'existing_box' || itemType === 'packed_box';
     });
-    renderBoxSummaryTable(packedBoxItems, 'Packed Boxes Summary', getBoxType);
+    renderBoxSummaryTable(packedBoxItems, 'Packed Boxes Summary', getBoxType, sectionTint.packed);
 
     // Recommended Boxes section - detailed rows
     const recommendedBoxRows = spreadsheetRows.filter(row => row.itemType === 'boxes_needed');
-    renderDetailedBoxRows(recommendedBoxRows, 'Recommended Boxes');
+    renderFlatRowsByRoom(recommendedBoxRows, 'Recommended Boxes', sectionTint.recommended);
 
     // Recommended Boxes Summary
     const recommendedBoxItems = inventoryItems.filter(item => {
       const itemType = item.itemType || item.item_type;
       return itemType === 'boxes_needed';
     });
-    renderBoxSummaryTable(recommendedBoxItems, 'Recommended Boxes Summary', getBoxType);
+    renderBoxSummaryTable(recommendedBoxItems, 'Recommended Boxes Summary', getBoxType, sectionTint.recommended);
 
     // Add AI summaries and notes sections
     const fetchAndAddNotes = async () => {
+      // Renders a single labeled note card with a colored left accent strip.
+      // Pads the body, wraps text, and handles mid-card page breaks cleanly.
+      const renderNoteCard = (accentColor, label, body, opts = {}) => {
+        if (!body) return;
+        const innerLeft = marginX + 6;
+        const wrapWidth = pageWidth - marginX * 2 - 10;
+        const lineH = 4.5;
+        doc.setFontSize(9);
+        const lines = doc.splitTextToSize(body, wrapWidth);
+
+        const headerH = 6;
+        const padTop = 3;
+        const padBottom = 3;
+        let i = 0;
+        let isFirstChunk = true;
+
+        while (i < lines.length) {
+          // Reserve room for at least a few lines
+          if (currentY + headerH + padTop + lineH + padBottom > pageHeight - bottomMargin) {
+            doc.addPage();
+            currentY = topMargin;
+          }
+          const remaining = pageHeight - bottomMargin - currentY - headerH - padTop - padBottom;
+          const linesThatFit = Math.max(1, Math.floor(remaining / lineH));
+          const chunkLines = Math.min(linesThatFit, lines.length - i);
+          const chunkH = headerH + padTop + chunkLines * lineH + padBottom;
+
+          // Card background
+          doc.setFillColor(...lightGray);
+          doc.roundedRect(marginX, currentY, pageWidth - marginX * 2, chunkH, 1.5, 1.5, 'F');
+          // Left accent strip
+          doc.setFillColor(...accentColor);
+          doc.rect(marginX, currentY, 2.5, chunkH, 'F');
+
+          // Label (only on first chunk; subsequent chunks just continue body)
+          if (isFirstChunk) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(9);
+            doc.setTextColor(...textStrong);
+            doc.text(label, innerLeft, currentY + 5);
+            isFirstChunk = false;
+          } else {
+            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(7);
+            doc.setTextColor(...textSubtle);
+            doc.text(`${label} (continued)`, innerLeft, currentY + 5);
+          }
+
+          // Body lines
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(9);
+          doc.setTextColor(...textColor);
+          for (let k = 0; k < chunkLines; k++) {
+            doc.text(lines[i + k], innerLeft, currentY + headerH + padTop + (k + 1) * lineH - 1);
+          }
+          currentY += chunkH;
+          i += chunkLines;
+
+          if (i < lines.length) {
+            currentY += 1; // tiny gap between chunks on different pages
+          }
+        }
+        currentY += 4; // bottom spacing after the card
+      };
+
       try {
-        // First, fetch AI summaries from video recordings
+        // ==================== AI SUMMARIES ====================
         const recordingsResponse = await fetch(`/api/projects/${currentProject._id}/video-recordings`);
         if (recordingsResponse.ok) {
           const recordingsData = await recordingsResponse.json();
           const recordings = recordingsData.recordings || [];
 
-          // Extract AI summaries from completed recordings
           const aiSummaries = recordings.filter(rec =>
             rec.status === 'completed' &&
             (rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary)
           );
 
           if (aiSummaries.length > 0) {
-            // Add new page for AI summaries
-            doc.addPage();
-            let aiY = 20;
+            drawSectionHeader('AI Notes & Summaries');
 
-            // AI Summaries header
-            doc.setFontSize(16);
-            doc.setTextColor(...primaryColor);
-            doc.text('AI Generated Notes', 20, aiY);
-            aiY += 15;
-
-            // Add each AI summary
             for (const recording of aiSummaries) {
-              const pageHeight = doc.internal.pageSize.height;
-
-              // Check if we need a new page
-              if (aiY + 60 > pageHeight - 20) {
+              // Recording label
+              if (currentY + 8 > pageHeight - bottomMargin) {
                 doc.addPage();
-                aiY = 20;
-                doc.setFontSize(16);
-                doc.setTextColor(...primaryColor);
-                doc.text('AI Generated Notes (continued)', 20, aiY);
-                aiY += 15;
+                currentY = topMargin;
               }
-
-              // Video call date
+              doc.setFont('helvetica', 'bold');
               doc.setFontSize(10);
-              doc.setTextColor(...textColor);
-              doc.text(`Virtual Call - ${new Date(recording.createdAt).toLocaleDateString()}`, 20, aiY);
-              aiY += 8;
+              doc.setTextColor(...textStrong);
+              const label = `Virtual Call — ${new Date(recording.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+              doc.text(label, marginX, currentY);
+              currentY += 5;
 
-              // Transcript Summary (AI Summary)
               if (recording.transcriptAnalysisResult?.summary) {
-                // Green header for AI Summary
-                doc.setFillColor(220, 252, 231); // green-100
-                const summaryLines = doc.splitTextToSize(recording.transcriptAnalysisResult.summary, 160);
-                const summaryHeight = summaryLines.length * 5 + 12;
-
-                if (aiY + summaryHeight > pageHeight - 20) {
-                  doc.addPage();
-                  aiY = 20;
-                }
-
-                doc.roundedRect(20, aiY - 4, 170, summaryHeight, 2, 2, 'F');
-
-                doc.setFontSize(10);
-                doc.setFont('helvetica', 'bold');
-                doc.setTextColor(22, 101, 52); // green-800
-                doc.text('AI Summary', 25, aiY + 2);
-
-                doc.setFont('helvetica', 'normal');
-                doc.setTextColor(...textColor);
-                doc.setFontSize(9);
-                summaryLines.forEach((line, i) => {
-                  doc.text(line, 25, aiY + 10 + (i * 5));
-                });
-
-                aiY += summaryHeight + 5;
+                renderNoteCard([16, 185, 129], 'Call Summary', recording.transcriptAnalysisResult.summary); // emerald-500
               }
-
-              // Analysis Summary (Packing Notes)
               if (recording.analysisResult?.summary) {
-                // Blue header for Packing Notes
-                doc.setFillColor(219, 234, 254); // blue-100
-                const packingLines = doc.splitTextToSize(recording.analysisResult.summary, 160);
-                const packingHeight = packingLines.length * 5 + 12;
-
-                if (aiY + packingHeight > pageHeight - 20) {
-                  doc.addPage();
-                  aiY = 20;
-                }
-
-                doc.roundedRect(20, aiY - 4, 170, packingHeight, 2, 2, 'F');
-
-                doc.setFontSize(10);
-                doc.setFont('helvetica', 'bold');
-                doc.setTextColor(30, 64, 175); // blue-800
-                doc.text('Packing Notes', 25, aiY + 2);
-
-                doc.setFont('helvetica', 'normal');
-                doc.setTextColor(...textColor);
-                doc.setFontSize(9);
-                packingLines.forEach((line, i) => {
-                  doc.text(line, 25, aiY + 10 + (i * 5));
-                });
-
-                aiY += packingHeight + 10;
+                renderNoteCard(primaryColor, 'Packing Notes', recording.analysisResult.summary);
               }
+
+              currentY += 2;
             }
           }
         }
 
-        // Then fetch regular project notes
+        // ==================== PROJECT NOTES ====================
         const notesResponse = await fetch(`/api/projects/${currentProject._id}/notes?sortBy=priority&sortOrder=desc`);
         if (notesResponse.ok) {
           const notesData = await notesResponse.json();
           const notes = notesData.notes || [];
-          
+
           if (notes.length > 0) {
-            // Add new page for notes
-            doc.addPage();
-            let notesY = 20;
+            drawSectionHeader('Project Notes');
 
-            // Notes header
-            doc.setFontSize(16);
-            doc.setTextColor(...primaryColor);
-            doc.text('Project Notes', 20, notesY);
-            notesY += 15;
+            // Priority -> accent color mapping
+            const priorityAccent = {
+              urgent: [244, 63, 94],    // rose-500
+              high:   [245, 158, 11],   // amber-500
+              normal: [100, 116, 139],  // slate-500
+              low:    [37, 99, 235],    // blue-600
+            };
 
-            // Add each note
-            notes.forEach((note, index) => {
-              // Priority color
-              const priorityColors = {
-                urgent: [254, 226, 226], // red-100
-                high: [254, 243, 199], // orange-100
-                normal: [243, 244, 246], // gray-100
-                low: [219, 234, 254] // blue-100
-              };
-              const noteColor = priorityColors[note.priority] || priorityColors.normal;
+            const formatCategory = (cat) => {
+              if (!cat) return 'General';
+              return cat.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+            };
 
-              // Calculate content lines first
-              doc.setFontSize(10);
-              const contentLines = doc.splitTextToSize(note.content || '', 160);
-              const lineHeight = 5;
-              const titleHeight = 14;
-              // Only show badge row if there's priority or pinned status (category is now the header)
-              const badgeHeight = (note.priority && note.priority !== 'normal') || note.isPinned ? 10 : 0;
-              const headerHeight = titleHeight + badgeHeight;
-              const pageHeight = doc.internal.pageSize.height;
-              const maxContentPerPage = Math.floor((pageHeight - 50) / lineHeight);
-
-              // Check if we need a new page before starting this note
-              if (notesY + headerHeight + 30 > pageHeight - 20) {
-                doc.addPage();
-                notesY = 20;
-                doc.setFontSize(16);
-                doc.setTextColor(...primaryColor);
-                doc.text('Project Notes (continued)', 20, notesY);
-                notesY += 15;
-              }
-
-              // Note header - use category as title if no title exists
-              doc.setFontSize(12);
-              doc.setFont('helvetica', 'bold');
-              doc.setTextColor(0, 0, 0);
-
-              // Draw title background
-              doc.setFillColor(...noteColor);
-              doc.roundedRect(20, notesY - 8, 170, headerHeight, 2, 2, 'F');
-
-              // Format category for display (capitalize words, replace hyphens)
-              const formatCategory = (cat) => {
-                if (!cat) return 'General';
-                return cat.split('-').map(word =>
-                  word.charAt(0).toUpperCase() + word.slice(1)
-                ).join(' ');
-              };
-
-              // Use title if exists, otherwise use formatted category
-              const headerText = note.title || formatCategory(note.category);
-              doc.text(headerText, 25, notesY);
-
-              // Priority and pinned badges (show below header)
-              let contentStartY = notesY + 10;
-              const badges = [];
-              if (note.priority && note.priority !== 'normal') badges.push(note.priority);
-              if (note.isPinned) badges.push('pinned');
-              if (badges.length > 0) {
-                doc.setFontSize(8);
-                doc.setFont('helvetica', 'normal');
-                doc.setTextColor(...textColor);
-                doc.text(badges.join(' • ').toUpperCase(), 25, notesY + 6);
-                contentStartY = notesY + 14;
-              }
-
-              notesY += headerHeight;
-
-              // Note content (full content, wrapped, handles page breaks)
-              doc.setFontSize(10);
-              doc.setFont('helvetica', 'normal');
-
-              let lineIndex = 0;
-              while (lineIndex < contentLines.length) {
-                // Calculate how many lines fit on current page
-                const remainingPageSpace = pageHeight - 25 - notesY;
-                const linesOnThisPage = Math.floor(remainingPageSpace / lineHeight);
-                const linesToDraw = Math.min(linesOnThisPage, contentLines.length - lineIndex);
-
-                if (linesToDraw <= 0) {
-                  // Need new page
-                  doc.addPage();
-                  notesY = 20;
-                  doc.setFontSize(16);
-                  doc.setTextColor(...primaryColor);
-                  doc.text('Project Notes (continued)', 20, notesY);
-                  notesY += 15;
-                  continue;
-                }
-
-                // Draw content background for this chunk
-                const chunkHeight = linesToDraw * lineHeight + 8;
-                doc.setFillColor(...noteColor);
-                doc.rect(20, notesY - 4, 170, chunkHeight, 'F');
-
-                // Draw content lines
-                doc.setTextColor(...textColor);
-                doc.setFontSize(10);
-                for (let i = 0; i < linesToDraw; i++) {
-                  doc.text(contentLines[lineIndex + i], 25, notesY + (i * lineHeight) + 2);
-                }
-
-                lineIndex += linesToDraw;
-                notesY += chunkHeight;
-
-                // If more content remains, add page break
-                if (lineIndex < contentLines.length) {
-                  doc.addPage();
-                  notesY = 20;
-                  doc.setFontSize(16);
-                  doc.setTextColor(...primaryColor);
-                  doc.text('Project Notes (continued)', 20, notesY);
-                  notesY += 15;
-                }
-              }
-
-              notesY += 10; // Space between notes
+            notes.forEach((note) => {
+              const accent = priorityAccent[note.priority] || priorityAccent.normal;
+              const title = note.title || formatCategory(note.category);
+              let badges = '';
+              const badgeBits = [];
+              if (note.priority && note.priority !== 'normal') badgeBits.push(note.priority);
+              if (note.isPinned) badgeBits.push('pinned');
+              if (badgeBits.length > 0) badges = '  •  ' + badgeBits.join(' · ').toUpperCase();
+              renderNoteCard(accent, `${title}${badges}`, note.content || '');
             });
           }
         }
       } catch (error) {
         console.error('Error fetching notes for PDF:', error);
       }
-      
-      // Add footer
+
+      // ==================== RUNNING HEADER + FOOTER ON EVERY PAGE ====================
+      // Build a small logo data URL sized for the running header
       const pageCount = doc.internal.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
+
+        // Page 1 already has the full cover header — only the footer is added.
+        if (i > 1) {
+          // Continuation header strip
+          // Subtle bottom border at y=18
+          if (logo) {
+            const maxW = 30;
+            const maxH = 9;
+            const scale = Math.min(maxW / logo.naturalW, maxH / logo.naturalH);
+            const w = logo.naturalW * scale;
+            const h = logo.naturalH * scale;
+            try {
+              doc.addImage(logo.dataUrl, logo.format, marginX, 8, w, h, undefined, 'FAST');
+            } catch (e) {
+              // ignore — fall back to text-only header
+            }
+          } else if (companyName) {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(10);
+            doc.setTextColor(...textStrong);
+            doc.text(companyName, marginX, 14);
+          }
+          // Project name on right (truncated)
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(...textSubtle);
+          const projName = currentProject?.name || 'Inventory Report';
+          let truncatedProj = projName;
+          const projMax = pageWidth - marginX * 2 - 35;
+          while (doc.getTextWidth(truncatedProj) > projMax && truncatedProj.length > 0) {
+            truncatedProj = truncatedProj.slice(0, -1);
+          }
+          if (truncatedProj !== projName && truncatedProj.length > 3) {
+            truncatedProj = truncatedProj.slice(0, -3) + '...';
+          }
+          doc.text(truncatedProj, pageWidth - marginX, 14, { align: 'right' });
+          // Thin divider line below header
+          doc.setDrawColor(...borderColor);
+          doc.setLineWidth(0.3);
+          doc.line(marginX, 19, pageWidth - marginX, 19);
+        }
+
+        // Footer (all pages)
+        // Top border line
+        doc.setDrawColor(...borderColor);
+        doc.setLineWidth(0.3);
+        doc.line(marginX, pageHeight - 14, pageWidth - marginX, pageHeight - 14);
+        // Company name (left), or fallback
+        doc.setFont('helvetica', 'normal');
         doc.setFontSize(8);
-        doc.setTextColor(...textColor);
-        doc.text(
-          `Page ${i} of ${pageCount}`,
-          doc.internal.pageSize.width / 2,
-          doc.internal.pageSize.height - 10,
-          { align: 'center' }
-        );
+        doc.setTextColor(...textSubtle);
+        const footerLeft = companyName || 'Inventory Report';
+        doc.text(footerLeft, marginX, pageHeight - 7);
+        // Page X of Y (right)
+        doc.text(`Page ${i} of ${pageCount}`, pageWidth - marginX, pageHeight - 7, { align: 'right' });
       }
-      
+
       // Save the PDF
-      const fileName = `${currentProject?.name || 'inventory'}-${new Date().toISOString().split('T')[0]}.pdf`;
+      const safeName = (currentProject?.name || 'inventory').replace(/[^a-z0-9-_\s]/gi, '').trim() || 'inventory';
+      const fileName = `${safeName}-${new Date().toISOString().split('T')[0]}.pdf`;
       doc.save(fileName);
     };
-    
+
     // Execute the notes fetching and PDF saving
     fetchAndAddNotes();
   };
