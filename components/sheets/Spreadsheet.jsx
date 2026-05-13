@@ -233,7 +233,9 @@ export default function Spreadsheet({
   const [pboDropdownOpen, setPboDropdownOpen] = useState(false); // For bulk PBO/CP dropdown
   const [cuftModal, setCuftModal] = useState({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
 
-  // Location update dialog state
+  // Location update dialog state. `isSaving` keeps the dialog open with a
+  // spinner while we await the location PATCHes; the dialog only closes once
+  // every affected item has been persisted (or an error toast has fired).
   const [locationDialog, setLocationDialog] = useState({
     isOpen: false,
     newLocation: '',
@@ -241,7 +243,8 @@ export default function Spreadsheet({
     currentColumn: null,
     itemsFromSameMedia: [],
     currentRow: null,
-    isAddingNewRoom: false
+    isAddingNewRoom: false,
+    isSaving: false
   });
 
   // Stock inventory picker modal state
@@ -1525,8 +1528,11 @@ export default function Spreadsheet({
   }, []);
   
   // Render cell content based on column type
-  // Handle location updates with user choice
-  const handleLocationUpdate = useCallback((newLocation, currentRowId, currentColumn, updateAllFromMedia = true) => {
+  // Handle location updates with user choice.
+  // Returns a promise that resolves with { success, attempted, failed }
+  // so the dialog can await it, show a spinner, and surface partial failures
+  // to the user instead of closing optimistically while PATCHes are in flight.
+  const handleLocationUpdate = useCallback(async (newLocation, currentRowId, currentColumn, updateAllFromMedia = true) => {
     // Save scroll position before updating rows
     if (spreadsheetRef.current) {
       scrollPositionRef.current = {
@@ -1538,94 +1544,68 @@ export default function Spreadsheet({
     const currentRow = rows.find(r => r.id === currentRowId);
     const itemName = currentRow?.cells?.col2 || 'Item';
     const colId = currentColumn.id;
-    
-    let updatedRows;
-    let affectedItemCount = 1;
-    
+
+    // Resolve which rows are affected up-front so the optimistic UI update
+    // and the persistence loop use the exact same set.
+    let affectedRows;
     if (updateAllFromMedia) {
-      // Get all items from the same media source
-      const itemsFromSameMedia = rows.filter(r => {
+      affectedRows = rows.filter(r => {
         if (currentRow?.sourceImageId) {
           return r.sourceImageId === currentRow.sourceImageId;
         } else if (currentRow?.sourceVideoId) {
           return r.sourceVideoId === currentRow.sourceVideoId;
         }
-        // If no media source, only update the specific item
         return r.id === currentRowId;
       });
-      
-      affectedItemCount = itemsFromSameMedia.length;
-      
-      // Update all items from the same media
-      updatedRows = rows.map(r => {
-        if (itemsFromSameMedia.some(item => item.id === r.id)) {
-          return {
-            ...r,
-            cells: {
-              ...r.cells,
-              [colId]: newLocation
-            }
-          };
-        }
-        return r;
-      });
     } else {
-      // Update only the specific item
-      updatedRows = rows.map(r => {
-        if (r.id === currentRowId) {
-          return {
-            ...r,
-            cells: {
-              ...r.cells,
-              [colId]: newLocation
-            }
-          };
-        }
-        return r;
-      });
+      affectedRows = currentRow ? [currentRow] : [];
     }
-    
-    setRows(updatedRows);  // Immediate local update
-    onRowsChange(updatedRows);  // Sync with parent
+    const affectedItemCount = affectedRows.length;
+    const affectedIds = new Set(affectedRows.map(r => r.id));
+
+    // Optimistic local update — show the new location immediately
+    const updatedRows = rows.map(r => (
+      affectedIds.has(r.id)
+        ? { ...r, cells: { ...r.cells, [colId]: newLocation } }
+        : r
+    ));
+    setRows(updatedRows);
+    onRowsChange(updatedRows);
     setSaveStatus('saving');
 
-    // Persist location changes to InventoryItem records in the database
+    // Persist each affected item's location to the InventoryItem record.
+    // Items without an inventoryItemId (purely manual rows) are skipped.
+    let failedCount = 0;
     if (onLocationChange) {
-      if (updateAllFromMedia) {
-        // Get all items from the same media source that have inventoryItemId
-        const itemsFromSameMedia = rows.filter(r => {
-          if (currentRow?.sourceImageId) {
-            return r.sourceImageId === currentRow.sourceImageId;
-          } else if (currentRow?.sourceVideoId) {
-            return r.sourceVideoId === currentRow.sourceVideoId;
-          }
-          return r.id === currentRowId;
+      const results = await Promise.allSettled(
+        affectedRows
+          .filter(r => r.inventoryItemId)
+          .map(r => onLocationChange(r.inventoryItemId, newLocation))
+      );
+      failedCount = results.filter(r => r.status === 'rejected').length;
+      if (failedCount > 0) {
+        results.forEach(r => {
+          if (r.status === 'rejected') console.error('Location PATCH failed:', r.reason);
         });
-
-        // Update each inventory item's location in the database
-        itemsFromSameMedia.forEach(row => {
-          if (row.inventoryItemId) {
-            onLocationChange(row.inventoryItemId, newLocation);
-          }
-        });
-      } else {
-        // Update only the specific item
-        if (currentRow?.inventoryItemId) {
-          onLocationChange(currentRow.inventoryItemId, newLocation);
-        }
       }
     }
 
-    // Show appropriate toast notification
-    toast.success(
-      affectedItemCount > 1
-        ? `${affectedItemCount} items from this ${currentRow?.sourceImageId ? 'photo' : 'video'} moved to ${newLocation}`
-        : `${itemName} moved to ${newLocation}`,
-      {
-        icon: '📍',
-        duration: 2000,
-      }
-    );
+    if (failedCount === 0) {
+      toast.success(
+        affectedItemCount > 1
+          ? `${affectedItemCount} items from this ${currentRow?.sourceImageId ? 'photo' : 'video'} moved to ${newLocation}`
+          : `${itemName} moved to ${newLocation}`,
+        { icon: '📍', duration: 2000 }
+      );
+    } else {
+      toast.error(
+        failedCount === affectedItemCount
+          ? `Failed to move ${failedCount === 1 ? itemName : `${failedCount} items`} — please try again.`
+          : `Moved ${affectedItemCount - failedCount} of ${affectedItemCount} items; ${failedCount} failed.`,
+        { duration: 4000 }
+      );
+    }
+    return { attempted: affectedItemCount, failed: failedCount };
   }, [rows, setSaveStatus, onRowsChange, onLocationChange]);
 
   const renderCellContent = useCallback((colType, value, rowId, colId, row, column) => {
@@ -3247,6 +3227,8 @@ export default function Spreadsheet({
         open={locationDialog.isOpen} 
         onOpenChange={(open) => {
           if (!open) {
+            // Don't let click-outside / Esc dismiss the dialog mid-save
+            if (locationDialog.isSaving) return;
             setLocationDialog({
               isOpen: false,
               newLocation: '',
@@ -3254,7 +3236,8 @@ export default function Spreadsheet({
               currentColumn: null,
               itemsFromSameMedia: [],
               currentRow: null,
-              isAddingNewRoom: false
+              isAddingNewRoom: false,
+              isSaving: false
             });
           }
         }}
@@ -3336,6 +3319,7 @@ export default function Spreadsheet({
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => {
+                  if (locationDialog.isSaving) return;
                   setLocationDialog({
                     isOpen: false,
                     newLocation: '',
@@ -3343,17 +3327,21 @@ export default function Spreadsheet({
                     currentColumn: null,
                     itemsFromSameMedia: [],
                     currentRow: null,
-                    isAddingNewRoom: false
+                    isAddingNewRoom: false,
+                    isSaving: false
                   });
                 }}
-                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+                disabled={locationDialog.isSaving}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
+                  if (locationDialog.isSaving) return;
+
                   let finalLocation = locationDialog.newLocation;
-                  
+
                   // If adding new room, get the input value
                   if (locationDialog.isAddingNewRoom) {
                     const roomNameInput = document.getElementById('new-room-name');
@@ -3363,17 +3351,32 @@ export default function Spreadsheet({
                       return;
                     }
                   }
-                  
-                  const updateAll = locationDialog.itemsFromSameMedia.length === 1 || 
+
+                  const updateAll = locationDialog.itemsFromSameMedia.length === 1 ||
                                    document.querySelector('input[name="location-update"]:checked')?.id === 'update-all';
-                  
-                  handleLocationUpdate(
-                    finalLocation,
-                    locationDialog.currentRowId,
-                    locationDialog.currentColumn,
-                    updateAll
-                  );
-                  
+
+                  // Snapshot fields we'll need after setLocationDialog clears them
+                  const rowId = locationDialog.currentRowId;
+                  const column = locationDialog.currentColumn;
+
+                  // Mark as saving so the button shows a spinner and the dialog
+                  // stays open while the PATCHes run
+                  setLocationDialog(prev => ({ ...prev, isSaving: true }));
+
+                  let result = { attempted: 0, failed: 0 };
+                  try {
+                    result = await handleLocationUpdate(finalLocation, rowId, column, updateAll);
+                  } catch (err) {
+                    console.error('Location update threw:', err);
+                  }
+
+                  // Keep the dialog open if every item failed so the user can retry;
+                  // otherwise close it (partial-failure messaging is in the toast).
+                  if (result && result.attempted > 0 && result.failed === result.attempted) {
+                    setLocationDialog(prev => ({ ...prev, isSaving: false }));
+                    return;
+                  }
+
                   setLocationDialog({
                     isOpen: false,
                     newLocation: '',
@@ -3381,12 +3384,22 @@ export default function Spreadsheet({
                     currentColumn: null,
                     itemsFromSameMedia: [],
                     currentRow: null,
-                    isAddingNewRoom: false
+                    isAddingNewRoom: false,
+                    isSaving: false
                   });
                 }}
-                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+                disabled={locationDialog.isSaving}
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors disabled:opacity-70 disabled:cursor-not-allowed inline-flex items-center"
               >
-                {locationDialog.isAddingNewRoom ? 'Add Room' : 'Update Location'}
+                {locationDialog.isSaving && (
+                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                  </svg>
+                )}
+                {locationDialog.isSaving
+                  ? 'Saving…'
+                  : (locationDialog.isAddingNewRoom ? 'Add Room' : 'Update Location')}
               </button>
             </div>
           </div>

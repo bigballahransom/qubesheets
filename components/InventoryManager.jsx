@@ -447,9 +447,17 @@ const inventoryDataChanged = (oldItems, newItems) => {
         special_handling: item.special_handling || '', // Preserve special handling notes
         cells: {
           col1: (() => {
-            // Prioritize manual room entry from source image/video over AI-generated location
+            // The item's own `location` is the source of truth: it's what the
+            // PATCH endpoint updates when the user changes the room via the
+            // location dialog. Fall back to the source media's manualRoomEntry
+            // only when the item has no location of its own (e.g., never
+            // assigned by the AI / pre-existing data). Before this priority
+            // swap, manualRoomEntry would mask user edits on refresh, because
+            // the user's PATCH only updates item.location and not the media's
+            // manualRoomEntry — so on next page load convertItemsToRows would
+            // revert the displayed room to the old upload-time value.
             const manualRoomEntry = item.sourceImageId?.manualRoomEntry || item.sourceVideoId?.manualRoomEntry;
-            return manualRoomEntry || item.location || '';
+            return (item.location && item.location.trim()) || manualRoomEntry || '';
           })(),
           col2: item.name || '',
           col3: item.quantity?.toString() || '1',
@@ -1713,7 +1721,9 @@ useEffect(() => {
     }
   }, [currentProject]);
 
-  // Handle location updates from Spreadsheet
+  // Handle location updates from Spreadsheet.
+  // Throws on failure so the Spreadsheet's location dialog can await the
+  // persistence and surface errors instead of closing optimistically.
   const handleLocationChange = useCallback(async (inventoryItemId, newLocation) => {
     console.log(`🔄 Updating inventory item ${inventoryItemId} location to ${newLocation}`);
 
@@ -1727,21 +1737,17 @@ useEffect(() => {
     );
 
     // Persist to database
-    try {
-      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location: newLocation }),
-      });
+    const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: newLocation }),
+    });
 
-      if (!response.ok) {
-        console.error(`Failed to persist location update for item ${inventoryItemId}`);
-      } else {
-        console.log(`✅ Successfully persisted location ${newLocation} for item ${inventoryItemId}`);
-      }
-    } catch (error) {
-      console.error('Error persisting location update:', error);
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Failed to persist location for item ${inventoryItemId}: ${response.status} ${body}`);
     }
+    console.log(`✅ Successfully persisted location ${newLocation} for item ${inventoryItemId}`);
   }, [currentProject]);
 
   // Handle going status updates from Spreadsheet dropdown (without regenerating rows)
