@@ -2915,155 +2915,175 @@ useEffect(() => {
       return { quantity, goingQty, goingCuft, goingWeight };
     };
 
-    // Renders a flat list of spreadsheet rows grouped by Location (col1), each
-    // room as a self-contained light card with a big room name and an inline
-    // KPI strip (Items / Weight / Cu.Ft.) on the right.
-    const renderFlatRowsByRoom = (rows, sectionTitle, tintColor) => {
+    // Banner geometry — banner matches the table width below it so the room
+    // banner and the sub-tables share the same left/right edges
+    const bannerW = totalWidth;
+    const bannerH = 14;
+
+    // Draws a room "banner" — full-width slate strip with the room name in bold
+    const drawRoomBanner = (room, continued = false) => {
+      if (currentY + bannerH + rowHeight + 6 > pageHeight - bottomMargin) {
+        doc.addPage();
+        currentY = topMargin;
+      }
+      doc.setFillColor(...surfaceAlt);
+      doc.roundedRect(marginX, currentY, bannerW, bannerH, 1.5, 1.5, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor(...textStrong);
+      const label = continued ? `${room}  (continued)` : room;
+      let truncated = label;
+      while (doc.getTextWidth(truncated) > bannerW - 8 && truncated.length > 0) {
+        truncated = truncated.slice(0, -1);
+      }
+      if (truncated !== label && truncated.length > 3) {
+        truncated = truncated.slice(0, -3) + '...';
+      }
+      doc.text(truncated, marginX + 4, currentY + 9);
+      currentY += bannerH + 1;
+    };
+
+    // Draws a tinted column header row (LOCATION/ITEM/COUNT/... in caps)
+    const drawTintedColumnHeader = (tint) => {
+      doc.setFillColor(...(tint || surfaceAlt));
+      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+      doc.setTextColor(...textColor);
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'bold');
+      let xPos = startX;
+      tableHeaders.forEach((header, i) => {
+        doc.text(String(header || '').toUpperCase(), xPos + cellPadding, currentY + rowHeight - 2);
+        xPos += colWidths[i];
+      });
+      currentY += rowHeight;
+      doc.setFont('helvetica', 'normal');
+    };
+
+    // Draws a single data row with the right status fill + thin bottom divider
+    const drawDataRow = (rowData, idx) => {
+      const t = getGoingTotals(rowData);
+      const isFullyNotGoing = t.goingQty === 0;
+      const isPartial = t.goingQty > 0 && t.goingQty < t.quantity;
+
+      if (isFullyNotGoing) {
+        doc.setFillColor(254, 226, 226); // rose-100
+      } else if (isPartial) {
+        doc.setFillColor(254, 243, 199); // amber-100
+      } else if (idx % 2 === 0) {
+        doc.setFillColor(255, 255, 255);
+      } else {
+        doc.setFillColor(...lightGray);
+      }
+      doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+      doc.setDrawColor(...borderColor);
+      doc.setLineWidth(0.2);
+      doc.line(startX, currentY + rowHeight, startX + totalWidth, currentY + rowHeight);
+
+      doc.setTextColor(...textStrong);
+      doc.setFontSize(8);
+      let xPos = startX;
+      spreadsheetColumns.forEach((col, i) => {
+        const raw = rowData.cells?.[col.id];
+        const text = (raw !== null && raw !== undefined) ? String(raw) : '';
+        const maxWidth = colWidths[i] - cellPadding * 2;
+        let displayText = text;
+        while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
+          displayText = displayText.slice(0, -1);
+        }
+        if (displayText !== text && displayText.length > 3) {
+          displayText = displayText.slice(0, -3) + '...';
+        }
+        doc.text(displayText, xPos + cellPadding, currentY + rowHeight - 2);
+        xPos += colWidths[i];
+      });
+      currentY += rowHeight;
+    };
+
+    // Draws a small sub-section label (e.g., "Items", "Packed Boxes") above
+    // a colored column header. Skips rendering if the rows array is empty.
+    const drawRoomSubTable = (label, rows, tint, roomName) => {
+      if (rows.length === 0) return;
+      // Reserve room for: label (5) + column header (rowHeight) + at least 1 row
+      if (currentY + 5 + rowHeight * 2 + 4 > pageHeight - bottomMargin) {
+        doc.addPage();
+        currentY = topMargin;
+        // Repeat the room banner so the reader knows which room they're in
+        drawRoomBanner(roomName, true);
+      }
+
+      // Small uppercase sub-section label
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(...textColor);
+      doc.text(label.toUpperCase(), marginX + 1, currentY + 3);
+      currentY += 5;
+
+      // Column header (tinted) + rows
+      drawTintedColumnHeader(tint);
+      rows.forEach((row, idx) => {
+        drawDataRow(row, idx);
+        // Mid-table page break
+        if (currentY + rowHeight > pageHeight - bottomMargin && idx < rows.length - 1) {
+          doc.addPage();
+          currentY = topMargin;
+          drawRoomBanner(roomName, true);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(...textColor);
+          doc.text(`${label.toUpperCase()} (CONT.)`, marginX + 1, currentY + 3);
+          currentY += 5;
+          drawTintedColumnHeader(tint);
+        }
+      });
+      currentY += 3; // small gap after the sub-table
+    };
+
+    // Renders every room with its three sub-tables (Items / Packed Boxes /
+    // Recommended Boxes) so the reader sees everything for one location together.
+    const renderRoomsCombined = (allRows) => {
+      const rows = allRows.filter(r => !r.isAnalyzing);
       if (rows.length === 0) return;
 
-      // Group by room
+      // Group all rows by room
       const roomGroups = new Map();
       rows.forEach(row => {
         const room = String(row.cells?.col1 ?? '').trim() || 'Unspecified';
         if (!roomGroups.has(room)) roomGroups.set(room, []);
         roomGroups.get(room).push(row);
       });
-      // Push "Unspecified" to the end; everything else alphabetical
       const sortedRooms = Array.from(roomGroups.keys()).sort((a, b) => {
         if (a === 'Unspecified') return 1;
         if (b === 'Unspecified') return -1;
         return a.localeCompare(b);
       });
 
-      // Section title (clean uppercase + thin underline)
-      drawSectionHeader(sectionTitle);
-
-      // Banner geometry — banner matches the table width below it so the
-      // room banner and column header have the same left/right edges
-      const fullW = totalWidth;
-      const bannerH = 14;
-      // Tinted fill for the room banner + column header; falls back to neutral surface
-      const headerFill = tintColor || surfaceAlt;
-
-      // Draws the room "banner" card: just the room name on the section tint.
-      const drawRoomBanner = (room, _totals, continued = false) => {
-        // Page check
-        if (currentY + bannerH + rowHeight + 6 > pageHeight - bottomMargin) {
-          doc.addPage();
-          currentY = topMargin;
-        }
-        doc.setFillColor(...headerFill);
-        doc.roundedRect(marginX, currentY, fullW, bannerH, 1.5, 1.5, 'F');
-
-        // Room name
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(12);
-        doc.setTextColor(...textStrong);
-        const label = continued ? `${room}  (continued)` : room;
-        let truncatedName = label;
-        const nameMaxW = fullW - 8;
-        while (doc.getTextWidth(truncatedName) > nameMaxW && truncatedName.length > 0) {
-          truncatedName = truncatedName.slice(0, -1);
-        }
-        if (truncatedName !== label && truncatedName.length > 3) {
-          truncatedName = truncatedName.slice(0, -3) + '...';
-        }
-        doc.text(truncatedName, marginX + 4, currentY + 9);
-
-        currentY += bannerH + 1;
-      };
-
-      // Modern column header — uses the section tint as a fill
-      const drawColumnHeader = () => {
-        doc.setFillColor(...headerFill);
-        doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-        doc.setTextColor(...textColor);
-        doc.setFontSize(7.5);
-        doc.setFont('helvetica', 'bold');
-        let xPos = startX;
-        tableHeaders.forEach((header, i) => {
-          doc.text(String(header || '').toUpperCase(), xPos + cellPadding, currentY + rowHeight - 2);
-          xPos += colWidths[i];
-        });
-        currentY += rowHeight;
-        doc.setFont('helvetica', 'normal');
-      };
+      drawSectionHeader('Inventory by Room');
 
       sortedRooms.forEach((room, roomIdx) => {
         const roomRows = roomGroups.get(room);
+        const itemsForRoom = roomRows.filter(r =>
+          r.itemType !== 'packed_box' &&
+          r.itemType !== 'existing_box' &&
+          r.itemType !== 'boxes_needed'
+        );
+        const packedForRoom = roomRows.filter(r =>
+          r.itemType === 'packed_box' || r.itemType === 'existing_box'
+        );
+        const recommendedForRoom = roomRows.filter(r => r.itemType === 'boxes_needed');
 
         // Spacing between rooms
-        if (roomIdx > 0) currentY += 5;
+        if (roomIdx > 0) currentY += 6;
 
-        // Banner + column header
         drawRoomBanner(room);
-        drawColumnHeader();
-
-        // Item rows
-        roomRows.forEach((rowData, idx) => {
-          const t = getGoingTotals(rowData);
-          const isFullyNotGoing = t.goingQty === 0;
-          const isPartial = t.goingQty > 0 && t.goingQty < t.quantity;
-
-          // Row background — keep status colors but soften
-          if (isFullyNotGoing) {
-            doc.setFillColor(254, 226, 226); // rose-100
-          } else if (isPartial) {
-            doc.setFillColor(254, 243, 199); // amber-100
-          } else if (idx % 2 === 0) {
-            doc.setFillColor(255, 255, 255);
-          } else {
-            doc.setFillColor(...lightGray);
-          }
-          doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
-
-          // Thin bottom divider (no vertical lines for a cleaner look)
-          doc.setDrawColor(...borderColor);
-          doc.setLineWidth(0.2);
-          doc.line(startX, currentY + rowHeight, startX + totalWidth, currentY + rowHeight);
-
-          // Cells
-          doc.setTextColor(...textStrong);
-          doc.setFontSize(8);
-          let xPos = startX;
-          spreadsheetColumns.forEach((col, i) => {
-            const raw = rowData.cells?.[col.id];
-            const text = (raw !== null && raw !== undefined) ? String(raw) : '';
-            const maxWidth = colWidths[i] - cellPadding * 2;
-            let displayText = text;
-            while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
-              displayText = displayText.slice(0, -1);
-            }
-            if (displayText !== text && displayText.length > 3) {
-              displayText = displayText.slice(0, -3) + '...';
-            }
-            doc.text(displayText, xPos + cellPadding, currentY + rowHeight - 2);
-            xPos += colWidths[i];
-          });
-          currentY += rowHeight;
-
-          // Mid-room page break: continue room on a new page with banner + header
-          if (currentY + rowHeight > pageHeight - bottomMargin) {
-            // Only break if there are more rows to draw in this room
-            const remainingInRoom = roomRows.length - idx - 1;
-            if (remainingInRoom > 0) {
-              doc.addPage();
-              currentY = topMargin;
-              drawRoomBanner(room, null, true);
-              drawColumnHeader();
-            }
-          }
-        });
+        drawRoomSubTable('Items', itemsForRoom, sectionTint.items, room);
+        drawRoomSubTable('Packed Boxes', packedForRoom, sectionTint.packed, room);
+        drawRoomSubTable('Recommended Boxes', recommendedForRoom, sectionTint.recommended, room);
       });
     };
 
-    // Inventory items — exclude all box types
-    const inventoryOnlyRows = spreadsheetRows.filter(row =>
-      row.itemType !== 'boxes_needed' &&
-      row.itemType !== 'existing_box' &&
-      row.itemType !== 'packed_box'
-    );
-    renderFlatRowsByRoom(inventoryOnlyRows, 'Inventory Items', sectionTint.items);
+    // Render all rooms with their items + packed + recommended boxes together
+    renderRoomsCombined(spreadsheetRows);
 
     // Helper function to render box summary table
     const renderBoxSummaryTable = (items, sectionTitle, getBoxTypeFn, tintColor) => {
@@ -3200,24 +3220,14 @@ useEffect(() => {
       return item.box_details?.box_type || item.packed_box_details?.size || item.name || 'Unknown Box';
     };
 
-    // Packed Boxes section - detailed rows
-    const packedBoxRows = spreadsheetRows.filter(row =>
-      row.itemType === 'existing_box' || row.itemType === 'packed_box'
-    );
-    renderFlatRowsByRoom(packedBoxRows, 'Packed Boxes', sectionTint.packed);
-
-    // Packed Boxes Summary
+    // Aggregate Packed Boxes summary (totals by box type, across all rooms)
     const packedBoxItems = inventoryItems.filter(item => {
       const itemType = item.itemType || item.item_type;
       return itemType === 'existing_box' || itemType === 'packed_box';
     });
     renderBoxSummaryTable(packedBoxItems, 'Packed Boxes Summary', getBoxType, sectionTint.packed);
 
-    // Recommended Boxes section - detailed rows
-    const recommendedBoxRows = spreadsheetRows.filter(row => row.itemType === 'boxes_needed');
-    renderFlatRowsByRoom(recommendedBoxRows, 'Recommended Boxes', sectionTint.recommended);
-
-    // Recommended Boxes Summary
+    // Aggregate Recommended Boxes summary (totals by box type, across all rooms)
     const recommendedBoxItems = inventoryItems.filter(item => {
       const itemType = item.itemType || item.item_type;
       return itemType === 'boxes_needed';
