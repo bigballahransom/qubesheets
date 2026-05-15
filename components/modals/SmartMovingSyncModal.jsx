@@ -477,6 +477,15 @@ export default function SmartMovingSyncModal({
                   </p>
                 </div>
               )}
+
+              {result.attachmentError && (
+                <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5" />
+                  <p className="text-sm text-amber-700">
+                    PDF attachment: {result.attachmentError}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

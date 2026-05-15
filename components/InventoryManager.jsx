@@ -2139,7 +2139,38 @@ useEffect(() => {
       });
 
       const data = await response.json();
-      setSmartMovingSyncResult(data);
+
+      // After a successful sync, build the inventory PDF and attach it to the
+      // SmartMoving opportunity. Failures here MUST NOT fail the overall sync —
+      // they're surfaced as a warning alongside the success result.
+      let attachmentError;
+      if (data.success && data.opportunityId) {
+        try {
+          const { doc, fileName } = await buildProjectPdfDoc();
+          const dataUri = doc.output('datauristring');
+          const base64Contents = dataUri.includes(',') ? dataUri.split(',')[1] : dataUri;
+
+          const attachRes = await fetch('/api/smartmoving/upload-attachment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId: currentProject._id,
+              opportunityId: data.opportunityId,
+              base64Contents,
+              fileName
+            })
+          });
+          const attachData = await attachRes.json();
+          if (!attachRes.ok || !attachData.success) {
+            attachmentError = attachData.message || `Failed to upload PDF to SmartMoving (status ${attachRes.status})`;
+          }
+        } catch (err) {
+          console.error('SmartMoving PDF attachment error:', err);
+          attachmentError = err?.message || 'Failed to generate or upload PDF';
+        }
+      }
+
+      setSmartMovingSyncResult(attachmentError ? { ...data, attachmentError } : data);
 
       if (data.success) {
         toast.success('Successfully synced to SmartMoving!');
@@ -2656,8 +2687,10 @@ useEffect(() => {
     }
   };
 
-  // Handle downloading project as PDF
-  const handleDownloadProject = async () => {
+  // Build the project PDF in-memory and return the populated jsPDF doc.
+  // Reused by both the local "Download Project" action and the SmartMoving
+  // sync flow (which forwards the bytes to SmartMoving's attachments API).
+  const buildProjectPdfDoc = async () => {
     // Fetch branding (logo + company name) so the PDF carries the user's brand.
     // Any failure falls back to an unbranded layout.
     let brandingInfo = null;
@@ -3447,14 +3480,19 @@ useEffect(() => {
         doc.text(`Page ${i} of ${pageCount}`, pageWidth - marginX, pageHeight - 7, { align: 'right' });
       }
 
-      // Save the PDF
       const safeName = (currentProject?.name || 'inventory').replace(/[^a-z0-9-_\s]/gi, '').trim() || 'inventory';
       const fileName = `${safeName}-${new Date().toISOString().split('T')[0]}.pdf`;
-      doc.save(fileName);
+      return fileName;
     };
 
-    // Execute the notes fetching and PDF saving
-    fetchAndAddNotes();
+    const fileName = await fetchAndAddNotes();
+    return { doc, fileName };
+  };
+
+  // Existing menubar action: build the PDF and save it locally.
+  const handleDownloadProject = async () => {
+    const { doc, fileName } = await buildProjectPdfDoc();
+    doc.save(fileName);
   };
 
   // Add this component to show processing status in the header
