@@ -61,6 +61,7 @@ export interface IInventoryItem extends Document {
   videoTimestamps?: string[]; // All timestamps where this item was seen
   consolidatedFromCount?: number; // How many raw detections merged into this
   stockItemId?: mongoose.Types.ObjectId | string; // Reference to stock inventory item
+  matchedCustomTags?: string[]; // Destination tags ("Land", "Sea", "Storage", ...) - AI-suggested, mover-editable
   createdAt: Date;
   updatedAt: Date;
 }
@@ -192,6 +193,13 @@ const InventoryItemSchema: Schema = new Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'StockInventory',
       required: false,
+      index: true
+    },
+    // Destination tags assigned by the Railway video worker (and, later,
+    // editable from the spreadsheet). Empty array = no tag assigned.
+    matchedCustomTags: {
+      type: [String],
+      default: [],
       index: true
     },
   },

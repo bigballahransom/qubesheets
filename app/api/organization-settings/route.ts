@@ -1,9 +1,32 @@
 // app/api/organization-settings/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
-import OrganizationSettings from '@/models/OrganizationSettings';
+import OrganizationSettings, { DEFAULT_INVENTORY_TAGS } from '@/models/OrganizationSettings';
 import { getAuthContext } from '@/lib/auth-helpers';
 import { DEFAULT_SMS_UPLOAD_TEMPLATE, validateSMSTemplate } from '@/lib/sms-template-helpers';
+
+// Inventory-tag constraints (mirror zaksDocs/08_CUSTOM_INVENTORY_TAGS_DESIGN.md):
+// trim, drop empties, dedupe case-insensitively, cap each at 40 chars, cap list at 50.
+function sanitizeInventoryTags(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim().slice(0, 40);
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
+function effectiveInventoryTags(stored?: string[] | null): string[] {
+  return stored && stored.length > 0 ? stored : DEFAULT_INVENTORY_TAGS;
+}
 
 // GET /api/organization-settings - Get organization settings
 export async function GET(request: NextRequest) {
@@ -39,6 +62,9 @@ export async function GET(request: NextRequest) {
         videoCallReminderSmsTemplate: null,
         videoCallReminder1HourEnabled: true,
         videoCallReminder15MinEnabled: true,
+        // Custom inventory tags
+        customInventoryTags: DEFAULT_INVENTORY_TAGS,
+        showCustomInventoryTags: false,
       });
     }
 
@@ -52,6 +78,9 @@ export async function GET(request: NextRequest) {
       videoCallReminderSmsTemplate: settings.videoCallReminderSmsTemplate,
       videoCallReminder1HourEnabled: settings.videoCallReminder1HourEnabled ?? true,
       videoCallReminder15MinEnabled: settings.videoCallReminder15MinEnabled ?? true,
+      // Custom inventory tags
+      customInventoryTags: effectiveInventoryTags(settings.customInventoryTags),
+      showCustomInventoryTags: settings.showCustomInventoryTags ?? false,
     });
   } catch (error) {
     console.error('Error fetching organization settings:', error);
@@ -110,6 +139,9 @@ export async function POST(request: NextRequest) {
       ...(data.videoCallReminderSmsTemplate !== undefined && { videoCallReminderSmsTemplate: data.videoCallReminderSmsTemplate }),
       ...(data.videoCallReminder1HourEnabled !== undefined && { videoCallReminder1HourEnabled: data.videoCallReminder1HourEnabled }),
       ...(data.videoCallReminder15MinEnabled !== undefined && { videoCallReminder15MinEnabled: data.videoCallReminder15MinEnabled }),
+      // Custom inventory tags
+      ...(data.customInventoryTags !== undefined && { customInventoryTags: sanitizeInventoryTags(data.customInventoryTags) }),
+      ...(data.showCustomInventoryTags !== undefined && { showCustomInventoryTags: Boolean(data.showCustomInventoryTags) }),
     };
     
     // Use findOneAndUpdate with upsert to create or update
@@ -133,6 +165,9 @@ export async function POST(request: NextRequest) {
       videoCallReminderSmsTemplate: settings.videoCallReminderSmsTemplate,
       videoCallReminder1HourEnabled: settings.videoCallReminder1HourEnabled ?? true,
       videoCallReminder15MinEnabled: settings.videoCallReminder15MinEnabled ?? true,
+      // Custom inventory tags
+      customInventoryTags: effectiveInventoryTags(settings.customInventoryTags),
+      showCustomInventoryTags: settings.showCustomInventoryTags ?? false,
     }, { status: 200 });
   } catch (error) {
     console.error('Error saving organization settings:', error);

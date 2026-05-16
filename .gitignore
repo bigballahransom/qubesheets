@@ -44,3 +44,6 @@ next-env.d.ts
 railway-sqs-service/
 # clerk configuration (can include secrets)
 /.clerk/
+
+# local working notes (not for the shared repo)
+/notes/

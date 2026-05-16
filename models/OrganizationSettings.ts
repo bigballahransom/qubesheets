@@ -66,6 +66,14 @@ const DEFAULT_HOURLY_RATES: IHourlyRates = {
 
 export { DEFAULT_HOURLY_RATES };
 
+// Default destination tags for inventory items. Mirrors
+// zaksDocs/08_CUSTOM_INVENTORY_TAGS_DESIGN.md and the Railway worker's
+// DEFAULT_DESTINATION_TAGS. Used whenever an org has not configured its own
+// list; the schema default stays [] so existing org docs aren't rewritten.
+export const DEFAULT_INVENTORY_TAGS: string[] = [
+  'Land', 'Sea', 'Air', 'Storage', 'Junk', 'Goodwill', 'Consignment', 'Customer Keeps',
+];
+
 
 export interface IOrganizationSettings extends Document {
   organizationId: string;
@@ -100,6 +108,10 @@ export interface IOrganizationSettings extends Document {
   // Weight Configuration
   weightMode?: 'actual' | 'custom';
   customWeightMultiplier?: number;
+
+  // Custom inventory ("destination") tags
+  customInventoryTags?: string[];      // Org's tag list; empty = use DEFAULT_INVENTORY_TAGS
+  showCustomInventoryTags?: boolean;   // Whether the spreadsheet renders the Destination column
 
   // Metadata
   createdAt: Date;
@@ -202,9 +214,19 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: 7,
       min: 4,
       max: 8
+    },
+    // Custom inventory ("destination") tags. Default stays [] so existing org
+    // docs aren't rewritten; callers fall back to DEFAULT_INVENTORY_TAGS.
+    customInventoryTags: {
+      type: [String],
+      default: []
+    },
+    showCustomInventoryTags: {
+      type: Boolean,
+      default: false
     }
   },
-  { 
+  {
     timestamps: true
   }
 );
