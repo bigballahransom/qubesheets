@@ -18,6 +18,8 @@ import {
 } from './ui/tooltip';
 import EditableProjectName from './EditableProjectName';
 import AdminPhotoUploader from './AdminPhotoUploader';
+// onsite-walkthrough: launcher for the new mover-controlled QR flow
+import OnsiteWalkthroughLauncher from './onsite-walkthrough/OnsiteWalkthroughLauncher';
 import ImageGallery from './ImageGallery';
 import VideoGallery from './VideoGallery';
 import VideoProcessingStatus from './VideoProcessingStatus';
@@ -123,6 +125,8 @@ export default function InventoryManager() {
 
   const [inventoryItems, setInventoryItems] = useState([]);
   const [isUploaderOpen, setIsUploaderOpen] = useState(false);
+  // onsite-walkthrough: state for the new mover-controlled QR launcher
+  const [isOnsiteWalkthroughOpen, setIsOnsiteWalkthroughOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadedImages, setUploadedImages] = useState([]);
   const [pendingJobIds, setPendingJobIds] = useState([]);
@@ -3705,6 +3709,11 @@ const ProcessingNotification = () => {
               <MapPin size={16} className="mr-1" />
               Start On-Site Walkthrough
             </MenubarItem>
+            {/* onsite-walkthrough: menu entry for the new mover-controlled QR flow */}
+            <MenubarItem onClick={() => setIsOnsiteWalkthroughOpen(true)}>
+              <Camera size={16} className="mr-1" />
+              Onsite Walkthrough (Mover)
+            </MenubarItem>
             <MenubarItem onClick={() => setIsSendLinkModalOpen(true)}>
               <MessageSquare size={16} className="mr-1" />
               Send Customer Self-Survey Link
@@ -4087,6 +4096,16 @@ const ProcessingNotification = () => {
         </TooltipProvider>
       </div>
       
+      {/* onsite-walkthrough: launcher modal mount */}
+      {currentProject && (
+        <OnsiteWalkthroughLauncher
+          open={isOnsiteWalkthroughOpen}
+          onOpenChange={setIsOnsiteWalkthroughOpen}
+          projectId={currentProject._id}
+          projectName={currentProject.name}
+        />
+      )}
+
       {/* Photo Uploader Modal */}
       {isUploaderOpen && currentProject && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
