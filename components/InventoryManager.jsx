@@ -2146,7 +2146,10 @@ useEffect(() => {
       let attachmentError;
       if (data.success && data.opportunityId) {
         try {
-          const { doc, fileName } = await buildProjectPdfDoc();
+          // refreshFromServer: fetch the canonical inventory the server just
+          // synced, so the PDF matches even if local React state is stale
+          // (common when the user uploads then immediately clicks Sync).
+          const { doc, fileName } = await buildProjectPdfDoc({ refreshFromServer: true });
           const dataUri = doc.output('datauristring');
           const base64Contents = dataUri.includes(',') ? dataUri.split(',')[1] : dataUri;
 
@@ -2690,7 +2693,10 @@ useEffect(() => {
   // Build the project PDF in-memory and return the populated jsPDF doc.
   // Reused by both the local "Download Project" action and the SmartMoving
   // sync flow (which forwards the bytes to SmartMoving's attachments API).
-  const buildProjectPdfDoc = async () => {
+  // Pass { refreshFromServer: true } when the caller may have stale React
+  // state — e.g. immediately after an upload, before the inventory has been
+  // re-fetched. Without it, the PDF would render the pre-upload snapshot.
+  const buildProjectPdfDoc = async (opts = {}) => {
     // Fetch branding (logo + company name) so the PDF carries the user's brand.
     // Any failure falls back to an unbranded layout.
     let brandingInfo = null;
@@ -2738,6 +2744,70 @@ useEffect(() => {
 
     const logo = await loadLogo(brandingInfo?.companyLogo);
     const companyName = brandingInfo?.companyName || '';
+
+    // Resolve the inventory data the PDF will render. Default to current React
+    // state; when refreshFromServer is set, pull the canonical server copy so
+    // the PDF reflects exactly what the SmartMoving sync wrote, not a stale
+    // pre-upload render of the component.
+    let effectiveItems = inventoryItems;
+    let effectiveRows = spreadsheetRows;
+    if (opts.refreshFromServer && currentProject?._id) {
+      try {
+        const r = await fetch(`/api/projects/${currentProject._id}/inventory`);
+        if (r.ok) {
+          const freshItems = await r.json();
+          effectiveItems = freshItems;
+          effectiveRows = convertItemsToRows(freshItems);
+          // Push to state so the UI catches up too — but read from the local
+          // vars in this closure; setState won't be visible here synchronously.
+          setInventoryItems(freshItems);
+          setSpreadsheetRows(effectiveRows);
+        }
+      } catch (e) {
+        console.warn('Failed to refresh inventory before PDF generation:', e);
+      }
+    }
+
+    // Re-derive the 4 summary KPIs from effectiveRows. Mirrors the useMemo
+    // reducers (totalItems / totalBoxes / totalCubicFeet / totalWeight) so
+    // the cover card stays consistent when we bypass React state.
+    const parseGoingQty = (cells, quantity) => {
+      const goingValue = cells?.col6 || 'going';
+      let g = 0;
+      if (goingValue === 'not going') g = 0;
+      else if (goingValue === 'going') g = quantity;
+      else if (goingValue.includes('(') && goingValue.includes('/')) {
+        const m = goingValue.match(/going \((\d+)\/\d+\)/);
+        g = m ? parseInt(m[1]) : quantity;
+      } else g = quantity;
+      return Math.max(0, Math.min(quantity, g));
+    };
+    const rowIsBox = (row) => row.itemType === 'existing_box' ||
+                              row.itemType === 'boxes_needed' ||
+                              (row.cells?.col2 || '').toLowerCase().includes('box');
+    const computeKpis = (rows) => {
+      let items = 0, boxes = 0, cuft = 0, weight = 0;
+      for (const row of rows) {
+        if (row.isAnalyzing) continue;
+        const quantity = parseInt(row.cells?.col3) || 1;
+        const goingQty = parseGoingQty(row.cells, quantity);
+        const isBox = rowIsBox(row);
+        if (isBox) {
+          boxes += row.itemType === 'boxes_needed' ? quantity : goingQty;
+        } else {
+          items += goingQty;
+        }
+        const displayCuft = parseFloat(row.cells?.col4) || 0;
+        const displayWeight = parseFloat(row.cells?.col5) || 0;
+        const factor = quantity > 0 ? goingQty / quantity : 0;
+        cuft += displayCuft * factor;
+        weight += displayWeight * factor;
+      }
+      return { totalItems: items, totalBoxes: boxes, totalCubicFeet: cuft.toFixed(0), totalWeight: weight.toFixed(0) };
+    };
+    const effectiveTotals = opts.refreshFromServer
+      ? computeKpis(effectiveRows)
+      : { totalItems, totalBoxes, totalCubicFeet, totalWeight };
 
     // Create the PDF document
     const doc = new jsPDF();
@@ -2912,10 +2982,10 @@ useEffect(() => {
 
     // KPI strip on right — label (small grey) above value (bold)
     const kpis = [
-      { label: 'ITEMS',  value: totalItems.toString() },
-      { label: 'BOXES',  value: totalBoxes.toString() },
-      { label: 'CU.FT.', value: totalCubicFeet.toString() },
-      { label: 'WEIGHT', value: `${totalWeight} lbs` },
+      { label: 'ITEMS',  value: effectiveTotals.totalItems.toString() },
+      { label: 'BOXES',  value: effectiveTotals.totalBoxes.toString() },
+      { label: 'CU.FT.', value: effectiveTotals.totalCubicFeet.toString() },
+      { label: 'WEIGHT', value: `${effectiveTotals.totalWeight} lbs` },
     ];
     const kpiSlotW = 30;
     const kpiRightEdge = pageWidth - marginX - 4;
@@ -3122,7 +3192,7 @@ useEffect(() => {
     };
 
     // Render all rooms with their items + packed + recommended boxes together
-    renderRoomsCombined(spreadsheetRows);
+    renderRoomsCombined(effectiveRows);
 
     // Helper function to render box summary table
     const renderBoxSummaryTable = (items, sectionTitle, getBoxTypeFn, tintColor) => {
@@ -3260,14 +3330,14 @@ useEffect(() => {
     };
 
     // Aggregate Packed Boxes summary (totals by box type, across all rooms)
-    const packedBoxItems = inventoryItems.filter(item => {
+    const packedBoxItems = effectiveItems.filter(item => {
       const itemType = item.itemType || item.item_type;
       return itemType === 'existing_box' || itemType === 'packed_box';
     });
     renderBoxSummaryTable(packedBoxItems, 'Packed Boxes Summary', getBoxType, sectionTint.packed);
 
     // Aggregate Recommended Boxes summary (totals by box type, across all rooms)
-    const recommendedBoxItems = inventoryItems.filter(item => {
+    const recommendedBoxItems = effectiveItems.filter(item => {
       const itemType = item.itemType || item.item_type;
       return itemType === 'boxes_needed';
     });
