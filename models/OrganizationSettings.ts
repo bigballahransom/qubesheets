@@ -101,6 +101,62 @@ export interface IOrganizationSettings extends Document {
   weightMode?: 'actual' | 'custom';
   customWeightMultiplier?: number;
 
+  // Master switch for the box-recommendation step. When false, the AI is
+  // instructed to skip box recommendations entirely and return an empty
+  // boxes_needed array. Default true preserves current behavior for orgs
+  // that never touch the toggle.
+  boxRecommendationsEnabled?: boolean;
+
+  // Box Recommendation Level — discrete 1..3 dial that selects one of three
+  // hidden prompt templates used by the Railway box-recommendation step.
+  // Lower values bias the AI toward fewer boxes; higher values toward more.
+  // Default 2 ("Balanced") matches the current Railway call-segment processor
+  // baseline, so orgs that never touch the slider see no behavior change
+  // when the prompt variants are wired in. Originally designed as a 1..5
+  // scale; "Light" and "Generous" variants are commented out in the page.
+  // Ignored when boxRecommendationsEnabled is false.
+  boxRecommendationLevel?: number;
+
+  // Custom box types — when present, overrides the eight canonical defaults
+  // (lib/defaultBoxTypes.ts) for the AI prompt's "BOX TYPES" section. Movers
+  // can add their own SKUs, edit capacities, or delete defaults they don't
+  // stock. Undefined / empty means "use defaults."
+  boxTypes?: Array<{
+    id: string;
+    name: string;
+    capacityCuft: number;
+    description: string;
+  }>;
+
+  // Per-flow photo capture switches. Each flow can be toggled independently
+  // so an org can, for example, keep photos available for on-site crews while
+  // disabling them on customer-facing links. All default true; when false,
+  // the choice screen on /customer-upload/[token] hides the "Take or Upload
+  // Photos" option for that flow.
+  //   - photosEnabledGlobalLink:    /upload/[orgId] (global self-survey)
+  //   - photosEnabledCustomerLink:  per-customer SMS/email links
+  //   - photosEnabledWalkthrough:   employee on-site walkthroughs
+  photosEnabledGlobalLink?: boolean;
+  photosEnabledCustomerLink?: boolean;
+  photosEnabledWalkthrough?: boolean;
+
+  // Smart Tags — org-defined labels that can be applied to inventory items
+  // (e.g. "Fragile", "Heavy"). Each tag carries its own `mode`: "ai" means
+  // the Railway worker is allowed to apply it automatically; "manual" means
+  // it's only available for movers to apply by hand. Default per tag is
+  // "manual" so adding a tag never silently turns on AI behavior.
+  //
+  // `smartTagsMode` is the legacy org-wide switch. Kept for backwards
+  // compatibility — no longer surfaced in the UI; new per-tag `mode` field
+  // is the source of truth.
+  smartTagsMode?: 'ai' | 'manual';
+  smartTags?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    mode: 'ai' | 'manual';
+  }>;
+
   // Metadata
   createdAt: Date;
   updatedAt: Date;
@@ -202,6 +258,53 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: 7,
       min: 4,
       max: 8
+    },
+    boxRecommendationsEnabled: {
+      type: Boolean,
+      default: true
+    },
+    boxRecommendationLevel: {
+      type: Number,
+      default: 2,
+      min: 1,
+      max: 3
+    },
+    boxTypes: {
+      type: [{
+        id: { type: String, required: true },
+        name: { type: String, required: true },
+        capacityCuft: { type: Number, required: true, min: 0 },
+        description: { type: String, default: '' }
+      }],
+      required: false,
+      default: undefined
+    },
+    photosEnabledGlobalLink: {
+      type: Boolean,
+      default: true
+    },
+    photosEnabledCustomerLink: {
+      type: Boolean,
+      default: true
+    },
+    photosEnabledWalkthrough: {
+      type: Boolean,
+      default: true
+    },
+    smartTagsMode: {
+      type: String,
+      enum: ['ai', 'manual'],
+      default: 'manual'
+    },
+    smartTags: {
+      type: [{
+        id: { type: String, required: true },
+        name: { type: String, required: true },
+        description: { type: String, default: '' },
+        mode: { type: String, enum: ['ai', 'manual'], default: 'manual' }
+      }],
+      required: false,
+      default: undefined
     }
   },
   { 

@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { GoogleGenAI, Session, LiveServerMessage, Modality, MediaResolution, Type } from '@google/genai';
+import { DEFAULT_BOX_TYPES, type BoxType } from '@/lib/defaultBoxTypes';
 
 interface InventoryItem {
   id: string;
@@ -45,6 +46,48 @@ export function useGeminiLiveInventory(projectId: string, recordingSessionId?: s
   const waitingForResponseRef = useRef(false);
   const latestFrameRef = useRef<string | null>(null);
   const recordingSessionIdRef = useRef<string | undefined>(recordingSessionId);
+
+  // Org's box-recommendation config. Fetched on mount so the live AI uses the
+  // org's custom box types (names, capacities) and respects the
+  // "boxRecommendationsEnabled" master switch. Defaults match the canonical
+  // baseline so video-call inventory still works for personal accounts and
+  // for orgs that haven't visited /settings/box-types yet.
+  const [orgBoxTypes, setOrgBoxTypes] = useState<BoxType[]>(DEFAULT_BOX_TYPES);
+  const [boxRecsEnabled, setBoxRecsEnabled] = useState<boolean>(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [recsRes, typesRes] = await Promise.all([
+          fetch('/api/settings/box-recommendations'),
+          fetch('/api/settings/box-types')
+        ]);
+        if (cancelled) return;
+        if (recsRes.ok) {
+          const recsData = await recsRes.json();
+          if (recsData && recsData.boxRecommendationsEnabled === false) {
+            setBoxRecsEnabled(false);
+          } else {
+            setBoxRecsEnabled(true);
+          }
+        }
+        if (typesRes.ok) {
+          const typesData = await typesRes.json();
+          if (Array.isArray(typesData?.boxTypes) && typesData.boxTypes.length > 0) {
+            setOrgBoxTypes(typesData.boxTypes);
+          }
+        }
+      } catch (err) {
+        // Personal accounts return 403 on these endpoints; defaults already
+        // applied, so nothing to do.
+        if (!cancelled) {
+          console.log('Gemini Live: Using default box-types (could not load org config):', err);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Keep recordingSessionId ref in sync
   useEffect(() => {
@@ -99,8 +142,29 @@ export function useGeminiLiveInventory(projectId: string, recordingSessionId?: s
     inventoryRef.current = state.inventory;
   }, [state.inventory]);
 
-  // System instruction for inventory detection - aligned with railway-video-service
-  const systemInstruction = `You are an expert moving consultant analyzing images for moving inventory. If items are partially visible, make your best guess of what is there.
+  // System instruction for inventory detection - aligned with
+  // railway-video-service. The BOXES NEEDED section is rebuilt from the
+  // org's box-types config (custom names + capacities) or replaced with a
+  // disabled stub when the org has turned box recommendations off.
+  const boxesNeededSection = useMemo(() => {
+    if (!boxRecsEnabled) {
+      return `BOXES NEEDED: DISABLED for this organization. Do NOT propose any boxes_needed entries — the boxes_needed array must remain empty. Continue capturing furniture_items and packed_boxes normally.`;
+    }
+    const lines = orgBoxTypes
+      .map((b) => {
+        const cap = b.capacityCuft % 1 === 0 ? b.capacityCuft.toFixed(1) : String(b.capacityCuft);
+        const desc = b.description ? ` (${b.description})` : '';
+        return `  * "${b.name}": ${cap} cuft${desc}`;
+      })
+      .join('\n');
+    return `BOXES NEEDED for loose/unpacked items:
+- If you see kitchen cabinets, bathroom cabinets, closets - assume they are full of items needing packing
+- Available box types with EXACT capacities:
+${lines}
+- Never exceed 50 lbs per box - use smaller boxes for heavy items`;
+  }, [orgBoxTypes, boxRecsEnabled]);
+
+  const systemInstruction = useMemo(() => `You are an expert moving consultant analyzing images for moving inventory. If items are partially visible, make your best guess of what is there.
 
 CRITICAL QUANTITY COUNTING RULES:
 - When you see MULTIPLE IDENTICAL items (e.g., 5 office chairs, 3 nightstands), return ONE entry with the actual quantity in the "quantity" field
@@ -119,76 +183,80 @@ PACKED BOXES (containers visible in the image):
 - Include containers that are taped shut, partially open, or fully open
 - Estimate size: Small/Medium/Large/Extra Large based on apparent dimensions
 
-BOXES NEEDED for loose/unpacked items:
-- If you see kitchen cabinets, bathroom cabinets, closets - assume they are full of items needing packing
-- Available box types with EXACT capacities:
-  * "Book Box": 1.0 cuft (for books, tools, heavy items >40 lbs)
-  * "Small Box": 1.5 cuft (canned goods, small heavy items, files)
-  * "Medium Box": 3.0 cuft (kitchen items, toys, small appliances)
-  * "Large Box": 4.5 cuft (lightweight bulky items, linens, lampshades)
-  * "Extra Large Box": 6.0 cuft (comforters, pillows, coats, very light items)
-  * "Wardrobe Box": 12.0 cuft (hanging clothes only)
-  * "Dish Pack": 5.2 cuft (dishes, glassware, fragile kitchen items)
-  * "Picture Box": 4.5 cuft (artwork, mirrors, framed pictures)
-- Never exceed 50 lbs per box - use smaller boxes for heavy items
+${boxesNeededSection}
 
-Be specific and detailed in item names (e.g., '4-Drawer Dresser' not just 'Dresser', 'L-Shaped Sectional Sofa' not just 'Sofa').`;
+Be specific and detailed in item names (e.g., '4-Drawer Dresser' not just 'Dresser', 'L-Shaped Sectional Sofa' not just 'Sofa').`, [boxesNeededSection]);
 
-  // Function declaration for inventory recording
-  const inventoryFunctionDeclaration = {
-    name: "record_inventory",
-    description: "Record inventory items detected in the video. Call this whenever you see furniture, boxes, or items that need packing.",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        action: { type: Type.STRING, enum: ["add", "update", "remove"], description: "Action to take on inventory" },
-        room: { type: Type.STRING, description: "Room where items are seen (Living Room, Kitchen, Bedroom, etc.)" },
-        furniture_items: {
-          type: Type.ARRAY,
-          description: "Large items that don't need boxes",
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING, description: "Specific item name (e.g., '4-Drawer Dresser', 'L-Shaped Sectional Sofa')" },
-              quantity: { type: Type.NUMBER, description: "Number of identical items" },
-              cuft: { type: Type.NUMBER, description: "Cubic feet per item" },
-              weight: { type: Type.NUMBER, description: "Estimated weight in lbs per item" },
-              special_handling: { type: Type.STRING, description: "Any special requirements" }
-            },
-            required: ["name", "quantity", "cuft", "weight"]
-          }
-        },
-        packed_boxes: {
-          type: Type.ARRAY,
-          description: "Boxes or containers already present in the space",
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              size: { type: Type.STRING, enum: ["Small", "Medium", "Large", "Extra Large"], description: "Box size" },
-              label: { type: Type.STRING, description: "Visible label or contents description" },
-              quantity: { type: Type.NUMBER, description: "Number of similar boxes" }
-            },
-            required: ["size", "quantity"]
-          }
-        },
-        boxes_needed: {
-          type: Type.ARRAY,
-          description: "Boxes needed for loose items that require packing",
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              box_type: { type: Type.STRING, enum: ["Book Box", "Small Box", "Medium Box", "Large Box", "Extra Large Box", "Wardrobe Box", "Dish Pack", "Picture Box"], description: "Type of box needed" },
-              quantity: { type: Type.NUMBER, description: "Number of boxes needed" },
-              capacity_cuft: { type: Type.NUMBER, description: "Exact capacity: Book Box=1.0, Small=1.5, Medium=3.0, Large=4.5, Extra Large=6.0, Wardrobe=12.0, Dish Pack=5.2, Picture=4.5" },
-              for_items: { type: Type.STRING, description: "What items these boxes are for" }
-            },
-            required: ["box_type", "quantity", "capacity_cuft", "for_items"]
-          }
+  // Function declaration for inventory recording.
+  // The box_type enum is built from the org's saved box types so custom
+  // entries are first-class. When the org has switched box recommendations
+  // off, the boxes_needed property is omitted entirely — the AI literally
+  // cannot return any.
+  const inventoryFunctionDeclaration = useMemo(() => {
+    const properties: any = {
+      action: { type: Type.STRING, enum: ["add", "update", "remove"], description: "Action to take on inventory" },
+      room: { type: Type.STRING, description: "Room where items are seen (Living Room, Kitchen, Bedroom, etc.)" },
+      furniture_items: {
+        type: Type.ARRAY,
+        description: "Large items that don't need boxes",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "Specific item name (e.g., '4-Drawer Dresser', 'L-Shaped Sectional Sofa')" },
+            quantity: { type: Type.NUMBER, description: "Number of identical items" },
+            cuft: { type: Type.NUMBER, description: "Cubic feet per item" },
+            weight: { type: Type.NUMBER, description: "Estimated weight in lbs per item" },
+            special_handling: { type: Type.STRING, description: "Any special requirements" }
+          },
+          required: ["name", "quantity", "cuft", "weight"]
         }
       },
-      required: ["action", "room"]
+      packed_boxes: {
+        type: Type.ARRAY,
+        description: "Boxes or containers already present in the space",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            size: { type: Type.STRING, enum: ["Small", "Medium", "Large", "Extra Large"], description: "Box size" },
+            label: { type: Type.STRING, description: "Visible label or contents description" },
+            quantity: { type: Type.NUMBER, description: "Number of similar boxes" }
+          },
+          required: ["size", "quantity"]
+        }
+      }
+    };
+
+    if (boxRecsEnabled && orgBoxTypes.length > 0) {
+      properties.boxes_needed = {
+        type: Type.ARRAY,
+        description: "Boxes needed for loose items that require packing",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            box_type: {
+              type: Type.STRING,
+              enum: orgBoxTypes.map((b) => b.name),
+              description: "Type of box needed — must be one of the listed options"
+            },
+            quantity: { type: Type.NUMBER, description: "Number of boxes needed" },
+            capacity_cuft: { type: Type.NUMBER, description: "Exact capacity in cuft for the chosen box_type (see system instructions for the per-type values)" },
+            for_items: { type: Type.STRING, description: "What items these boxes are for" }
+          },
+          required: ["box_type", "quantity", "capacity_cuft", "for_items"]
+        }
+      };
     }
-  };
+
+    return {
+      name: "record_inventory",
+      description: "Record inventory items detected in the video. Call this whenever you see furniture, boxes, or items that need packing.",
+      parameters: {
+        type: Type.OBJECT,
+        properties,
+        required: ["action", "room"]
+      }
+    };
+  }, [orgBoxTypes, boxRecsEnabled]);
 
   // Handle inventory update from function call
   const handleInventoryUpdate = useCallback((args: any) => {
@@ -458,7 +526,7 @@ CRITICAL: Wait for video input before reporting any inventory. Call record_inven
       console.error('Gemini Live: Connection failed:', error);
       setState(s => ({ ...s, error: error.message || 'Connection failed' }));
     }
-  }, [handleServerMessage, systemInstruction]);
+  }, [handleServerMessage, systemInstruction, inventoryFunctionDeclaration]);
 
   // Start streaming video frames
   const startStreaming = useCallback(async (videoTrack: MediaStreamTrack) => {

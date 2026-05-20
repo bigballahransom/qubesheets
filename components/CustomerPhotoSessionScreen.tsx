@@ -2,16 +2,15 @@
 
 // components/CustomerPhotoSessionScreen.tsx
 //
-// Replaces the legacy "Upload Photos" view in the customer-upload flow with
-// a single combined screen that lets the customer either:
-//   1. Take photos with an in-page camera (similar visual language to the
-//      LiveKit recorder, but with a still-image shutter), or
+// Combined capture/pick screen for the customer-upload flow. The customer can:
+//   1. Take photos with an in-page camera, or
 //   2. Pick existing photos from their device (image/* only — no video).
 //
-// Photos are uploaded in the background as they're captured/picked. When the
-// customer taps "I'm Done", we POST /upload-session/finish which fires
-// exactly one "{customer} finished uploading N photos" SMS to the moving
-// company, regardless of how many photos were in the batch.
+// Photos are held on-device until the customer taps "I'm Done." Only then
+// does the batch upload to /api/customer-upload/[token]/upload, followed by
+// a single POST to /upload-session/finish which fires exactly one SMS to the
+// moving company regardless of how many photos were in the batch. The defer
+// is what lets the customer remove a photo before any processing happens.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -45,7 +44,12 @@ interface CustomerPhotoSessionScreenProps {
   walkthroughReturnUrl?: string;
 }
 
-type StagedPhotoStatus = 'queued' | 'uploading' | 'uploaded' | 'failed';
+// 'pending'   — picked/captured by the customer, sitting on-device only.
+// 'queued'    — promoted by "I'm Done", waiting for a free upload slot.
+// 'uploading' — POST in flight.
+// 'uploaded'  — server returned an Image._id.
+// 'failed'    — last upload attempt errored; tap to retry or X to drop.
+type StagedPhotoStatus = 'pending' | 'queued' | 'uploading' | 'uploaded' | 'failed';
 
 interface StagedPhoto {
   /** Local id (not the server's imageId). */
@@ -86,27 +90,51 @@ export function CustomerPhotoSessionScreen({
   // finishing, so each finalize-fire is its own session.
   const [uploadSessionId, setUploadSessionId] = useState<string>(() => newSessionId());
   const [photos, setPhotos] = useState<StagedPhoto[]>([]);
-  const [screen, setScreen] = useState<'capturing' | 'finalizing' | 'success'>('capturing');
+  const [screen, setScreen] = useState<'capturing' | 'submitting' | 'finalizing' | 'success'>('capturing');
   const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [finalizedCount, setFinalizedCount] = useState<number>(0);
+  // True while the post-"I'm Done" upload pump is running. Disables the
+  // shutter / library / remove buttons and switches the Done button into
+  // its progress label.
+  const [isSubmitting, setIsSubmitting] = useState(false);
   // Increments on every "Upload more" reset so the file-input remounts and
   // its internal "selected files" state resets.
   const [pickerKey, setPickerKey] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inFlightRef = useRef<number>(0);
-  // Queue of full photo objects waiting to upload. Storing the StagedPhoto
-  // directly (instead of just its id) avoids a race where the upload pumper
-  // would run before React committed the new photo to state, find nothing
-  // in a ref, and silently bail — leaving the thumbnail spinning forever.
-  // Captures from the in-page camera triggered this race consistently
-  // because they fire much faster than picker uploads.
+  // Queue of full photo objects waiting to upload. Populated by handleDone
+  // (initial batch) and handleRetry (single-photo retries). Storing the full
+  // StagedPhoto rather than its id avoids reading partially-committed React
+  // state inside the pump.
   const queueRef = useRef<StagedPhoto[]>([]);
-  // Mirror of `photos` used only by the unmount cleanup effect to revoke
-  // any thumbnail object URLs (state can't be safely read inside a cleanup
-  // function once the component has begun tearing down).
+  // Mirror of `photos` used by the unmount cleanup (state can't be safely
+  // read inside a cleanup once the component is tearing down) and by
+  // handleDone (which needs the latest snapshot to evaluate post-pump state
+  // without waiting for a render cycle).
   const photosRef = useRef<StagedPhoto[]>([]);
   useEffect(() => { photosRef.current = photos; }, [photos]);
+  // Re-entrancy guard for handleDone — React state updates aren't atomic, so
+  // a double-tap of "I'm Done" within the same tick would otherwise start
+  // two parallel upload pumps.
+  const isSubmittingRef = useRef(false);
+  // True once "I'm Done" has been tapped at least once in this session.
+  // After the first attempt, subsequent taps are permissive: if any photos
+  // uploaded successfully we proceed to /finish even when some failed.
+  const hasAttemptedSubmitRef = useRef(false);
+  // Resolved by the pump when both inFlight and queue reach zero. Lets
+  // handleDone await a settled state without polling.
+  const drainResolversRef = useRef<Array<() => void>>([]);
+
+  const waitForDrain = useCallback((): Promise<void> => {
+    return new Promise((resolve) => {
+      if (inFlightRef.current === 0 && queueRef.current.length === 0) {
+        resolve();
+        return;
+      }
+      drainResolversRef.current.push(resolve);
+    });
+  }, []);
 
   const {
     status: cameraStatus,
@@ -153,11 +181,11 @@ export function CustomerPhotoSessionScreen({
     };
   }, []);
 
+  const pendingCount = useMemo(() => photos.filter((p) => p.status === 'pending').length, [photos]);
   const inFlightCount = useMemo(() => photos.filter((p) => p.status === 'uploading').length, [photos]);
   const uploadedCount = useMemo(() => photos.filter((p) => p.status === 'uploaded').length, [photos]);
   const queuedCount = useMemo(() => photos.filter((p) => p.status === 'queued').length, [photos]);
   const failedCount = useMemo(() => photos.filter((p) => p.status === 'failed').length, [photos]);
-  const canFinish = uploadedCount > 0 && inFlightCount === 0 && queuedCount === 0;
 
   // Upload pump: takes the StagedPhoto object directly, so it never has to
   // look up state through a ref that may not be committed yet.
@@ -195,6 +223,11 @@ export function CustomerPhotoSessionScreen({
     } finally {
       inFlightRef.current = Math.max(0, inFlightRef.current - 1);
       pumpQueue();
+      if (inFlightRef.current === 0 && queueRef.current.length === 0 && drainResolversRef.current.length > 0) {
+        const resolvers = drainResolversRef.current;
+        drainResolversRef.current = [];
+        resolvers.forEach((r) => r());
+      }
     }
   }, [uploadSessionId, uploadToken]);
 
@@ -212,15 +245,11 @@ export function CustomerPhotoSessionScreen({
       id: newLocalId(),
       file: f,
       thumbUrl: URL.createObjectURL(f),
-      status: 'queued' as const
+      status: 'pending' as const
     }));
 
     setPhotos((prev) => [...prev, ...newPhotos]);
-    queueRef.current.push(...newPhotos);
-    // Pump synchronously — no React state lookup needed since the queue
-    // holds the full photo objects.
-    pumpQueue();
-  }, [pumpQueue]);
+  }, []);
 
   const handleCapture = useCallback(async () => {
     try {
@@ -261,38 +290,82 @@ export function CustomerPhotoSessionScreen({
   }, [pumpQueue]);
 
   const handleDone = useCallback(async () => {
-    if (!canFinish || screen !== 'capturing') return;
+    if (isSubmittingRef.current || screen !== 'capturing') return;
+    if (photosRef.current.length === 0) return;
 
-    setScreen('finalizing');
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
     setFinalizeError(null);
-
-    // Release the camera before posting finish so iOS drops the indicator.
+    setScreen('submitting');
+    // Drop the iOS recording indicator while we upload — the customer is no
+    // longer capturing. The capture screen re-inits the camera if we have to
+    // fall back (partial failure, all-failed, /finish error).
     cleanupCamera();
 
-    const photoCount = uploadedCount;
+    const pending = photosRef.current.filter((p) => p.status === 'pending');
+    if (pending.length > 0) {
+      setPhotos((prev) => prev.map((p) => (p.status === 'pending' ? { ...p, status: 'queued' as const } : p)));
+      queueRef.current.push(...pending);
+      pumpQueue();
+    }
+
+    await waitForDrain();
+
+    const after = photosRef.current;
+    const uploadedAfter = after.filter((p) => p.status === 'uploaded').length;
+    const failedAfter = after.filter((p) => p.status === 'failed').length;
+
+    // First attempt with at least one success but some failures: stop and let
+    // the customer decide (retry, remove, or tap Done again to proceed with
+    // what uploaded). Subsequent taps are permissive and continue to /finish.
+    if (failedAfter > 0 && uploadedAfter > 0 && !hasAttemptedSubmitRef.current) {
+      hasAttemptedSubmitRef.current = true;
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+      setScreen('capturing');
+      initCamera();
+      return;
+    }
+
+    if (uploadedAfter === 0) {
+      hasAttemptedSubmitRef.current = true;
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+      setFinalizeError(
+        failedAfter > 0
+          ? 'All uploads failed. Tap the ⚠ on any photo to retry, or remove and try again.'
+          : 'No photos to upload.'
+      );
+      setScreen('capturing');
+      initCamera();
+      return;
+    }
+
+    setScreen('finalizing');
 
     try {
       const res = await fetch(`/api/customer-upload/${uploadToken}/upload-session/finish`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uploadSessionId, photoCount })
+        body: JSON.stringify({ uploadSessionId, photoCount: uploadedAfter })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data?.error || `Finish failed (HTTP ${res.status})`);
       }
-      // Server returns the verified count (matched Image docs); prefer it.
-      const serverCount = typeof data?.photoCount === 'number' ? data.photoCount : photoCount;
+      const serverCount = typeof data?.photoCount === 'number' ? data.photoCount : uploadedAfter;
       setFinalizedCount(serverCount);
       setScreen('success');
     } catch (err: any) {
       console.error('finish failed', err);
       setFinalizeError(err?.message || 'Could not complete the upload session. Please try again.');
       setScreen('capturing');
-      // Re-init camera so the user can keep going if they want.
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+      hasAttemptedSubmitRef.current = true;
       initCamera();
     }
-  }, [canFinish, screen, cleanupCamera, uploadedCount, uploadToken, uploadSessionId, initCamera]);
+  }, [screen, pumpQueue, waitForDrain, cleanupCamera, uploadToken, uploadSessionId, initCamera]);
 
   const handleUploadMore = useCallback(() => {
     // Revoke any existing thumb URLs to avoid leaking object URLs between
@@ -313,6 +386,10 @@ export function CustomerPhotoSessionScreen({
     setPhotos([]);
     queueRef.current = [];
     inFlightRef.current = 0;
+    drainResolversRef.current = [];
+    isSubmittingRef.current = false;
+    hasAttemptedSubmitRef.current = false;
+    setIsSubmitting(false);
     setUploadSessionId(newSessionId());
     setFinalizeError(null);
     setFinalizedCount(0);
@@ -382,7 +459,31 @@ export function CustomerPhotoSessionScreen({
   }
 
   // ──────────────────────────────────────────────────────────────────────
-  // Render: finalizing (brief loading state between Done tap and success)
+  // Render: submitting (uploading the batch after "I'm Done")
+  // ──────────────────────────────────────────────────────────────────────
+  if (screen === 'submitting') {
+    const submitTotal = pendingCount + queuedCount + inFlightCount + uploadedCount;
+    return (
+      <div
+        className="fixed inset-0 flex flex-col bg-gray-900 text-white items-center justify-center p-6 text-center"
+        style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
+      >
+        <Loader2 className="w-14 h-14 animate-spin text-blue-500 mb-6" />
+        <h2 className="text-xl font-semibold mb-2">We&apos;re on it</h2>
+        <p className="text-gray-300 max-w-xs">
+          Uploading your photos — please do not leave the screen.
+        </p>
+        {submitTotal > 0 && (
+          <p className="text-gray-500 text-sm mt-5">
+            {uploadedCount} of {submitTotal} uploaded
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Render: finalizing (brief loading state between uploads and success)
   // ──────────────────────────────────────────────────────────────────────
   if (screen === 'finalizing') {
     return (
@@ -406,7 +507,8 @@ export function CustomerPhotoSessionScreen({
   // Mirrors SelfServeRecorderLiveKit's layout: the camera fills the entire
   // viewport edge-to-edge, and all controls float on top with a translucent
   // gradient backdrop so the camera stays visible behind them.
-  const isUploading = inFlightCount > 0 || queuedCount > 0;
+  const submitTarget = pendingCount + queuedCount + inFlightCount + uploadedCount;
+  const doneCount = pendingCount + uploadedCount;
 
   return (
     <div
@@ -447,33 +549,33 @@ export function CustomerPhotoSessionScreen({
       )}
 
       {/* Top-right: floating "I'm Done" button. Conventional iOS-style
-          finish-action placement; appears once at least one photo is uploaded
-          and all in-flight uploads have settled. */}
+          finish-action placement; appears once the customer has at least one
+          photo selected or uploaded. */}
       <div
         className="absolute top-0 right-0 z-20 px-3"
         style={{ paddingTop: 'calc(env(safe-area-inset-top) + 10px)' }}
       >
-        {uploadedCount > 0 && (
+        {doneCount > 0 && (
           <Button
             onClick={handleDone}
-            disabled={!canFinish}
+            disabled={isSubmitting}
             size="sm"
             className={cn(
               'h-10 px-4 rounded-full font-semibold shadow-lg',
-              canFinish
-                ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                : 'bg-gray-700/80 text-gray-300 cursor-not-allowed'
+              isSubmitting
+                ? 'bg-gray-700/80 text-gray-300 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
             )}
           >
-            {isUploading ? (
+            {isSubmitting ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                {uploadedCount}/{photos.length}
+                {uploadedCount}/{submitTarget}
               </span>
             ) : (
               <span className="flex items-center gap-2">
                 I&apos;m Done
-                <span className="bg-white/20 px-1.5 py-0.5 rounded-full text-xs">{uploadedCount}</span>
+                <span className="bg-white/20 px-1.5 py-0.5 rounded-full text-xs">{doneCount}</span>
               </span>
             )}
           </Button>
@@ -514,6 +616,7 @@ export function CustomerPhotoSessionScreen({
               <ThumbCard
                 key={photo.id}
                 photo={photo}
+                isSubmitting={isSubmitting}
                 onRemove={() => handleRemove(photo.id)}
                 onRetry={() => handleRetry(photo)}
               />
@@ -538,7 +641,8 @@ export function CustomerPhotoSessionScreen({
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white active:bg-black/60"
+          disabled={isSubmitting}
+          className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white active:bg-black/60 disabled:opacity-30"
           aria-label="Pick photos from your library"
         >
           <Images className="w-5 h-5" />
@@ -557,10 +661,10 @@ export function CustomerPhotoSessionScreen({
         <button
           type="button"
           onClick={handleCapture}
-          disabled={!cameraReady}
+          disabled={!cameraReady || isSubmitting}
           className={cn(
             'w-[74px] h-[74px] rounded-full flex items-center justify-center transition-transform active:scale-95',
-            cameraReady ? 'bg-transparent' : 'bg-transparent opacity-50 cursor-not-allowed'
+            cameraReady && !isSubmitting ? 'bg-transparent' : 'bg-transparent opacity-50 cursor-not-allowed'
           )}
           aria-label="Capture photo"
         >
@@ -573,7 +677,7 @@ export function CustomerPhotoSessionScreen({
         <button
           type="button"
           onClick={flipCamera}
-          disabled={!cameraReady}
+          disabled={!cameraReady || isSubmitting}
           className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-md flex items-center justify-center text-white active:bg-black/60 disabled:opacity-30"
           aria-label={`Switch to ${facingMode === 'environment' ? 'front' : 'back'} camera`}
         >
@@ -589,19 +693,26 @@ export function CustomerPhotoSessionScreen({
 // ────────────────────────────────────────────────────────────────────────
 function ThumbCard({
   photo,
+  isSubmitting,
   onRemove,
   onRetry
 }: {
   photo: StagedPhoto;
+  isSubmitting: boolean;
   onRemove: () => void;
   onRetry: () => void;
 }) {
+  // The X is hidden while an upload is in flight for this photo — removing
+  // mid-POST would orphan an S3 write. It stays available for 'pending' and
+  // 'failed' photos (the customer-controlled states) and for 'uploaded' so
+  // the customer can drop a photo before the batch finalizes.
+  const canRemove = photo.status !== 'queued' && photo.status !== 'uploading';
+
   return (
     <div className="relative w-16 h-16 flex-shrink-0 rounded-md overflow-hidden bg-gray-800">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={photo.thumbUrl} alt="" className="w-full h-full object-cover" />
 
-      {/* Status overlay */}
       {(photo.status === 'queued' || photo.status === 'uploading') && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
           <Loader2 className="w-4 h-4 text-white animate-spin" />
@@ -616,7 +727,8 @@ function ThumbCard({
         <button
           type="button"
           onClick={onRetry}
-          className="absolute inset-0 bg-red-900/60 flex items-center justify-center"
+          disabled={isSubmitting}
+          className="absolute inset-0 bg-red-900/60 flex items-center justify-center disabled:opacity-50"
           aria-label="Retry upload"
           title={photo.errorMessage || 'Tap to retry'}
         >
@@ -624,15 +736,16 @@ function ThumbCard({
         </button>
       )}
 
-      {/* Remove */}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="absolute top-1 right-1 w-4 h-4 bg-black/70 rounded-full flex items-center justify-center hover:bg-black"
-        aria-label="Remove photo"
-      >
-        <X className="w-3 h-3 text-white" />
-      </button>
+      {canRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="absolute top-1 right-1 w-4 h-4 bg-black/70 rounded-full flex items-center justify-center hover:bg-black"
+          aria-label="Remove photo"
+        >
+          <X className="w-3 h-3 text-white" />
+        </button>
+      )}
     </div>
   );
 }

@@ -213,6 +213,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
     { id: 'col5', name: 'Weight', type: 'url' },
     { id: 'col6', name: 'Going', type: 'select' },
     { id: 'col7', name: 'PBO/CP', type: 'select' },
+    { id: 'col8', name: 'Tags', type: 'text' },
   ];
   
   // Initialize with default empty spreadsheet
@@ -496,6 +497,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
             }
           })(),
           col7: item.packed_by || 'N/A', // Packed By field - use saved value or default to N/A
+          col8: Array.isArray(item.tags) ? item.tags.join(', ') : '', // Smart Tags — comma-separated
         }
       };
       return row;
@@ -943,8 +945,9 @@ useEffect(() => {
           hasCountColumn = spreadsheetData.columns.some(col => col.name === 'Count');
           const hasGoingColumn = spreadsheetData.columns.some(col => col.name === 'Going');
           const hasPackedByColumn = spreadsheetData.columns.some(col => col.name === 'PBO/CP' || col.name === 'Packed By');
-          
-          if (!hasCountColumn || !hasGoingColumn || !hasPackedByColumn) {
+          const hasTagsColumn = spreadsheetData.columns.some(col => col.name === 'Tags');
+
+          if (!hasCountColumn || !hasGoingColumn || !hasPackedByColumn || !hasTagsColumn) {
             // Migrate existing columns by inserting Count and Going columns
             let migratedColumns = [...spreadsheetData.columns];
             
@@ -993,6 +996,13 @@ useEffect(() => {
                 migratedColumns.push({ id: 'col7', name: 'PBO/CP', type: 'select' });
               }
             }
+
+            // Add Tags column if missing (position 8, after PBO/CP)
+            if (!hasTagsColumn) {
+              if (!migratedColumns.find(col => col.name === 'Tags')) {
+                migratedColumns.push({ id: 'col8', name: 'Tags', type: 'text' });
+              }
+            }
             
             // Migrate existing rows to include Count, Going, and Packed By columns
             const migratedRows = spreadsheetData.rows?.map(row => {
@@ -1027,7 +1037,12 @@ useEffect(() => {
               if (!newCells.col7) {
                 newCells.col7 = 'N/A'; // Default to N/A
               }
-              
+
+              // Ensure Tags column exists (col8) — empty string by default.
+              if (newCells.col8 === undefined || newCells.col8 === null) {
+                newCells.col8 = '';
+              }
+
               return {
                 ...row,
                 cells: newCells
@@ -1689,6 +1704,39 @@ useEffect(() => {
       console.error('Error persisting cuft/weight update:', error);
     }
   }, [convertItemsToRows, currentProject]);
+
+  // Handle Smart Tag updates from Spreadsheet's TagsCell popover. The
+  // TagsCell already optimistically updated the spreadsheet row's col8
+  // cell, so we only need to keep the local inventory item in sync and
+  // persist the canonical array to Mongo.
+  const handleTagsUpdate = useCallback(async (inventoryItemId, nextTags) => {
+    if (!inventoryItemId || !currentProject) return;
+    const cleaned = Array.isArray(nextTags)
+      ? nextTags.map((t) => String(t).trim()).filter(Boolean)
+      : [];
+
+    setInventoryItems(prev =>
+      prev.map(item =>
+        item._id === inventoryItemId ? { ...item, tags: cleaned } : item
+      )
+    );
+
+    try {
+      const response = await fetch(
+        `/api/projects/${currentProject._id}/inventory/${inventoryItemId}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tags: cleaned })
+        }
+      );
+      if (!response.ok) {
+        console.error(`Failed to persist tags update for item ${inventoryItemId}`);
+      }
+    } catch (error) {
+      console.error('Error persisting tags update:', error);
+    }
+  }, [currentProject]);
 
   // Handle packed_by (CP/PBO) updates from Spreadsheet
   const handlePackedByUpdate = useCallback(async (inventoryItemId, newPackedBy) => {
@@ -4144,6 +4192,7 @@ const ProcessingNotification = () => {
                       onBulkPackedByUpdate={handleBulkPackedByUpdate}
                       onAddStockItem={handleAddStockItems}
                       onCuftWeightUpdate={handleCuftWeightUpdate}
+                      onTagsUpdate={handleTagsUpdate}
                       projectId={projectId}
                       inventoryItems={inventoryItems}
                       weightConfig={weightConfig}

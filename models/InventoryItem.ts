@@ -61,6 +61,11 @@ export interface IInventoryItem extends Document {
   videoTimestamps?: string[]; // All timestamps where this item was seen
   consolidatedFromCount?: number; // How many raw detections merged into this
   stockItemId?: mongoose.Types.ObjectId | string; // Reference to stock inventory item
+  // Smart Tags applied to this item — names match entries in
+  // OrganizationSettings.smartTags. Each org tag has its own mode ("ai" or
+  // "manual"); "ai"-mode tags can be applied automatically by the worker,
+  // "manual"-mode tags only via the picker.
+  tags?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -193,6 +198,10 @@ const InventoryItemSchema: Schema = new Schema(
       ref: 'StockInventory',
       required: false,
       index: true
+    },
+    tags: {
+      type: [String],
+      default: undefined
     },
   },
   { timestamps: true }

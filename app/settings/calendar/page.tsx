@@ -4,11 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useUser } from '@clerk/nextjs';
 import { CalendarDays, CheckCircle, Loader2, ExternalLink, Unlink, Globe, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
-import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
+import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { toast } from 'sonner';
-import IntercomChat from '@/components/IntercomChat';
 
 // Common US timezones (most users will be in these)
 const COMMON_TIMEZONES = [
@@ -244,35 +241,14 @@ export default function CalendarSettingsPage() {
   const isCommonTimezone = COMMON_TIMEZONES.some(tz => tz.value === timezone);
 
   return (
-    <>
-      <SidebarProvider>
-        <AppSidebar />
-        <DesktopHeaderBar />
-        <div className="h-16"></div>
-        <div className="container mx-auto p-4 max-w-4xl lg:pl-64 lg:pt-16">
-          {/* Header */}
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold">Link Calendar</h1>
-            </div>
-          </div>
-
-          {loading || !isLoaded ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-            </div>
-          ) : (
-            <div className="max-w-2xl">
-              <div className="space-y-6">
-                {/* Info Box */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h3 className="font-medium text-blue-900 mb-1">Personal Calendar</h3>
-                  <p className="text-sm text-blue-700">
-                    Connect your Google Calendar to automatically create events when you schedule video calls.
-                    This is linked to your personal account, not the organization.
-                  </p>
-                </div>
-
+    <SettingsPageShell
+      title="Link Calendar"
+      subtitle="Connect your Google Calendar so scheduled video calls land on your personal calendar with the meeting link attached."
+      icon={CalendarDays}
+      scope="personal"
+      loading={loading || !isLoaded}
+    >
+      <div className="space-y-6">
                 {/* Google Calendar Connection */}
                 <div className="bg-white rounded-lg shadow-sm border p-6">
                   <div className="flex items-start gap-4">
@@ -461,15 +437,9 @@ export default function CalendarSettingsPage() {
 
                 {/* Note about different accounts */}
                 <p className="text-xs text-gray-500 text-center">
-                  You can connect any Google account - it doesn't need to match your login email.
+                  You can connect any Google account — it doesn&apos;t need to match your login email.
                 </p>
-              </div>
-            </div>
-          )}
-        </div>
-        <SidebarTrigger />
-      </SidebarProvider>
-      <IntercomChat />
-    </>
+      </div>
+    </SettingsPageShell>
   );
 }

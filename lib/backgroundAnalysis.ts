@@ -119,6 +119,9 @@ function convertItemsToSpreadsheetRows(items: any[]): any[] {
       col2: item.name || '',
       col3: item.cuft?.toString() || '',
       col4: item.weight?.toString() || '',
+      // col8 holds Tags after the InventoryManager migration appends Count
+      // (col3 shift), Going (col6), and PBO/CP (col7).
+      col8: Array.isArray(item.tags) ? item.tags.join(', ') : '',
     }
   }));
 }

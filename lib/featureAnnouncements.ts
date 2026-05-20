@@ -58,10 +58,51 @@ export interface FeatureAnnouncement {
 }
 
 // Current version - update this to trigger new announcements
-export const CURRENT_APP_VERSION = 'v1.0';
+export const CURRENT_APP_VERSION = 'v1.1';
 
 // All feature announcements by version
 export const FEATURE_ANNOUNCEMENTS: Record<string, FeatureAnnouncement> = {
+  'v1.1': {
+    title: "What's New?",
+    sections: [
+      {
+        sectionTitle: 'New Settings',
+        sectionIcon: 'Settings',
+        features: [
+          {
+            icon: 'Package',
+            title: 'Box Recommendations',
+            description:
+              'Control how aggressively the AI recommends packing boxes on every estimate — from lean to padded.',
+          },
+          {
+            icon: 'Package',
+            title: 'Box Types',
+            description:
+              'Define the exact set of boxes the AI is allowed to recommend so estimates match your inventory.',
+          },
+          {
+            icon: 'Sparkles',
+            title: 'Smart Tags',
+            description:
+              'Create custom labels for inventory items. Set each tag to AI (auto-applied during inventory) or Manual (applied by your team).',
+          },
+        ],
+      },
+      {
+        sectionTitle: 'Photo Capture Settings',
+        sectionIcon: 'Camera',
+        features: [
+          {
+            icon: 'Camera',
+            title: 'Turn Photo Capture Off',
+            description:
+              'Toggle photo capture on or off per upload-link flow — global self-survey links, per-customer upload links, and on-site walkthroughs. When off, only video recording is shown.',
+          },
+        ],
+      },
+    ],
+  },
   'v1.0': {
     title: "What's New?",
     sections: [

@@ -35,7 +35,9 @@ function convertItemsToSpreadsheetRows(items: any[]): any[] {
       col2: item.name,
       col3: String(item.quantity || 1),
       col4: String(item.cuft || 0),
-      col5: String(item.weight || 0)
+      col5: String(item.weight || 0),
+      // col6 Going / col7 PBO/CP added by the InventoryManager migration.
+      col8: Array.isArray(item.tags) ? item.tags.join(', ') : ''
     }
   }));
 }

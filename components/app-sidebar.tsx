@@ -62,6 +62,10 @@ interface Project {
     smartMovingOpportunityId?: string;
     smartMovingSyncedAt?: string;
     source?: string;
+    supermoveSync?: {
+      synced: boolean;
+      syncedAt: string;
+    };
   };
 }
 
@@ -422,6 +426,7 @@ export function AppSidebar() {
                     {filteredProjects.map((project) => {
                       // Show SmartMoving logo only for projects that have been synced (have syncedAt timestamp)
                       const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
+                      const isSyncedToSupermove = !!project.metadata?.supermoveSync?.synced;
 
                       return (
                         <li key={project._id}>
@@ -440,6 +445,17 @@ export function AppSidebar() {
                                     <Image
                                       src="/smtiny.png"
                                       alt="Synced to SmartMoving"
+                                      width={14}
+                                      height={14}
+                                      className="flex-shrink-0"
+                                    />
+                                  </span>
+                                )}
+                                {isSyncedToSupermove && (
+                                  <span title="Synced with Supermove">
+                                    <Image
+                                      src="/supermovetiny.png"
+                                      alt="Synced to Supermove"
                                       width={14}
                                       height={14}
                                       className="flex-shrink-0"

@@ -1,8 +1,8 @@
 // components/sheets/Spreadsheet.jsx
 'use client'
 
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react';
-import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info, Pencil, Check } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, memo } from 'react';
+import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info, Pencil, Check, Tags } from 'lucide-react';
 import VideoRecordingModal from '../VideoRecordingModal';
 import {
   Dialog,
@@ -24,6 +24,9 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import StockInventoryPickerModal from '@/components/modals/StockInventoryPickerModal';
+import TagsCell, { stringifyTags } from '@/components/sheets/TagsCell';
+import RoomTagPopover from '@/components/sheets/RoomTagPopover';
+import { parseTagsCell, tagStyleFor } from '@/lib/tagColors';
 
 // Helper to group items by location/room
 const groupByRoom = (items) => {
@@ -186,6 +189,7 @@ export default function Spreadsheet({
   onBulkPackedByUpdate = null,
   onAddStockItem = null,
   onCuftWeightUpdate = null,
+  onTagsUpdate = null,
   projectId = null,
   inventoryItems = [],
   weightConfig = { weightMode: 'actual', customWeightMultiplier: 7 },
@@ -193,13 +197,14 @@ export default function Spreadsheet({
 }) {
   // State for spreadsheet data
   const [columns, setColumns] = useState(
-    initialColumns.length > 0 
-      ? initialColumns 
+    initialColumns.length > 0
+      ? initialColumns
       : [
           { id: 'col1', name: 'Location', type: 'text' },
           { id: 'col2', name: 'Item', type: 'company' },
           { id: 'col3', name: 'Cuft', type: 'url' },
           { id: 'col4', name: 'Weight', type: 'url' },
+          { id: 'col8', name: 'Tags', type: 'text' },
         ]
   );
   
@@ -213,7 +218,18 @@ export default function Spreadsheet({
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('By Room');
   const [itemTypeFilter, setItemTypeFilter] = useState('All Items');
-  const [columnCount, setColumnCount] = useState(`${columns.length}/6 columns`);
+  // Tag filter: 'All Tags' means no filter; otherwise the row's col8 must
+  // include this tag (case-insensitive). Single-select to match the existing
+  // item-type filter UX. Can extend to multi-select if needed.
+  const [tagFilter, setTagFilter] = useState('All Tags');
+  const [orgSmartTags, setOrgSmartTags] = useState([]);
+  // Which room's "Tag room" popover is currently open. null = none open.
+  // We also stash the trigger HTMLElement so the portaled RoomTagPopover can
+  // anchor itself to the button via getBoundingClientRect instead of being
+  // trapped inside the narrow Tags column cell.
+  const [roomTagPickerOpen, setRoomTagPickerOpen] = useState(null);
+  const [roomTagAnchor, setRoomTagAnchor] = useState(null);
+  const [columnCount, setColumnCount] = useState(`${columns.length}/8 columns`);
   const [rowCount, setRowCount] = useState(`${rows.length}/${rows.length} rows`);
   const [zoom, setZoom] = useState(100);
   const [showDropdown, setShowDropdown] = useState(null);
@@ -530,6 +546,7 @@ export default function Spreadsheet({
             if ((oldRow.perUnitCuft || 0) !== (newRow.perUnitCuft || 0)) return true;
             if ((oldRow.cells?.col4 || '') !== (newRow.cells?.col4 || '')) return true;
             if ((oldRow.cells?.col5 || '') !== (newRow.cells?.col5 || '')) return true;
+            if ((oldRow.cells?.col8 || '') !== (newRow.cells?.col8 || '')) return true;
             return false;
           });
 
@@ -594,6 +611,72 @@ export default function Spreadsheet({
     }
   }, [rows]);
 
+  // Load the org's saved smart-tag library so the tag-filter dropdown can
+  // surface them even before any are applied to a row. Personal accounts and
+  // any 403 simply leave orgSmartTags empty; the dropdown still works using
+  // tags found on rows.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/settings/smart-tags');
+        if (!cancelled && res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.smartTags)) {
+            setOrgSmartTags(data.smartTags);
+          }
+        }
+      } catch (e) {
+        // Silent — fall back to row-derived tags.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Combined alphabetized list of every tag that could be filtered on:
+  // the org's smart-tag library + any one-off tags currently applied to
+  // rows (so users can also filter by tags they've created ad-hoc). Case-
+  // insensitive de-dupe; first-seen casing wins for display.
+  const availableTags = useMemo(() => {
+    const seen = new Map();
+    for (const t of orgSmartTags) {
+      const name = (t && t.name ? String(t.name) : '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (!seen.has(key)) seen.set(key, name);
+    }
+    for (const r of rows) {
+      const cell = r?.cells?.col8;
+      if (!cell) continue;
+      for (const name of parseTagsCell(cell)) {
+        const key = name.toLowerCase();
+        if (!seen.has(key)) seen.set(key, name);
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }, [orgSmartTags, rows]);
+
+  // Tags currently in use on rows in this project that are NOT in the org
+  // library — i.e. one-offs added to other items. Surfaced in the TagsCell
+  // picker under "In this project" so the user can reapply them quickly
+  // (and optionally promote them to the org library) without retyping.
+  const projectOnlyTags = useMemo(() => {
+    const orgSet = new Set(
+      orgSmartTags.map((t) => String(t?.name || '').trim().toLowerCase())
+    );
+    const seen = new Map();
+    for (const r of rows) {
+      const cell = r?.cells?.col8;
+      if (!cell) continue;
+      for (const name of parseTagsCell(cell)) {
+        const key = name.toLowerCase();
+        if (!key || orgSet.has(key)) continue;
+        if (!seen.has(key)) seen.set(key, name);
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }, [orgSmartTags, rows]);
+
   // Restore scroll position after local row updates (quantity changes, etc.)
   // useLayoutEffect runs BEFORE browser paint, preventing visible jump
   useLayoutEffect(() => {
@@ -610,7 +693,7 @@ export default function Spreadsheet({
   useEffect(() => {
     const columnsChanged = columns !== initialColumns;
     if (columns.length > 0 && columnsChanged) {
-      setColumnCount(`${columns.length}/6 columns`);
+      setColumnCount(`${columns.length}/8 columns`);
 
       const timeoutId = setTimeout(() => {
         onColumnsChange(columns);
@@ -739,6 +822,10 @@ export default function Spreadsheet({
     if (colId === 'col3') {
       return;
     }
+    // Tags (col8) renders its own popover-based picker and handles its own clicks.
+    if (colId === 'col8') {
+      return;
+    }
     setActiveCell({ rowId, colId });
     setEditingCellContent(currentValue || '');
   }, []);
@@ -826,6 +913,45 @@ export default function Spreadsheet({
   const calculateNewGoingQuantity = useCallback((currentGoingQty, currentQuantity, newQuantity) => {
     return newQuantity;
   }, []);
+
+  // Apply a tag to every row whose Location (col1) matches `roomName`.
+  // Existing tags on each row are preserved; the new tag is added with a
+  // case-insensitive de-dupe so re-tagging a room is idempotent. Calls
+  // onTagsUpdate per row when wired (server-side persist) plus the bulk
+  // onRowsChange path so autosave catches everything.
+  const applyTagToRoom = useCallback((roomName, tagName) => {
+    const trimmed = (tagName || '').trim();
+    if (!trimmed) return;
+    let changedCount = 0;
+    const updatedRows = rows.map((r) => {
+      const room = r.cells?.col1 || 'No Room';
+      if (room !== roomName) return r;
+      const existing = parseTagsCell(r.cells?.col8 || '');
+      if (existing.some((t) => t.toLowerCase() === trimmed.toLowerCase())) {
+        return r; // Already tagged — leave untouched
+      }
+      changedCount += 1;
+      const nextTags = [...existing, trimmed];
+      return { ...r, cells: { ...r.cells, col8: stringifyTags(nextTags) } };
+    });
+    setRows(updatedRows);
+    onRowsChange?.(updatedRows);
+    if (onTagsUpdate) {
+      for (const r of updatedRows) {
+        const room = r.cells?.col1 || 'No Room';
+        if (room === roomName && r.inventoryItemId) {
+          onTagsUpdate(r.inventoryItemId, parseTagsCell(r.cells?.col8 || ''));
+        }
+      }
+    }
+    setRoomTagPickerOpen(null);
+    setRoomTagAnchor(null);
+    if (changedCount === 0) {
+      toast.info(`All items in ${roomName} already have "${trimmed}".`);
+    } else {
+      toast.success(`Tagged ${changedCount} ${changedCount === 1 ? 'item' : 'items'} in ${roomName} with "${trimmed}".`);
+    }
+  }, [rows, onRowsChange, onTagsUpdate]);
 
   // Handle +/- button clicks for Count column
   const handleCountChange = useCallback((rowId, delta) => {
@@ -1331,6 +1457,13 @@ export default function Spreadsheet({
       }
     }
 
+    // Tag filter — single-select, case-insensitive. 'All Tags' = no filter.
+    if (tagFilter !== 'All Tags') {
+      const wanted = tagFilter.toLowerCase();
+      const rowTags = parseTagsCell(row?.cells?.col8).map((t) => t.toLowerCase());
+      if (!rowTags.includes(wanted)) return false;
+    }
+
     return true;
   });
 
@@ -1494,6 +1627,58 @@ export default function Spreadsheet({
     return 0; // Preserve existing order for non-analyzing rows
   });
 
+  // Compute going-weighted cuft / weight totals for an arbitrary list of
+  // rows. Used by both the global "filtered totals" footer and the per-room
+  // totals row beneath each By-Room group, so they stay consistent.
+  //
+  // A row marked 'not going' contributes zero; a partial row (e.g.
+  // "going (2/3)") contributes 2/3 of its per-unit values. Analyzing rows
+  // are skipped — their cuft/weight aren't trustworthy until analysis
+  // completes. perUnitCuft / perUnitWeight already include any custom
+  // weight multiplier, so we just multiply by goingQuantity here.
+  const computeGoingTotals = (sourceRows) => {
+    let cuft = 0;
+    let weight = 0;
+    let goingCount = 0;
+    let countedRows = 0;
+    for (const row of sourceRows) {
+      if (!row || row.isAnalyzing) continue;
+      countedRows += 1;
+      const quantity = parseInt(row.cells?.col3) || row.quantity || 1;
+      const goingQty = parseGoingQuantity(row.cells?.col6 || 'going', quantity);
+      if (goingQty <= 0) continue;
+      const perCuft = typeof row.perUnitCuft === 'number'
+        ? row.perUnitCuft
+        : (parseFloat(row.cells?.col4) / Math.max(1, quantity));
+      const perWeight = typeof row.perUnitWeight === 'number'
+        ? row.perUnitWeight
+        : (parseFloat(row.cells?.col5) / Math.max(1, quantity));
+      if (Number.isFinite(perCuft)) cuft += perCuft * goingQty;
+      if (Number.isFinite(perWeight)) weight += perWeight * goingQty;
+      goingCount += goingQty;
+    }
+    return { cuft, weight, goingCount, countedRows };
+  };
+
+  const filteredTotals = computeGoingTotals(filteredRows);
+
+  // Per-room totals for "By Room" view. Recomputed every render so quantity,
+  // going-status, and tag-filter changes propagate live.
+  const roomTotalsMap = (() => {
+    if (viewMode !== 'By Room') return null;
+    const groups = new Map();
+    for (const row of filteredRows) {
+      const room = row.cells?.col1 || 'No Room';
+      if (!groups.has(room)) groups.set(room, []);
+      groups.get(room).push(row);
+    }
+    const out = new Map();
+    for (const [room, group] of groups) {
+      out.set(room, computeGoingTotals(group));
+    }
+    return out;
+  })();
+
   // Calculate "not going" items count
   const notGoingCount = rows.filter(row => {
     const goingValue = row.cells?.col6 || 'going';
@@ -1651,6 +1836,35 @@ export default function Spreadsheet({
     if (colId === 'col5' && weightMode === 'perUnit' && row) {
       const displayValue = row.perUnitWeight !== undefined ? row.perUnitWeight.toFixed(1) : value;
       return <span className="p-2 text-gray-600">{displayValue}</span>;
+    }
+
+    // Tags column (col8) — modern popover-based picker. Handles its own
+    // clicks; handleCellClick short-circuits for this column.
+    if (colId === 'col8') {
+      return (
+        <TagsCell
+          value={value || ''}
+          rowId={rowId}
+          inventoryItemId={row?.inventoryItemId || null}
+          projectId={projectId}
+          projectTags={projectOnlyTags}
+          onTagsChange={(rid, nextTags) => {
+            const nextCell = stringifyTags(nextTags);
+            const updatedRows = rows.map((r) =>
+              r.id === rid
+                ? { ...r, cells: { ...r.cells, col8: nextCell } }
+                : r
+            );
+            // setRows mirrors handleCellBlur — required so the chip change is
+            // reflected immediately. onRowsChange syncs to parent for autosave.
+            setRows(updatedRows);
+            onRowsChange(updatedRows);
+            if (onTagsUpdate && row?.inventoryItemId) {
+              onTagsUpdate(row.inventoryItemId, nextTags);
+            }
+          }}
+        />
+      );
     }
 
     // Special handling for item name column (col2) with media preview
@@ -2252,7 +2466,74 @@ export default function Spreadsheet({
               </div>
             )}
           </div>
-          
+
+          {/* Tag Filter */}
+          <div className="relative dropdown-container">
+            <button
+              className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100"
+              onClick={() => setShowDropdown(showDropdown === 'tagFilter' ? null : 'tagFilter')}
+              title={tagFilter === 'All Tags' ? 'Filter by tag' : `Filtering by tag: ${tagFilter}`}
+            >
+              <Tags size={16} />
+              <span>{tagFilter}</span>
+              <ChevronDown size={14} />
+            </button>
+            {showDropdown === 'tagFilter' && (
+              <div className="absolute top-full left-0 mt-1 bg-white shadow-lg rounded-md border z-40 w-60 max-h-[60vh] flex flex-col">
+                {/* "All Tags" — clears the filter */}
+                <div
+                  className={`px-2.5 py-1.5 m-1 rounded cursor-pointer text-sm flex items-center gap-2 ${
+                    tagFilter === 'All Tags' ? 'bg-blue-50 text-blue-700 font-medium' : 'hover:bg-gray-100'
+                  }`}
+                  onClick={() => {
+                    setTagFilter('All Tags');
+                    setShowDropdown(null);
+                  }}
+                >
+                  <Tags size={14} className="text-gray-500" />
+                  <span>All Tags</span>
+                </div>
+
+                {availableTags.length === 0 ? (
+                  <div className="px-3 py-3 text-xs text-gray-400 italic border-t border-gray-100">
+                    No tags yet. Add tags to rows or save them in <a href="/settings/smart-tags" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">settings</a>.
+                  </div>
+                ) : (
+                  <>
+                    <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 border-t border-gray-100">
+                      Filter by
+                    </div>
+                    <div className="flex-1 overflow-y-auto pb-1">
+                      {availableTags.map((name) => {
+                        const style = tagStyleFor(name);
+                        const isActive = tagFilter.toLowerCase() === name.toLowerCase();
+                        return (
+                          <div
+                            key={name}
+                            className={`mx-1 px-2 py-1.5 rounded cursor-pointer text-sm flex items-center gap-2 ${
+                              isActive ? 'bg-blue-50' : 'hover:bg-gray-100'
+                            }`}
+                            onClick={() => {
+                              setTagFilter(name);
+                              setShowDropdown(null);
+                            }}
+                          >
+                            <span
+                              className={`inline-flex items-center rounded-full border text-[11px] font-medium px-2 py-0.5 leading-none truncate max-w-[180px] ${style.bg} ${style.text} ${style.border}`}
+                            >
+                              {name}
+                            </span>
+                            {isActive && <Check size={14} className="ml-auto text-blue-600" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* <div className="relative dropdown-container">
             <button 
               className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100"
@@ -2439,6 +2720,9 @@ export default function Spreadsheet({
                       <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${weightConfig.weightMode === 'custom' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
                         {weightConfig.weightMode === 'custom' ? `×${weightConfig.customWeightMultiplier}` : (weightMode === 'total' ? 'Σ' : '/1')}
                       </span>
+                    )
+                    : column.name === 'Tags' ? (
+                      <Tags className="w-3.5 h-3.5 text-gray-500" strokeWidth={2} />
                     )
                     : column.type === 'text' ? 'T'
                     : column.type === 'company' ? '🏢'
@@ -2628,13 +2912,35 @@ export default function Spreadsheet({
               return false;
             })();
             
+            // Identify the current room for By-Room separators and for the
+            // per-room totals strip rendered after the last row of each room.
+            // No top-of-room header bar — the room label and the "Tag room"
+            // action live on the bottom totals strip.
+            const currentRoom = row.cells?.col1 || 'No Room';
+            const isByRoom = viewMode === 'By Room';
+
+            // Per-room totals strip is rendered after the last row of each
+            // room. Defined in the outer map scope (not inside the row IIFE
+            // below) so the JSX block that uses it after the IIFE closes
+            // can still see the binding.
+            const nextRoom = filteredRows[rowIndex + 1]?.cells?.col1
+              || (rowIndex + 1 < filteredRows.length ? 'No Room' : null);
+            const isLastInRoom = isByRoom &&
+              (rowIndex === filteredRows.length - 1 || nextRoom !== currentRoom);
+            const thisRoomTotals = (isLastInRoom && roomTotalsMap)
+              ? roomTotalsMap.get(currentRoom)
+              : null;
+
             return (
               <React.Fragment key={row.id}>
-                {/* Group separator (media or category) */}
+                {/* Thin visual separator between rooms. The room header
+                    strip is gone — the per-room totals strip at the bottom
+                    of each room now carries the room label and the
+                    "Tag room" action. */}
                 {needsSeparator && (
-                  <div 
+                  <div
                     style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }}
-                    className="border-t-2 border-gray-400 bg-gray-50 h-1"
+                    className="border-t-2 border-gray-300 h-px"
                   />
                 )}
                 
@@ -2688,6 +2994,9 @@ export default function Spreadsheet({
               });
             }
             
+            // (Per-room totals are computed in the outer map scope so the
+            // JSX block after this IIFE can read `thisRoomTotals`.)
+
             return (
             <div key={row.id} style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }} className={`flex ${
               row.isAnalyzing 
@@ -2780,10 +3089,10 @@ export default function Spreadsheet({
                 <div 
                   key={`${row.id}-${column.id}`}
                   className={`${getColumnWidth(column)} p-2 border-r border-b h-10 overflow-hidden ${
-                    row.isAnalyzing 
-                      ? 'text-blue-600 font-medium animate-pulse' 
-                      : activeCell && activeCell.rowId === row.id && activeCell.colId === column.id 
-                        ? 'bg-blue-100 border-2 border-blue-500' 
+                    row.isAnalyzing
+                      ? 'text-blue-600 font-medium animate-pulse'
+                      : activeCell && activeCell.rowId === row.id && activeCell.colId === column.id
+                        ? 'bg-blue-100 border-2 border-blue-500'
                         : ''
                   }`}
                   onClick={() => !row.isAnalyzing && handleCellClick(row.id, column.id, row.cells[column.id] || '')}
@@ -2813,10 +3122,131 @@ export default function Spreadsheet({
             </div>
             );
                 })()}
+
+                {/* Per-room totals — only in By-Room view, rendered after
+                    the last row of each room. Same column-aligned structure
+                    as the global filtered-totals row but in the room
+                    header's gray palette to read as a peer of the header. */}
+                {thisRoomTotals && (
+                  <div
+                    style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }}
+                    className="flex bg-gray-50 border-t border-gray-300 border-b-2 border-b-gray-400 font-semibold"
+                  >
+                    {/* Sigma in the row-number column */}
+                    <div className="w-8 min-w-[32px] border-r border-b flex items-center justify-center">
+                      <span className="text-xs text-gray-500">Σ</span>
+                    </div>
+
+                    {columns.map((column) => {
+                      const isLocation = column.name === 'Location';
+                      const isItem = column.name === 'Item';
+                      const isCount = column.name === 'Count';
+                      const isCuft = column.name === 'Cuft';
+                      const isWeight = column.name === 'Weight';
+                      const isTags = column.name === 'Tags';
+                      return (
+                        <div
+                          key={`roomtotals-${currentRoom}-${column.id}`}
+                          className={`${getColumnWidth(column)} p-2 border-r border-b h-10 overflow-hidden flex items-center text-sm`}
+                        >
+                          {isLocation ? (
+                            <span className="text-gray-700 truncate" title={`Totals for ${currentRoom}`}>
+                              {currentRoom} total
+                            </span>
+                          ) : isItem ? (
+                            <span className="text-gray-500">
+                              {thisRoomTotals.countedRows} {thisRoomTotals.countedRows === 1 ? 'row' : 'rows'}
+                            </span>
+                          ) : isCount ? (
+                            <span className="text-gray-800" title="Sum of going quantities in this room">
+                              {thisRoomTotals.goingCount}
+                            </span>
+                          ) : isCuft ? (
+                            <span className="text-gray-800" title="Total cuft for this room (going items only)">
+                              {thisRoomTotals.cuft.toFixed(1)}
+                            </span>
+                          ) : isWeight ? (
+                            <span className="text-gray-800" title="Total weight for this room (going items only)">
+                              {Math.round(thisRoomTotals.weight)}
+                            </span>
+                          ) : isTags ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                if (roomTagPickerOpen === currentRoom) {
+                                  setRoomTagPickerOpen(null);
+                                  setRoomTagAnchor(null);
+                                } else {
+                                  setRoomTagPickerOpen(currentRoom);
+                                  setRoomTagAnchor(e.currentTarget);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-gray-100 hover:border-gray-300 hover:text-gray-900 transition-colors"
+                              title={`Apply a tag to every item in ${currentRoom}`}
+                            >
+                              <Tags size={12} />
+                              Tag room
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+
+                    <div className="w-12 min-w-[48px] border-b" />
+                  </div>
+                )}
               </React.Fragment>
             );
           })}
-          
+
+          {/* Filtered totals — shown when a tag filter is active. Sums
+              respect per-row going status: full count for "going", partial
+              for "going (X/Y)", zero for "not going". */}
+          {tagFilter !== 'All Tags' && filteredRows.length > 0 && (
+            <div
+              style={{ minWidth: `${32 + getTotalColumnsWidth(columns) + 48}px` }}
+              className="flex bg-blue-50/60 border-t-2 border-blue-300 font-semibold"
+            >
+              {/* Sigma indicator in row-number column */}
+              <div className="w-8 min-w-[32px] border-r border-b flex items-center justify-center">
+                <span className="text-xs text-blue-700">Σ</span>
+              </div>
+
+              {columns.map((column) => {
+                const isItem = column.name === 'Item';
+                const isCount = column.name === 'Count';
+                const isCuft = column.name === 'Cuft';
+                const isWeight = column.name === 'Weight';
+                return (
+                  <div
+                    key={`totals-${column.id}`}
+                    className={`${getColumnWidth(column)} p-2 border-r border-b h-10 overflow-hidden flex items-center text-sm`}
+                  >
+                    {isItem ? (
+                      <span className="text-blue-900">
+                        Tagged &ldquo;{tagFilter}&rdquo; · {filteredRows.length} {filteredRows.length === 1 ? 'row' : 'rows'}
+                      </span>
+                    ) : isCount ? (
+                      <span className="text-blue-800" title="Sum of going quantities across filtered rows">
+                        {filteredTotals.goingCount}
+                      </span>
+                    ) : isCuft ? (
+                      <span className="text-blue-700" title="Total cuft (going items only)">
+                        {filteredTotals.cuft.toFixed(1)}
+                      </span>
+                    ) : isWeight ? (
+                      <span className="text-blue-700" title="Total weight (going items only)">
+                        {Math.round(filteredTotals.weight)}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })}
+
+              <div className="w-12 min-w-[48px] border-b" />
+            </div>
+          )}
+
           {/* Add inventory button */}
           <div className="flex items-center border-b h-10 pl-8">
             <button
@@ -3614,6 +4044,27 @@ export default function Spreadsheet({
         }}
         existingInventory={inventoryItems}
       />
+
+      {/* Portaled room-tag picker. Anchored to the "Tag room" button in
+          whichever room header is currently open. Single instance lives at
+          the root so the popover isn't clipped by row-height cell wrappers. */}
+      {roomTagPickerOpen && roomTagAnchor && (
+        <RoomTagPopover
+          anchor={roomTagAnchor}
+          roomName={roomTagPickerOpen}
+          itemCount={rows.filter((r) => (r.cells?.col1 || 'No Room') === roomTagPickerOpen).length}
+          orgTags={orgSmartTags
+            .map((t) => String(t?.name || '').trim())
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b))}
+          projectTags={projectOnlyTags}
+          onApply={(room, name) => applyTagToRoom(room, name)}
+          onClose={() => {
+            setRoomTagPickerOpen(null);
+            setRoomTagAnchor(null);
+          }}
+        />
+      )}
     </div>
   );
 }

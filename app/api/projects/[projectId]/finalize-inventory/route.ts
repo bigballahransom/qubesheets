@@ -211,7 +211,8 @@ async function updateSpreadsheet(recording: any, items: any[]) {
     }
 
     // Map items to spreadsheet rows
-    // Column mapping: col1=location, col2=name, col3=quantity, col4=cuft, col5=weight
+    // Column mapping: col1=location, col2=name, col3=quantity, col4=cuft, col5=weight,
+    // col6=going, col7=PBO/CP (added by InventoryManager migration), col8=tags
     const newRows = items.map(item => ({
       id: uuidv4(),
       cells: {
@@ -219,7 +220,8 @@ async function updateSpreadsheet(recording: any, items: any[]) {
         col2: item.name || '',
         col3: String(item.quantity || 1),
         col4: String(item.cuft || 0),
-        col5: String(item.weight || 0)
+        col5: String(item.weight || 0),
+        col8: Array.isArray(item.tags) ? item.tags.join(', ') : ''
       }
     }));
 

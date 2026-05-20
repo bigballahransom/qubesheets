@@ -34,6 +34,10 @@ interface UploadValidation {
   // redirects back to /projects/{projectId} instead of looping back to the
   // upload choice screen.
   isWalkthrough?: boolean;
+  // Org-level master switch. When false, the choice screen hides photo
+  // capture and 'files'-only links short-circuit to a "photos disabled"
+  // empty state.
+  photosEnabled?: boolean;
 }
 
 type ViewMode = 'choice' | 'recording' | 'upload' | 'qr';
@@ -131,13 +135,15 @@ export default function CustomerUploadPage() {
   }, [viewMode, loading, validation]);
 
   // Auto-route mobile customers when their link only supports a single mode.
-  // 'files'-only links → straight to the photo session screen.
+  // 'files'-only links → straight to the photo session screen (unless the
+  // org has turned photos off — then we stay on the choice screen so the
+  // empty-state copy can explain the link is no longer accepting uploads).
   // 'recording'-only links → straight to the recorder.
   // 'both' stays on the choice screen.
   useEffect(() => {
     if (loading || !validation || isDesktop) return;
     if (viewMode !== 'choice') return;
-    if (validation.uploadMode === 'files') {
+    if (validation.uploadMode === 'files' && validation.photosEnabled !== false) {
       setViewMode('upload');
     } else if (validation.uploadMode === 'recording') {
       setViewMode('recording');
@@ -166,7 +172,8 @@ export default function CustomerUploadPage() {
             uploadMode: data.uploadMode || 'both',
             recordingInstructions: data.recordingInstructions,
             maxRecordingDuration: data.maxRecordingDuration || 1200,
-            isWalkthrough: !!data.isWalkthrough
+            isWalkthrough: !!data.isWalkthrough,
+            photosEnabled: data.photosEnabled !== false
           });
           
           // Set project ID for SSE connection
@@ -183,7 +190,8 @@ export default function CustomerUploadPage() {
             branding: null,
             instructions: null,
             uploadMode: 'both',
-            maxRecordingDuration: 1200
+            maxRecordingDuration: 1200,
+            photosEnabled: true
           });
         }
       } catch (error) {
@@ -197,7 +205,8 @@ export default function CustomerUploadPage() {
           branding: null,
           instructions: null,
           uploadMode: 'both',
-          maxRecordingDuration: 1200
+          maxRecordingDuration: 1200,
+          photosEnabled: true
         });
       } finally {
         setLoading(false);
@@ -655,7 +664,11 @@ export default function CustomerUploadPage() {
       ? `/projects/${validation.projectId}`
       : undefined;
 
-  // Desktop QR Code View - shows QR for mobile handoff
+  const photosAllowed = validation.photosEnabled !== false;
+
+  // Desktop QR Code View - shows QR for mobile handoff.
+  // Suppress the "Or upload photos instead" affordance when the org has
+  // turned photo capture off.
   if (viewMode === 'qr' && isDesktop) {
     return (
       <DesktopQRCodeView
@@ -665,7 +678,7 @@ export default function CustomerUploadPage() {
         companyName={validation.branding?.companyName}
         companyLogo={validation.branding?.companyLogo}
         onSessionComplete={handleRecordingComplete}
-        onSwitchToUpload={() => setViewMode('upload')}
+        onSwitchToUpload={photosAllowed ? () => setViewMode('upload') : undefined}
         isWalkthrough={!!validation.isWalkthrough}
       />
     );
@@ -705,7 +718,11 @@ export default function CustomerUploadPage() {
   // Mobile Choice View - choose between recording and upload
   if (viewMode === 'choice' && !isDesktop) {
     const canRecord = supportsRecording && validation.uploadMode !== 'files';
-    const canUpload = validation.uploadMode !== 'recording';
+    const canUpload = validation.uploadMode !== 'recording' && photosAllowed;
+    // 'files'-only link + photos disabled is the only combination that
+    // leaves the choice screen with nothing actionable. Show a dedicated
+    // message instead of the regular options.
+    const noOptionsAvailable = !canRecord && !canUpload;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100 flex flex-col">
@@ -754,6 +771,19 @@ export default function CustomerUploadPage() {
                   Help us ensure a wonderful moving experience by preparing your moving inventory
                 </p>
               </>
+            )}
+
+            {/* Empty state — link minted as photos-only, but the org has
+                disabled photos. Customer can't proceed here. */}
+            {noOptionsAvailable && (
+              <div className="bg-white rounded-2xl p-6 text-left shadow-lg border border-slate-200">
+                <h2 className="text-lg font-semibold text-slate-800 mb-2">
+                  This link is no longer accepting uploads
+                </h2>
+                <p className="text-slate-600 text-sm">
+                  {validation.branding?.companyName || 'Your moving company'} has temporarily disabled photo uploads. Please reach out to them for a new link or to schedule a video walkthrough.
+                </p>
+              </div>
             )}
 
             {/* Option Cards */}

@@ -25,6 +25,7 @@ interface BrandingData {
 interface OrgConfig {
   branding?: BrandingData | null;
   instructions?: string | null;
+  photosEnabled?: boolean;
 }
 
 export default function GlobalUploadPage() {
@@ -249,10 +250,10 @@ export default function GlobalUploadPage() {
       <div className="max-w-md mx-auto px-4 py-12">
         <div className="text-center space-y-4 mb-8">
           <h1 className="text-3xl font-bold text-slate-800">
-            Upload Your Moving Photos
+            {config?.photosEnabled === false ? 'Record Your Walkthrough' : 'Upload Your Moving Photos'}
           </h1>
           <p className="text-slate-600">
-            Enter your information to get started with your inventory upload.
+            Enter your information to get started with your inventory.
           </p>
         </div>
 

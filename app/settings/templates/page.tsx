@@ -2,15 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
-import { Save, RotateCcw, FileText, MessageSquare, Video, Bell } from 'lucide-react';
+import { RotateCcw, FileText, MessageSquare, Video, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
-import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
+import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { toast } from 'sonner';
 import { DEFAULT_SMS_UPLOAD_TEMPLATE } from '@/lib/sms-template-helpers';
-import IntercomChat from '@/components/IntercomChat';
 
 const DEFAULT_INSTRUCTIONS = `Upload Tips from {companyName}
 
@@ -204,36 +201,23 @@ export default function TemplatesPage() {
 
 
   return (
-    <>
-      <SidebarProvider>
-      <AppSidebar />
-      <DesktopHeaderBar />
-      <div className="h-16"></div>
-      <div className="container mx-auto p-4 max-w-4xl lg:pl-64 lg:pt-16">
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Templates</h1>
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <div className="text-gray-500">Loading template...</div>
-          </div>
-        ) : (
-          <div className="max-w-2xl">
+    <SettingsPageShell
+      title="Templates"
+      subtitle="SMS and customer-facing copy used by the upload links, video-call invites, and reminders."
+      icon={FileText}
+      scope="organization"
+      organizationName={organization?.name}
+      loading={loading}
+      unsavedChanges={hasChanges}
+      saving={saving}
+      onSave={saveTemplates}
+      onDiscard={() => {
+        setHasChanges(false);
+        loadTemplateData();
+      }}
+      saveLabel="Save templates"
+    >
             <div className="space-y-6">
-              {/* Organization/User Info */}
-              {organization && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h3 className="font-medium text-blue-900 mb-1">Organization Templates</h3>
-                  <p className="text-sm text-blue-700">
-                    These templates will apply to all projects for <strong>{organization.name}</strong>.
-                  </p>
-                </div>
-              )}
-
               {/* Customer Instructions Template */}
               <div className="bg-white rounded-lg shadow-sm border p-6">
                 <div className="flex items-center justify-between mb-4">
@@ -480,28 +464,7 @@ export default function TemplatesPage() {
                 </>
               )}
 
-              {/* Save Button */}
-              <Button
-                onClick={saveTemplates}
-                disabled={saving || !hasChanges}
-                className="w-full"
-              >
-                <Save className="mr-2 h-4 w-4" />
-                {saving ? 'Saving...' : hasChanges ? 'Save Templates' : 'No Changes to Save'}
-              </Button>
-
-              {hasChanges && (
-                <p className="text-sm text-orange-600 text-center mt-2">
-                  You have unsaved changes
-                </p>
-              )}
             </div>
-          </div>
-        )}
-      </div>
-        <SidebarTrigger />
-      </SidebarProvider>
-      <IntercomChat />
-    </>
+    </SettingsPageShell>
   );
 }

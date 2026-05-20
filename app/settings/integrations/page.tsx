@@ -4,11 +4,8 @@ import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
 import { Plug, Save, Key, TestTube, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
-import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
+import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { toast } from 'sonner';
-import IntercomChat from '@/components/IntercomChat';
 
 export default function IntegrationsPage() {
   const { user } = useUser();
@@ -181,43 +178,16 @@ export default function IntegrationsPage() {
   };
 
   return (
-    <>
-      <SidebarProvider>
-      <AppSidebar />
-      <DesktopHeaderBar />
-      <div className="h-16"></div>
-      <div className="container mx-auto p-4 max-w-4xl lg:pl-64 lg:pt-16">
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Integrations</h1>
-          </div>
-        </div>
-        
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <div className="text-gray-500">Loading integration settings...</div>
-          </div>
-        ) : !organization ? (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-            <h3 className="font-medium text-yellow-900 mb-2">Organization Required</h3>
-            <p className="text-sm text-yellow-700">
-              Please select or create an organization to manage integrations.
-            </p>
-          </div>
-        ) : (
-          <div className="max-w-2xl">
+    <SettingsPageShell
+      title="Integrations"
+      subtitle="Sync inventory surveys directly into your CRM."
+      icon={Plug}
+      scope="organization"
+      organizationName={organization?.name}
+      requiresOrganization
+      loading={loading}
+    >
             <div className="space-y-6">
-              {/* Organization Info */}
-              {organization && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <h3 className="font-medium text-blue-900 mb-1">Organization Settings</h3>
-                  <p className="text-sm text-blue-700">
-                    These integration settings will apply to all members of <strong>{organization.name}</strong>.
-                  </p>
-                </div>
-              )}
-              
               {/* Supermove Integration */}
               <div className="bg-white rounded-lg shadow-sm border p-6">
                 <img src="/supermove.png" alt="Supermove" className="h-16 w-auto mb-4" />
@@ -484,12 +454,6 @@ export default function IntegrationsPage() {
                 {saving ? 'Saving...' : 'Save Integration Settings'}
               </Button>
             </div>
-          </div>
-        )}
-      </div>
-        <SidebarTrigger />
-      </SidebarProvider>
-      <IntercomChat />
-    </>
+    </SettingsPageShell>
   );
 }

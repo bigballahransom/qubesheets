@@ -21,6 +21,7 @@ function convertItemsToSpreadsheetRows(items: Array<{
   quantity: number;
   cuft: number;
   weight: number;
+  tags?: string[];
 }>) {
   return items.map(item => ({
     id: generateId(),
@@ -30,6 +31,9 @@ function convertItemsToSpreadsheetRows(items: Array<{
       col3: item.quantity?.toString() || '1',
       col4: item.cuft?.toString() || '',
       col5: item.weight?.toString() || '',
+      // col6 Going / col7 PBO/CP are appended by the InventoryManager
+      // migration; col8 holds the Tags string.
+      col8: Array.isArray(item.tags) ? item.tags.join(', ') : '',
     }
   }));
 }

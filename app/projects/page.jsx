@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { Folder, Plus, Loader2, User, Users, UserX, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -206,28 +207,57 @@ export default function ProjectsPage() {
           </div>
         ) : (
           <div className="divide-y">
-            {filteredProjects.map((project) => (
-              <div
-                key={project._id}
-                className="py-3 hover:bg-gray-50 transition-colors cursor-pointer"
-                onClick={() => handleProjectClick(project._id)}
-              >
-                <div className="flex items-start">
-                  <div className="mr-3 mt-1">
-                    <Folder className="h-5 w-5 text-blue-500" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-medium">{project.name}</h3>
-                    {project.description && (
-                      <p className="text-sm text-gray-600 mt-1">{project.description}</p>
-                    )}
-                    <p className="text-xs text-gray-500 mt-1">
-                      Last updated: {formatDate(project.updatedAt)}
-                    </p>
+            {filteredProjects.map((project) => {
+              const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
+              const isSyncedToSupermove = !!project.metadata?.supermoveSync?.synced;
+
+              return (
+                <div
+                  key={project._id}
+                  className="py-3 hover:bg-gray-50 transition-colors cursor-pointer"
+                  onClick={() => handleProjectClick(project._id)}
+                >
+                  <div className="flex items-start">
+                    <div className="mr-3 mt-1">
+                      <Folder className="h-5 w-5 text-blue-500" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-medium flex items-center gap-1.5">
+                        {project.name}
+                        {isSyncedToSmartMoving && (
+                          <span title="Synced with SmartMoving">
+                            <Image
+                              src="/smtiny.png"
+                              alt="Synced to SmartMoving"
+                              width={14}
+                              height={14}
+                              className="flex-shrink-0"
+                            />
+                          </span>
+                        )}
+                        {isSyncedToSupermove && (
+                          <span title="Synced with Supermove">
+                            <Image
+                              src="/supermovetiny.png"
+                              alt="Synced to Supermove"
+                              width={14}
+                              height={14}
+                              className="flex-shrink-0"
+                            />
+                          </span>
+                        )}
+                      </h3>
+                      {project.description && (
+                        <p className="text-sm text-gray-600 mt-1">{project.description}</p>
+                      )}
+                      <p className="text-xs text-gray-500 mt-1">
+                        Last updated: {formatDate(project.updatedAt)}
+                      </p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

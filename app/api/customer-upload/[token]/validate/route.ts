@@ -9,6 +9,7 @@ import CustomerUpload from '@/models/CustomerUpload';
 import Branding from '@/models/Branding';
 import Template from '@/models/Template';
 import ActivityLog from '@/models/ActivityLog';
+import OrganizationSettings from '@/models/OrganizationSettings';
 
 export async function GET(
   request: NextRequest,
@@ -77,6 +78,38 @@ export async function GET(
     } catch (brandingError) {
       console.warn('Error fetching branding:', brandingError);
       // Continue without branding - it's optional
+    }
+
+    // Resolve the org-level photo switch for whichever flow this token
+    // belongs to. Three independent flags exist on OrganizationSettings:
+    //   - photosEnabledGlobalLink:    token minted by /api/upload/[orgId]/create-project
+    //                                 (discriminated by userId === 'global-self-survey-link')
+    //   - photosEnabledWalkthrough:   token minted with isWalkthrough: true
+    //   - photosEnabledCustomerLink:  everything else (per-customer SMS/email)
+    // Default true when no settings doc exists or the link belongs to a
+    // personal account, so existing flows keep working.
+    let photosEnabled = true;
+    if (customerUpload.organizationId) {
+      try {
+        const orgSettings = await OrganizationSettings.findOne({
+          organizationId: customerUpload.organizationId
+        });
+        if (orgSettings) {
+          let flagValue: boolean | undefined;
+          if (customerUpload.isWalkthrough) {
+            flagValue = orgSettings.photosEnabledWalkthrough;
+          } else if (customerUpload.userId === 'global-self-survey-link') {
+            flagValue = orgSettings.photosEnabledGlobalLink;
+          } else {
+            flagValue = orgSettings.photosEnabledCustomerLink;
+          }
+          if (flagValue === false) {
+            photosEnabled = false;
+          }
+        }
+      } catch (settingsError) {
+        console.warn('Error fetching org photo settings:', settingsError);
+      }
     }
 
     // Fetch custom instructions template based on user/org
@@ -158,6 +191,10 @@ export async function GET(
       // Page uses this to swap "Upload more" → "Back to project" CTAs and
       // server-side SMS suppression is keyed on the same flag.
       isWalkthrough: !!customerUpload.isWalkthrough,
+
+      // Org-level photo master switch. Default true; client hides photo
+      // capture entirely when this resolves to false.
+      photosEnabled,
     });
 
   } catch (error) {

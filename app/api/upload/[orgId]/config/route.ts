@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Branding from '@/models/Branding';
 import Template from '@/models/Template';
+import OrganizationSettings from '@/models/OrganizationSettings';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,6 +46,19 @@ export async function GET(
       console.warn('Error fetching custom instructions:', templateError);
     }
 
+    // This endpoint is only hit by the global self-survey landing page, so
+    // we surface the global-link flag specifically. The other two flow
+    // flags (customer-link, walkthrough) don't apply here. Defaults true.
+    let photosEnabled = true;
+    try {
+      const orgSettings = await OrganizationSettings.findOne({ organizationId: orgId });
+      if (orgSettings && orgSettings.photosEnabledGlobalLink === false) {
+        photosEnabled = false;
+      }
+    } catch (settingsError) {
+      console.warn('Error fetching org photo settings:', settingsError);
+    }
+
     return NextResponse.json(
       {
         branding: branding
@@ -54,6 +68,7 @@ export async function GET(
             }
           : null,
         instructions,
+        photosEnabled,
       },
       { headers: corsHeaders }
     );
