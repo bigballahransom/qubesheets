@@ -24,10 +24,13 @@ export interface IOnsiteWalkthroughSnapshot {
 }
 
 export type OnsiteWalkthroughStatus =
-  | 'created'        // doc minted, mobile page not yet opened OR opened but not recording
-  | 'recording'      // egress in flight
-  | 'finished'       // recording stopped, awaiting worker
-  | 'processed'      // worker has produced inventory
+  | 'created'           // doc minted by /create; mobile page not yet opened
+  | 'initialized'       // /init succeeded; LiveKit room exists and mover has joined
+  | 'starting_egress'   // /start-recording is mid-flight (transient lock for race-safety)
+  | 'recording'         // egress in flight
+  | 'stopping'          // /stop is mid-flight
+  | 'finished'          // recording stopped, awaiting worker
+  | 'processed'         // worker has produced inventory
   | 'failed';
 
 export interface IOnsiteWalkthroughSession extends Document {
@@ -37,11 +40,15 @@ export interface IOnsiteWalkthroughSession extends Document {
 
   uploadToken: string;                    // QR token; unique
   liveKitRoomName: string;                // e.g. 'onsite-walkthrough-<hex>'
+  livekitParticipantIdentity?: string;    // identity of the mover device joining the room
   isActive: boolean;
   status: OnsiteWalkthroughStatus;
   maxRecordingDuration: number;           // seconds; default 1200 (20 min)
 
-  // Recording refs — populated in P1b / P2
+  // LiveKit egress tracking
+  egressId?: string;                      // server-side egress writing to S3
+
+  // Recording refs — populated in P1b
   recordingStartedAt?: Date;
   recordingEndedAt?: Date;
   recordingDurationMs?: number;
@@ -95,14 +102,26 @@ const OnsiteWalkthroughSessionSchema: Schema = new Schema(
 
     uploadToken: { type: String, required: true, unique: true, index: true },
     liveKitRoomName: { type: String, required: true, index: true },
+    livekitParticipantIdentity: { type: String },
     isActive: { type: Boolean, default: true, index: true },
     status: {
       type: String,
-      enum: ['created', 'recording', 'finished', 'processed', 'failed'],
+      enum: [
+        'created',
+        'initialized',
+        'starting_egress',
+        'recording',
+        'stopping',
+        'finished',
+        'processed',
+        'failed',
+      ],
       default: 'created',
       index: true,
     },
     maxRecordingDuration: { type: Number, default: 1200 },
+
+    egressId: { type: String, index: true, sparse: true },
 
     recordingStartedAt: { type: Date },
     recordingEndedAt: { type: Date },
