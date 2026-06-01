@@ -1,11 +1,18 @@
 // components/VideoProcessingStatus.jsx - Simple video processing monitor (database-driven)
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { memo } from 'react';
 
-// Memoized for performance - only re-renders when projectId changes  
+// Memoized for performance - only re-renders when projectId changes
 const VideoProcessingStatus = memo(function VideoProcessingStatus({ projectId, onProcessingComplete }) {
+  // Keep the latest callback in a ref so the SSE effect depends ONLY on projectId.
+  // The parent passes a fresh inline arrow each render; including it in the effect
+  // deps tore down + reopened the EventSource on every render, leaking connections
+  // (the climbing "EventSource created. Total active: N" in the console).
+  const onCompleteRef = useRef(onProcessingComplete);
+  onCompleteRef.current = onProcessingComplete;
+
   useEffect(() => {
     if (!projectId) return;
 
@@ -25,9 +32,9 @@ const VideoProcessingStatus = memo(function VideoProcessingStatus({ projectId, o
           if (data.type === 'processing-complete' && data.itemType === 'video') {
             console.log('🎬 Video processing completed:', data.itemId);
             
-            // Notify parent with minimal data
-            if (onProcessingComplete) {
-              onProcessingComplete([{
+            // Notify parent with minimal data (via ref — see note above)
+            if (onCompleteRef.current) {
+              onCompleteRef.current([{
                 videoId: data.itemId,
                 itemsProcessed: 1 // Simple assumption
               }]);
@@ -50,7 +57,7 @@ const VideoProcessingStatus = memo(function VideoProcessingStatus({ projectId, o
     return () => {
       eventSource?.close();
     };
-  }, [projectId, onProcessingComplete]);
+  }, [projectId]); // only re-run when the project changes, NOT on every render
 
   // This component doesn't render anything - it's just a listener
   return null;
