@@ -1,16 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { WebhookReceiver, RoomServiceClient } from 'livekit-server-sdk';
+import { WebhookReceiver } from 'livekit-server-sdk';
 import connectMongoDB from '@/lib/mongodb';
-import { startRecording, stopRecording, startCustomerEgress, stopCustomerEgress, clearRecordingState } from '@/lib/livekitEgress';
+import { clearRecordingState } from '@/lib/livekitEgress';
 import { safeStopOrphan } from '@/lib/selfServeEgress';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
-
-// Room service client for checking active participants
-const roomServiceClient = new RoomServiceClient(
-  process.env.LIVEKIT_URL!,
-  process.env.LIVEKIT_API_KEY!,
-  process.env.LIVEKIT_API_SECRET!
-);
 
 const webhookReceiver = new WebhookReceiver(
   process.env.LIVEKIT_API_KEY!,
@@ -147,113 +140,6 @@ function getParticipantType(identity: string): 'agent' | 'customer' | 'egress' {
   return 'customer';
 }
 
-/**
- * Check if a room still has active (non-egress) participants
- * Used to detect if we need to restart recording after an egress disconnection
- */
-async function getRoomActiveParticipants(roomName: string): Promise<{ count: number; identities: string[] }> {
-  try {
-    const participants = await roomServiceClient.listParticipants(roomName);
-
-    // Filter out egress participants (EG_ prefix)
-    const activeParticipants = participants.filter(p => !p.identity.startsWith('EG_'));
-
-    return {
-      count: activeParticipants.length,
-      identities: activeParticipants.map(p => p.identity)
-    };
-  } catch (error: any) {
-    // Room might not exist anymore (call ended)
-    if (error.message?.includes('not found') || error.code === 'NOT_FOUND') {
-      return { count: 0, identities: [] };
-    }
-    console.error(`❌ Error checking room participants for ${roomName}:`, error);
-    return { count: 0, identities: [] };
-  }
-}
-
-/**
- * Auto-restart recording when egress disconnects while call is still active
- * This prevents losing entire call recordings due to LiveKit egress timeouts
- */
-async function autoRestartRecording(
-  roomName: string,
-  existingRecording: any,
-  disconnectionReason: string
-): Promise<boolean> {
-  console.log('🔄 =================================');
-  console.log('🔄 AUTO-RESTART RECORDING');
-  console.log('🔄 =================================');
-  console.log(`📌 Room: ${roomName}`);
-  console.log(`📌 Previous Recording ID: ${existingRecording._id}`);
-  console.log(`📌 Disconnection Reason: ${disconnectionReason}`);
-
-  const VideoRecording = (await import('@/models/VideoRecording')).default;
-
-  try {
-    // Mark the old recording as partial (not failed, since we have some data)
-    await VideoRecording.findByIdAndUpdate(existingRecording._id, {
-      status: 'partial',
-      error: `Egress disconnected: ${disconnectionReason}. Auto-restart initiated.`,
-      isPartialRecording: true
-    });
-
-    // Create a new recording entry for the continuation
-    const Project = (await import('@/models/Project')).default;
-    const project = await Project.findById(existingRecording.projectId);
-
-    if (!project) {
-      console.error('❌ Project not found for auto-restart');
-      return false;
-    }
-
-    // Create new recording with reference to the previous partial recording
-    const newRecording = await VideoRecording.create({
-      projectId: existingRecording.projectId,
-      userId: project.userId,
-      organizationId: project.organizationId,
-      roomId: roomName,
-      status: 'starting',
-      s3Key: `recordings/${roomName}/pending.mp4`,
-      startedAt: new Date(),
-      participants: existingRecording.participants || [],
-      activeParticipants: existingRecording.activeParticipants || [],
-      previousRecordingId: existingRecording._id,  // Link to partial recording
-      isAutoRestarted: true
-    });
-
-    console.log(`✅ Created new recording entry: ${newRecording._id}`);
-
-    // CRITICAL: Clear the in-memory cache before starting new egress
-    // This prevents startRecording() from returning the old (disconnected) egress ID
-    clearRecordingState(roomName);
-
-    // Start a new egress
-    const egressId = await startRecording(roomName, newRecording._id.toString());
-
-    if (egressId) {
-      console.log(`✅ Auto-restart successful! New egress: ${egressId}`);
-
-      // Update the old recording to reference the new one
-      await VideoRecording.findByIdAndUpdate(existingRecording._id, {
-        continuedInRecordingId: newRecording._id
-      });
-
-      return true;
-    } else {
-      console.error('❌ Failed to start new egress');
-      await VideoRecording.findByIdAndUpdate(newRecording._id, {
-        status: 'failed',
-        error: 'Auto-restart failed: Could not start new egress'
-      });
-      return false;
-    }
-  } catch (error) {
-    console.error('❌ Auto-restart recording failed:', error);
-    return false;
-  }
-}
-
 async function handleParticipantJoined(event: WebhookEvent) {
   if (!event.room || !event.participant) return;
 
@@ -261,16 +147,15 @@ async function handleParticipantJoined(event: WebhookEvent) {
   const participantIdentity = event.participant.identity;
   const participantType = getParticipantType(participantIdentity);
 
-  // Ignore LiveKit egress participants
+  // Ignore LiveKit egress participants (they're the recorder itself)
   if (participantType === 'egress') return;
 
-  // Ignore self-serve recording rooms - they have their own flow
+  // Self-serve recording rooms have their own flow
   if (roomName.startsWith('self-serve-')) {
     console.log(`📹 Ignoring participant_joined for self-serve room: ${roomName}`);
     return;
   }
 
-  // Try to get name from event, fallback to metadata, then 'Unknown'
   let participantName = event.participant.name;
   if (!participantName && event.participant.metadata) {
     try {
@@ -282,113 +167,33 @@ async function handleParticipantJoined(event: WebhookEvent) {
 
   console.log(`👋 ${participantType} joined: ${participantName} (${participantIdentity})`);
 
-  // Extract projectId from room metadata or room name
-  let projectId: string | null = null;
-  if (event.room.metadata) {
-    try {
-      projectId = JSON.parse(event.room.metadata).projectId;
-    } catch (e) {}
-  }
-  if (!projectId) {
-    const roomParts = roomName.split('-');
-    if (roomParts[0]?.length === 24 && /^[a-f0-9]+$/i.test(roomParts[0])) {
-      projectId = roomParts[0];
-    }
-  }
-  if (!projectId) {
-    console.error('❌ Could not determine projectId');
-    return;
-  }
-
-  // Fetch project to get userId and organizationId
-  const Project = (await import('@/models/Project')).default;
-  const project = await Project.findById(projectId);
-  if (!project) {
-    console.error('❌ Project not found:', projectId);
-    return;
-  }
-
   const VideoRecording = (await import('@/models/VideoRecording')).default;
 
-  // ATOMIC: Create recording if none exists, OR update existing
-  // This prevents race conditions from simultaneous participant joins
-  let recording;
-  let isNewRecording = false;
-  try {
-    // First, try to find an existing recording (including 'processing' to prevent duplicates while egress ends)
-    recording = await VideoRecording.findOne({
-      roomId: roomName,
-      status: { $in: ['waiting', 'starting', 'recording', 'processing'] }
-    });
-
-    if (recording) {
-      // Recording exists - add participant to activeParticipants
-      recording = await VideoRecording.findOneAndUpdate(
-        { _id: recording._id },
-        {
-          $addToSet: {
-            activeParticipants: {
-              identity: participantIdentity,
-              type: participantType,
-              joinedAt: new Date()
-            }
-          }
-        },
-        { new: true }
-      );
-    } else {
-      // No recording exists - create one with this participant
-      isNewRecording = true;
-      recording = await VideoRecording.create({
-        projectId,
-        userId: project.userId,
-        organizationId: project.organizationId,
-        roomId: roomName,
-        status: 'waiting',
-        s3Key: `recordings/${roomName}/pending.mp4`,
-        startedAt: new Date(),
-        participants: [],
-        activeParticipants: [{
-          identity: participantIdentity,
-          type: participantType,
-          joinedAt: new Date()
-        }]
-      });
-    }
-  } catch (error: any) {
-    // Handle duplicate key error - another webhook beat us to it (race condition)
-    if (error.code === 11000) {
-      console.log(`⚠️ Race condition detected for room ${roomName}, finding existing recording...`);
-      recording = await VideoRecording.findOneAndUpdate(
-        { roomId: roomName, status: { $in: ['waiting', 'starting', 'recording', 'processing'] } },
-        {
-          $addToSet: {
-            activeParticipants: {
-              identity: participantIdentity,
-              type: participantType,
-              joinedAt: new Date()
-            }
-          }
-        },
-        { new: true }
-      );
-    } else {
-      console.error('❌ Error in atomic recording creation:', error);
-      return;
-    }
-  }
+  // The recording was pre-created in /api/calls/[roomId]/start when the agent hit
+  // Start Meeting, and Auto Egress on CreateRoom already kicked off the recorder.
+  // This handler only needs to track who's in the room.
+  const recording = await VideoRecording.findOne({
+    roomId: roomName,
+    status: { $in: ['waiting', 'starting', 'recording', 'processing'] }
+  });
 
   if (!recording) {
-    console.error('❌ Failed to create or find recording');
+    console.warn(`⚠️ participant_joined for ${roomName} but no active recording — was /api/calls/${roomName}/start called?`);
     return;
   }
 
-  console.log(`📹 Recording state: ${recording.status}, activeParticipants: ${recording.activeParticipants?.length || 0}`);
+  await VideoRecording.findByIdAndUpdate(recording._id, {
+    $addToSet: {
+      activeParticipants: {
+        identity: participantIdentity,
+        type: participantType,
+        joinedAt: new Date()
+      }
+    }
+  });
 
-  // Add to participants array (with full details including name)
   const existingParticipant = recording.participants?.find((p: any) => p.identity === participantIdentity);
   if (existingParticipant) {
-    // Rejoin: update joinedAt, clear leftAt
     await VideoRecording.findOneAndUpdate(
       { _id: recording._id, 'participants.identity': participantIdentity },
       { $set: { 'participants.$.name': participantName, 'participants.$.joinedAt': new Date(), 'participants.$.leftAt': null } }
@@ -399,54 +204,6 @@ async function handleParticipantJoined(event: WebhookEvent) {
       $push: { participants: { identity: participantIdentity, name: participantName, joinedAt: new Date(), type: participantType } }
     });
   }
-
-  // Start room composite egress if status is 'waiting' (first participant to trigger egress)
-  // Use atomic update to prevent race condition where two participants both try to start egress
-  if (recording.status === 'waiting') {
-    // Atomically transition from 'waiting' to 'starting' - only one webhook will succeed
-    const transitioned = await VideoRecording.findOneAndUpdate(
-      { _id: recording._id, status: 'waiting' },
-      { status: 'starting' },
-      { new: true }
-    );
-
-    if (transitioned) {
-      console.log(`🎬 First participant joined - starting room composite egress`);
-
-      // Update ScheduledVideoCall status to 'started' if this room is from a scheduled call
-      const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
-      console.log(`🔍 Looking for ScheduledVideoCall with roomId: ${roomName}`);
-      const scheduledCallUpdate = await ScheduledVideoCall.findOneAndUpdate(
-        { roomId: roomName, status: 'scheduled' },
-        { status: 'started', startedAt: new Date() },
-        { new: true }
-      );
-      if (scheduledCallUpdate) {
-        console.log(`📅 ScheduledVideoCall status updated to 'started': ${scheduledCallUpdate._id}`);
-      }
-
-      try {
-        const egressId = await startRecording(roomName, recording._id.toString());
-        if (egressId) {
-          console.log(`✅ Room composite egress started: ${egressId}`);
-        } else {
-          console.error('❌ Failed to start room composite egress');
-          await VideoRecording.findByIdAndUpdate(recording._id, { status: 'failed', error: 'Failed to start egress' });
-          return;
-        }
-      } catch (egressError) {
-        console.error('❌ Error starting room composite egress:', egressError);
-        await VideoRecording.findByIdAndUpdate(recording._id, { status: 'failed', error: 'Egress start error' });
-        return;
-      }
-    } else {
-      console.log(`⏭️ Another webhook already started the egress`);
-    }
-  }
-
-  // NOTE: Customer egress is now started on track_published event
-  // This ensures we wait for the customer's video track to be ready before recording
-  // See handleTrackPublished() below
 }
 
 async function handleParticipantLeft(event: WebhookEvent) {
@@ -490,45 +247,10 @@ async function handleParticipantLeft(event: WebhookEvent) {
   const remainingParticipants = recording.activeParticipants?.length || 0;
   console.log(`👥 Participants remaining in room: ${remainingParticipants}`);
 
-  // ONLY stop recording when LAST participant leaves
-  if (remainingParticipants === 0) {
-    console.log(`🛑 Last participant left - stopping recording: ${recording._id}`);
-
-    // Update ScheduledVideoCall status to 'completed' if this room is from a scheduled call
-    const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
-    console.log(`🔍 Looking for ScheduledVideoCall with roomId: ${roomName} to mark completed`);
-    const scheduledCallUpdate = await ScheduledVideoCall.findOneAndUpdate(
-      { roomId: roomName, status: 'started' },
-      { status: 'completed', completedAt: new Date() },
-      { new: true }
-    );
-    if (scheduledCallUpdate) {
-      console.log(`📅 ScheduledVideoCall status updated to 'completed': ${scheduledCallUpdate._id}`);
-    }
-
-    // Stop customer egress first (if running)
-    if (recording.customerEgressId && ['starting', 'recording'].includes(recording.customerEgressStatus || '')) {
-      console.log(`🛑 Stopping customer egress: ${recording.customerEgressId}`);
-      await stopCustomerEgress(roomName);
-    }
-
-    // Stop room composite egress
-    const stopped = await stopRecording(roomName);
-    if (!stopped) {
-      // If stopRecording returned false (no active egress found), update status manually
-      await VideoRecording.findByIdAndUpdate(recording._id, { status: 'processing', endedAt: new Date() });
-    }
-  } else {
-    console.log(`⏳ Recording continues - ${remainingParticipants} participant(s) still in room`);
-
-    // Edge case: If the CUSTOMER left but agent is still there, stop customer egress only
-    // (no point recording empty customer feed for AI analysis)
-    const hasCustomer = recording.activeParticipants?.some((p: any) => p.type === 'customer');
-    if (!hasCustomer && recording.customerEgressId && recording.customerEgressStatus === 'recording') {
-      console.log(`🛑 Customer left but agent remains - stopping customer egress only`);
-      await stopCustomerEgress(roomName);
-    }
-  }
+  // The egress is owned by the room (Auto Egress on CreateRoom) and stays running
+  // through any participant drop. LiveKit closes the room — and the egress — when
+  // it's been empty for departure_timeout seconds. Then egress_ended fires and
+  // we finalize. Don't stop egress here; doing so would defeat reconnect handling.
 }
 
 /**
@@ -721,29 +443,14 @@ async function handleEgressEnded(event: WebhookEvent) {
   // Always clear in-memory cache when egress ends (prevents stale state)
   clearRecordingState(roomName);
 
-  // 🚨 AUTO-RECOVERY: Check if participants are still in the room
-  // If yes, the egress disconnected unexpectedly and we need to restart recording
-  const activeParticipants = await getRoomActiveParticipants(roomName);
-  console.log(`👥 Active participants in room: ${activeParticipants.count}`, activeParticipants.identities);
-
-  if (activeParticipants.count > 0) {
-    // Call is still active but egress disconnected - this is bad!
-    console.log('🚨 EGRESS DISCONNECTED WHILE CALL STILL ACTIVE!');
-    console.log(`🔄 Attempting auto-restart to prevent data loss...`);
-
-    const disconnectionReason = event.egressInfo.error || 'CONNECTION_TIMEOUT';
-    const restarted = await autoRestartRecording(roomName, existingRecording, disconnectionReason);
-
-    if (restarted) {
-      console.log('✅ Auto-restart successful - call recording will continue');
-      // Don't process this egress end as normal - we've handled it via auto-restart
-      // The partial recording is already marked, and a new recording has started
-      return;
-    } else {
-      console.error('❌ Auto-restart failed - some recording may be lost');
-      // Continue processing as failed recording
-    }
-  }
+  // Mark the scheduled call (if any) as completed — the egress is the canonical
+  // call-ended signal under Auto Egress, since participant_left no longer stops
+  // the recording.
+  const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
+  await ScheduledVideoCall.findOneAndUpdate(
+    { roomId: roomName, status: 'started' },
+    { status: 'completed', completedAt: new Date() }
+  );
 
   // Convert nanosecond timestamps to milliseconds
   const endedAtMs = event.egressInfo.endedAt

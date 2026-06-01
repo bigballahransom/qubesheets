@@ -29,12 +29,15 @@ interface Background {
 }
 
 interface AgentPreJoinProps {
-  onJoin: (displayName: string, backgroundSettings?: {
+  onStartMeeting: (displayName: string, backgroundSettings?: {
     mode: 'none' | 'blur' | 'virtual';
     blurRadius?: number;
     imageUrl?: string;
   }) => void;
   isLoading?: boolean;
+  customerPresent: boolean;
+  customerDisplayName?: string | null;
+  expectedCustomerName?: string;
 }
 
 // Preset backgrounds
@@ -44,7 +47,13 @@ const PRESET_BACKGROUNDS: Background[] = [
   { id: 'preset_minimal', name: 'Minimal', url: '/backgrounds/download.png', isPreset: true },
 ];
 
-export default function AgentPreJoin({ onJoin, isLoading = false }: AgentPreJoinProps) {
+export default function AgentPreJoin({
+  onStartMeeting,
+  isLoading = false,
+  customerPresent,
+  customerDisplayName,
+  expectedCustomerName,
+}: AgentPreJoinProps) {
   const { isLoaded, user } = useUser();
 
   // Name state
@@ -387,7 +396,7 @@ export default function AgentPreJoin({ onJoin, isLoading = false }: AgentPreJoin
     }
 
     // Pass settings to parent
-    onJoin(displayName.trim(), {
+    onStartMeeting(displayName.trim(), {
       mode: backgroundMode,
       blurRadius: backgroundMode === 'blur' ? blurRadius : undefined,
       imageUrl: backgroundMode === 'virtual' && selectedBackground
@@ -652,21 +661,52 @@ export default function AgentPreJoin({ onJoin, isLoading = false }: AgentPreJoin
             </span>
           </label>
 
-          {/* Join Button */}
+          {/* Customer presence pill */}
+          <div
+            className={`rounded-xl px-4 py-3 border text-sm flex items-center gap-2.5 ${
+              customerPresent
+                ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100'
+                : 'bg-white/5 border-white/15 text-white/70'
+            }`}
+          >
+            {customerPresent ? (
+              <>
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
+                </span>
+                <span>
+                  <span className="font-semibold">{customerDisplayName || expectedCustomerName || 'Your customer'}</span> has joined the waiting room
+                </span>
+              </>
+            ) : (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Waiting for {expectedCustomerName || 'your customer'} to join…</span>
+              </>
+            )}
+          </div>
+
+          {/* Start Meeting Button */}
           <button
             onClick={handleJoin}
-            disabled={isLoading || isSaving || !displayName.trim()}
-            className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-500 disabled:to-gray-600 text-white rounded-xl font-semibold text-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none flex items-center justify-center gap-2"
+            disabled={isLoading || isSaving || !displayName.trim() || !customerPresent}
+            className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-white rounded-xl font-semibold text-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none flex items-center justify-center gap-2"
           >
             {isLoading || isSaving ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                {isSaving ? 'Saving...' : 'Joining...'}
+                {isSaving ? 'Saving…' : 'Starting Meeting…'}
+              </>
+            ) : !customerPresent ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Waiting for customer
               </>
             ) : (
               <>
                 <Video className="w-5 h-5" />
-                Join Call
+                Start Meeting
               </>
             )}
           </button>
