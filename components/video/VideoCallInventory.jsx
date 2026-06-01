@@ -818,38 +818,47 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
       <div className="absolute inset-0 z-10">
         {isSmallScreen ? (
           // Mobile: Bypass GridLayout entirely - use manual video elements for better compatibility
+          // Customer-side layout: customer's own camera is the large feed (so they can
+          // see what they're showing), agent appears in the PiP corner.
           <div className="absolute inset-0 flex flex-col bg-black">
-            {/* Remote video (agent) - full screen background */}
+            {/* Local video (self) - full screen background */}
             <div className="flex-1 relative">
-              {remoteCameraTrack?.publication?.track ? (
+              {localCameraTrack?.publication?.track ? (
                 <video
-                  ref={remoteVideoRef}
+                  ref={localVideoRef}
                   autoPlay
                   playsInline
+                  muted
                   className="absolute inset-0 w-full h-full object-cover"
                 />
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900">
                   <div className="text-center">
                     <Loader2 className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
-                    <p className="text-white/80">Waiting for agent to connect...</p>
+                    <p className="text-white/80">Starting your camera...</p>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Local video (self) - small overlay in corner */}
-            {localCameraTrack?.publication?.track && (
+            {/* Remote video (agent) - small overlay in corner */}
+            {remoteCameraTrack?.publication?.track ? (
               <div
                 className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30 bg-black"
               >
                 <video
-                  ref={localVideoRef}
+                  ref={remoteVideoRef}
                   autoPlay
                   playsInline
-                  muted
                   className="w-full h-full object-cover"
                 />
+              </div>
+            ) : (
+              <div className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30 bg-black flex items-center justify-center">
+                <div className="text-center px-2">
+                  <Loader2 className="w-5 h-5 animate-spin text-white/70 mx-auto mb-1" />
+                  <p className="text-white/70 text-[10px] leading-tight">Connecting consultant…</p>
+                </div>
               </div>
             )}
           </div>
