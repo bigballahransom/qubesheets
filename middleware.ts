@@ -24,6 +24,7 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/crew-review/(.*)',
   '/api/livekit/token(.*)',
   '/api/livekit/webhook(.*)',  // LiveKit webhook endpoint
+  '/api/calls/(.*)',  // Lobby presence + start — customer side is anonymous, agent auth checked inside handler
   '/api/projects/(.*)/public-info',
   '/api/external/(.*)',  // External API endpoints with API key auth
   '/api/processing-complete(.*)',  // Webhook endpoint and SSE for Railway services

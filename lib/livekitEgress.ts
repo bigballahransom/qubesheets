@@ -33,18 +33,11 @@ export async function startRecording(roomName: string, recordingId: string): Pro
   console.log('📌 Timestamp:', new Date().toISOString());
 
   try {
-    // Check if recording is already active for this room (in-memory check)
-    if (activeRecordings[roomName]?.status === 'recording' || activeRecordings[roomName]?.status === 'starting') {
-      console.log(`⚠️ Recording already active for room: ${roomName}`, {
-        status: activeRecordings[roomName].status,
-        egressId: activeRecordings[roomName].egressId
-      });
-      return activeRecordings[roomName].egressId;
-    }
-
     await connectMongoDB();
 
-    // CRITICAL: Check database for existing egress (in-memory check doesn't work across serverless instances)
+    // Database is the source of truth — in-memory cache is unreliable across
+    // serverless instances and was the root cause of a silent-failure bug
+    // where a stale egressId got returned for a fresh recording attempt.
     const VideoRecordingModel = (await import('@/models/VideoRecording')).default;
     const existingWithEgress = await VideoRecordingModel.findOne({
       roomId: roomName,
@@ -53,9 +46,29 @@ export async function startRecording(roomName: string, recordingId: string): Pro
     });
 
     if (existingWithEgress?.egressId) {
-      console.log(`⚠️ Egress already exists for room (database check): ${roomName}`, {
+      if (existingWithEgress._id.toString() === recordingId) {
+        console.log(`⚠️ Egress already started for this recording: ${roomName}`, {
+          egressId: existingWithEgress.egressId,
+          status: existingWithEgress.status
+        });
+        activeRecordings[roomName] = { egressId: existingWithEgress.egressId, status: existingWithEgress.status };
+        return existingWithEgress.egressId;
+      }
+
+      // A different recording owns an active egress on this room — point the
+      // new recording at the same egress so it isn't left orphaned without an
+      // egressId. Both will be reconciled when egress_ended fires.
+      console.warn(`⚠️ Existing egress for room belongs to different recording`, {
+        existingRecordingId: existingWithEgress._id.toString(),
+        newRecordingId: recordingId,
+        egressId: existingWithEgress.egressId
+      });
+      const VideoRecording = (await import('@/models/VideoRecording')).default;
+      await VideoRecording.findByIdAndUpdate(recordingId, {
         egressId: existingWithEgress.egressId,
-        status: existingWithEgress.status
+        s3Key: existingWithEgress.s3Key,
+        status: existingWithEgress.status,
+        error: 'Attached to existing egress for room (race condition)'
       });
       activeRecordings[roomName] = { egressId: existingWithEgress.egressId, status: existingWithEgress.status };
       return existingWithEgress.egressId;

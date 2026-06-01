@@ -18,7 +18,9 @@ import {
   MessageCircle,
   FileText,
   Package,
-  Quote
+  Quote,
+  RotateCcw,
+  RotateCw
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -294,6 +296,13 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     setCurrentTime(newTime);
   };
 
+  const skipBy = (deltaSeconds) => {
+    if (!videoRef.current) return;
+    const newTime = Math.max(0, Math.min(duration || videoRef.current.duration || 0, videoRef.current.currentTime + deltaSeconds));
+    videoRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+  };
+
   const handleVolumeChange = (value) => {
     const newVolume = value[0] / 100;
     setVolume(newVolume);
@@ -492,6 +501,17 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                   {/* Control Buttons */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1">
+                      {/* Back 5s */}
+                      <button
+                        onClick={() => skipBy(-5)}
+                        disabled={isLoading}
+                        className="relative p-2 text-white hover:bg-white/20 rounded transition-colors"
+                        title="Back 5 seconds"
+                      >
+                        <RotateCcw className="w-5 h-5" />
+                        <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold pointer-events-none mt-0.5">5</span>
+                      </button>
+
                       {/* Play/Pause */}
                       <button
                         onClick={togglePlayPause}
@@ -503,6 +523,17 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                         ) : (
                           <Play className="w-5 h-5" />
                         )}
+                      </button>
+
+                      {/* Forward 5s */}
+                      <button
+                        onClick={() => skipBy(5)}
+                        disabled={isLoading}
+                        className="relative p-2 text-white hover:bg-white/20 rounded transition-colors"
+                        title="Forward 5 seconds"
+                      >
+                        <RotateCw className="w-5 h-5" />
+                        <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold pointer-events-none mt-0.5">5</span>
                       </button>
 
                       {/* Volume */}

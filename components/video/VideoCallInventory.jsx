@@ -582,7 +582,9 @@ function isAgent(participantName) {
 const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   const [showControls, setShowControls] = useState(true);
   const { localParticipant } = useLocalParticipant();
-  const remoteParticipants = useRemoteParticipants();
+  const remoteParticipants = useRemoteParticipants().filter(
+    (p) => !p.identity?.startsWith('EG_')
+  );
   const connectionState = useConnectionState();
 
   // Custom control states
@@ -651,7 +653,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
       { source: Track.Source.ScreenShare, withPlaceholder: false },
     ],
     { onlySubscribed: false }
-  );
+  ).filter((t) => !t.participant?.identity?.startsWith('EG_'));
 
   // Check if local camera track is ready (not just a placeholder)
   const localCameraTrack = tracks.find(
@@ -1031,7 +1033,9 @@ const AgentView = React.memo(({
     });
   }, []);
 
-  const remoteParticipants = useRemoteParticipants();
+  const remoteParticipants = useRemoteParticipants().filter(
+    (p) => !p.identity?.startsWith('EG_')
+  );
   const { switchCamera, isSwitching, canSwitchCamera: canSwitchCameraCustomer } = useAdvancedCameraSwitching();
 
   // Sync control states with localParticipant
@@ -1080,8 +1084,8 @@ const AgentView = React.memo(({
       { source: Track.Source.ScreenShare, withPlaceholder: false },
     ],
     { onlySubscribed: false }
-  );
-  
+  ).filter((t) => !t.participant?.identity?.startsWith('EG_'));
+
 
   useEffect(() => {
     const checkScreenSize = () => {

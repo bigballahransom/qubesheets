@@ -2,12 +2,12 @@
 'use client';
 
 import { useState, useEffect, useRef, memo, useMemo, useCallback } from 'react';
-import { 
-  Play, 
-  Pause, 
-  Volume2, 
-  VolumeX, 
-  Clock, 
+import {
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Clock,
   Video as VideoIcon,
   User,
   Calendar,
@@ -19,7 +19,9 @@ import {
   Loader2,
   Package,
   X,
-  Copy
+  Copy,
+  RotateCcw,
+  RotateCw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -375,6 +377,14 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   const [selectedRecording, setSelectedRecording] = useState(null); // For VideoRecordingModal (self-serve)
   const [isRecordingModalOpen, setIsRecordingModalOpen] = useState(false); // Track VideoRecordingModal state
   const inventoryAbortControllerRef = useRef(null); // AbortController for inventory polling
+  const modalVideoRef = useRef(null); // Detail modal video element ref
+
+  const skipModalVideoBy = (deltaSeconds) => {
+    const v = modalVideoRef.current;
+    if (!v) return;
+    const dur = v.duration || 0;
+    v.currentTime = Math.max(0, Math.min(dur, v.currentTime + deltaSeconds));
+  };
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -1371,17 +1381,40 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
                 {/* Video Player */}
                 <div className="relative bg-black rounded-lg overflow-hidden">
                   {modalVideoUrl ? (
-                    <video
-                      src={modalVideoUrl}
-                      controls
-                      preload="metadata"
-                      className="w-full h-auto bg-black block"
-                      style={{ maxHeight: '400px' }}
-                      onLoadedMetadata={(e) => {
-                        // Ensure video shows first frame
-                        e.target.currentTime = 0;
-                      }}
-                    />
+                    <>
+                      <video
+                        ref={modalVideoRef}
+                        src={modalVideoUrl}
+                        controls
+                        preload="metadata"
+                        className="w-full h-auto bg-black block"
+                        style={{ maxHeight: '400px' }}
+                        onLoadedMetadata={(e) => {
+                          // Ensure video shows first frame
+                          e.target.currentTime = 0;
+                        }}
+                      />
+                      <div className="flex items-center justify-center gap-2 bg-black/80 py-2">
+                        <button
+                          type="button"
+                          onClick={() => skipModalVideoBy(-5)}
+                          className="relative flex items-center gap-1 px-3 py-1.5 text-white text-xs hover:bg-white/20 rounded transition-colors"
+                          title="Back 5 seconds"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          <span>5s</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => skipModalVideoBy(5)}
+                          className="relative flex items-center gap-1 px-3 py-1.5 text-white text-xs hover:bg-white/20 rounded transition-colors"
+                          title="Forward 5 seconds"
+                        >
+                          <span>5s</span>
+                          <RotateCw className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </>
                   ) : (
                     <div className="w-full h-96 flex items-center justify-center">
                       <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />

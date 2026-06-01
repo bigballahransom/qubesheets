@@ -1,13 +1,14 @@
-// app/video-call/[roomId]/page.tsx - Video call page with pre-join screens
+// app/video-call/[roomId]/page.tsx - Video call page with lobby / waiting room
 'use client';
 
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@clerk/nextjs';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import VideoCallInventory from '@/components/video/VideoCallInventory';
 import AgentPreJoin from '@/components/video/AgentPreJoin';
 import CustomerPreJoin from '@/components/video/CustomerPreJoin';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface BackgroundSettings {
   mode: 'none' | 'blur' | 'virtual';
@@ -15,11 +16,32 @@ interface BackgroundSettings {
   imageUrl?: string;
 }
 
-interface CustomerSettings {
-  videoEnabled: boolean;
-  audioEnabled: boolean;
-  facingMode: 'user' | 'environment';
+interface PresenceState {
+  callStatus: 'lobby' | 'live' | 'ended';
+  agentPresent: boolean;
+  customerPresent: boolean;
+  agentDisplayName: string | null;
+  customerDisplayName: string | null;
+  startedAt: string | null;
+  isScheduled: boolean;
+  scheduledFor: string | null;
+  scheduledStatus: string | null;
 }
+
+const POLL_INTERVAL_MS = 2000;
+const NO_SHOW_GRACE_MS = 5 * 60 * 1000;
+
+const DEFAULT_PRESENCE: PresenceState = {
+  callStatus: 'lobby',
+  agentPresent: false,
+  customerPresent: false,
+  agentDisplayName: null,
+  customerDisplayName: null,
+  startedAt: null,
+  isScheduled: false,
+  scheduledFor: null,
+  scheduledStatus: null,
+};
 
 export default function VideoCallPage() {
   const params = useParams();
@@ -30,7 +52,6 @@ export default function VideoCallPage() {
   const roomId = params?.roomId as string;
   const projectId = searchParams?.get('projectId');
 
-  // Check for isAgent param (new) or name containing 'agent' (legacy support)
   const isAgentParam = searchParams?.get('isAgent') === 'true';
   const legacyParticipantName = searchParams?.get('name') || 'Participant';
   const isAgent = isAgentParam || legacyParticipantName.toLowerCase().includes('agent');
@@ -39,27 +60,38 @@ export default function VideoCallPage() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [callStartTime] = useState(new Date());
 
-  // Pre-join state for agents
-  const [showPreJoin, setShowPreJoin] = useState(true);
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings | null>(null);
-  const [isJoining, setIsJoining] = useState(false);
+  const [presence, setPresence] = useState<PresenceState>(DEFAULT_PRESENCE);
+  const [now, setNow] = useState<number>(Date.now());
 
-  // Pre-join state for customers
-  const [showCustomerPreJoin, setShowCustomerPreJoin] = useState(true);
-  const [customerSettings, setCustomerSettings] = useState<CustomerSettings | null>(null);
+  // Agent-side staged choices, captured when they hit Start Meeting
+  const [agentDisplayName, setAgentDisplayName] = useState<string | null>(null);
+  const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+
+  // Customer-side readiness (camera + mic permissions granted)
+  const [customerReady, setCustomerReady] = useState(false);
+
+  // Local flag that lets the agent enter the live call immediately after they
+  // press Start Meeting, without waiting for the next presence poll round trip.
+  const [agentEntered, setAgentEntered] = useState(false);
+
+  // Gates the actual mount of VideoCallInventory. We flip this true ~500ms
+  // after the PreJoin's render condition is no longer met, giving the
+  // pre-join's MediaStreamTrack time to fully release before LiveKitRoom
+  // tries to acquire the same device.
+  const [readyForLive, setReadyForLive] = useState(false);
+
+  const presenceRef = useRef<PresenceState>(DEFAULT_PRESENCE);
+  presenceRef.current = presence;
 
   useEffect(() => {
     if (isAgent) {
-      // Agents must be authenticated
-      if (!isLoaded) return; // Wait for auth to load
-
+      if (!isLoaded) return;
       if (!userId) {
         router.push('/sign-in');
         return;
       }
     }
-    // For customers, we don't need to wait for auth to load
 
     if (!projectId) {
       setValidationError('Invalid video call link - missing project information');
@@ -67,40 +99,24 @@ export default function VideoCallPage() {
       return;
     }
 
-    // Validate access based on user type
     const validateAccess = async () => {
       try {
         if (isAgent && userId) {
-          // For agents, validate they own the project
           const response = await fetch(`/api/projects/${projectId}`);
-          if (!response.ok) {
-            throw new Error('Project not found or access denied');
-          }
+          if (!response.ok) throw new Error('Project not found or access denied');
         } else {
-          // For customers, just validate the project exists (no auth required)
           const response = await fetch(`/api/projects/${projectId}/public-info`);
           if (!response.ok) {
-            // Fallback: try to validate the room ID format
-            if (!roomId || !roomId.includes(projectId)) {
-              throw new Error('Invalid video call link');
-            }
-            // If we can't validate the project but the room format looks right,
-            // allow the customer to proceed (the LiveKit room will handle final validation)
+            if (!roomId || !roomId.includes(projectId)) throw new Error('Invalid video call link');
           }
         }
-
         setIsValidating(false);
       } catch (error) {
         console.error('Access validation failed:', error);
-
         if (isAgent) {
-          // Agents should be redirected to projects page
           router.push('/projects');
         } else {
-          // Customers should see an error message, not be redirected
-          setValidationError(
-            error instanceof Error ? error.message : 'Unable to join video call'
-          );
+          setValidationError(error instanceof Error ? error.message : 'Unable to join video call');
           setIsValidating(false);
         }
       }
@@ -109,68 +125,196 @@ export default function VideoCallPage() {
     validateAccess();
   }, [isLoaded, userId, projectId, roomId, isAgent, router]);
 
-  // Handle agent joining from pre-join screen
-  const handleAgentJoin = useCallback((name: string, bgSettings?: BackgroundSettings) => {
-    setIsJoining(true);
-    setDisplayName(name);
-    setBackgroundSettings(bgSettings || null);
-    setShowPreJoin(false);
-    setIsJoining(false);
+  // Tick a clock for no-show timeout calculations
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(id);
   }, []);
 
-  // Handle customer joining from pre-join screen
-  const handleCustomerJoin = useCallback((settings: CustomerSettings) => {
-    setIsJoining(true);
-    setCustomerSettings(settings);
-    setShowCustomerPreJoin(false);
-    setIsJoining(false);
-  }, []);
-
-  // Get the participant name to use
-  const getParticipantName = () => {
-    if (isAgent && displayName) {
-      return displayName;
+  // Handoff timer: when both sides agree it's time to enter the call, wait a
+  // beat so the PreJoin's camera track gets a chance to stop.
+  useEffect(() => {
+    const callIsLive = presence.callStatus === 'live';
+    const shouldEnter =
+      (isAgent && callIsLive && agentEntered) ||
+      (!isAgent && callIsLive && customerReady);
+    if (!shouldEnter) {
+      if (readyForLive) setReadyForLive(false);
+      return;
     }
-    // For customers or legacy agent URLs, use the URL param
+    if (readyForLive) return;
+    const t = setTimeout(() => setReadyForLive(true), 500);
+    return () => clearTimeout(t);
+  }, [presence.callStatus, isAgent, agentEntered, customerReady, readyForLive]);
+
+  // Heartbeat + poll presence while in the lobby
+  useEffect(() => {
+    if (isValidating || validationError) return;
+    if (presence.callStatus === 'live' && (isAgent ? agentEntered : customerReady)) return;
+    if (presence.callStatus === 'ended') return;
+    if (!isAgent && presence.isScheduled && presence.scheduledFor) {
+      const expired = Date.now() - new Date(presence.scheduledFor).getTime() > NO_SHOW_GRACE_MS;
+      if (expired && !presence.agentPresent) return;
+    }
+
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/calls/${roomId}/presence`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            side: isAgent ? 'agent' : 'customer',
+            displayName: isAgent ? agentDisplayName || undefined : legacyParticipantName,
+            projectId: projectId || undefined,
+          }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setPresence(prev => ({
+          ...prev,
+          callStatus: data.callStatus ?? prev.callStatus,
+          agentPresent: !!data.agentPresent,
+          customerPresent: !!data.customerPresent,
+          agentDisplayName: data.agentDisplayName ?? prev.agentDisplayName,
+          customerDisplayName: data.customerDisplayName ?? prev.customerDisplayName,
+          startedAt: data.startedAt ?? prev.startedAt,
+        }));
+      } catch (e) {
+        // Network blip — next tick will retry.
+      }
+    };
+
+    const fetchFullState = async () => {
+      try {
+        const res = await fetch(`/api/calls/${roomId}/presence`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setPresence({
+          callStatus: data.callStatus ?? 'lobby',
+          agentPresent: !!data.agentPresent,
+          customerPresent: !!data.customerPresent,
+          agentDisplayName: data.agentDisplayName ?? null,
+          customerDisplayName: data.customerDisplayName ?? null,
+          startedAt: data.startedAt ?? null,
+          isScheduled: !!data.isScheduled,
+          scheduledFor: data.scheduledFor ?? null,
+          scheduledStatus: data.scheduledStatus ?? null,
+        });
+      } catch {}
+    };
+
+    fetchFullState();
+    tick();
+    const interval = setInterval(tick, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    roomId,
+    isAgent,
+    isValidating,
+    validationError,
+    presence.callStatus,
+    presence.isScheduled,
+    presence.scheduledFor,
+    presence.agentPresent,
+    agentDisplayName,
+    agentEntered,
+    customerReady,
+    legacyParticipantName,
+    projectId,
+  ]);
+
+  const handleAgentStart = useCallback(
+    async (name: string, bgSettings?: BackgroundSettings) => {
+      setAgentDisplayName(name);
+      setBackgroundSettings(bgSettings || null);
+      setIsStarting(true);
+      try {
+        const res = await fetch(`/api/calls/${roomId}/start`, { method: 'POST' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          toast.error(data.error || 'Could not start the meeting. Please try again.');
+          setIsStarting(false);
+          return;
+        }
+        setPresence(prev => ({ ...prev, callStatus: 'live', startedAt: new Date().toISOString() }));
+        setAgentEntered(true);
+        setIsStarting(false);
+      } catch (error) {
+        console.error('Failed to start meeting:', error);
+        toast.error('Could not start the meeting. Please try again.');
+        setIsStarting(false);
+      }
+    },
+    [roomId]
+  );
+
+  const handleCustomerReadyChange = useCallback((ready: boolean) => {
+    setCustomerReady(ready);
+  }, []);
+
+  const handleNudgeCustomer = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/calls/${roomId}/nudge`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Could not send the reminder.');
+        return;
+      }
+      toast.success('Reminder text sent to the customer.');
+    } catch (err) {
+      console.error('Failed to nudge customer:', err);
+      toast.error('Could not send the reminder.');
+    }
+  }, [roomId]);
+
+  const getParticipantName = () => {
+    if (isAgent && agentDisplayName) return agentDisplayName;
     return legacyParticipantName;
   };
 
   const handleCallEnd = async () => {
     const participantName = getParticipantName();
 
-    // Log the video call activity
+    // Agent hitting End Call ends the meeting for everyone: delete the room,
+    // which forces all participants to disconnect and triggers Auto Egress to
+    // finalize the recording to S3 immediately. Customer's End Call just
+    // disconnects them; the room stays open in case the agent needs another
+    // moment to wrap up notes.
+    if (isAgent) {
+      try {
+        await fetch(`/api/calls/${roomId}/end`, { method: 'POST' });
+      } catch (endError) {
+        console.warn('Failed to call /end endpoint:', endError);
+      }
+    }
+
     try {
       const callEndTime = new Date();
-      const duration = Math.round((callEndTime.getTime() - callStartTime.getTime()) / 1000); // Duration in seconds
-
-      const response = await fetch(`/api/projects/${projectId}/log-video-call`, {
+      const duration = Math.round((callEndTime.getTime() - callStartTime.getTime()) / 1000);
+      await fetch(`/api/projects/${projectId}/log-video-call`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId,
           duration,
-          participantCount: isAgent ? 2 : 1, // Assume agent + customer, or just customer
-          userName: participantName
-        })
+          participantCount: isAgent ? 2 : 1,
+          userName: participantName,
+        }),
       });
-
-      if (response.ok) {
-        console.log('✅ Video call activity logged');
-      } else {
-        console.warn('⚠️ Failed to log video call activity:', await response.text());
-      }
     } catch (logError) {
-      console.warn('⚠️ Failed to log video call activity:', logError);
-      // Don't fail the navigation if logging fails
+      console.warn('Failed to log video call activity:', logError);
     }
 
     if (isAgent && userId) {
-      // Agents go back to their project
       router.push(`/projects/${projectId}`);
     } else {
-      // Customers get a thank you message or go to a landing page
       router.push('/call-complete');
     }
   };
@@ -187,55 +331,113 @@ export default function VideoCallPage() {
     );
   }
 
-  // Error state
   if (validationError) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-100">
         <div className="bg-white p-8 rounded-xl shadow-lg text-center max-w-md">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">
-            Unable to Join Call
-          </h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Unable to Join Call</h2>
           <p className="text-gray-600 mb-4">{validationError}</p>
-          <p className="text-sm text-gray-500">
-            Please contact your moving company for assistance.
-          </p>
+          <p className="text-sm text-gray-500">Please contact your moving company for assistance.</p>
         </div>
       </div>
     );
   }
 
-  // Pre-join screen for agents
-  if (isAgent && showPreJoin) {
+  const callIsLive = presence.callStatus === 'live';
+  const agentShouldEnter = isAgent && callIsLive && agentEntered;
+  const customerShouldEnter = !isAgent && callIsLive && customerReady;
+  const shouldEnterCall = agentShouldEnter || customerShouldEnter;
+
+  // Render an intermediate loader for ~500ms when transitioning from a PreJoin
+  // into VideoCallInventory. This unmounts the PreJoin first, letting
+  // useAndroidCompatibleVideoTrack's cleanup release the camera before
+  // LiveKitRoom tries to acquire it — otherwise we hit "Requested device not
+  // found" because the prior MediaStreamTrack still owns the device.
+  if (shouldEnterCall && !readyForLive) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-white" />
+          <p className="text-white/70">Joining the meeting…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Agent: in the call once they've pressed Start Meeting (or rejoin while live)
+  if (agentShouldEnter && readyForLive) {
+    return (
+      <VideoCallInventory
+        projectId={projectId!}
+        roomId={roomId}
+        participantName={getParticipantName()}
+        onCallEnd={handleCallEnd}
+        isAgentUser={isAgent}
+        backgroundSettings={backgroundSettings as any}
+      />
+    );
+  }
+
+  // Agent rejoin: call is already live but they haven't set their display name yet — show
+  // a quick PreJoin with the Start button auto-enabled.
+  if (isAgent && callIsLive && !agentEntered) {
     return (
       <AgentPreJoin
-        onJoin={handleAgentJoin}
-        isLoading={isJoining}
+        onStartMeeting={handleAgentStart}
+        isLoading={isStarting}
+        customerPresent={true}
+        customerDisplayName={presence.customerDisplayName || legacyParticipantName}
+        expectedCustomerName={presence.customerDisplayName || legacyParticipantName}
+        onNudgeCustomer={handleNudgeCustomer}
       />
     );
   }
 
-  // Pre-join screen for customers
-  if (!isAgent && showCustomerPreJoin) {
+  // Customer: enter the live call once permissions are good (and after handoff delay)
+  if (customerShouldEnter && readyForLive) {
     return (
-      <CustomerPreJoin
-        onJoin={handleCustomerJoin}
-        participantName={legacyParticipantName}
-        isLoading={isJoining}
+      <VideoCallInventory
+        projectId={projectId!}
+        roomId={roomId}
+        participantName={getParticipantName()}
+        onCallEnd={handleCallEnd}
+        isAgentUser={false}
+        customerSettings={{ videoEnabled: true, audioEnabled: true, facingMode: 'user' } as any}
       />
     );
   }
 
-  // Main video call
+  // Agent lobby
+  if (isAgent) {
+    return (
+      <AgentPreJoin
+        onStartMeeting={handleAgentStart}
+        isLoading={isStarting}
+        customerPresent={presence.customerPresent}
+        customerDisplayName={presence.customerDisplayName || legacyParticipantName}
+        expectedCustomerName={presence.customerDisplayName || legacyParticipantName}
+        onNudgeCustomer={handleNudgeCustomer}
+      />
+    );
+  }
+
+  // Customer lobby
+  const noShowExpired =
+    presence.isScheduled &&
+    !!presence.scheduledFor &&
+    !presence.agentPresent &&
+    now - new Date(presence.scheduledFor).getTime() > NO_SHOW_GRACE_MS;
+
   return (
-    <VideoCallInventory
-      projectId={projectId!}
-      roomId={roomId}
-      participantName={getParticipantName()}
-      onCallEnd={handleCallEnd}
-      isAgentUser={isAgent}
-      backgroundSettings={backgroundSettings as any}
-      customerSettings={customerSettings as any}
+    <CustomerPreJoin
+      participantName={legacyParticipantName}
+      agentPresent={presence.agentPresent}
+      agentDisplayName={presence.agentDisplayName}
+      callStatus={presence.callStatus}
+      isScheduled={presence.isScheduled}
+      noShowExpired={noShowExpired}
+      onReadyChange={handleCustomerReadyChange}
     />
   );
 }
