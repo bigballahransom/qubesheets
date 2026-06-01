@@ -1,6 +1,6 @@
 // app/api/livekit/token/route.ts - Updated for customer access
 import { NextRequest, NextResponse } from 'next/server';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { auth } from '@clerk/nextjs/server';
 
 export async function POST(request: NextRequest) {
@@ -49,6 +49,38 @@ export async function POST(request: NextRequest) {
         { error: 'LiveKit credentials not configured' },
         { status: 500 }
       );
+    }
+
+    // bvls: Ensure the call room exists with a generous reconnect grace window
+    // BEFORE anyone joins. LiveKit's default departureTimeout is only ~20s, so a
+    // brief network drop (WiFi<->cellular handoff, dead zone, stairwell) would
+    // close the room and end the recording mid-survey. We create the room
+    // idempotently with a 180s departureTimeout (room stays open 3 min after the
+    // last participant leaves) and a 600s emptyTimeout (room waits 10 min for the
+    // first join). createRoom only applies these on first creation; an "already
+    // exists" error is expected and safe. Companion to the webhook change that no
+    // longer stops egress on a momentary empty room (see
+    // app/api/livekit/webhook/route.ts -> handleParticipantLeft).
+    try {
+      const roomServiceClient = new RoomServiceClient(
+        process.env.LIVEKIT_URL || wsUrl,
+        apiKey,
+        apiSecret
+      );
+      await roomServiceClient.createRoom({
+        name: roomName,
+        departureTimeout: 180, // 3 min grace after the last participant leaves (reconnect window)
+        emptyTimeout: 600,     // 10 min for the first participant to join
+      });
+      console.log(`✅ bvls: ensured room ${roomName} (departureTimeout=180s, emptyTimeout=600s)`);
+    } catch (roomError: any) {
+      if (roomError?.message?.includes('already exists')) {
+        console.log(`⚠️ bvls: room ${roomName} already exists, continuing`);
+      } else {
+        // Non-fatal: the room also auto-creates on join. Log and continue so token
+        // issuance never fails just because room pre-creation hiccuped.
+        console.error('⚠️ bvls: createRoom failed (continuing; room will auto-create on join):', roomError?.message || roomError);
+      }
     }
 
     // Generate a unique identity for the participant

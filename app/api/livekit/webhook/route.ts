@@ -492,7 +492,7 @@ async function handleParticipantLeft(event: WebhookEvent) {
 
   // ONLY stop recording when LAST participant leaves
   if (remainingParticipants === 0) {
-    console.log(`🛑 Last participant left - stopping recording: ${recording._id}`);
+    console.log(`👋 bvls: last participant left room (count=0) for recording ${recording._id} - NOT stopping; LiveKit departureTimeout grace now governs teardown.`);
 
     // Update ScheduledVideoCall status to 'completed' if this room is from a scheduled call
     const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
@@ -512,12 +512,17 @@ async function handleParticipantLeft(event: WebhookEvent) {
       await stopCustomerEgress(roomName);
     }
 
-    // Stop room composite egress
-    const stopped = await stopRecording(roomName);
-    if (!stopped) {
-      // If stopRecording returned false (no active egress found), update status manually
-      await VideoRecording.findByIdAndUpdate(recording._id, { status: 'processing', endedAt: new Date() });
-    }
+    // bvls: DO NOT stop the room composite egress on a momentary empty room.
+    // A brief network drop (WiFi<->cellular handoff, dead zone, stairwell) fires
+    // participant_left and drops the live count to 0 for a few seconds. Stopping
+    // the egress here truncated the recording and permanently lost the rest of the
+    // survey when the customer reconnected. Instead we leave the egress running and
+    // let LiveKit govern teardown via the room's departureTimeout (set to 180s in
+    // app/api/livekit/token/route.ts): if the customer reconnects within that grace
+    // window they rejoin the SAME room and the SAME recording continues; if nobody
+    // returns, LiveKit closes the room, ends the egress, and handleEgressEnded
+    // finalizes the recording (status:'completed' + s3Key + SQS) exactly as before.
+    console.log(`⏸️ bvls: room ${roomName} empty - leaving egress running for the LiveKit departureTimeout grace window; reconnect continues the same recording.`);
   } else {
     console.log(`⏳ Recording continues - ${remainingParticipants} participant(s) still in room`);
 
