@@ -19,6 +19,8 @@ export interface ICallPresence extends Document {
   startedAt?: Date;
   endedAt?: Date;
 
+  lastNudgedAt?: Date;
+
   expiresAt: Date;
 
   createdAt: Date;
@@ -60,6 +62,8 @@ const CallPresenceSchema: Schema = new Schema(
 
     startedAt: { type: Date },
     endedAt: { type: Date },
+
+    lastNudgedAt: { type: Date },
 
     expiresAt: {
       type: Date,

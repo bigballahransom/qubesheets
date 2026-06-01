@@ -75,6 +75,12 @@ export default function VideoCallPage() {
   // press Start Meeting, without waiting for the next presence poll round trip.
   const [agentEntered, setAgentEntered] = useState(false);
 
+  // Gates the actual mount of VideoCallInventory. We flip this true ~500ms
+  // after the PreJoin's render condition is no longer met, giving the
+  // pre-join's MediaStreamTrack time to fully release before LiveKitRoom
+  // tries to acquire the same device.
+  const [readyForLive, setReadyForLive] = useState(false);
+
   const presenceRef = useRef<PresenceState>(DEFAULT_PRESENCE);
   presenceRef.current = presence;
 
@@ -124,6 +130,22 @@ export default function VideoCallPage() {
     const id = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(id);
   }, []);
+
+  // Handoff timer: when both sides agree it's time to enter the call, wait a
+  // beat so the PreJoin's camera track gets a chance to stop.
+  useEffect(() => {
+    const callIsLive = presence.callStatus === 'live';
+    const shouldEnter =
+      (isAgent && callIsLive && agentEntered) ||
+      (!isAgent && callIsLive && customerReady);
+    if (!shouldEnter) {
+      if (readyForLive) setReadyForLive(false);
+      return;
+    }
+    if (readyForLive) return;
+    const t = setTimeout(() => setReadyForLive(true), 500);
+    return () => clearTimeout(t);
+  }, [presence.callStatus, isAgent, agentEntered, customerReady, readyForLive]);
 
   // Heartbeat + poll presence while in the lobby
   useEffect(() => {
@@ -237,6 +259,21 @@ export default function VideoCallPage() {
     setCustomerReady(ready);
   }, []);
 
+  const handleNudgeCustomer = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/calls/${roomId}/nudge`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error || 'Could not send the reminder.');
+        return;
+      }
+      toast.success('Reminder text sent to the customer.');
+    } catch (err) {
+      console.error('Failed to nudge customer:', err);
+      toast.error('Could not send the reminder.');
+    }
+  }, [roomId]);
+
   const getParticipantName = () => {
     if (isAgent && agentDisplayName) return agentDisplayName;
     return legacyParticipantName;
@@ -308,9 +345,28 @@ export default function VideoCallPage() {
   }
 
   const callIsLive = presence.callStatus === 'live';
+  const agentShouldEnter = isAgent && callIsLive && agentEntered;
+  const customerShouldEnter = !isAgent && callIsLive && customerReady;
+  const shouldEnterCall = agentShouldEnter || customerShouldEnter;
+
+  // Render an intermediate loader for ~500ms when transitioning from a PreJoin
+  // into VideoCallInventory. This unmounts the PreJoin first, letting
+  // useAndroidCompatibleVideoTrack's cleanup release the camera before
+  // LiveKitRoom tries to acquire it — otherwise we hit "Requested device not
+  // found" because the prior MediaStreamTrack still owns the device.
+  if (shouldEnterCall && !readyForLive) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-white" />
+          <p className="text-white/70">Joining the meeting…</p>
+        </div>
+      </div>
+    );
+  }
 
   // Agent: in the call once they've pressed Start Meeting (or rejoin while live)
-  if (isAgent && callIsLive && agentEntered) {
+  if (agentShouldEnter && readyForLive) {
     return (
       <VideoCallInventory
         projectId={projectId!}
@@ -333,12 +389,13 @@ export default function VideoCallPage() {
         customerPresent={true}
         customerDisplayName={presence.customerDisplayName || legacyParticipantName}
         expectedCustomerName={presence.customerDisplayName || legacyParticipantName}
+        onNudgeCustomer={handleNudgeCustomer}
       />
     );
   }
 
-  // Customer: enter the live call once permissions are good
-  if (!isAgent && callIsLive && customerReady) {
+  // Customer: enter the live call once permissions are good (and after handoff delay)
+  if (customerShouldEnter && readyForLive) {
     return (
       <VideoCallInventory
         projectId={projectId!}
@@ -360,6 +417,7 @@ export default function VideoCallPage() {
         customerPresent={presence.customerPresent}
         customerDisplayName={presence.customerDisplayName || legacyParticipantName}
         expectedCustomerName={presence.customerDisplayName || legacyParticipantName}
+        onNudgeCustomer={handleNudgeCustomer}
       />
     );
   }

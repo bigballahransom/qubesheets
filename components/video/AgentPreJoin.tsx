@@ -38,6 +38,7 @@ interface AgentPreJoinProps {
   customerPresent: boolean;
   customerDisplayName?: string | null;
   expectedCustomerName?: string;
+  onNudgeCustomer?: () => Promise<void>;
 }
 
 // Preset backgrounds
@@ -53,7 +54,28 @@ export default function AgentPreJoin({
   customerPresent,
   customerDisplayName,
   expectedCustomerName,
+  onNudgeCustomer,
 }: AgentPreJoinProps) {
+  const [isNudging, setIsNudging] = useState(false);
+  const [nudgedAt, setNudgedAt] = useState<number | null>(null);
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (!nudgedAt) return;
+    const id = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [nudgedAt]);
+  const cooldownLeft = nudgedAt ? Math.max(0, 30 - Math.floor((Date.now() - nudgedAt) / 1000)) : 0;
+
+  const handleNudge = async () => {
+    if (!onNudgeCustomer || isNudging || cooldownLeft > 0) return;
+    setIsNudging(true);
+    try {
+      await onNudgeCustomer();
+      setNudgedAt(Date.now());
+    } finally {
+      setIsNudging(false);
+    }
+  };
   const { isLoaded, user } = useUser();
 
   // Name state
@@ -710,6 +732,23 @@ export default function AgentPreJoin({
               </>
             )}
           </button>
+
+          {/* Nudge customer text */}
+          {!customerPresent && onNudgeCustomer && (
+            <div className="text-center">
+              <button
+                onClick={handleNudge}
+                disabled={isNudging || cooldownLeft > 0}
+                className="text-xs text-white/60 hover:text-white/90 underline underline-offset-2 transition-colors disabled:cursor-not-allowed disabled:hover:text-white/60"
+              >
+                {isNudging
+                  ? 'Sending reminder…'
+                  : cooldownLeft > 0
+                  ? `Reminder sent — try again in ${cooldownLeft}s`
+                  : 'Send them a text reminder'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
