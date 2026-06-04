@@ -140,6 +140,11 @@ export interface IOrganizationSettings extends Document {
   photosEnabledCustomerLink?: boolean;
   photosEnabledWalkthrough?: boolean;
 
+  // Customer Review Link (/inventory-review/[token]) display toggles. Movers
+  // that don't want to expose a truck-size recommendation to customers can
+  // hide that card from the stat bar. Default true preserves current behavior.
+  customerReviewShowTruckSize?: boolean;
+
   // Smart Tags — org-defined labels that can be applied to inventory items
   // (e.g. "Fragile", "Heavy"). Each tag carries its own `mode`: "ai" means
   // the Railway worker is allowed to apply it automatically; "manual" means
@@ -288,6 +293,10 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: true
     },
     photosEnabledWalkthrough: {
+      type: Boolean,
+      default: true
+    },
+    customerReviewShowTruckSize: {
       type: Boolean,
       default: true
     },

@@ -18,7 +18,8 @@ import {
   Package,
   Boxes,
   Camera,
-  Tags
+  Tags,
+  ClipboardCheck
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -39,6 +40,7 @@ const settingsItems: SettingsItem[] = [
   { title: 'Templates', icon: FileText, href: '/settings/templates' },
   { title: 'Branding', icon: Palette, href: '/settings/branding' },
   { title: 'Global Self-Survey Link', icon: Link2, href: '/settings/global-upload-link' },
+  { title: 'Customer Review Link', icon: ClipboardCheck, href: '/settings/customer-review-link' },
   { title: 'Photo Capture', icon: Camera, href: '/settings/photos' },
 
   // Inventory

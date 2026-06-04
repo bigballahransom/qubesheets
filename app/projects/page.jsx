@@ -25,11 +25,15 @@ import {
 //   updatedAt: string;
 // }
 
+const FILTER_STORAGE_KEY = 'projectsFilter';
+const SCROLL_STORAGE_KEY = 'projectsScrollPos';
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [projectFilter, setProjectFilter] = useState('mine');
+  const [filterHydrated, setFilterHydrated] = useState(false);
 
   const router = useRouter();
   const { isLoaded, userId } = useAuth();
@@ -56,6 +60,34 @@ export default function ProjectsPage() {
   useEffect(() => {
     fetchProjects();
   }, []);
+
+  // Restore persisted filter selection on mount
+  useEffect(() => {
+    const saved = sessionStorage.getItem(FILTER_STORAGE_KEY);
+    if (saved === 'mine' || saved === 'all' || saved === 'unassigned') {
+      setProjectFilter(saved);
+    }
+    setFilterHydrated(true);
+  }, []);
+
+  // Persist filter selection whenever it changes
+  useEffect(() => {
+    if (filterHydrated) {
+      sessionStorage.setItem(FILTER_STORAGE_KEY, projectFilter);
+    }
+  }, [projectFilter, filterHydrated]);
+
+  // Restore scroll position once projects are rendered, then clear it so a
+  // fresh visit starts at the top.
+  useEffect(() => {
+    if (loading || projects.length === 0) return;
+    const savedScroll = sessionStorage.getItem(SCROLL_STORAGE_KEY);
+    if (savedScroll === null) return;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, parseInt(savedScroll, 10) || 0);
+      sessionStorage.removeItem(SCROLL_STORAGE_KEY);
+    });
+  }, [loading, projects.length]);
   
   // Listen for organization data refresh events
   useEffect(() => {
@@ -97,6 +129,7 @@ export default function ProjectsPage() {
   };
   
   const handleProjectClick = (projectId) => {
+    sessionStorage.setItem(SCROLL_STORAGE_KEY, String(window.scrollY));
     router.push(`/projects/${projectId}`);
   };
   
@@ -128,8 +161,8 @@ export default function ProjectsPage() {
       </div>
       
       {/* Projects list */}
-      <div className="bg-white rounded-lg shadow-sm border p-4">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-lg shadow-sm border">
+        <div className="sticky top-0 lg:top-16 z-10 flex items-center justify-between px-4 py-3 bg-white border-b rounded-t-lg">
           <h2 className="text-lg font-medium">Your Projects</h2>
 
           {/* Project Filter Dropdown - only show for organizations */}
@@ -178,6 +211,7 @@ export default function ProjectsPage() {
           )}
         </div>
 
+        <div className="p-4">
         {loading ? (
           <div className="flex justify-center items-center py-8">
             <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -260,6 +294,7 @@ export default function ProjectsPage() {
             })}
           </div>
         )}
+        </div>
       </div>
     </div>
           <SidebarTrigger />

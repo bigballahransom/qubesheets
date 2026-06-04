@@ -9,6 +9,7 @@ import InventoryNote from '@/models/InventoryNote';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
+import OrganizationSettings from '@/models/OrganizationSettings';
 import { resolveWeightConfig, resolveItemWeight, WeightConfig } from '@/lib/weight-config';
 
 interface GroupedItems {
@@ -194,6 +195,22 @@ export async function GET(
       console.warn('Error fetching branding:', error);
     }
 
+    // Fetch org-level customer review link display settings. Only orgs have
+    // a settings document; personal-account links keep the defaults.
+    let customerReviewShowTruckSize = true;
+    if (reviewLink.organizationId) {
+      try {
+        const orgSettings = await OrganizationSettings.findOne({
+          organizationId: reviewLink.organizationId
+        }).select('customerReviewShowTruckSize').lean<{ customerReviewShowTruckSize?: boolean } | null>();
+        if (orgSettings?.customerReviewShowTruckSize === false) {
+          customerReviewShowTruckSize = false;
+        }
+      } catch (error) {
+        console.warn('Error fetching organization review settings:', error);
+      }
+    }
+
     // Fetch all inventory items for the project
     const allItems = await InventoryItem.find({ projectId: reviewLink.projectId });
 
@@ -251,11 +268,18 @@ export async function GET(
       }
     }
 
-    // Fetch video recordings with full analysis data
+    // Fetch video recordings with full analysis data.
+    // Self-serve recordings are watchable as soon as status === 'processing' because the
+    // customer video is already in S3 at that point; only the AI analysis is still running.
+    // LiveKit video-call recordings stay gated on 'completed' since egress may not have
+    // finished flushing the file to S3 while status is 'processing'.
     const videoRecordingsWithAnalysis = await VideoRecording.find({
       projectId: reviewLink.projectId,
-      status: 'completed'
-    }).select('_id roomId duration s3Key createdAt analysisResult transcriptAnalysisResult').lean();
+      $or: [
+        { status: 'completed' },
+        { status: 'processing', source: 'self_serve' }
+      ]
+    }).select('_id roomId duration s3Key createdAt analysisResult transcriptAnalysisResult status source').lean();
 
     // Process video recordings with their AI summaries
     for (const recording of videoRecordingsWithAnalysis as any[]) {
@@ -353,6 +377,9 @@ export async function GET(
         companyName: branding.companyName,
         companyLogo: branding.companyLogo,
       } : null,
+      settings: {
+        showTruckSize: customerReviewShowTruckSize,
+      },
       stats,
       mediaSections,
       boxRecommendationsByRoom,

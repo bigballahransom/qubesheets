@@ -133,10 +133,15 @@ interface Stats {
   totalBedrooms: number;
 }
 
+interface ReviewSettings {
+  showTruckSize: boolean;
+}
+
 interface ReviewData {
   isValid: boolean;
   projectInfo: ProjectInfo;
   branding?: BrandingData | null;
+  settings?: ReviewSettings;
   stats: Stats;
   mediaSections: MediaSection[];
   boxRecommendationsByRoom: { [room: string]: BoxRecommendation[] };
@@ -450,7 +455,8 @@ export default function InventoryReviewPage() {
     );
   }
 
-  const { projectInfo, branding, stats, mediaSections, boxRecommendationsByRoom, projectNotes, existingSignature } = reviewData;
+  const { projectInfo, branding, settings, stats, mediaSections, boxRecommendationsByRoom, projectNotes, existingSignature } = reviewData;
+  const showTruckSize = settings?.showTruckSize !== false;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100">
@@ -616,7 +622,7 @@ export default function InventoryReviewPage() {
 
         {/* Stats Summary */}
         {stats && (stats.totalItems > 0 || stats.totalBoxes > 0) && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className={`grid grid-cols-2 gap-4 ${showTruckSize ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
             <div className="bg-white rounded-xl shadow-md border border-slate-200 p-4">
               <div className="flex items-center gap-3 mb-2">
                 <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -648,16 +654,18 @@ export default function InventoryReviewPage() {
               <p className="text-xs text-slate-500">lbs</p>
             </div>
 
-            <div className="bg-white rounded-xl shadow-md border border-slate-200 p-4">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <Truck className="w-5 h-5 text-purple-600" />
+            {showTruckSize && (
+              <div className="bg-white rounded-xl shadow-md border border-slate-200 p-4">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <Truck className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <p className="text-sm font-medium text-slate-600">Truck Size</p>
                 </div>
-                <p className="text-sm font-medium text-slate-600">Truck Size</p>
+                <p className="text-lg font-bold text-slate-800">{getTruckRecommendation(stats.totalCuft).size}</p>
+                <p className="text-xs text-slate-500">{stats.totalCuft.toLocaleString()} cu ft</p>
               </div>
-              <p className="text-lg font-bold text-slate-800">{getTruckRecommendation(stats.totalCuft).size}</p>
-              <p className="text-xs text-slate-500">{stats.totalCuft.toLocaleString()} cu ft</p>
-            </div>
+            )}
           </div>
         )}
 
