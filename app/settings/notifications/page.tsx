@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
-import { Bell, Phone } from 'lucide-react';
+import { Bell, Phone, PenTool } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { toast } from 'sonner';
@@ -41,6 +41,8 @@ export default function NotificationsPage() {
 
   const [enableInventoryUpdates, setEnableInventoryUpdates] = useState(false);
   const [notificationScope, setNotificationScope] = useState<'all' | 'unassigned-and-mine' | 'mine'>('all');
+  const [enableReviewSignedUpdates, setEnableReviewSignedUpdates] = useState(false);
+  const [reviewSignedNotificationScope, setReviewSignedNotificationScope] = useState<'all' | 'unassigned-and-mine' | 'mine'>('all');
   const [phoneNumber, setPhoneNumber] = useState('');
 
   const [enableCustomerFollowUps, setEnableCustomerFollowUps] = useState(false);
@@ -72,10 +74,14 @@ export default function NotificationsPage() {
         const settings = await response.json();
         setEnableInventoryUpdates(settings.enableInventoryUpdates || false);
         setNotificationScope(settings.notificationScope || 'all');
+        setEnableReviewSignedUpdates(settings.enableReviewSignedUpdates || false);
+        setReviewSignedNotificationScope(settings.reviewSignedNotificationScope || 'all');
         setPhoneNumber(formatPhoneForDisplay(settings.phoneNumber || ''));
       } else {
         setEnableInventoryUpdates(false);
         setNotificationScope('all');
+        setEnableReviewSignedUpdates(false);
+        setReviewSignedNotificationScope('all');
         setPhoneNumber('');
       }
 
@@ -105,6 +111,8 @@ export default function NotificationsPage() {
           body: JSON.stringify({
             enableInventoryUpdates,
             notificationScope,
+            enableReviewSignedUpdates,
+            reviewSignedNotificationScope,
             phoneNumber: phoneNumber.trim() || null
           })
         });
@@ -257,6 +265,109 @@ export default function NotificationsPage() {
                     />
                   </div>
                   <p className="text-xs text-gray-500 mt-1">US phone number required for SMS notifications</p>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* Review Signed Notifications — Personal */}
+        <section className="rounded-xl border border-gray-200 bg-white shadow-sm p-6">
+          <div className="flex items-start justify-between mb-4 gap-3">
+            <div>
+              <h2 className="text-lg font-medium flex items-center gap-2">
+                <PenTool className="w-4 h-4 text-emerald-600" />
+                Review Signed Notifications
+              </h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Just for you — other org members configure their own.
+              </p>
+            </div>
+            <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 text-xs font-medium">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Personal
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="flex-1 pr-4">
+                <h3 className="font-medium">Enable Review Signed Alerts</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Get notified when a customer signs off on their inventory from the review link.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableReviewSignedUpdates}
+                  onChange={(e) => {
+                    setEnableReviewSignedUpdates(e.target.checked);
+                    setHasUnsavedChanges(true);
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+
+            {enableReviewSignedUpdates && (
+              <>
+                <div className="pt-4 border-t">
+                  <label className="block text-sm font-medium mb-2">Which projects?</label>
+                  <div className="space-y-2">
+                    {([
+                      { value: 'all', title: 'All projects', desc: 'Notify on every project in the org (default).' },
+                      {
+                        value: 'unassigned-and-mine',
+                        title: 'Unassigned projects and my projects',
+                        desc: 'Projects assigned to or created by me, plus projects from automated sources (Smart Moving, API, the global self-survey link) that haven\'t been assigned yet.'
+                      },
+                      { value: 'mine', title: 'My projects only', desc: 'Only projects assigned to me, or projects I created if no one else is assigned.' }
+                    ] as const).map((opt) => (
+                      <label
+                        key={opt.value}
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          reviewSignedNotificationScope === opt.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300 bg-white'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="reviewSignedNotificationScope"
+                          value={opt.value}
+                          checked={reviewSignedNotificationScope === opt.value}
+                          onChange={() => {
+                            setReviewSignedNotificationScope(opt.value);
+                            setHasUnsavedChanges(true);
+                          }}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{opt.title}</div>
+                          <div className="text-xs text-gray-600 mt-0.5">{opt.desc}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <label className="block text-sm font-medium mb-2">
+                    Phone Number <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      type="tel"
+                      value={phoneNumber}
+                      onChange={handlePhoneChange}
+                      placeholder="(555) 123-4567"
+                      className="pl-10"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    US phone number required for SMS notifications. Shared with your other personal notifications.
+                  </p>
                 </div>
               </>
             )}

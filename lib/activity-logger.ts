@@ -157,6 +157,26 @@ export async function logReviewLinkShared(
   });
 }
 
+export async function logReviewLinkSigned(
+  projectId: string,
+  customerName: string,
+  linkToken: string,
+  userId: string,
+  organizationId?: string
+) {
+  return logActivity({
+    projectId,
+    userId,
+    organizationId,
+    activityType: 'review_link_signed',
+    action: 'signed',
+    details: {
+      customerName,
+      linkToken
+    }
+  });
+}
+
 export async function logCrewLinkShared(
   projectId: string,
   linkToken: string,

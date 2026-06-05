@@ -17,6 +17,7 @@ import {
   Package,
   MessageSquare,
   FileCheck,
+  PenTool,
   Users,
   ExternalLink,
   Calendar,
@@ -33,7 +34,7 @@ interface ActivityLogProps {
 
 interface Activity {
   _id: string;
-  activityType: 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'crew_link_shared';
+  activityType: 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'review_link_signed' | 'crew_link_shared';
   action: string;
   details: {
     fileName?: string;
@@ -122,6 +123,8 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return <MessageSquare className="w-4 h-4 text-amber-600" />;
       case 'review_link_shared':
         return <FileCheck className="w-4 h-4 text-emerald-600" />;
+      case 'review_link_signed':
+        return <PenTool className="w-4 h-4 text-emerald-600" />;
       case 'crew_link_shared':
         return <Users className="w-4 h-4 text-cyan-600" />;
       case 'video_call_scheduled':
@@ -212,6 +215,13 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
             {activity.details.customerName && (
               <span> with <span className="font-medium">{activity.details.customerName}</span></span>
             )}
+          </span>
+        );
+
+      case 'review_link_signed':
+        return (
+          <span>
+            Customer <strong>{activity.details.customerName || 'Customer'}</strong> signed the inventory review
           </span>
         );
 

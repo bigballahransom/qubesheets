@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import InventoryReviewLink from '@/models/InventoryReviewLink';
+import Project from '@/models/Project';
+import { sendReviewSignedNotification } from '@/lib/reviewSignedNotifications';
+import { logReviewLinkSigned } from '@/lib/activity-logger';
 
 export async function POST(
   request: NextRequest,
@@ -79,6 +82,35 @@ export async function POST(
     };
 
     await reviewLink.save();
+
+    const projectId = String(reviewLink.projectId);
+
+    // Activity log entry for the project timeline. Attributed to the org/owner
+    // that minted the link (same pattern as upload_link_visited) since the
+    // customer signing the form is unauthenticated.
+    try {
+      await logReviewLinkSigned(
+        projectId,
+        customerName,
+        token,
+        reviewLink.userId,
+        reviewLink.organizationId
+      );
+    } catch (logErr) {
+      console.warn('review-signed activity log failed (non-fatal):', logErr);
+    }
+
+    // Fire personal review-signed SMS notifications to all eligible recipients
+    // for the project. Non-blocking: failures here must not fail the request,
+    // since the signature is already persisted at this point.
+    try {
+      const project = await Project.findById(projectId).select('name').lean<{ name?: string } | null>();
+      const projectName = project?.name || 'a project';
+      const body = `${customerName} just signed the inventory review for ${projectName}.`;
+      void sendReviewSignedNotification({ projectId, body });
+    } catch (notifyErr) {
+      console.warn('review-signed notification dispatch failed (non-fatal):', notifyErr);
+    }
 
     return NextResponse.json({
       success: true,

@@ -42,6 +42,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         enableInventoryUpdates: false,
         notificationScope: 'all',
+        enableReviewSignedUpdates: false,
+        reviewSignedNotificationScope: 'all',
         phoneNumber: null
       });
     }
@@ -49,6 +51,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       enableInventoryUpdates: settings.enableInventoryUpdates,
       notificationScope: settings.notificationScope || 'all',
+      enableReviewSignedUpdates: settings.enableReviewSignedUpdates || false,
+      reviewSignedNotificationScope: settings.reviewSignedNotificationScope || 'all',
       phoneNumber: settings.phoneNumber
     });
   } catch (error) {
@@ -106,10 +110,22 @@ export async function POST(request: NextRequest) {
       ? incomingScope
       : 'all';
 
+    const incomingReviewScope =
+      typeof data.reviewSignedNotificationScope === 'string'
+        ? data.reviewSignedNotificationScope
+        : 'all';
+    const reviewSignedNotificationScope = (allowedScopes as readonly string[]).includes(
+      incomingReviewScope
+    )
+      ? incomingReviewScope
+      : 'all';
+
     const settingsData: any = {
       userId: authContext.userId,
       enableInventoryUpdates: Boolean(data.enableInventoryUpdates),
       notificationScope,
+      enableReviewSignedUpdates: Boolean(data.enableReviewSignedUpdates),
+      reviewSignedNotificationScope,
       phoneNumber: formattedPhoneNumber
     };
     
@@ -141,6 +157,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       enableInventoryUpdates: settings.enableInventoryUpdates,
       notificationScope: settings.notificationScope || 'all',
+      enableReviewSignedUpdates: settings.enableReviewSignedUpdates || false,
+      reviewSignedNotificationScope: settings.reviewSignedNotificationScope || 'all',
       phoneNumber: settings.phoneNumber
     }, { status: 200 });
   } catch (error) {

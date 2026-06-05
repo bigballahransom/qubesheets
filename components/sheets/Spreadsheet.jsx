@@ -1923,30 +1923,38 @@ export default function Spreadsheet({
         value.toLowerCase().includes('glass')
       );
       
+      const actionLabel = row.sourceVideoRecordingId
+        ? (row.sourceType === 'self_serve' ? 'Click to play recording' : 'Click to view video call')
+        : 'Click to view source media';
       return (
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              // Handle video call items differently (use proper ObjectId reference)
-              if (row.sourceVideoRecordingId) {
-                handleVideoCallPreview(row.sourceVideoRecordingId, value, row); // Pass row for auto-seek
-              } else if (row.sourceImageId) {
-                handleMediaPreview('image', row.sourceImageId, value);
-              } else {
-                handleMediaPreview('video', row.sourceVideoId, value);
-              }
-            }}
-            className="text-blue-600 hover:text-blue-800 underline text-left truncate flex-1"
-            title={
-              row.sourceVideoRecordingId
-                ? (row.sourceType === 'self_serve' ? 'Click to play recording' : 'Click to view video call')
-                : 'Click to view source media'
-            }
-          >
-            {value}
-          </button>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // Handle video call items differently (use proper ObjectId reference)
+                    if (row.sourceVideoRecordingId) {
+                      handleVideoCallPreview(row.sourceVideoRecordingId, value, row); // Pass row for auto-seek
+                    } else if (row.sourceImageId) {
+                      handleMediaPreview('image', row.sourceImageId, value);
+                    } else {
+                      handleMediaPreview('video', row.sourceVideoId, value);
+                    }
+                  }}
+                  className="text-blue-600 hover:text-blue-800 underline text-left truncate flex-1 min-w-0"
+                >
+                  {value}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
+                <p className="font-medium text-xs mb-1">{value}</p>
+                <p className="text-xs text-muted-foreground">{actionLabel}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           {isRecommendedBoxes && (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -2090,7 +2098,16 @@ export default function Spreadsheet({
         return (
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
-            <span className="truncate min-w-0">{value}</span>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="truncate min-w-0 flex-1 cursor-default">{value}</span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="text-xs">{value}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             {isRecommendedBox && (
               <TooltipProvider delayDuration={200}>
                 <Tooltip>

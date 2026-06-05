@@ -20,6 +20,14 @@ export interface INotificationSettings extends Document {
    *   - 'mine'                → only projects where assignedTo.userId is me,
    *                             or (no assignedTo) the project was created by me. */
   notificationScope: 'all' | 'unassigned-and-mine' | 'mine';
+
+  // Review-link signed notifications — fired by /api/inventory-review/[token]/sign
+  // when a customer signs off on the inventory review page. Uses the same scope
+  // semantics as `notificationScope`; phone number is shared with the inventory
+  // update notification (single phone per user per org).
+  enableReviewSignedUpdates: boolean;
+  reviewSignedNotificationScope: 'all' | 'unassigned-and-mine' | 'mine';
+
   phoneNumber?: string; // Formatted as +1XXXXXXXXXX for Twilio
 
   // Metadata
@@ -44,6 +52,15 @@ const NotificationSettingsSchema: Schema = new Schema(
       default: false
     },
     notificationScope: {
+      type: String,
+      enum: ['all', 'unassigned-and-mine', 'mine'],
+      default: 'all'
+    },
+    enableReviewSignedUpdates: {
+      type: Boolean,
+      default: false
+    },
+    reviewSignedNotificationScope: {
       type: String,
       enum: ['all', 'unassigned-and-mine', 'mine'],
       default: 'all'
