@@ -11,6 +11,7 @@ const isPublicRoute = createRouteMatcher([
   '/inventory-review(.*)',
   '/crew-review(.*)',
   '/form(.*)',
+  '/embed/forms/lead-forms(.*)',  // Public hosted lead form page (lands in Phase 2)
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/organization-selection(.*)'
@@ -18,6 +19,7 @@ const isPublicRoute = createRouteMatcher([
 
 const isPublicApiRoute = createRouteMatcher([
   '/api/customer-upload/(.*)',
+  '/api/public/embed/lead-forms/(.*)',  // Anonymous lead-form submissions — org derived from the form record
   '/api/upload/(.*)',  // Global self-survey link API (config + create-project)
   '/api/self-serve/(.*)',  // Customer self-serve recording endpoints (init, start, stop, telemetry) — auth checked via uploadToken
   '/api/inventory-review/(.*)',
