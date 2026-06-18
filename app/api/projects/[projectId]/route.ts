@@ -74,6 +74,7 @@ export async function PATCH(
       'name',
       'customerName',
       'customerEmail',
+      'customerCompanyName',
       'phone',
       'description',
       'jobDate',
@@ -125,11 +126,12 @@ export async function DELETE(
 
     await connectMongoDB();
 
-    const project = await Project.findOneAndDelete({
+    const projectFilter = {
       _id: projectId,
       ...getOrgFilter(authContext),
-    });
+    };
 
+    const project = await Project.findOne(projectFilter);
     if (!project) {
       return NextResponse.json(
         { error: 'Project not found' },
@@ -137,7 +139,33 @@ export async function DELETE(
       );
     }
 
-    return NextResponse.json({ success: true });
+    const Image = (await import('@/models/Image')).default;
+    const Video = (await import('@/models/Video')).default;
+    const InventoryItem = (await import('@/models/InventoryItem')).default;
+    const SpreadsheetData = (await import('@/models/SpreadsheetData')).default;
+
+    const deletedImages = await Image.deleteMany({ projectId });
+    const deletedVideos = await Video.deleteMany({ projectId });
+    const deletedItems = await InventoryItem.deleteMany({ projectId });
+    const deletedSpreadsheetData = await SpreadsheetData.deleteMany({ projectId });
+
+    const deletedProject = await Project.findOneAndDelete(projectFilter);
+    if (!deletedProject) {
+      return NextResponse.json(
+        { error: 'Failed to delete project' },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      cleanup: {
+        images: deletedImages.deletedCount,
+        videos: deletedVideos.deletedCount,
+        inventoryItems: deletedItems.deletedCount,
+        spreadsheetData: deletedSpreadsheetData.deletedCount,
+      },
+    });
   } catch (error) {
     console.error('Error deleting project:', error);
     return NextResponse.json(

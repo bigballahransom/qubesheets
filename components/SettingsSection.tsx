@@ -19,9 +19,12 @@ import {
   Boxes,
   Camera,
   Tags,
-  ClipboardCheck
+  ClipboardCheck,
+  Inbox,
+  Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import LeadFormsUpgradeModal from '@/components/LeadFormsUpgradeModal';
 
 interface SettingsItem {
   title: string;
@@ -41,6 +44,7 @@ const settingsItems: SettingsItem[] = [
   { title: 'Branding', icon: Palette, href: '/settings/branding' },
   { title: 'Global Self-Survey Link', icon: Link2, href: '/settings/global-upload-link' },
   { title: 'Customer Review Link', icon: ClipboardCheck, href: '/settings/customer-review-link' },
+  { title: 'Lead Forms', icon: Inbox, href: '/settings/lead-forms' },
   { title: 'Photo Capture', icon: Camera, href: '/settings/photos' },
 
   // Inventory
@@ -57,9 +61,14 @@ const settingsItems: SettingsItem[] = [
 
 export function SettingsSection() {
   const { organization } = useOrganization();
-  const hasCrmAddOn = (organization?.publicMetadata as any)?.subscription?.addOns?.includes('crm');
+  const addOns: string[] =
+    (organization?.publicMetadata as { subscription?: { addOns?: string[] } } | undefined)
+      ?.subscription?.addOns ?? [];
+  const hasCrmAddOn = addOns.includes('crm');
+  const hasLeadFormAddOn = addOns.includes('leadForm');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
   const pathname = usePathname();
   const settingsRef = useRef<HTMLDivElement>(null);
 
@@ -105,6 +114,8 @@ export function SettingsSection() {
           {filteredItems.map((item, index) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
+            const isLeadFormsLocked =
+              item.href === '/settings/lead-forms' && !hasLeadFormAddOn;
             return (
               <div key={item.href}>
                 {item.sectionLabel && (
@@ -119,7 +130,15 @@ export function SettingsSection() {
                 )}
                 <a
                   href={item.href}
-                  onClick={() => setIsSettingsOpen(false)}
+                  onClick={(e) => {
+                    if (isLeadFormsLocked) {
+                      e.preventDefault();
+                      setIsSettingsOpen(false);
+                      setUpgradeModalOpen(true);
+                      return;
+                    }
+                    setIsSettingsOpen(false);
+                  }}
                   className={cn(
                     'flex items-center gap-3 px-3 text-sm rounded-md transition-colors cursor-pointer',
                     'touch-manipulation',
@@ -130,7 +149,12 @@ export function SettingsSection() {
                   )}
                 >
                   <Icon className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate">{item.title}</span>
+                  <span className="truncate flex-1">{item.title}</span>
+                  {isLeadFormsLocked && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 flex-shrink-0">
+                      Upgrade
+                    </span>
+                  )}
                 </a>
               </div>
             );
@@ -161,6 +185,11 @@ export function SettingsSection() {
           )}
         />
       </button>
+
+      <LeadFormsUpgradeModal
+        open={upgradeModalOpen}
+        onOpenChange={setUpgradeModalOpen}
+      />
     </div>
   );
 }

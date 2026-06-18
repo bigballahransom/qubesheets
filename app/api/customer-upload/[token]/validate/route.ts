@@ -81,10 +81,12 @@ export async function GET(
     }
 
     // Resolve the org-level photo switch for whichever flow this token
-    // belongs to. Three independent flags exist on OrganizationSettings:
+    // belongs to. Four independent flags exist on OrganizationSettings:
     //   - photosEnabledGlobalLink:    token minted by /api/upload/[orgId]/create-project
     //                                 (discriminated by userId === 'global-self-survey-link')
     //   - photosEnabledWalkthrough:   token minted with isWalkthrough: true
+    //   - photosEnabledWebForm:       token minted by the embedded lead-form
+    //                                 pipeline (discriminated by userId === 'form-submission')
     //   - photosEnabledCustomerLink:  everything else (per-customer SMS/email)
     // Default true when no settings doc exists or the link belongs to a
     // personal account, so existing flows keep working.
@@ -100,6 +102,8 @@ export async function GET(
             flagValue = orgSettings.photosEnabledWalkthrough;
           } else if (customerUpload.userId === 'global-self-survey-link') {
             flagValue = orgSettings.photosEnabledGlobalLink;
+          } else if (customerUpload.userId === 'form-submission') {
+            flagValue = orgSettings.photosEnabledWebForm;
           } else {
             flagValue = orgSettings.photosEnabledCustomerLink;
           }

@@ -14,12 +14,14 @@ const DEFAULT_ENABLED = true;
 type PhotoFlag =
   | 'photosEnabledGlobalLink'
   | 'photosEnabledCustomerLink'
-  | 'photosEnabledWalkthrough';
+  | 'photosEnabledWalkthrough'
+  | 'photosEnabledWebForm';
 
 const PHOTO_FLAGS: PhotoFlag[] = [
   'photosEnabledGlobalLink',
   'photosEnabledCustomerLink',
-  'photosEnabledWalkthrough'
+  'photosEnabledWalkthrough',
+  'photosEnabledWebForm'
 ];
 
 export async function GET(_request: NextRequest) {
@@ -45,7 +47,8 @@ export async function GET(_request: NextRequest) {
     return NextResponse.json({
       photosEnabledGlobalLink: settings?.photosEnabledGlobalLink ?? DEFAULT_ENABLED,
       photosEnabledCustomerLink: settings?.photosEnabledCustomerLink ?? DEFAULT_ENABLED,
-      photosEnabledWalkthrough: settings?.photosEnabledWalkthrough ?? DEFAULT_ENABLED
+      photosEnabledWalkthrough: settings?.photosEnabledWalkthrough ?? DEFAULT_ENABLED,
+      photosEnabledWebForm: settings?.photosEnabledWebForm ?? DEFAULT_ENABLED
     });
   } catch (error) {
     console.error('Error fetching photo settings:', error);
@@ -110,7 +113,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       photosEnabledGlobalLink: settings.photosEnabledGlobalLink ?? DEFAULT_ENABLED,
       photosEnabledCustomerLink: settings.photosEnabledCustomerLink ?? DEFAULT_ENABLED,
-      photosEnabledWalkthrough: settings.photosEnabledWalkthrough ?? DEFAULT_ENABLED
+      photosEnabledWalkthrough: settings.photosEnabledWalkthrough ?? DEFAULT_ENABLED,
+      photosEnabledWebForm: settings.photosEnabledWebForm ?? DEFAULT_ENABLED
     }, { status: 200 });
   } catch (error) {
     console.error('Error saving photo settings:', error);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
-import { Camera, Link2, MessageSquare, Building2 } from 'lucide-react';
+import { Camera, Link2, MessageSquare, Building2, Globe } from 'lucide-react';
 import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { toast } from 'sonner';
 
@@ -12,12 +12,14 @@ interface PhotoFlags {
   photosEnabledGlobalLink: boolean;
   photosEnabledCustomerLink: boolean;
   photosEnabledWalkthrough: boolean;
+  photosEnabledWebForm: boolean;
 }
 
 const DEFAULT_FLAGS: PhotoFlags = {
   photosEnabledGlobalLink: DEFAULT_ENABLED,
   photosEnabledCustomerLink: DEFAULT_ENABLED,
-  photosEnabledWalkthrough: DEFAULT_ENABLED
+  photosEnabledWalkthrough: DEFAULT_ENABLED,
+  photosEnabledWebForm: DEFAULT_ENABLED
 };
 
 type FlagKey = keyof PhotoFlags;
@@ -47,6 +49,12 @@ const FLAG_DEFINITIONS: FlagDefinition[] = [
     title: 'On-Site Walkthroughs',
     description: 'When an employee starts a walkthrough from a project. When off, the in-app photo capture is hidden — video only.',
     icon: Building2
+  },
+  {
+    key: 'photosEnabledWebForm',
+    title: 'Embedded Web Form',
+    description: 'The lead-capture form embedded on your website. When off, the post-submit chooser will only show the video-recording option.',
+    icon: Globe
   }
 ];
 
@@ -74,7 +82,8 @@ export default function PhotosSettingsPage() {
         setFlags({
           photosEnabledGlobalLink: config.photosEnabledGlobalLink ?? DEFAULT_ENABLED,
           photosEnabledCustomerLink: config.photosEnabledCustomerLink ?? DEFAULT_ENABLED,
-          photosEnabledWalkthrough: config.photosEnabledWalkthrough ?? DEFAULT_ENABLED
+          photosEnabledWalkthrough: config.photosEnabledWalkthrough ?? DEFAULT_ENABLED,
+          photosEnabledWebForm: config.photosEnabledWebForm ?? DEFAULT_ENABLED
         });
       } else if (response.status === 403) {
         setLoading(false);

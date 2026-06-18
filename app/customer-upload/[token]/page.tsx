@@ -9,6 +9,7 @@ import CustomerPhotoSessionScreen from '@/components/CustomerPhotoSessionScreen'
 import InventoryInstructionsModal from '@/components/InventoryInstructionsModal';
 import SelfServeRecorderLiveKit from '@/components/SelfServeRecorderLiveKit';
 import DesktopQRCodeView from '@/components/DesktopQRCodeView';
+import UploadChooser from '@/components/UploadChooser';
 import { shouldShowQRCode, isMobileDevice, canRecordVideo } from '@/lib/deviceDetection';
 import { toast } from 'sonner';
 import Logo from '../../../public/logo';
@@ -133,6 +134,26 @@ export default function CustomerUploadPage() {
       setShowInstructionsModal(true);
     }
   }, [viewMode, loading, validation]);
+
+  // Embed hand-off: when the lead pipeline breaks out of its iframe to this
+  // route after the customer picked an option, it appends ?start=recording
+  // or ?start=upload so the chooser is skipped. Re-check the same guards
+  // canRecord/canUpload use below — a malicious/stale ?start= value falls
+  // through to the chooser, never into a disabled view.
+  useEffect(() => {
+    if (loading || !validation || isDesktop) return;
+    if (viewMode !== 'choice') return;
+    const start = searchParams?.get('start');
+    if (start === 'recording' && validation.uploadMode !== 'files') {
+      setViewMode('recording');
+    } else if (
+      start === 'upload' &&
+      validation.photosEnabled !== false &&
+      validation.uploadMode !== 'recording'
+    ) {
+      setViewMode('upload');
+    }
+  }, [loading, validation, isDesktop, viewMode, searchParams]);
 
   // Auto-route mobile customers when their link only supports a single mode.
   // 'files'-only links → straight to the photo session screen (unless the
@@ -715,146 +736,26 @@ export default function CustomerUploadPage() {
     );
   }
 
-  // Mobile Choice View - choose between recording and upload
+  // Mobile choice view — extracted into a reusable component shared with the
+  // embed iframe. We pass our already-fetched validation so the component
+  // doesn't refetch, and an onChoose that swaps viewMode in place (no
+  // break-out — break-out is the component's default for arrivals that
+  // didn't come through this route).
   if (viewMode === 'choice' && !isDesktop) {
-    const canRecord = supportsRecording && validation.uploadMode !== 'files';
-    const canUpload = validation.uploadMode !== 'recording' && photosAllowed;
-    // 'files'-only link + photos disabled is the only combination that
-    // leaves the choice screen with nothing actionable. Show a dedicated
-    // message instead of the regular options.
-    const noOptionsAvailable = !canRecord && !canUpload;
-
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-100 flex flex-col">
-        {/* Header */}
-        <header className="p-4 flex items-center justify-between border-b border-slate-200/50 bg-white/80 backdrop-blur-md">
-          <div className="flex items-center gap-3">
-            {validation.branding?.companyLogo ? (
-              <img
-                src={validation.branding.companyLogo}
-                alt={validation.branding.companyName}
-                className="w-10 h-10 object-contain rounded-lg"
-              />
-            ) : (
-              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                <Building2 className="w-5 h-5 text-blue-600" />
-              </div>
-            )}
-            <div>
-              <p className="font-medium text-slate-800">
-                {validation.branding?.companyName || 'Moving Company'}
-              </p>
-              <p className="text-sm text-slate-500">Self-Serve Inventory Upload</p>
-            </div>
-          </div>
-        </header>
-
-        {/* Main Content */}
-        <main className="flex-1 flex flex-col items-center justify-center p-6">
-          <div className="max-w-sm w-full text-center">
-            {/* Greeting */}
-            {validation.isWalkthrough ? (
-              <>
-                <h1 className="text-2xl font-bold text-slate-800 mb-2">
-                  On-site walkthrough
-                </h1>
-                <p className="text-slate-600 mb-8">
-                  Capturing inventory for <strong>{validation.projectName}</strong>
-                </p>
-              </>
-            ) : (
-              <>
-                <h1 className="text-2xl font-bold text-slate-800 mb-2">
-                  Hi {validation.customerName}!
-                </h1>
-                <p className="text-slate-600 mb-8">
-                  Help us ensure a wonderful moving experience by preparing your moving inventory
-                </p>
-              </>
-            )}
-
-            {/* Empty state — link minted as photos-only, but the org has
-                disabled photos. Customer can't proceed here. */}
-            {noOptionsAvailable && (
-              <div className="bg-white rounded-2xl p-6 text-left shadow-lg border border-slate-200">
-                <h2 className="text-lg font-semibold text-slate-800 mb-2">
-                  This link is no longer accepting uploads
-                </h2>
-                <p className="text-slate-600 text-sm">
-                  {validation.branding?.companyName || 'Your moving company'} has temporarily disabled photo uploads. Please reach out to them for a new link or to schedule a video walkthrough.
-                </p>
-              </div>
-            )}
-
-            {/* Option Cards */}
-            <div className="space-y-4">
-              {/* Record Video Option */}
-              {canRecord && (
-                <button
-                  onClick={() => setViewMode('recording')}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white rounded-2xl p-6 text-left transition-all shadow-lg hover:shadow-xl"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 bg-blue-500 rounded-xl flex items-center justify-center flex-shrink-0">
-                      <Video className="w-7 h-7" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-semibold mb-1">Record Video</h2>
-                      <p className="text-blue-100 text-sm">
-                        Walk through your home and record your belongings
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex items-center gap-2 text-blue-200 text-xs">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span>Recommended - fastest way to capture everything</span>
-                  </div>
-                </button>
-              )}
-
-              {/* Upload Photos Option */}
-              {canUpload && (
-                <button
-                  onClick={() => setViewMode('upload')}
-                  className="w-full bg-white hover:bg-slate-50 text-slate-800 rounded-2xl p-6 text-left transition-all shadow-lg hover:shadow-xl border border-slate-200"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                      <ImageIcon className="w-7 h-7 text-slate-600" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-semibold mb-1">Take or Upload Photos</h2>
-                      <p className="text-slate-500 text-sm">
-                        Snap photos in-app or pick from your photo library
-                      </p>
-                    </div>
-                  </div>
-                </button>
-              )}
-            </div>
-
-            {/* Security Note */}
-            <div className="mt-8 flex items-center justify-center gap-2 text-sm text-slate-400">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              <span>Your media is private and secure</span>
-            </div>
-          </div>
-        </main>
-
-        {/* Footer */}
-        <footer className="p-4 text-center">
-          <div className="inline-flex items-center text-slate-400 text-sm">
-            <span>Powered by</span>
-            <div className="scale-[0.7] origin-center -ml-1">
-              <Logo />
-            </div>
-          </div>
-        </footer>
-      </div>
+      <UploadChooser
+        token={token}
+        prefetchedValidation={{
+          customerName: validation.customerName,
+          projectName: validation.projectName,
+          branding: validation.branding,
+          uploadMode: validation.uploadMode,
+          isWalkthrough: validation.isWalkthrough,
+          photosEnabled: validation.photosEnabled,
+        }}
+        showLeadGreeting={searchParams?.get('greeting') === 'lead'}
+        onChoose={(kind) => setViewMode(kind)}
+      />
     );
   }
 

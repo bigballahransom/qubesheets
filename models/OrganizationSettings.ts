@@ -136,9 +136,11 @@ export interface IOrganizationSettings extends Document {
   //   - photosEnabledGlobalLink:    /upload/[orgId] (global self-survey)
   //   - photosEnabledCustomerLink:  per-customer SMS/email links
   //   - photosEnabledWalkthrough:   employee on-site walkthroughs
+  //   - photosEnabledWebForm:       embedded lead-form chooser (mover's website)
   photosEnabledGlobalLink?: boolean;
   photosEnabledCustomerLink?: boolean;
   photosEnabledWalkthrough?: boolean;
+  photosEnabledWebForm?: boolean;
 
   // Customer Review Link (/inventory-review/[token]) display toggles. Movers
   // that don't want to expose a truck-size recommendation to customers can
@@ -293,6 +295,10 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: true
     },
     photosEnabledWalkthrough: {
+      type: Boolean,
+      default: true
+    },
+    photosEnabledWebForm: {
       type: Boolean,
       default: true
     },

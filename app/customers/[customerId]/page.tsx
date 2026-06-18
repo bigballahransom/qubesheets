@@ -34,6 +34,7 @@ import {
   Home
 } from 'lucide-react';
 import { useLoadScript } from '@react-google-maps/api';
+import PlacesAutocomplete from '@/components/PlacesAutocomplete';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -866,58 +867,6 @@ function StaticMapThumbnail({ address, lat, lng, className = "w-24 h-20" }: { ad
 
 // Google Places Autocomplete libraries
 const libraries: ("places")[] = ["places"];
-
-// Places Autocomplete Input Component
-function PlacesAutocomplete({
-  value,
-  onChange,
-  onSelect,
-  placeholder = "Enter address..."
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  onSelect: (place: google.maps.places.PlaceResult) => void;
-  placeholder?: string;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
-
-  useEffect(() => {
-    if (!inputRef.current || !window.google) return;
-
-    autocompleteRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
-      types: ['address'],
-      componentRestrictions: { country: 'us' }
-    });
-
-    autocompleteRef.current.addListener('place_changed', () => {
-      const place = autocompleteRef.current?.getPlace();
-      if (place) {
-        onSelect(place);
-        if (place.formatted_address) {
-          onChange(place.formatted_address);
-        }
-      }
-    });
-
-    return () => {
-      if (autocompleteRef.current) {
-        google.maps.event.clearInstanceListeners(autocompleteRef.current);
-      }
-    };
-  }, [onChange, onSelect]);
-
-  return (
-    <input
-      ref={inputRef}
-      type="text"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="w-full px-3 py-3 border-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-base"
-    />
-  );
-}
 
 // Route Map Component
 function RouteMap({
