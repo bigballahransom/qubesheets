@@ -31,5 +31,5 @@ export default async function LeadFormPage({
     return <Unavailable />;
   }
 
-  return <LeadIntakeForm formId={form.formId} formName={form.name} />;
+  return <LeadIntakeForm formId={form.formId} />;
 }

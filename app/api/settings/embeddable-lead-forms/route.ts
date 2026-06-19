@@ -16,8 +16,12 @@ import {
   getOrCreateDefaultForm,
   updateForm,
 } from '@/features/lead-intake/lib/leadForms';
+import { normalizeHost } from '@/features/lead-intake/lib/cors';
 
 export const runtime = 'nodejs';
+
+// Cap on additional allowed origins per form (the primary one is websiteDomain).
+const MAX_ALLOWED_DOMAINS = 20;
 
 const ORG_ONLY = {
   error: 'Embeddable lead form settings are only available for organization members',
@@ -28,12 +32,14 @@ function present(form: {
   formId: string;
   name: string;
   websiteDomain?: string;
+  allowedDomains?: string[];
   isActive: boolean;
 }) {
   return {
     formId: form.formId,
     name: form.name,
     websiteDomain: form.websiteDomain ?? '',
+    allowedDomains: form.allowedDomains ?? [],
     isActive: form.isActive,
   };
 }
@@ -74,7 +80,12 @@ export async function POST(request: NextRequest) {
 
     // Collect only the fields we allow editing, with light validation. Any
     // client-sent formId/organizationId is intentionally ignored.
-    const attrs: { name?: string; websiteDomain?: string; isActive?: boolean } = {};
+    const attrs: {
+      name?: string;
+      websiteDomain?: string;
+      allowedDomains?: string[];
+      isActive?: boolean;
+    } = {};
 
     if (body.name !== undefined) {
       if (typeof body.name !== 'string' || body.name.trim().length === 0) {
@@ -101,6 +112,40 @@ export async function POST(request: NextRequest) {
       }
       // Empty string clears the configured domain.
       attrs.websiteDomain = body.websiteDomain.trim();
+    }
+
+    if (body.allowedDomains !== undefined) {
+      if (!Array.isArray(body.allowedDomains)) {
+        return NextResponse.json(
+          { error: 'allowedDomains must be an array' },
+          { status: 400 }
+        );
+      }
+      if (body.allowedDomains.length > MAX_ALLOWED_DOMAINS) {
+        return NextResponse.json(
+          { error: `allowedDomains is limited to ${MAX_ALLOWED_DOMAINS} entries` },
+          { status: 400 }
+        );
+      }
+      const normalized: string[] = [];
+      for (const entry of body.allowedDomains) {
+        if (typeof entry !== 'string') {
+          return NextResponse.json(
+            { error: 'allowedDomains entries must be strings' },
+            { status: 400 }
+          );
+        }
+        if (entry.length > 200) {
+          return NextResponse.json(
+            { error: 'an allowedDomains entry is too long' },
+            { status: 400 }
+          );
+        }
+        // Store with the SAME normalization the CORS allow-list check uses.
+        const host = normalizeHost(entry);
+        if (host && !normalized.includes(host)) normalized.push(host);
+      }
+      attrs.allowedDomains = normalized;
     }
 
     if (body.isActive !== undefined) {

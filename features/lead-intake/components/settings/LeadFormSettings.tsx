@@ -33,6 +33,7 @@ interface FormState {
   formId: string;
   name: string;
   websiteDomain: string;
+  allowedDomains: string[];
   isActive: boolean;
 }
 
@@ -47,6 +48,7 @@ function isDirty(saved: FormState | null, draft: FormState | null): boolean {
   return (
     saved.name !== draft.name ||
     saved.websiteDomain !== draft.websiteDomain ||
+    saved.allowedDomains.join('|') !== draft.allowedDomains.join('|') ||
     saved.isActive !== draft.isActive
   );
 }
@@ -97,6 +99,7 @@ export default function LeadFormSettings() {
         body: JSON.stringify({
           name: draft.name,
           websiteDomain: draft.websiteDomain,
+          allowedDomains: draft.allowedDomains,
           isActive: draft.isActive,
         }),
       });
@@ -251,6 +254,10 @@ export default function LeadFormSettings() {
                 <LeadFormAdvanced
                   isActive={draft.isActive}
                   onActiveChange={(isActive) => setDraft({ ...draft, isActive })}
+                  allowedDomains={draft.allowedDomains}
+                  onAllowedDomainsChange={(allowedDomains) =>
+                    setDraft({ ...draft, allowedDomains })
+                  }
                   name={draft.name}
                   onNameChange={(name) => setDraft({ ...draft, name })}
                   formId={draft.formId}

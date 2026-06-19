@@ -8,7 +8,9 @@ import type { ILeadForm } from '../models/LeadForm';
 type FormOrigins = Pick<ILeadForm, 'websiteDomain' | 'allowedDomains'>;
 
 // Normalize a domain or full origin to a comparable host[:port], lowercased.
-function normalizeHost(value?: string | null): string | null {
+// Exported so the settings route stores allowedDomains with the SAME normalization
+// the allow-list check uses (no drift between what's saved and what's matched).
+export function normalizeHost(value?: string | null): string | null {
   if (!value) return null;
   let v = value.trim().toLowerCase();
   if (!v) return null;

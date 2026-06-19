@@ -1,0 +1,39 @@
+<!doctype html>
+<!--
+  TEMP Phase-2 widget eyeball test (lead-intake feature). Served from the app's
+  OWN origin (public/) so the injected iframe is first-party and skips Clerk's
+  dev handshake. Open it at the app's port, e.g. http://localhost:3001/lead-widget-test.html
+  Not part of the feature; remove during end-of-feature cleanup.
+
+  The <script> src is ROOT-RELATIVE on purpose: the browser resolves it against
+  whatever origin serves this page, and form.js derives the iframe origin from
+  its own src — so this works on :3000, :3001, or the ngrok host without edits.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lead-form widget — same-origin test</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 40px; color: #0f172a; }
+      .frame { border: 1px dashed #cbd5e1; padding: 12px; margin-top: 16px; }
+      code { background: #f1f5f9; padding: 1px 4px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Lead-form widget — same-origin test</h1>
+    <p>Simulates an org's site embedding the JS widget, but served from the app
+      origin so Clerk's dev handshake doesn't block the iframe. The iframe below
+      is injected by <code>form.js</code>.</p>
+
+    <div class="frame">
+      <div id="qubesheets-lead-form"></div>
+      <script
+        src="/api/public/embed/lead-forms/form.js"
+        data-form-id="leadform_qa_phase1"
+        data-target="qubesheets-lead-form"
+        async
+      ></script>
+    </div>
+  </body>
+</html>

@@ -12,7 +12,6 @@ import LeadSuccessCTA from './LeadSuccessCTA';
 
 type Props = {
   formId: string;
-  formName: string;
 };
 
 type FieldValues = {
@@ -75,7 +74,7 @@ function Field({
   );
 }
 
-export default function LeadIntakeForm({ formId, formName }: Props) {
+export default function LeadIntakeForm({ formId }: Props) {
   const [values, setValues] = useState<FieldValues>(EMPTY);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -134,14 +133,9 @@ export default function LeadIntakeForm({ formId, formName }: Props) {
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-10">
       <div className="mx-auto max-w-lg">
-        <div className="mb-5">
-          <h1 className="text-xl font-semibold leading-tight text-slate-900">{formName}</h1>
-          <p className="mt-0.5 text-xs text-slate-500">
-            We make moving easy. Get your free quote in minutes.
-          </p>
-        </div>
-
-        <hr className="my-5 border-slate-200" />
+        <p className="mb-5 text-sm font-medium text-slate-700">
+          Fill out this form to get a free quote.
+        </p>
 
         <form onSubmit={handleSubmit} noValidate className="space-y-5">
           <div className="grid gap-5 sm:grid-cols-2">

@@ -79,8 +79,12 @@ export default clerkMiddleware(async (auth, req) => {
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files, unless found in search params
-    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    // Skip Next.js internals and all static files, unless found in search params.
+    // Also skip the public hosted lead-form PAGE so clerkMiddleware never runs on
+    // it — its dev-instance handshake redirect breaks cross-site (third-party)
+    // iframe embeds. The page is fully public; the /api/public/embed submit route
+    // stays matched (it must keep running as a public API route).
+    '/((?!_next|embed/forms/lead-forms|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
     // Always run for API routes
     '/(api|trpc)(.*)',
   ],
