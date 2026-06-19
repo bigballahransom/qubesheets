@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lead Intake — Feature Overview</title>
+<style>
+  :root { --fg:#1f2933; --muted:#52606d; --line:#e4e7eb; --accent:#2563eb; --bg:#fff; --code:#f3f4f6; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         color: var(--fg); background: var(--bg); margin: 0; padding: 2.5rem 1.25rem; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.75rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.2rem; margin: 2.25rem 0 .75rem; padding-bottom: .35rem; border-bottom: 2px solid var(--line); }
+  h3 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+  p { margin: .6rem 0; }
+  .lede { color: var(--muted); margin-bottom: 1.5rem; }
+  ol.flow { margin: .5rem 0; padding-left: 1.25rem; }
+  ol.flow li { margin: .4rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: .75rem 0 1rem; }
+  th, td { text-align: left; vertical-align: top; padding: .5rem .65rem; border-bottom: 1px solid var(--line); }
+  th { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  td code, p code, li code { background: var(--code); padding: .1rem .35rem; border-radius: 4px;
+         font: 13px/1.4 "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+  td.path code { white-space: nowrap; }
+  ul.checks { list-style: none; padding-left: 0; margin: .5rem 0; }
+  ul.checks li { padding: .35rem 0 .35rem 1.6rem; position: relative; border-bottom: 1px solid var(--line); }
+  ul.checks li::before { content: "\2713"; position: absolute; left: 0; color: #15803d; font-weight: 700; }
+  .note { color: var(--muted); font-size: .9rem; }
+  footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>Lead Intake</h1>
+  <p class="lede">An embeddable, per-organization lead-capture form. An org drops the form onto its own
+  website; a public visitor submits their move details; the submission becomes a project in the org's
+  workspace and the visitor is invited to complete a self-survey for a faster quote.</p>
+
+  <h2>1. How it works</h2>
+  <ol class="flow">
+    <li>An admin opens <strong>Settings &rarr; Embeddable Form</strong>, configures the form, and copies an
+        embed snippet (an <code>&lt;iframe&gt;</code> or a small JS widget).</li>
+    <li>The snippet renders the hosted form on the org's own site. The form is fully public &mdash; no login,
+        no auth handshake.</li>
+    <li>A visitor submits their contact and move details. The request is validated and posted to a public
+        submission endpoint.</li>
+    <li>The organization is <strong>derived server-side from the stored form record</strong>, never read from
+        the client. This is the trust boundary: the public <code>formId</code> identifies the form, and the
+        form record owns the org.</li>
+    <li>The submission is recorded and turned into a project in that org's workspace, along with a customer
+        self-survey upload link.</li>
+    <li>The visitor sees a success message with a call-to-action to complete the self-survey &mdash; a button
+        on mobile, a QR code on desktop.</li>
+  </ol>
+  <p class="note">Origin control: each form carries an allow-list of domains permitted to post to it, so a
+  form can only be submitted from the sites the admin authorizes.</p>
+
+  <h2>2. Feature files</h2>
+  <p>All feature code lives under <code>features/lead-intake/</code>.</p>
+  <table>
+    <thead><tr><th>File</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>models/LeadForm.ts</code></td><td>The per-org form record: public form id, configured domains, active state, default flag.</td></tr>
+      <tr><td class="path"><code>models/LeadSubmission.ts</code></td><td>Stores each public submission.</td></tr>
+      <tr><td class="path"><code>lib/validators.ts</code></td><td>Schema validation for the public submission payload.</td></tr>
+      <tr><td class="path"><code>lib/cors.ts</code></td><td>Per-form origin allow-list: normalizes hosts and decides whether a submitting origin is permitted.</td></tr>
+      <tr><td class="path"><code>lib/leadForms.ts</code></td><td>Data-access helpers, including the lookup that resolves a public form to its owning org (the trust boundary) and the org-scoped update.</td></tr>
+      <tr><td class="path"><code>lib/createProjectFromLead.ts</code></td><td>Turns a submission into a project plus a customer self-survey link.</td></tr>
+      <tr><td class="path"><code>lib/embedCode.ts</code></td><td>Generates the iframe and JS-widget snippets shown in settings.</td></tr>
+      <tr><td class="path"><code>components/LeadIntakeForm.tsx</code></td><td>The hosted public form UI.</td></tr>
+      <tr><td class="path"><code>components/LeadSuccessCTA.tsx</code></td><td>Post-submit call-to-action (button on mobile, QR on desktop) linking to the self-survey.</td></tr>
+      <tr><td class="path"><code>components/settings/LeadFormSettings.tsx</code></td><td>Settings container &mdash; loads and saves the form configuration.</td></tr>
+      <tr><td class="path"><code>components/settings/LeadFormAdvanced.tsx</code></td><td>Advanced settings: active toggle, allowed-domains editor, internal form name.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Route wrappers (thin, under <code>app/</code>)</h3>
+  <p>These are the public and admin entry points that mount the feature into Next.js routing.</p>
+  <table>
+    <thead><tr><th>File</th><th>Responsibility</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>app/embed/forms/lead-forms/[formId]/page.tsx</code></td><td>The public hosted form page.</td></tr>
+      <tr><td class="path"><code>app/api/public/embed/lead-forms/[formId]/submissions/route.ts</code></td><td>Anonymous submission endpoint.</td></tr>
+      <tr><td class="path"><code>app/api/public/embed/lead-forms/form.js/route.ts</code></td><td>Serves the embeddable widget script.</td></tr>
+      <tr><td class="path"><code>app/settings/embeddable-lead-forms/page.tsx</code></td><td>Admin settings page.</td></tr>
+      <tr><td class="path"><code>app/api/settings/embeddable-lead-forms/route.ts</code></td><td>Org-scoped settings API (read and save form config).</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. Integration with the QubeSheets app</h2>
+  <p>The feature is self-contained; it touches the surrounding application in a small, additive way.</p>
+  <table>
+    <thead><tr><th>Existing file / facility</th><th>How the feature uses it</th></tr></thead>
+    <tbody>
+      <tr><td class="path"><code>middleware.ts</code></td><td>Registers the public form page and submission API as public routes, and excludes the hosted page from the auth matcher so no auth handshake runs on it inside a cross-site iframe.</td></tr>
+      <tr><td class="path"><code>components/SettingsSection.tsx</code></td><td>One nav entry linking to the settings page.</td></tr>
+      <tr><td class="path"><code>package.json</code></td><td>Adds <code>zod</code> for payload validation.</td></tr>
+      <tr><td class="path"><code>lib/mongodb.ts</code></td><td>Reuses the shared database connection.</td></tr>
+      <tr><td class="path"><code>models/Project.ts</code>, <code>models/CustomerUpload.ts</code></td><td>Reused to create the project and the customer self-survey link from a submission.</td></tr>
+      <tr><td class="path"><code>tsconfig</code> path alias</td><td>The existing <code>@/*</code> alias resolves <code>@/features/*</code>; no config change needed.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. Tests passed</h2>
+  <ul class="checks">
+    <li>Trust boundary holds: a client-supplied organization id is ignored; the org is derived from the stored form.</li>
+    <li>A submission creates a project plus a customer self-survey link in the correct org.</li>
+    <li>The success CTA shows correctly &mdash; button on mobile, QR code on desktop.</li>
+    <li>The public form page and the JS widget both render and submit.</li>
+    <li>The settings page auto-provisions a default form and saves configuration scoped to the signed-in org.</li>
+    <li>Allowed domains are normalized, de-duplicated, and capped; submissions from listed origins are accepted and others are rejected.</li>
+    <li>An inactive or unknown form shows &ldquo;Unavailable&rdquo; and the submission endpoint returns 404 &mdash; no silent project creation.</li>
+    <li>The form renders inside a cross-site iframe with no auth-handshake redirect and no framing block; protected routes remain gated.</li>
+    <li>Org isolation: a signed-in admin cannot modify another org's form.</li>
+    <li>Type-check (<code>tsc --noEmit</code>) is clean; existing settings pages are unaffected.</li>
+  </ul>
+
+  <footer>Lead Intake feature &mdash; internal overview.</footer>
+
+</main>
+</body>
+</html>
