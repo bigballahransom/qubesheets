@@ -1,8 +1,8 @@
 // features/lead-intake/lib/embedCode.ts
 //
-// Generates the two embed snippets an org copies into its website. Consumed by
-// the Phase-3 settings UI; the widget's <script> src points at the form.js
-// route, which injects the same hosted page in an <iframe>.
+// Generates the two embed snippets an org copies into its website. The widget's
+// <script> src points at the form.js route, which injects the same hosted page
+// in an <iframe>.
 
 function trimSlash(url: string): string {
   return url.replace(/\/+$/, '');

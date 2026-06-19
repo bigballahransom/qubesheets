@@ -3,8 +3,8 @@
 // features/lead-intake/components/LeadSuccessCTA.tsx
 //
 // Post-submission success screen + self-survey handoff. The project already
-// exists (Phase 1), so we use the per-lead selfSurveyUrl returned by the submit
-// endpoint. Device split mirrors the app's existing self-survey pattern:
+// exists by this point, so we use the per-lead selfSurveyUrl returned by the
+// submit endpoint. Device split:
 //   desktop -> QR of the self-survey URL (scan to continue on a phone)
 //   mobile  -> a button that opens the self-survey directly
 import { useEffect, useState } from 'react';

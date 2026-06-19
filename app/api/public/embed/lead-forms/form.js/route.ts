@@ -6,7 +6,7 @@
 //           data-form-id="<formId>" data-target="qubesheets-lead-form" async></script>
 // This serves a tiny IIFE that injects an <iframe> pointing at the hosted form
 // page — so the embedded form inherits all of the React page's logic/styling.
-// Public via the Phase-1 `/api/public/embed/lead-forms/(.*)` matcher.
+// Public via the `/api/public/embed/lead-forms/(.*)` middleware matcher.
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';

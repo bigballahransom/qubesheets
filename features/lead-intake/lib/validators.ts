@@ -1,7 +1,7 @@
 // features/lead-intake/lib/validators.ts
 //
-// Zod schema for the full lead-form field set (POC fields minus photo/video).
-// `name` + `email` are required; everything else is optional. Unknown keys are
+// Zod schema for the full lead-form field set. `name` + `email` are required;
+// everything else is optional. Unknown keys are
 // stripped (zod's default object behavior, made explicit with .strip()).
 import { z } from 'zod';
 

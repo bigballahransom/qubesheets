@@ -5,8 +5,8 @@
 // This is the public path's equivalent of POST /api/projects — which we cannot
 // call because it is Clerk-gated and would 401 an anonymous visitor.
 //
-// Field mapping is governed by the Phase 1 schema-drift verification
-// (see dev/lead-intake-feature/tests/phase-1-qa.md §6). Notably:
+// Field mapping must respect the Project schema — mongoose drops undeclared
+// fields, so watch these:
 //   - Project.origin / Project.destination are SUB-DOCUMENTS — wrap the address
 //     string as { address }, never assign a bare string (mongoose drops it).
 //   - moveSize / phoneType have no first-class Project field -> metadata (Mixed).

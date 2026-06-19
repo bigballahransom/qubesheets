@@ -1,8 +1,7 @@
 // features/lead-intake/lib/cors.ts
 //
-// v1 abuse control: a per-form CORS allow-list built from the org's configured
-// website domain(s). Cross-origin browser submissions are accepted only from an
-// allowed host. Rate-limiting is deferred (see development plan).
+// A per-form CORS allow-list built from the org's configured website domain(s).
+// Cross-origin browser submissions are accepted only from an allowed host.
 import type { ILeadForm } from '../models/LeadForm';
 
 type FormOrigins = Pick<ILeadForm, 'websiteDomain' | 'allowedDomains'>;

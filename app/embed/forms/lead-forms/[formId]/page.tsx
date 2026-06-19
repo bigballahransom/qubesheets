@@ -2,7 +2,7 @@
 //
 // PUBLIC hosted lead-form page (iframe target + widget target). Thin server
 // wrapper: resolve the form by its public id, gate on isActive, render the
-// client form. Public via middleware (Phase 1).
+// client form. Public via middleware (no auth).
 import { getFormByPublicId } from '@/features/lead-intake/lib/leadForms';
 import LeadIntakeForm from '@/features/lead-intake/components/LeadIntakeForm';
 

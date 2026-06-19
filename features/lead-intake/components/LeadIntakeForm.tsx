@@ -2,11 +2,10 @@
 
 // features/lead-intake/components/LeadIntakeForm.tsx
 //
-// Public lead-capture form. Ported from the POC EmbedForm, adapted to this
-// module: it POSTs the Phase-1 Zod KEYS (name/email/phone/phoneType/origin/
-// destination/moveDate/moveSize/notes) to the lead-intake submit endpoint, and
-// on success swaps to the self-survey CTA using the returned selfSurveyUrl.
-// No photo/video upload, no honeypot/speed-trap (removed by design).
+// Public lead-capture form. POSTs the submission fields
+// (name/email/phone/phoneType/origin/destination/moveDate/moveSize/notes) to the
+// lead-intake submit endpoint, and on success swaps to the self-survey CTA using
+// the returned selfSurveyUrl.
 import { useState } from 'react';
 import LeadSuccessCTA from './LeadSuccessCTA';
 

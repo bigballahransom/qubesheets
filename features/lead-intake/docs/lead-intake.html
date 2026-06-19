@@ -28,6 +28,19 @@
   ul.checks li::before { content: "\2713"; position: absolute; left: 0; color: #15803d; font-weight: 700; }
   .note { color: var(--muted); font-size: .9rem; }
   footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+
+  .info { position: relative; display: inline-flex; align-items: center; justify-content: center;
+          width: 15px; height: 15px; margin-left: 5px; border-radius: 50%; background: var(--accent);
+          color: #fff; font-size: .68rem; font-weight: 700; font-style: italic; cursor: help;
+          vertical-align: middle; user-select: none; }
+  .info .tip { position: absolute; bottom: 150%; left: 50%; transform: translateX(-50%); width: 250px;
+          background: #111827; color: #f9fafb; padding: 10px 12px; border-radius: 10px; font-size: .78rem;
+          font-weight: 400; font-style: normal; line-height: 1.5; text-transform: none; letter-spacing: normal;
+          opacity: 0; visibility: hidden; transition: opacity .15s ease; z-index: 10;
+          box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+  .info .tip::after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+          border: 6px solid transparent; border-top-color: #111827; }
+  .info:hover .tip, .info:focus .tip { opacity: 1; visibility: visible; }
 </style>
 </head>
 <body>
@@ -103,7 +116,104 @@
     </tbody>
   </table>
 
-  <h2>4. Tests passed</h2>
+  <h2>4. Types &amp; contracts</h2>
+  <p>These are the feature's canonical types. <strong>Import them &mdash; do not redeclare a parallel
+  shape.</strong> Each one lives next to the thing it describes (model, schema, or function); this section is
+  the map so you don't have to hunt for them.</p>
+
+  <div class="callout"><strong>Rules for extending the type surface</strong>
+    <ul>
+      <li>The submission payload's single source of truth is the Zod schema <code>leadSubmissionSchema</code>.
+          Get its type via <code>z.infer</code> (exported as <code>LeadSubmissionInput</code>). To add or change
+          a field, edit the schema &mdash; never hand-write a second interface that mirrors it.</li>
+      <li>The <code>I&hellip;</code> interfaces are the database document shapes, defined alongside their Mongoose
+          schema. Extend or import them; don't fork a copy (the DB silently drops fields you persist without
+          declaring &mdash; a forked type hides that).</li>
+      <li><code>organizationId</code> is always derived server-side from the form record. Never add a
+          client-supplied org field to any of these types.</li>
+      <li>Component-level draft/state types stay colocated with their component, but some intentionally
+          <em>mirror</em> a canonical shape (a form draft vs. the submission, a settings draft vs. the record).
+          They're catalogued under <em>Component-level types</em> below with what each one shadows &mdash; when
+          you add a field to a canonical type, update its shadow in the same change.</li>
+    </ul>
+  </div>
+
+  <h3>Data models</h3>
+  <p class="muted"><code>features/lead-intake/models/LeadForm.ts</code> &mdash; the stored per-org form record.</p>
+<pre><code>interface ILeadForm extends Document {
+  organizationId: string;        // Clerk org id — the trusted owner
+  formId: string;                // public, unguessable id used in embed URLs
+  name: string;
+  websiteDomain?: string;        // primary allowed origin host (CORS allow-list)
+  allowedDomains: string[];      // additional allowed origin hosts
+  theme?: Record&lt;string, unknown&gt;;
+  isActive: boolean;
+  isDefault: boolean;            // the org's auto-provisioned default form
+  createdAt: Date;
+  updatedAt: Date;
+}</code></pre>
+  <p class="muted"><code>features/lead-intake/models/LeadSubmission.ts</code> &mdash; one record per public submission.</p>
+<pre><code>interface ILeadSubmission extends Document {
+  formId: string;                // the public form id this came through
+  organizationId: string;        // derived from the form, never the client
+  data: Record&lt;string, unknown&gt;; // full validated payload
+  projectId?: ObjectId | string;
+  sourceOrigin?: string;         // request Origin header at submit time
+  createdAt: Date;
+  updatedAt: Date;
+}</code></pre>
+
+  <h3>Submission payload (the public contract)</h3>
+  <p class="muted"><code>features/lead-intake/lib/validators.ts</code> &mdash; schema is the source of truth;
+  the type is inferred from it. <code>name</code> + <code>email</code> required, the rest optional; unknown keys stripped.</p>
+<pre><code>const leadSubmissionSchema = z.object({
+  name:        z.string().trim().min(1).max(200),     // required
+  email:       z.string().trim().email().max(200),    // required
+  phone:       z.string().trim().max(50).optional(),
+  phoneType:   z.string().trim().max(50).optional(),
+  origin:      z.string().trim().max(500).optional(),
+  destination: z.string().trim().max(500).optional(),
+  moveDate:    z.string().trim().max(100).optional(),
+  moveSize:    z.string().trim().max(100).optional(),
+  notes:       z.string().trim().max(5000).optional(),
+}).strip();
+
+type LeadSubmissionInput = z.infer&lt;typeof leadSubmissionSchema&gt;;  // import this; don't redeclare</code></pre>
+
+  <h3>Function result</h3>
+  <p class="muted"><code>features/lead-intake/lib/createProjectFromLead.ts</code> &mdash; what the submit path
+  hands back to render the success CTA.</p>
+<pre><code>interface CreateProjectFromLeadResult {
+  projectId: string;
+  selfSurveyUrl: string;
+}</code></pre>
+
+  <h3>Component-level types</h3>
+  <p>These are local UI shapes &mdash; one consumer each, so they live with their component rather than in the
+  catalogue above. The first two <strong>shadow a canonical type</strong>: they're separate on purpose (draft
+  state is all-present strings, not the typed/optional domain shape), but they restate its fields, so keep them
+  in sync.</p>
+  <table>
+    <thead><tr><th>Type</th><th>File</th><th>Shadows<span class="info" tabindex="0">i<span class="tip">A &ldquo;shadow&rdquo; is a local type that restates the fields of a canonical type instead of reusing it &mdash; kept separate on purpose (e.g. form draft state is all-present strings, not the typed/optional domain shape). Worth being aware of because the two have no compiler link: add a field to the canonical type and the shadow won&rsquo;t error, it just silently goes out of date &mdash; so you must update both in the same change.</span></span></th><th>Keep-in-sync note</th></tr></thead>
+    <tbody>
+      <tr><td><code>FieldValues</code></td><td class="path"><code>components/LeadIntakeForm.tsx</code></td>
+          <td><code>LeadSubmissionInput</code></td>
+          <td>Form draft state &mdash; every submission field as an always-present string. Add a field to the
+          schema &rarr; add it here and to the <code>EMPTY</code> initializer.</td></tr>
+      <tr><td><code>FormState</code></td><td class="path"><code>components/settings/LeadFormSettings.tsx</code></td>
+          <td>editable subset of <code>ILeadForm</code></td>
+          <td>The settings draft (formId, name, websiteDomain, allowedDomains, isActive). Add an editable form
+          field &rarr; add it here, to the dirty-check, and to the save payload.</td></tr>
+      <tr><td><code>LeadFormAdvancedProps</code></td><td class="path"><code>components/settings/LeadFormAdvanced.tsx</code></td>
+          <td>&mdash; (local wiring)</td>
+          <td>Parent&rarr;child props (values + change callbacks). No canonical overlap.</td></tr>
+      <tr><td><code>Props</code></td><td class="path"><code>components/LeadIntakeForm.tsx</code></td>
+          <td>&mdash; (local wiring)</td>
+          <td>Just <code>{ formId }</code>. No canonical overlap.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. Tests passed</h2>
   <ul class="checks">
     <li>Trust boundary holds: a client-supplied organization id is ignored; the org is derived from the stored form.</li>
     <li>A submission creates a project plus a customer self-survey link in the correct org.</li>

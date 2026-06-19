@@ -36,7 +36,7 @@ export async function getOrCreateDefaultForm(organizationId: string): Promise<IL
   return form;
 }
 
-// --- Settings-phase helpers (wired into the UI in Phase 3) -------------------
+// --- Form configuration helpers (used by the settings UI) --------------------
 
 export async function createForm(
   organizationId: string,
