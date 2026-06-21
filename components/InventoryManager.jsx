@@ -38,6 +38,7 @@ import { Badge } from './ui/badge';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import simpleRealTimeDatabase from '@/lib/simple-realtime-database';
+import { parseTagsCell, tagRgbFor } from '@/lib/tagColors';
 import { toast } from 'sonner';
 
 import {
@@ -2970,10 +2971,32 @@ useEffect(() => {
     let currentY = coverY;
     const cellPadding = 2;
     const rowHeight = 8;
-    // Column widths for the 7-column [Location, Item, Count, Cuft, Weight, Going, PBO/CP] layout
-    const colWidths = [25, 45, 18, 18, 20, 30, 25];
-    const totalWidth = colWidths.reduce((a, b) => a + b, 0); // 181 mm — fits within margins
+    // 8-column [Location, Item, Count, Cuft, Weight, Going, PBO/CP, Tags]
+    // layout — width sums to 181 mm so the table aligns with prior versions.
+    const colWidths = [22, 38, 13, 14, 18, 24, 18, 34];
+    const totalWidth = colWidths.reduce((a, b) => a + b, 0);
     const tableHeaders = spreadsheetColumns.map(col => col.name);
+
+    // Resolve the PDF grouping mode + org Smart Tags up front. Both have safe
+    // fallbacks: if either fetch fails we render the room-grouped layout.
+    let pdfGroupBy = 'room';
+    let orgSmartTags = [];
+    try {
+      const [grpRes, tagsRes] = await Promise.all([
+        fetch('/api/settings/customer-review-link'),
+        fetch('/api/settings/smart-tags')
+      ]);
+      if (grpRes.ok) {
+        const cfg = await grpRes.json();
+        if (cfg.pdfGroupInventoryBy === 'tag') pdfGroupBy = 'tag';
+      }
+      if (tagsRes.ok) {
+        const tagsCfg = await tagsRes.json();
+        if (Array.isArray(tagsCfg.smartTags)) orgSmartTags = tagsCfg.smartTags;
+      }
+    } catch (e) {
+      console.warn('PDF settings/smart-tags fetch failed; defaulting to room grouping:', e);
+    }
 
     // Section tint palette — light tints used as background fills for the room
     // banner and the column header row, so each section is color-coded the
@@ -2982,6 +3005,41 @@ useEffect(() => {
       items:       [219, 234, 254], // blue-100 — matches the Items stat card
       packed:      [254, 243, 199], // amber-100 — matches packed-box rows
       recommended: [243, 232, 255], // purple-100 — matches recommended-box rows
+    };
+
+    // Bold section accents — used for the vertical strip drawn down the left
+    // margin alongside each sub-table so the category color stays visible past
+    // the column header row as the reader scrolls.
+    const sectionAccent = {
+      items:       [37, 99, 235],   // blue-600
+      packed:      [217, 119, 6],   // amber-600
+      recommended: [147, 51, 234],  // purple-600
+    };
+    const accentForTint = (tint) => {
+      if (tint === sectionTint.items) return sectionAccent.items;
+      if (tint === sectionTint.packed) return sectionAccent.packed;
+      if (tint === sectionTint.recommended) return sectionAccent.recommended;
+      return null;
+    };
+
+    // Single left-margin accent strip. Inside a tag section the strip uses
+    // the tag color (so the line is continuous from the banner through to the
+    // summary); in room-only mode it falls back to the sub-table category
+    // color while a sub-table is rendering. Only ever one line at a time —
+    // simpler visually than parallel strips.
+    const stripW = 1;
+    const stripX = marginX - 1.5;
+    let inTagMode = false;            // true while renderTagsCombined is running
+    let activeTagAccent = null;       // [r,g,b] | null — set during tag sections
+    let activeCategoryAccent = null;  // [r,g,b] | null — set during sub-tables
+    const drawLeftStrip = (y, h) => {
+      // In tag mode the strip ONLY carries the tag color, so the "Untagged"
+      // section (activeTagAccent === null) is intentionally strip-free. In
+      // room-only mode it falls back to the category color during sub-tables.
+      const color = inTagMode ? activeTagAccent : activeCategoryAccent;
+      if (!color) return;
+      doc.setFillColor(...color);
+      doc.rect(stripX, y, stripW, h, 'F');
     };
 
     // Clean modern section header: bold uppercase title + thin underline.
@@ -3085,6 +3143,9 @@ useEffect(() => {
       }
       doc.setFillColor(...surfaceAlt);
       doc.roundedRect(marginX, currentY, bannerW, bannerH, 1.5, 1.5, 'F');
+      // Tag-color marginal strip beside the banner — extended through the 1pt
+      // trailing gap so the line reads as continuous into the next element.
+      drawLeftStrip(currentY, bannerH + 1);
 
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(12);
@@ -3101,10 +3162,119 @@ useEffect(() => {
       currentY += bannerH + 1;
     };
 
+    // Resolves the banner/summary palette for a tag. The untagged "-" section
+    // falls back to the neutral slate surface so it doesn't visually compete
+    // with real tags.
+    const tagBannerPalette = (tagName) => {
+      if (!tagName || tagName === '-') {
+        return { bg: lightGray, accent: textColor, text: textStrong };
+      }
+      const rgb = tagRgbFor(tagName);
+      return { bg: rgb.bg, accent: rgb.text, text: rgb.text };
+    };
+
+    // Tag banner — same geometry as the room banner but tinted with the
+    // tag's accent color and prefixed with a colored left strip so each
+    // section reads as its own area.
+    const drawTagBanner = (tagName, continued = false) => {
+      if (currentY + bannerH + rowHeight + 6 > pageHeight - bottomMargin) {
+        doc.addPage();
+        currentY = topMargin;
+      }
+      const palette = tagBannerPalette(tagName);
+      doc.setFillColor(...palette.bg);
+      doc.roundedRect(marginX, currentY, bannerW, bannerH, 1.5, 1.5, 'F');
+      // Outer margin strip carries the tag color; no internal accent here so
+      // the banner doesn't look double-bordered alongside the margin strip.
+      drawLeftStrip(currentY, bannerH + 1);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor(...palette.text);
+      const display = tagName === '-' ? 'Untagged' : tagName;
+      const label = continued ? `${display}  (continued)` : display;
+      let truncated = label;
+      while (doc.getTextWidth(truncated) > bannerW - 10 && truncated.length > 0) {
+        truncated = truncated.slice(0, -1);
+      }
+      if (truncated !== label && truncated.length > 3) {
+        truncated = truncated.slice(0, -3) + '...';
+      }
+      doc.text(truncated, marginX + 4, currentY + 9);
+      currentY += bannerH + 1;
+    };
+
+    // Aggregates going totals across every row in a tag and draws a
+    // tag-colored summary strip (Qty / Cu.Ft / Weight). Called once per tag
+    // section, after its three sub-tables.
+    const drawTagSummary = (tagName, tagRows) => {
+      let qty = 0;
+      let cuft = 0;
+      let weight = 0;
+      tagRows.forEach(row => {
+        const t = getGoingTotals(row);
+        qty += t.goingQty;
+        cuft += t.goingCuft;
+        weight += t.goingWeight;
+      });
+
+      const summaryH = 12;
+      if (currentY + summaryH > pageHeight - bottomMargin) {
+        doc.addPage();
+        currentY = topMargin;
+      }
+
+      const palette = tagBannerPalette(tagName);
+      doc.setFillColor(...palette.bg);
+      doc.roundedRect(marginX, currentY, bannerW, summaryH, 1.5, 1.5, 'F');
+      drawLeftStrip(currentY, summaryH);
+
+      // Section label on the left
+      const labelText = tagName === '-' ? 'UNTAGGED TOTAL' : `${tagName.toUpperCase()} TOTAL`;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(...palette.text);
+      let truncated = labelText;
+      const maxLabelW = bannerW * 0.45;
+      while (doc.getTextWidth(truncated) > maxLabelW && truncated.length > 1) {
+        truncated = truncated.slice(0, -1);
+      }
+      if (truncated !== labelText && truncated.length > 3) {
+        truncated = truncated.slice(0, -3) + '...';
+      }
+      doc.text(truncated, marginX + 4, currentY + 8);
+
+      // KPI strip on the right — label above value, right-aligned
+      const kpis = [
+        { label: 'QTY',    value: String(qty) },
+        { label: 'CU.FT',  value: String(Math.round(cuft)) },
+        { label: 'WEIGHT', value: `${Math.round(weight)} lbs` },
+      ];
+      const slotW = 26;
+      const rightEdge = marginX + bannerW - 4;
+      kpis.forEach((kpi, i) => {
+        const x = rightEdge - (kpis.length - 1 - i) * slotW;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6);
+        doc.setTextColor(...textSubtle);
+        doc.text(kpi.label, x, currentY + 4.5, { align: 'right' });
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...palette.text);
+        doc.text(kpi.value, x, currentY + 10, { align: 'right' });
+      });
+
+      currentY += summaryH + 2;
+      // Reset shared text defaults
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...textStrong);
+    };
+
     // Draws a tinted column header row (LOCATION/ITEM/COUNT/... in caps)
     const drawTintedColumnHeader = (tint) => {
       doc.setFillColor(...(tint || surfaceAlt));
       doc.rect(startX, currentY, totalWidth, rowHeight, 'F');
+      drawLeftStrip(currentY, rowHeight);
       doc.setTextColor(...textColor);
       doc.setFontSize(7.5);
       doc.setFont('helvetica', 'bold');
@@ -3115,6 +3285,60 @@ useEffect(() => {
       });
       currentY += rowHeight;
       doc.setFont('helvetica', 'normal');
+    };
+
+    // Draws the Smart Tag chips for a cell. Lays chips horizontally, each
+    // filled with the tag's RGB palette (from tagRgbFor — slot-matched with
+    // the on-screen Tailwind palette). When the chips overflow the cell, the
+    // tail is replaced with a small "+N" indicator.
+    const drawTagChipsInCell = (tags, cellX, cellY, cellW, cellH) => {
+      if (!tags.length) return;
+      const chipH = 4.4;
+      const chipY = cellY + (cellH - chipH) / 2;
+      const chipPadX = 1.3;
+      const chipGap = 1;
+      let x = cellX;
+      const maxX = cellX + cellW;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6);
+      for (let i = 0; i < tags.length; i++) {
+        const tag = tags[i];
+        const palette = tagRgbFor(tag);
+        let label = tag;
+        let textW = doc.getTextWidth(label);
+        let chipW = textW + chipPadX * 2;
+        // Truncate the label if it can't fit on its own
+        while (chipW > cellW && label.length > 1) {
+          label = label.slice(0, -1);
+          textW = doc.getTextWidth(label);
+          chipW = textW + chipPadX * 2;
+        }
+        if (x + chipW > maxX) {
+          const remaining = tags.length - i;
+          const more = `+${remaining}`;
+          const moreW = doc.getTextWidth(more) + chipPadX * 2;
+          if (x + moreW <= maxX) {
+            doc.setFillColor(148, 163, 184); // slate-400
+            doc.setDrawColor(148, 163, 184);
+            doc.setLineWidth(0.15);
+            doc.roundedRect(x, chipY, moreW, chipH, 0.8, 0.8, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.text(more, x + chipPadX, chipY + chipH - 1.1);
+          }
+          break;
+        }
+        doc.setFillColor(...palette.bg);
+        doc.setDrawColor(...palette.border);
+        doc.setLineWidth(0.15);
+        doc.roundedRect(x, chipY, chipW, chipH, 0.8, 0.8, 'FD');
+        doc.setTextColor(...palette.text);
+        doc.text(label, x + chipPadX, chipY + chipH - 1.1);
+        x += chipW + chipGap;
+      }
+      // Restore defaults for subsequent text
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(...textStrong);
     };
 
     // Draws a single data row with the right status fill + thin bottom divider
@@ -3136,44 +3360,66 @@ useEffect(() => {
       doc.setDrawColor(...borderColor);
       doc.setLineWidth(0.2);
       doc.line(startX, currentY + rowHeight, startX + totalWidth, currentY + rowHeight);
+      drawLeftStrip(currentY, rowHeight);
 
       doc.setTextColor(...textStrong);
       doc.setFontSize(8);
       let xPos = startX;
       spreadsheetColumns.forEach((col, i) => {
-        const raw = rowData.cells?.[col.id];
-        const text = (raw !== null && raw !== undefined) ? String(raw) : '';
-        const maxWidth = colWidths[i] - cellPadding * 2;
-        let displayText = text;
-        while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
-          displayText = displayText.slice(0, -1);
+        if (col.id === 'col8') {
+          const tagsForRow = parseTagsCell(rowData.cells?.col8);
+          drawTagChipsInCell(
+            tagsForRow,
+            xPos + cellPadding,
+            currentY,
+            colWidths[i] - cellPadding * 2,
+            rowHeight
+          );
+        } else {
+          const raw = rowData.cells?.[col.id];
+          const text = (raw !== null && raw !== undefined) ? String(raw) : '';
+          const maxWidth = colWidths[i] - cellPadding * 2;
+          let displayText = text;
+          while (doc.getTextWidth(displayText) > maxWidth && displayText.length > 0) {
+            displayText = displayText.slice(0, -1);
+          }
+          if (displayText !== text && displayText.length > 3) {
+            displayText = displayText.slice(0, -3) + '...';
+          }
+          doc.text(displayText, xPos + cellPadding, currentY + rowHeight - 2);
         }
-        if (displayText !== text && displayText.length > 3) {
-          displayText = displayText.slice(0, -3) + '...';
-        }
-        doc.text(displayText, xPos + cellPadding, currentY + rowHeight - 2);
         xPos += colWidths[i];
       });
       currentY += rowHeight;
     };
 
     // Draws a small sub-section label (e.g., "Items", "Packed Boxes") above
-    // a colored column header. Skips rendering if the rows array is empty.
-    const drawRoomSubTable = (label, rows, tint, roomName) => {
+    // a colored column header, then the rows. `redrawBanner` is invoked on
+    // page breaks so the section's owning banner (room or tag) repeats at
+    // the top of the continued page. Skips rendering if rows is empty.
+    const drawSubTable = (label, rows, tint, redrawBanner) => {
       if (rows.length === 0) return;
       // Reserve room for: label (5) + column header (rowHeight) + at least 1 row
       if (currentY + 5 + rowHeight * 2 + 4 > pageHeight - bottomMargin) {
         doc.addPage();
         currentY = topMargin;
-        // Repeat the room banner so the reader knows which room they're in
-        drawRoomBanner(roomName, true);
+        redrawBanner();
       }
 
-      // Small uppercase sub-section label
+      // Activate the category accent for the duration of this sub-table so
+      // drawTintedColumnHeader and drawDataRow paint a left strip in the
+      // matching color (blue / amber / purple).
+      const prevCategoryAccent = activeCategoryAccent;
+      activeCategoryAccent = accentForTint(tint);
+
+      // Small uppercase sub-section label. Extend the marginal strips through
+      // the label height so the colored line reads as continuous from the
+      // label down through the rows.
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(...textColor);
       doc.text(label.toUpperCase(), marginX + 1, currentY + 3);
+      drawLeftStrip(currentY, 5);
       currentY += 5;
 
       // Column header (tinted) + rows
@@ -3184,25 +3430,32 @@ useEffect(() => {
         if (currentY + rowHeight > pageHeight - bottomMargin && idx < rows.length - 1) {
           doc.addPage();
           currentY = topMargin;
-          drawRoomBanner(roomName, true);
+          redrawBanner();
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(8);
           doc.setTextColor(...textColor);
           doc.text(`${label.toUpperCase()} (CONT.)`, marginX + 1, currentY + 3);
+          drawLeftStrip(currentY, 5);
           currentY += 5;
           drawTintedColumnHeader(tint);
         }
       });
-      currentY += 3; // small gap after the sub-table
+      // Extend just the tag strip through the trailing 3pt gap so the line
+      // stays continuous between adjacent sub-tables.
+      activeCategoryAccent = prevCategoryAccent;
+      drawLeftStrip(currentY, 3);
+      currentY += 3;
     };
 
-    // Renders every room with its three sub-tables (Items / Packed Boxes /
-    // Recommended Boxes) so the reader sees everything for one location together.
-    const renderRoomsCombined = (allRows) => {
-      const rows = allRows.filter(r => !r.isAnalyzing);
+    // Groups `rows` by their Location (col1) and renders each room's three
+    // sub-tables. Reused by both the top-level "Inventory by Room" layout and
+    // the tag layout, where the same room grouping appears inside every tag
+    // section. `redrawTopBanner` is invoked on mid-table page breaks before
+    // the room banner so any owning context (e.g. the tag banner) repeats at
+    // the top of the continued page.
+    const renderRoomsForRows = (rows, redrawTopBanner = null) => {
       if (rows.length === 0) return;
 
-      // Group all rows by room
       const roomGroups = new Map();
       rows.forEach(row => {
         const room = String(row.cells?.col1 ?? '').trim() || 'Unspecified';
@@ -3214,8 +3467,6 @@ useEffect(() => {
         if (b === 'Unspecified') return -1;
         return a.localeCompare(b);
       });
-
-      drawSectionHeader('Inventory by Room');
 
       sortedRooms.forEach((room, roomIdx) => {
         const roomRows = roomGroups.get(room);
@@ -3229,18 +3480,109 @@ useEffect(() => {
         );
         const recommendedForRoom = roomRows.filter(r => r.itemType === 'boxes_needed');
 
-        // Spacing between rooms
-        if (roomIdx > 0) currentY += 6;
+        if (roomIdx > 0) {
+          // Bridge the inter-room gap with the tag strip so the colored line
+          // doesn't break between rooms inside a tag section.
+          drawLeftStrip(currentY, 6);
+          currentY += 6;
+        }
 
         drawRoomBanner(room);
-        drawRoomSubTable('Items', itemsForRoom, sectionTint.items, room);
-        drawRoomSubTable('Packed Boxes', packedForRoom, sectionTint.packed, room);
-        drawRoomSubTable('Recommended Boxes', recommendedForRoom, sectionTint.recommended, room);
+        const redrawBanners = () => {
+          if (redrawTopBanner) redrawTopBanner();
+          drawRoomBanner(room, true);
+        };
+        drawSubTable('Items', itemsForRoom, sectionTint.items, redrawBanners);
+        drawSubTable('Packed Boxes', packedForRoom, sectionTint.packed, redrawBanners);
+        drawSubTable('Recommended Boxes', recommendedForRoom, sectionTint.recommended, redrawBanners);
       });
     };
 
-    // Render all rooms with their items + packed + recommended boxes together
-    renderRoomsCombined(effectiveRows);
+    // Renders every room with its three sub-tables (Items / Packed Boxes /
+    // Recommended Boxes) so the reader sees everything for one location together.
+    const renderRoomsCombined = (allRows) => {
+      const rows = allRows.filter(r => !r.isAnalyzing);
+      if (rows.length === 0) return;
+      drawSectionHeader('Inventory by Room');
+      renderRoomsForRows(rows);
+    };
+
+    // Renders inventory grouped by Smart Tag. Within each tag, rows are still
+    // grouped by room (same Items / Packed / Recommended layout as the room
+    // view) so the reader keeps location context. Multi-tag rows appear in
+    // every tag section they belong to; rows with no tags fall into a final
+    // "-" section. Tag order follows OrganizationSettings.smartTags so the
+    // mover controls priority; any one-off tags found on items but not in the
+    // org library are appended alphabetically after the configured tags.
+    const renderTagsCombined = (allRows) => {
+      const rows = allRows.filter(r => !r.isAnalyzing);
+      if (rows.length === 0) return;
+
+      const UNTAGGED = '-';
+      const tagGroups = new Map();
+      const ensure = (name) => {
+        if (!tagGroups.has(name)) tagGroups.set(name, []);
+        return tagGroups.get(name);
+      };
+
+      rows.forEach(row => {
+        const rowTags = parseTagsCell(row.cells?.col8);
+        if (rowTags.length === 0) {
+          ensure(UNTAGGED).push(row);
+        } else {
+          rowTags.forEach(tag => ensure(tag).push(row));
+        }
+      });
+
+      const orderedNames = [];
+      const seen = new Set();
+      orgSmartTags.forEach(t => {
+        const name = (t?.name || '').trim();
+        if (!name || seen.has(name)) return;
+        if ((tagGroups.get(name) || []).length > 0) {
+          orderedNames.push(name);
+          seen.add(name);
+        }
+      });
+      const extras = [];
+      tagGroups.forEach((tagRows, name) => {
+        if (name === UNTAGGED || seen.has(name)) return;
+        if (tagRows.length > 0) extras.push(name);
+      });
+      extras.sort((a, b) => a.localeCompare(b));
+      orderedNames.push(...extras);
+      if ((tagGroups.get(UNTAGGED) || []).length > 0) orderedNames.push(UNTAGGED);
+
+      if (orderedNames.length === 0) return;
+
+      drawSectionHeader('Inventory by Tag');
+
+      inTagMode = true;
+      orderedNames.forEach((tagName, tagIdx) => {
+        const tagRows = tagGroups.get(tagName) || [];
+        if (tagIdx > 0) currentY += 6;
+
+        // Activate the tag-color marginal strip for the entire section so it
+        // runs alongside the banner, every room, and the closing summary.
+        // Untagged ("-") keeps activeTagAccent null, which suppresses the
+        // strip across the whole section.
+        activeTagAccent = tagName === '-' ? null : tagRgbFor(tagName).text;
+        drawTagBanner(tagName);
+        renderRoomsForRows(tagRows, () => drawTagBanner(tagName, true));
+        drawTagSummary(tagName, tagRows);
+        activeTagAccent = null;
+      });
+      inTagMode = false;
+    };
+
+    // Branch on the org's grouping setting. Layout for rooms (default) or
+    // tags is fully separate — only the table column layout and chip helpers
+    // are shared.
+    if (pdfGroupBy === 'tag') {
+      renderTagsCombined(effectiveRows);
+    } else {
+      renderRoomsCombined(effectiveRows);
+    }
 
     // Helper function to render box summary table
     const renderBoxSummaryTable = (items, sectionTitle, getBoxTypeFn, tintColor) => {

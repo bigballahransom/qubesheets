@@ -147,6 +147,12 @@ export interface IOrganizationSettings extends Document {
   // hide that card from the stat bar. Default true preserves current behavior.
   customerReviewShowTruckSize?: boolean;
 
+  // Project PDF layout — groups the inventory table by room (default,
+  // historical behavior) or by Smart Tag. When 'tag', items appear in every
+  // tag section they belong to and a trailing "-" section catches untagged
+  // items; rooms still appear as values in the Location column.
+  pdfGroupInventoryBy?: 'room' | 'tag';
+
   // Smart Tags — org-defined labels that can be applied to inventory items
   // (e.g. "Fragile", "Heavy"). Each tag carries its own `mode`: "ai" means
   // the Railway worker is allowed to apply it automatically; "manual" means
@@ -305,6 +311,11 @@ const OrganizationSettingsSchema: Schema = new Schema(
     customerReviewShowTruckSize: {
       type: Boolean,
       default: true
+    },
+    pdfGroupInventoryBy: {
+      type: String,
+      enum: ['room', 'tag'],
+      default: 'room'
     },
     smartTagsMode: {
       type: String,

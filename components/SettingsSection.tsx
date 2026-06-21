@@ -43,7 +43,7 @@ const settingsItems: SettingsItem[] = [
   { title: 'Templates', icon: FileText, href: '/settings/templates' },
   { title: 'Branding', icon: Palette, href: '/settings/branding' },
   { title: 'Global Self-Survey Link', icon: Link2, href: '/settings/global-upload-link' },
-  { title: 'Customer Review Link', icon: ClipboardCheck, href: '/settings/customer-review-link' },
+  { title: 'PDFs and Links', icon: ClipboardCheck, href: '/settings/customer-review-link' },
   { title: 'Lead Forms', icon: Inbox, href: '/settings/lead-forms' },
   { title: 'Photo Capture', icon: Camera, href: '/settings/photos' },
 
