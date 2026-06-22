@@ -6,7 +6,7 @@
 // Move Size also gets a per-form editable list of dropdown options
 // below the field grid (only when Move Size is enabled).
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronDown, GripVertical, Lock, Plus, RotateCcw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,7 +16,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { FieldKey, ILeadFormConfigField } from '@/models/LeadFormConfig';
+import type {
+  FieldKey,
+  ILeadFormConfigField,
+  LeadFormStep,
+} from '@/models/LeadFormConfig';
 
 const DEFAULT_MOVE_SIZE_OPTIONS = [
   'Studio',
@@ -33,6 +37,8 @@ interface FieldsTabProps {
   onChange: (next: ILeadFormConfigField[]) => void;
   moveSizeOptions?: string[];
   onMoveSizeOptionsChange?: (next: string[] | undefined) => void;
+  steps?: LeadFormStep[];
+  onStepsChange?: (next: LeadFormStep[] | undefined) => void;
 }
 
 const FIELD_LABELS: Record<FieldKey, string> = {
@@ -70,6 +76,8 @@ export function FieldsTab({
   onChange,
   moveSizeOptions,
   onMoveSizeOptionsChange,
+  steps,
+  onStepsChange,
 }: FieldsTabProps) {
   const byId = new Map(fields.map((f) => [f.id, f]));
   const [moveSizeOpen, setMoveSizeOpen] = useState(false);
@@ -196,6 +204,313 @@ export function FieldsTab({
           </div>
         );
       })}
+      {onStepsChange && (
+        <FormLayoutSection
+          fields={fields}
+          steps={steps}
+          onStepsChange={onStepsChange}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- Form layout (single page vs multi-step) ------------------------------
+//
+// Lives at the bottom of the Fields tab because step composition is just a
+// layout decision on top of the field list above. Default: single page
+// (steps is undefined). When the admin flips multi-step on, we seed with
+// one step containing every enabled field, then they can split fields
+// across more steps.
+//
+// Constraints enforced here (the server-side validator also re-enforces):
+//   - A field can live on at most one step
+//   - Fields not assigned to any step show up in an "Unassigned" bucket
+//     with a "Move to step N" affordance, so toggling fields on/off in
+//     the grid above can't silently drop them out of the wizard.
+
+interface FormLayoutSectionProps {
+  fields: ILeadFormConfigField[];
+  steps: LeadFormStep[] | undefined;
+  onStepsChange: (next: LeadFormStep[] | undefined) => void;
+}
+
+function FormLayoutSection({
+  fields,
+  steps,
+  onStepsChange,
+}: FormLayoutSectionProps) {
+  const multiStepOn = Array.isArray(steps) && steps.length > 0;
+
+  const enabledFields = useMemo(
+    () => fields.filter((f) => f.enabled).map((f) => f.id),
+    [fields],
+  );
+
+  const fieldToStep = useMemo(() => {
+    const m = new Map<string, number>();
+    if (steps) {
+      steps.forEach((s, idx) => {
+        for (const f of s.fields) m.set(f, idx);
+      });
+    }
+    return m;
+  }, [steps]);
+
+  const unassigned = enabledFields.filter((f) => !fieldToStep.has(f));
+
+  const enableMultiStep = () => {
+    onStepsChange([
+      {
+        heading: '',
+        fields: enabledFields as FieldKey[],
+      },
+    ]);
+  };
+
+  const disableMultiStep = () => {
+    onStepsChange(undefined);
+  };
+
+  const addStep = () => {
+    onStepsChange([...(steps ?? []), { heading: '', fields: [] }]);
+  };
+
+  const updateStep = (idx: number, patch: Partial<LeadFormStep>) => {
+    if (!steps) return;
+    const next = steps.map((s, i) => (i === idx ? { ...s, ...patch } : s));
+    onStepsChange(next);
+  };
+
+  const removeStep = (idx: number) => {
+    if (!steps) return;
+    // Push the removed step's fields back to "unassigned" — drop them out
+    // of the list entirely. Re-adding to a step is one click in the picker.
+    const next = steps.filter((_, i) => i !== idx);
+    onStepsChange(next.length > 0 ? next : undefined);
+  };
+
+  const moveStep = (idx: number, delta: -1 | 1) => {
+    if (!steps) return;
+    const j = idx + delta;
+    if (j < 0 || j >= steps.length) return;
+    const next = [...steps];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    onStepsChange(next);
+  };
+
+  const assignFieldToStep = (field: FieldKey, targetIdx: number) => {
+    if (!steps) return;
+    const next = steps.map((s, i) => {
+      const without = s.fields.filter((f) => f !== field);
+      if (i === targetIdx) return { ...s, fields: [...without, field] };
+      return { ...s, fields: without };
+    });
+    onStepsChange(next);
+  };
+
+  const removeFieldFromStep = (field: FieldKey) => {
+    if (!steps) return;
+    const next = steps.map((s) => ({
+      ...s,
+      fields: s.fields.filter((f) => f !== field),
+    }));
+    onStepsChange(next);
+  };
+
+  const fieldLabel = (id: string): string =>
+    FIELD_LABELS[id as FieldKey] ?? id;
+
+  return (
+    <div className="px-6 py-5 border-t border-gray-100 bg-gray-50/40">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-medium text-gray-900">Form layout</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            By default the form shows every enabled field on a single screen.
+            Turn on multi-step to split fields across multiple screens — the
+            customer sees a Continue button between each step.
+          </p>
+        </div>
+        <Switch
+          checked={multiStepOn}
+          onCheckedChange={(checked) =>
+            checked ? enableMultiStep() : disableMultiStep()
+          }
+        />
+      </div>
+
+      {multiStepOn && steps && (
+        <div className="mt-5 space-y-4">
+          {steps.map((step, idx) => {
+            const stepFieldSet = new Set(step.fields);
+            return (
+              <div
+                key={idx}
+                className="rounded-lg border border-gray-200 bg-white p-4 space-y-3"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold shrink-0">
+                    {idx + 1}
+                  </span>
+                  <Input
+                    value={step.heading ?? ''}
+                    placeholder={`Step ${idx + 1} heading (optional)`}
+                    onChange={(e) =>
+                      updateStep(idx, { heading: e.target.value })
+                    }
+                    className="flex-1"
+                    maxLength={200}
+                  />
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => moveStep(idx, -1)}
+                      disabled={idx === 0}
+                      title="Move up"
+                      className="text-gray-400 hover:text-gray-700"
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => moveStep(idx, 1)}
+                      disabled={idx === steps.length - 1}
+                      title="Move down"
+                      className="text-gray-400 hover:text-gray-700"
+                    >
+                      ↓
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeStep(idx)}
+                      title="Remove step"
+                      className="text-gray-400 hover:text-red-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-gray-500">
+                    Fields on this step
+                  </div>
+                  {step.fields.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic">
+                      No fields yet — assign from the &ldquo;Unassigned&rdquo;
+                      list below.
+                    </p>
+                  ) : (
+                    <ul className="flex flex-wrap gap-1.5">
+                      {step.fields
+                        .filter((f) => enabledFields.includes(f))
+                        .map((f) => (
+                          <li
+                            key={f}
+                            className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 py-0.5 pl-2.5 pr-1 text-xs text-gray-800"
+                          >
+                            {fieldLabel(f)}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeFieldFromStep(f as FieldKey)
+                              }
+                              aria-label={`Remove ${fieldLabel(f)} from step ${idx + 1}`}
+                              className="inline-flex h-4 w-4 items-center justify-center rounded-full text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                  {/* Show any stale field references (in the step list but no longer enabled) */}
+                  {step.fields.filter((f) => !enabledFields.includes(f)).length >
+                    0 && (
+                    <p className="text-[11px] text-amber-700">
+                      {step.fields.filter((f) => !enabledFields.includes(f)).length}{' '}
+                      field
+                      {step.fields.filter((f) => !enabledFields.includes(f))
+                        .length === 1
+                        ? ''
+                        : 's'}{' '}
+                      on this step {step.fields.filter((f) => !enabledFields.includes(f))
+                        .length === 1
+                        ? 'is'
+                        : 'are'}{' '}
+                      no longer enabled — re-enable above to surface
+                      {step.fields.filter((f) => !enabledFields.includes(f))
+                        .length === 1
+                        ? ' it'
+                        : ' them'}
+                      .
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addStep}
+            disabled={steps.length >= 10}
+          >
+            <Plus className="h-3.5 w-3.5 mr-1" />
+            Add step
+          </Button>
+
+          {unassigned.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <div className="text-xs font-medium text-amber-900 mb-1.5">
+                Unassigned fields
+              </div>
+              <p className="text-[11px] text-amber-800 mb-2">
+                These enabled fields aren&apos;t on any step yet. Pick a step
+                to put them on.
+              </p>
+              <ul className="space-y-1.5">
+                {unassigned.map((f) => (
+                  <li
+                    key={f}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <span className="flex-1 min-w-0 truncate text-gray-800">
+                      {fieldLabel(f)}
+                    </span>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const idx = parseInt(e.target.value, 10);
+                        if (Number.isFinite(idx))
+                          assignFieldToStep(f as FieldKey, idx);
+                      }}
+                      className="text-xs border border-amber-300 rounded px-2 py-1 bg-white"
+                    >
+                      <option value="">Assign to…</option>
+                      {steps.map((s, idx) => (
+                        <option key={idx} value={idx}>
+                          Step {idx + 1}
+                          {s.heading ? ` — ${s.heading}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

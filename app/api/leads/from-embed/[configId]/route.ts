@@ -8,6 +8,7 @@ import connectMongoDB from '@/lib/mongodb';
 import LeadFormConfig from '@/models/LeadFormConfig';
 import { ingestLead } from '@/lib/leads/pipeline';
 import { checkAndRecord } from '@/lib/leads/rateLimiter';
+import { validateLeadSubmission } from '@/lib/leads/validateSubmission';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -88,10 +89,16 @@ export async function POST(
 
     const ip = extractClientIp(request);
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
 
-    // Honeypot — silently succeed for bots.
-    if (typeof body?._hp_company === 'string' && body._hp_company.length > 0) {
+    // Honeypot — silently succeed for bots. Runs BEFORE validation so a bot
+    // never learns anything about our validator's rules.
+    if (
+      body &&
+      typeof body === 'object' &&
+      typeof (body as Record<string, unknown>)._hp_company === 'string' &&
+      ((body as Record<string, unknown>)._hp_company as string).length > 0
+    ) {
       const message =
         config.postSubmit?.kind === 'inline-message'
           ? config.postSubmit.message
@@ -99,6 +106,17 @@ export async function POST(
       return NextResponse.json(
         { ok: true, message },
         { status: 200, headers: corsHeaders }
+      );
+    }
+
+    // Validate payload shape + caps. Runs AFTER honeypot, BEFORE rate-limit so
+    // a bot flooding with garbage doesn't pollute the rate-limit bucket with
+    // attempts that would never have succeeded.
+    const validationError = validateLeadSubmission(body);
+    if (validationError) {
+      return NextResponse.json(
+        { error: validationError },
+        { status: 400, headers: corsHeaders }
       );
     }
 

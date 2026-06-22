@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { addMonths, format, startOfMonth } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
+import { ScheduleSkeleton } from '@/components/embed/ActionSkeleton';
 
 export interface SlotsPayload {
   timezone: string;
@@ -203,13 +204,10 @@ export default function ScheduleCallView({ submissionId, prefetched }: ScheduleC
   }
 
   if (view.kind === 'loading') {
-    return (
-      <div className={EMBED_OUTER}>
-        <div className={`${EMBED_CARD} flex items-center justify-center min-h-[600px]`}>
-          <Loader2 className="h-8 w-8 animate-spin text-blue-500" aria-label="Loading" />
-        </div>
-      </div>
-    );
+    // Use the action skeleton — same card shell, calendar-and-slots shape —
+    // instead of a centered spinner. Reads as "the scheduler is filling in"
+    // rather than "something is happening, please wait."
+    return <ScheduleSkeleton />;
   }
 
   if (view.kind === 'error') {

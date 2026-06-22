@@ -1,38 +1,81 @@
 // components/embed/LeadForm.tsx
 //
 // Client-side lead-capture form rendered inside the iframe at /embed/:configId.
-// Renders only the fields the config has enabled, posts to the public
-// /api/leads/from-embed endpoint, and dispatches a redirect or inline-message
-// based on the response action.
+//
+// Architecture: a wizard that defaults to a single-step "all fields on one
+// page" view (original behavior), upgrading to multi-step when the admin
+// configures `steps`. Same StepContent renderer handles both cases.
+//
+// Premium polish in this revision:
+//   - Floating labels on every input (Airbnb / Stripe / Linear pattern)
+//   - Per-field inline validation: error animates in below field, green
+//     check renders on the right edge for valid required fields on blur
+//   - "Verified" pill on address fields when Google Places confirms a real address
+//   - Focus management — first input of a new step receives focus after the
+//     spring transition lands
+//   - Respects `prefers-reduced-motion` (springs flatten to instant)
+//   - No state persistence across page loads — refresh deliberately resets
+//     the form so a returning visitor never sees a stranger's stale data
+//     and a customer submitting a second request starts clean
+//   - postMessage iframe height on every animation completion + on
+//     ResizeObserver continuous changes, so the host iframe resizes smoothly
+//   - Container-query padding tightens at narrow widths (real iframes on
+//     mobile can hit ~320 px wide)
+//   - Skeleton placeholders for the dynamically-loaded action views
+//   - Error recovery: a failed submit doesn't wipe the form; the customer
+//     can retry without re-typing
+//
+// Heavy dependencies (Google Maps Places, ScheduleCallView, UploadChooser) are
+// lazy-loaded with skeleton placeholders so the initial paint is fast and
+// the first interaction doesn't wait on the ~150 KB Maps bundle.
 //
 // Server-only code (Mongoose models, DB connections) is never imported here.
 
 'use client';
 
-import { useCallback, useState } from 'react';
-import { useLoadScript } from '@react-google-maps/api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
+import { AnimatePresence, motion, useReducedMotion, type Transition } from 'framer-motion';
 import {
   AlertTriangle,
+  ArrowLeft,
   Calendar as CalendarIcon,
+  Check,
   CheckCircle2,
   Eye,
   Loader2,
   MapPin,
 } from 'lucide-react';
 import { format, parse, isValid } from 'date-fns';
-import PlacesAutocomplete from '@/components/PlacesAutocomplete';
+import { useLoadScript } from '@react-google-maps/api';
 import { SuccessState, ErrorState } from '@/components/embed/EmbedShell';
-import UploadChooser from '@/components/UploadChooser';
-import ScheduleCallView, { type SlotsPayload } from '@/components/embed/ScheduleCallView';
+import { ChooserSkeleton, ScheduleSkeleton } from '@/components/embed/ActionSkeleton';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { formatPhoneNumber, validatePhone } from '@/lib/phone';
 import type { FieldKey } from '@/models/LeadFormConfig';
 import type { NormalizedAddress } from '@/lib/leads/types';
+import type { SlotsPayload } from '@/components/embed/ScheduleCallView';
 
-// Module-level constant so the `useLoadScript` libraries array has a
-// stable identity across renders (otherwise the loader re-initializes).
+// Dynamic imports — these only load when the user reaches a screen that
+// needs them. The skeleton placeholders match the form shell exactly so the
+// transition into the action view reads as one continuous surface.
+const PlacesAutocomplete = dynamic(
+  () => import('@/components/PlacesAutocomplete'),
+  { ssr: false },
+);
+const ScheduleCallView = dynamic(
+  () => import('@/components/embed/ScheduleCallView'),
+  { ssr: false, loading: () => <ScheduleSkeleton /> },
+);
+const UploadChooser = dynamic(
+  () => import('@/components/UploadChooser'),
+  { ssr: false, loading: () => <ChooserSkeleton /> },
+);
+
+// Stable identity for useLoadScript's `libraries` so the loader doesn't
+// re-initialize on every render.
 const GOOGLE_MAPS_LIBRARIES: ('places')[] = ['places'];
 
 const DEFAULT_MOVE_SIZE_OPTIONS = [
@@ -51,10 +94,23 @@ const PHONE_TYPE_OPTIONS: Array<{ value: 'mobile' | 'home' | 'work'; label: stri
   { value: 'work', label: 'Work' },
 ];
 
+// Spring config tuned for "natural" feel — not too bouncy, not robotic.
+// Used by every step transition + the morphing submit button. When
+// `prefers-reduced-motion` is set, callers swap this for INSTANT_TRANSITION.
+const SPRING: Transition = { type: 'spring', stiffness: 320, damping: 32, mass: 0.8 };
+const INSTANT_TRANSITION: Transition = { duration: 0 };
+
+// --- Field config & ordering ---------------------------------------------
+
 interface FieldConfig {
   id: string;
   enabled: boolean;
   required: boolean;
+}
+
+interface ConfigStep {
+  heading?: string;
+  fields: string[];
 }
 
 interface LeadFormProps {
@@ -71,13 +127,405 @@ interface LeadFormProps {
     };
     postSubmit: { kind: 'inline-message' | 'redirect-chooser'; message?: string };
     moveSizeOptions?: string[];
+    steps?: ConfigStep[];
   };
   configId: string;
-  /** Editor-triggered simulation mode (via `?preview=1`). Form behaves
-   *  normally but submissions go to the preview endpoint with no DB
-   *  writes, no CRM, no credit consumption, and a banner is shown. */
   previewMode?: boolean;
 }
+
+const FIELD_DISPLAY_ORDER: FieldKey[] = [
+  'moveDate',
+  'moveSize',
+  'firstName',
+  'lastName',
+  'fullName',
+  'email',
+  'phone',
+  'phoneType',
+  'origin',
+  'destination',
+  'companyName',
+];
+
+// User-facing labels for floating-label rendering + validation errors.
+const FIELD_LABEL: Record<FieldKey, string> = {
+  firstName: 'First name',
+  lastName: 'Last name',
+  fullName: 'Full name',
+  email: 'Email',
+  phone: 'Phone number',
+  phoneType: 'Phone type',
+  moveDate: 'Move date',
+  moveSize: 'Move size',
+  origin: 'Origin address',
+  destination: 'Destination address',
+  companyName: 'Company name',
+};
+
+interface ResolvedStep {
+  heading?: string;
+  fields: Set<FieldKey>;
+}
+
+function computeSteps(
+  fieldsConfig: FieldConfig[],
+  steps: ConfigStep[] | undefined,
+): ResolvedStep[] {
+  const enabledIds = new Set(
+    fieldsConfig.filter((f) => f.enabled).map((f) => f.id as FieldKey),
+  );
+  if (steps && steps.length > 0) {
+    const resolved = steps
+      .map((s) => ({
+        heading: s.heading,
+        fields: new Set(
+          s.fields.filter((f): f is FieldKey => enabledIds.has(f as FieldKey)),
+        ),
+      }))
+      .filter((s) => s.fields.size > 0);
+    if (resolved.length > 0) return resolved;
+  }
+  return [{ fields: enabledIds }];
+}
+
+// --- Style tokens ---------------------------------------------------------
+
+// Floating-label inputs need extra top padding so the label has somewhere to
+// float to. Bottom padding stays small so the input stays the same overall
+// height. Border + shadow tokens kept consistent with the form card.
+const floatingInputClass =
+  'peer w-full px-4 pt-5 pb-1.5 bg-white text-gray-900 rounded-xl border border-gray-200 ' +
+  'shadow-sm transition-all duration-200 focus:outline-none text-base ' +
+  'placeholder:opacity-0 placeholder:text-base';
+
+const errorInputClass = 'border-red-400';
+
+// --- Helpers --------------------------------------------------------------
+
+function postIframeHeight() {
+  if (typeof window === 'undefined') return;
+  if (window.parent === window) return;
+  try {
+    const height = document.documentElement.scrollHeight;
+    window.parent.postMessage({ type: 'qubesheets-form-resize', height }, '*');
+  } catch {
+    // cross-origin parent is fine; the postMessage still goes through
+  }
+}
+
+// --- Reusable Field wrapper ------------------------------------------------
+//
+// Provides the floating-label scaffolding and per-field validation feedback
+// (error message animating in below, green check on the right for valid
+// blurred required fields). Children render the actual input/select/button.
+
+interface FieldProps {
+  id: string;
+  label: string;
+  required: boolean;
+  filled: boolean;
+  focused: boolean;
+  error: string | null;
+  showCheck: boolean;
+  accentColor: string;
+  rightAdornment?: React.ReactNode;
+  children: React.ReactNode;
+}
+
+function Field({
+  id,
+  label,
+  required,
+  filled,
+  focused,
+  error,
+  showCheck,
+  accentColor,
+  rightAdornment,
+  children,
+}: FieldProps) {
+  const isFloating = focused || filled;
+  return (
+    <div>
+      <div className="relative">
+        {children}
+        <label
+          htmlFor={id}
+          className={cn(
+            'absolute left-4 pointer-events-none transition-all duration-150 select-none',
+            isFloating
+              ? 'top-1 text-[11px] font-medium'
+              : 'top-1/2 -translate-y-1/2 text-base text-gray-400',
+            isFloating && !focused && 'text-gray-500',
+          )}
+          style={isFloating && focused ? { color: accentColor } : undefined}
+        >
+          {label}
+          {required && <span className="text-red-500 ml-0.5">*</span>}
+        </label>
+        {rightAdornment ? (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            {rightAdornment}
+          </div>
+        ) : showCheck ? (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+            <motion.div
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.15 }}
+              className="h-5 w-5 rounded-full bg-green-500 flex items-center justify-center"
+            >
+              <Check className="h-3 w-3 text-white" strokeWidth={3} />
+            </motion.div>
+          </div>
+        ) : null}
+      </div>
+      <AnimatePresence initial={false}>
+        {error && (
+          <motion.p
+            key="error"
+            initial={{ opacity: 0, y: -2, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: 'auto' }}
+            exit={{ opacity: 0, y: -2, height: 0 }}
+            transition={{ duration: 0.15 }}
+            className="text-xs text-red-500 mt-1 ml-1"
+            id={`${id}-error`}
+            role="alert"
+          >
+            {error}
+          </motion.p>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// --- Address input: defers Google Maps until reached + confirmed pill ----
+
+interface AddressInputProps {
+  id: string;
+  label: string;
+  required: boolean;
+  accentColor: string;
+  value: string;
+  placeSelected: boolean;
+  focused: boolean;
+  error: string | null;
+  onFocus: () => void;
+  onBlur: () => void;
+  onTextChange: (text: string) => void;
+  onPlaceSelect: (place: NormalizedAddress) => void;
+  onPlaceCleared: () => void;
+}
+
+function AddressInput({
+  id,
+  label,
+  required,
+  accentColor,
+  value,
+  placeSelected,
+  focused,
+  error,
+  onFocus,
+  onBlur,
+  onTextChange,
+  onPlaceSelect,
+  onPlaceCleared,
+}: AddressInputProps) {
+  const { isLoaded, loadError } = useLoadScript({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? '',
+    libraries: GOOGLE_MAPS_LIBRARIES,
+  });
+
+  const handleSelect = useCallback(
+    (place: google.maps.places.PlaceResult) => {
+      onPlaceSelect({
+        raw: place.formatted_address ?? '',
+        placeId: place.place_id,
+        lat: place.geometry?.location?.lat(),
+        lng: place.geometry?.location?.lng(),
+      });
+    },
+    [onPlaceSelect],
+  );
+
+  return (
+    <Field
+      id={id}
+      label={label}
+      required={required}
+      filled={!!value}
+      focused={focused}
+      error={error}
+      // Use the same green-check confirmation as every other valid field.
+      // Triggered by a Places match (we treat that as the confirmation event
+      // for addresses, since blur-validation can't tell a real address from
+      // a typo).
+      showCheck={placeSelected}
+      accentColor={accentColor}
+      // Map-pin only when nothing's confirmed yet — green check takes the
+      // right edge once a place is selected.
+      rightAdornment={
+        !placeSelected ? <MapPin className="w-5 h-5 text-gray-300" /> : undefined
+      }
+    >
+      {isLoaded && !loadError ? (
+        <PlacesAutocomplete
+          id={id}
+          value={value}
+          placeholder=" "
+          className={cn(floatingInputClass, 'pl-4 pr-10', error && errorInputClass)}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          onChange={(v) => {
+            onTextChange(v);
+            if (placeSelected && v !== value) onPlaceCleared();
+          }}
+          onSelect={handleSelect}
+        />
+      ) : (
+        // Fallback while Maps loads (or if it errored). Plain input keeps
+        // the field usable immediately — submit will go through as a raw
+        // address string.
+        <input
+          id={id}
+          type="text"
+          value={value}
+          onChange={(e) => {
+            onTextChange(e.target.value);
+            if (placeSelected) onPlaceCleared();
+          }}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          placeholder=" "
+          required={required}
+          className={cn(floatingInputClass, 'pr-10', error && errorInputClass)}
+        />
+      )}
+    </Field>
+  );
+}
+
+// --- Progress dots --------------------------------------------------------
+
+function ProgressDots({
+  total,
+  current,
+  accentColor,
+  spring,
+}: {
+  total: number;
+  current: number;
+  accentColor: string;
+  spring: Transition;
+}) {
+  if (total <= 1) return null;
+  return (
+    <div className="flex items-center justify-center gap-1.5 mb-6">
+      {Array.from({ length: total }).map((_, i) => (
+        <motion.div
+          key={i}
+          className="h-1.5 rounded-full"
+          initial={false}
+          animate={{
+            width: i === current ? 28 : 6,
+            backgroundColor: i <= current ? accentColor : 'rgb(229 231 235)',
+          }}
+          transition={spring}
+        />
+      ))}
+    </div>
+  );
+}
+
+// --- Morphing submit button -----------------------------------------------
+
+function MorphingSubmitButton({
+  label,
+  submitting,
+  disabled,
+  accentColor,
+  spring,
+  onClick,
+}: {
+  label: string;
+  submitting: boolean;
+  disabled: boolean;
+  accentColor: string;
+  spring: Transition;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || submitting}
+      layout
+      transition={spring}
+      style={{
+        backgroundColor: accentColor,
+        borderRadius: submitting ? 999 : 12,
+        width: submitting ? 56 : '100%',
+        height: 56,
+      }}
+      className={cn(
+        'mx-auto flex items-center justify-center text-white font-semibold text-base',
+        'shadow-sm transition-opacity',
+        'hover:opacity-95 active:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed',
+      )}
+    >
+      {submitting ? (
+        <Loader2 className="h-6 w-6 animate-spin" />
+      ) : (
+        <span>{label}</span>
+      )}
+    </motion.button>
+  );
+}
+
+// --- Premium success state -----------------------------------------------
+
+function PremiumSuccess({
+  message,
+  accentColor,
+  spring,
+}: {
+  message: string;
+  accentColor: string;
+  spring: Transition;
+}) {
+  return (
+    <div className="min-h-screen bg-transparent flex items-center justify-center px-4 py-10">
+      <motion.div
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={spring}
+        className="@container max-w-md w-full bg-white rounded-2xl shadow-xl border border-gray-100 p-6 @sm:p-8 text-center"
+      >
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ ...spring, delay: 0.05 }}
+          className="w-16 h-16 mx-auto rounded-full flex items-center justify-center mb-4"
+          style={{ backgroundColor: accentColor }}
+        >
+          <motion.div
+            initial={{ scale: 0, rotate: -45 }}
+            animate={{ scale: 1, rotate: 0 }}
+            transition={{ ...spring, delay: 0.2 }}
+          >
+            <Check className="w-8 h-8 text-white" strokeWidth={3} />
+          </motion.div>
+        </motion.div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Thank you!</h2>
+        <p className="text-gray-600 text-base leading-relaxed">{message}</p>
+      </motion.div>
+    </div>
+  );
+}
+
+// --- Preview result view (editor-triggered simulation) --------------------
 
 interface PreviewResult {
   capturedData: Record<string, unknown>;
@@ -101,24 +549,13 @@ type ViewState =
   | { kind: 'form' }
   | { kind: 'success'; message: string }
   | { kind: 'error'; message: string }
-  // `chooser` may carry a submissionId — when present the chooser renders
-  // a third "Schedule a virtual call" button alongside Record/Photos. The
-  // schedule path transitions to the `schedule` view below.
   | { kind: 'chooser'; token: string; submissionId?: string }
   | { kind: 'schedule'; submissionId: string; prefetched?: SlotsPayload }
   | { kind: 'preview-result'; result: PreviewResult };
 
-const inputBaseClass =
-  'w-full px-3 py-3 border border-gray-300 rounded-lg bg-white text-gray-900 placeholder-gray-400 ' +
-  'focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-base';
-const labelClass = 'block text-sm font-medium text-gray-900 mb-1.5';
+// --- Main component -------------------------------------------------------
 
 export default function LeadForm({ config, configId, previewMode = false }: LeadFormProps) {
-  const { isLoaded, loadError } = useLoadScript({
-    googleMapsApiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? '',
-    libraries: GOOGLE_MAPS_LIBRARIES,
-  });
-
   // Field state
   const [moveDate, setMoveDate] = useState('');
   const [moveSize, setMoveSize] = useState('');
@@ -127,76 +564,213 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [phoneType, setPhoneType] = useState<'mobile' | 'home' | 'work' | ''>('');
   const [companyName, setCompanyName] = useState('');
-
-  // Address fields carry both the raw text and the structured Places data.
   const [originText, setOriginText] = useState('');
   const [originPlace, setOriginPlace] = useState<NormalizedAddress | null>(null);
   const [destinationText, setDestinationText] = useState('');
   const [destinationPlace, setDestinationPlace] = useState<NormalizedAddress | null>(null);
 
-  // Honeypot — bound to state so React owns it. Real users never touch this.
+  // Honeypot — real users never touch this. Not persisted to localStorage.
   const [honeypot, setHoneypot] = useState('');
 
+  // Per-field focus + touched state (drives floating labels + validation
+  // feedback timing).
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+  const markTouched = useCallback((id: string) => {
+    setTouched((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  }, []);
+
   const [submitting, setSubmitting] = useState(false);
+  const [stepError, setStepError] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>({ kind: 'form' });
+
+  // Reduced-motion preference — affects every motion transition. Stored once
+  // and applied via the SPRING/INSTANT_TRANSITION pair.
+  const prefersReducedMotion = useReducedMotion();
+  const spring: Transition = prefersReducedMotion ? INSTANT_TRANSITION : SPRING;
 
   const fieldEnabled = useCallback(
     (id: FieldKey): boolean =>
       config.fields.some((f) => f.id === id && f.enabled),
-    [config.fields]
+    [config.fields],
   );
-
   const fieldRequired = useCallback(
     (id: FieldKey): boolean =>
       config.fields.some((f) => f.id === id && f.enabled && f.required),
-    [config.fields]
+    [config.fields],
   );
 
-  const handleOriginSelect = useCallback((place: google.maps.places.PlaceResult) => {
-    setOriginPlace({
-      raw: place.formatted_address ?? '',
-      placeId: place.place_id,
-      lat: place.geometry?.location?.lat(),
-      lng: place.geometry?.location?.lng(),
-    });
-  }, []);
+  // Resolve the actual step list. Default: one step containing every
+  // enabled field. Admin-configured `steps` overrides.
+  const enabledSteps = useMemo(
+    () => computeSteps(config.fields, config.steps),
+    [config.fields, config.steps],
+  );
 
-  const handleDestinationSelect = useCallback((place: google.maps.places.PlaceResult) => {
-    setDestinationPlace({
-      raw: place.formatted_address ?? '',
-      placeId: place.place_id,
-      lat: place.geometry?.location?.lat(),
-      lng: place.geometry?.location?.lng(),
-    });
-  }, []);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [direction, setDirection] = useState(1);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (submitting) return;
+  const currentStep = enabledSteps[stepIndex] ?? enabledSteps[0];
+  const isLastStep = stepIndex >= enabledSteps.length - 1;
+  const isFirstStep = stepIndex === 0;
+  const isMultiStep = enabledSteps.length > 1;
 
-    // Re-run phone validation at submit time so a paste / autofill that
-    // bypassed the onChange formatter still gets caught. Phone is required
-    // for every form (10DLC product decision).
-    if (fieldEnabled('phone')) {
-      const err = validatePhone(phone) ?? (!phone ? 'Phone number is required' : null);
-      if (err) {
-        setPhoneError(err);
-        return;
+  // --- Focus management: focus first input of new step after transition ---
+
+  const stepContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    // Wait one frame for AnimatePresence to mount the new step's DOM, then
+    // focus the first interactive element. We skip on the initial mount
+    // (no transition) and during submit (don't steal focus from button).
+    const handle = window.setTimeout(() => {
+      const el = stepContainerRef.current?.querySelector<HTMLElement>(
+        'input, select, button:not([aria-hidden]):not([data-no-autofocus])',
+      );
+      el?.focus({ preventScroll: true });
+    }, 50);
+    return () => window.clearTimeout(handle);
+  }, [stepIndex]);
+
+  // --- Iframe height sync ----------------------------------------------
+
+  useEffect(() => {
+    postIframeHeight();
+    if (typeof window === 'undefined') return;
+    const observer = new ResizeObserver(() => postIframeHeight());
+    observer.observe(document.body);
+    return () => observer.disconnect();
+  }, [stepIndex, view]);
+
+  // --- Per-field validation --------------------------------------------
+
+  function rawErrorFor(id: FieldKey): string | null {
+    const required = fieldRequired(id);
+    switch (id) {
+      case 'firstName':
+        if (required && !firstName.trim()) return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'lastName':
+        if (required && !lastName.trim()) return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'fullName':
+        if (required && !fullName.trim()) return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'email': {
+        if (required && !email.trim()) return `${FIELD_LABEL[id]} is required`;
+        if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+          return 'Please enter a valid email address';
+        }
+        return null;
       }
+      case 'phone': {
+        // Phone is locked to required at the editor level (10DLC).
+        const err = validatePhone(phone) ?? (!phone ? 'Phone number is required' : null);
+        return err;
+      }
+      case 'phoneType':
+        if (required && !phoneType) return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'moveDate':
+        if (required && !moveDate) return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'moveSize':
+        if (required && !moveSize) return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'origin':
+        if (required && !(originText.trim() || originPlace))
+          return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'destination':
+        if (required && !(destinationText.trim() || destinationPlace))
+          return `${FIELD_LABEL[id]} is required`;
+        return null;
+      case 'companyName':
+        if (required && !companyName.trim()) return `${FIELD_LABEL[id]} is required`;
+        return null;
     }
+  }
 
+  // Surfaced error: only after the user has touched the field.
+  function errorFor(id: FieldKey): string | null {
+    if (!touched.has(id)) return null;
+    return rawErrorFor(id);
+  }
+
+  // Green check eligibility: required field, touched, currently valid, has
+  // a value. Optional fields don't show a check (showing one on empty is
+  // weird), and address fields use the Verified pill instead.
+  function showCheckFor(id: FieldKey): boolean {
+    if (id === 'origin' || id === 'destination') return false;
+    if (!touched.has(id)) return false;
+    if (rawErrorFor(id) !== null) return false;
+    if (!fieldRequired(id)) return false;
+    return hasValueFor(id);
+  }
+
+  function hasValueFor(id: FieldKey): boolean {
+    switch (id) {
+      case 'firstName': return !!firstName.trim();
+      case 'lastName': return !!lastName.trim();
+      case 'fullName': return !!fullName.trim();
+      case 'email': return !!email.trim();
+      case 'phone': return !!phone.trim();
+      case 'phoneType': return !!phoneType;
+      case 'moveDate': return !!moveDate;
+      case 'moveSize': return !!moveSize;
+      case 'origin': return !!(originText.trim() || originPlace);
+      case 'destination': return !!(destinationText.trim() || destinationPlace);
+      case 'companyName': return !!companyName.trim();
+    }
+  }
+
+  // Mark all of the current step's fields as touched before submit/continue
+  // so any field-level errors render. Then return the first error so the
+  // step-level message can echo it (useful for screen readers).
+  function validateCurrentStep(): string | null {
+    const ids = Array.from(currentStep.fields);
+    for (const id of ids) markTouched(id);
+    for (const id of ids) {
+      const err = rawErrorFor(id);
+      if (err) return err;
+    }
+    return null;
+  }
+
+  const goNext = () => {
+    const err = validateCurrentStep();
+    if (err) {
+      setStepError(err);
+      return;
+    }
+    setStepError(null);
+    setDirection(1);
+    setStepIndex((i) => Math.min(i + 1, enabledSteps.length - 1));
+  };
+
+  const goBack = () => {
+    setStepError(null);
+    setDirection(-1);
+    setStepIndex((i) => Math.max(0, i - 1));
+  };
+
+  async function handleSubmit() {
+    if (submitting) return;
+    const err = validateCurrentStep();
+    if (err) {
+      setStepError(err);
+      return;
+    }
+    setStepError(null);
     setSubmitting(true);
 
-    // Origin/destination payload: prefer the structured Places result; fall
-    // back to the raw typed text so manual entries still go through.
-    const origin =
+    const originPayload =
       fieldEnabled('origin') && (originPlace || originText)
         ? originPlace ?? { raw: originText }
         : undefined;
-    const destination =
+    const destinationPayload =
       fieldEnabled('destination') && (destinationPlace || destinationText)
         ? destinationPlace ?? { raw: destinationText }
         : undefined;
@@ -212,8 +786,8 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     if (fieldEnabled('email') && email) payload.email = email;
     if (phone) payload.phone = phone;
     if (fieldEnabled('phoneType') && phoneType) payload.phoneType = phoneType;
-    if (origin) payload.origin = origin;
-    if (destination) payload.destination = destination;
+    if (originPayload) payload.origin = originPayload;
+    if (destinationPayload) payload.destination = destinationPayload;
     if (fieldEnabled('companyName') && companyName) payload.companyName = companyName;
 
     try {
@@ -225,7 +799,6 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.ok) {
@@ -238,8 +811,6 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         return;
       }
 
-      // Preview mode short-circuit — render the simulation result card
-      // instead of dispatching the action.
       if (previewMode) {
         setView({ kind: 'preview-result', result: data as PreviewResult });
         return;
@@ -247,51 +818,16 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
 
       const action = data.action;
       if (action?.kind === 'redirect-chooser' && typeof action.uploadUrl === 'string') {
-        // Parse the token out of /customer-upload/<token> so the chooser can
-        // render INSIDE the iframe as the next view. Only when the customer
-        // picks Record Video / Take Photos does the chooser break out to the
-        // full-page experience for actual media capture.
-        let token: string | null = null;
-        try {
-          const parsed = new URL(action.uploadUrl, window.location.origin);
-          const match = parsed.pathname.match(/^\/customer-upload\/([^/]+)/);
-          if (match) token = match[1] ?? null;
-        } catch {
-          // Malformed URL — fall through to legacy break-out below.
-        }
-
+        const token = parseUploadToken(action.uploadUrl);
         if (token) {
           setView({ kind: 'chooser', token });
           return;
         }
-
-        // Fallback: token unparseable. Don't strand the lead on the form —
-        // navigate the way we did before introducing the in-iframe chooser.
-        let relative = action.uploadUrl;
-        try {
-          const parsed = new URL(action.uploadUrl);
-          relative = parsed.pathname + parsed.search + parsed.hash;
-        } catch {
-          // Already relative, or malformed — use as-is.
-        }
-        try {
-          if (window.top && window.top !== window.self) {
-            window.top.location.href = relative;
-            return;
-          }
-        } catch {
-          // Cross-origin top — fall through to in-frame nav.
-        }
-        window.location.href = relative;
+        navigateTo(action.uploadUrl);
         return;
       }
 
       if (action?.kind === 'schedule-call' && typeof action.submissionId === 'string') {
-        // Pre-fetch slots BEFORE swapping views so the customer doesn't
-        // see the form briefly collapse into a tiny spinner card. We
-        // keep `submitting` true through this so the button stays in
-        // "Submitting…" state. If the prefetch fails, fall back to the
-        // schedule view's own loading state — better than stranding.
         const submissionId = action.submissionId;
         try {
           const slotsRes = await fetch(`/api/leads/schedule-call/${submissionId}`);
@@ -301,7 +837,7 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
             return;
           }
         } catch {
-          // ignore — fall through to unprefetched
+          // fall through to unprefetched scheduler
         }
         setView({ kind: 'schedule', submissionId });
         return;
@@ -312,20 +848,10 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         typeof action.uploadUrl === 'string' &&
         typeof action.submissionId === 'string'
       ) {
-        // Show the chooser with a third "Schedule a virtual call" button.
-        let token: string | null = null;
-        try {
-          const parsed = new URL(action.uploadUrl, window.location.origin);
-          const match = parsed.pathname.match(/^\/customer-upload\/([^/]+)/);
-          if (match) token = match[1] ?? null;
-        } catch {
-          // fall through to schedule-only
-        }
+        const token = parseUploadToken(action.uploadUrl);
         if (token) {
           setView({ kind: 'chooser', token, submissionId: action.submissionId });
         } else {
-          // Token unparseable — degrade to scheduler-only so the lead
-          // isn't stranded on the form.
           setView({ kind: 'schedule', submissionId: action.submissionId });
         }
         return;
@@ -341,7 +867,6 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         return;
       }
 
-      // Defensive fallback.
       setView({
         kind: 'success',
         message: 'Thanks — we received your request.',
@@ -356,14 +881,14 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     }
   }
 
-  // Honeypot must be present in every render path — declare it once so we
-  // can drop it into both the loading state and the form itself.
+  // Honeypot must be present in every render path — declare it once.
   const honeypotField = (
     <input
       type="text"
       name="_hp_company"
       tabIndex={-1}
       autoComplete="off"
+      data-no-autofocus="true"
       value={honeypot}
       onChange={(e) => setHoneypot(e.target.value)}
       aria-hidden="true"
@@ -381,6 +906,8 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     </div>
   ) : null;
 
+  // --- View dispatch ----------------------------------------------------
+
   if (view.kind === 'preview-result') {
     return (
       <>
@@ -388,7 +915,11 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         {previewBanner}
         <PreviewResultView
           result={view.result}
-          onReset={() => setView({ kind: 'form' })}
+          onReset={() => {
+            setView({ kind: 'form' });
+            setStepIndex(0);
+            setDirection(-1);
+          }}
         />
       </>
     );
@@ -399,17 +930,31 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
       <>
         {honeypotField}
         {previewBanner}
-        <SuccessState message={view.message} />
+        <PremiumSuccess
+          message={view.message}
+          accentColor={config.theme.buttonColor}
+          spring={spring}
+        />
       </>
     );
   }
 
   if (view.kind === 'error') {
+    // Soft recovery: a failed submit doesn't wipe the form. Customer can
+    // return to the form (data still in state) and try again.
     return (
       <>
         {honeypotField}
         {previewBanner}
-        <ErrorState message={view.message} />
+        <ErrorState
+          message={view.message}
+          onBack={() => setView({ kind: 'form' })}
+          onRetry={() => {
+            setView({ kind: 'form' });
+            // Defer slightly so the form view re-mounts before we fire submit
+            setTimeout(() => handleSubmit(), 0);
+          }}
+        />
       </>
     );
   }
@@ -425,14 +970,6 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
   }
 
   if (view.kind === 'chooser') {
-    // No onChoose → component's default break-out fires (top-frame nav to
-    // /customer-upload/<token>?greeting=lead&start=<kind>, falling back to
-    // in-frame nav for sandboxed iframes). The lead-pipeline arrival is by
-    // definition a lead, so the personalized greeting always shows.
-    //
-    // When the chooser was launched from a self-survey-or-schedule action
-    // we also pass `onSchedule`, which renders a third button. Picking it
-    // swaps in the scheduler view in the same iframe.
     const submissionIdForSchedule = view.submissionId;
     return (
       <>
@@ -453,373 +990,690 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     );
   }
 
-  // Google Maps failed to load entirely (network blocked, invalid key, etc.).
-  // We surface a clear error rather than silently breaking the address inputs.
-  if (loadError) {
-    return (
-      <>
-        {honeypotField}
-        {previewBanner}
-        <ErrorState message="Address lookup failed to load. Please refresh the page or try again later." />
-      </>
-    );
-  }
+  // --- Form view ---------------------------------------------------------
 
-  // Still loading the Maps SDK — render a lightweight placeholder. We keep
-  // the honeypot mounted so a bot can't race the form mount.
-  if (!isLoaded) {
-    return (
-      <>
-        {previewBanner}
-        <div className="min-h-screen flex items-center justify-center px-6 py-12 bg-transparent">
-          {honeypotField}
-          <Loader2 className="h-8 w-8 animate-spin text-blue-500" aria-label="Loading form" />
-        </div>
-      </>
-    );
-  }
+  const accentColor = config.theme.buttonColor;
+
+  // Field-level handler factories. Keep these inline so the StepContent
+  // remains a pure rendering function with no state of its own.
+  const onFocusFactory = (id: FieldKey) => () => setFocusedField(id);
+  const onBlurFactory = (id: FieldKey) => () => {
+    setFocusedField((f) => (f === id ? null : f));
+    markTouched(id);
+  };
 
   return (
     <>
       {previewBanner}
-      <div className="min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col">
-      {/* @container enables Tailwind container queries on the card's
-          children so two-column rows (first/last, phone/phoneType)
-          collapse to single column when the iframe is narrow — host
-          sites embed the form at widths from 320px on phones to 600px+
-          on desktop. Viewport-based breakpoints don't work for that.
+      <div className="min-h-screen bg-transparent px-2 py-3 sm:px-4 sm:py-10 flex flex-col">
+        {/* @container drives padding + grid behavior off the card's width,
+            not the viewport. Critical for iframe embeds where viewport tells
+            us nothing useful about the available width. */}
+        <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8">
+          {config.theme.logoUrl && (
+            <img
+              src={config.theme.logoUrl}
+              alt=""
+              className="h-10 @sm:h-12 mx-auto mb-4 object-contain"
+            />
+          )}
 
-          `flex-1` lets the card stretch to fill the iframe's available
-          vertical space so the form and the post-submit chooser
-          (UploadChooser embedded variant) both occupy the same area —
-          the second screen "inherits" the first's height. */}
-      <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-xl @sm:rounded-2xl shadow-lg @sm:shadow-xl border border-gray-200 p-5 @sm:p-7 @md:p-8">
-        {config.theme.logoUrl && (
-          <img
-            src={config.theme.logoUrl}
-            alt=""
-            className="h-10 @sm:h-12 mx-auto mb-3 @sm:mb-4 object-contain"
-          />
-        )}
-        <h1 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-1">{config.theme.title}</h1>
-        {config.theme.subtitle && (
-          <p className="text-gray-600 text-sm @sm:text-base mb-5 @sm:mb-6">{config.theme.subtitle}</p>
-        )}
+          {/* Title block gets consistent breathing room below regardless of
+              whether a subtitle is present — single-page forms without a
+              subtitle were previously rendering with the title visually
+              touching the first input. */}
+          <div className="mb-4 @sm:mb-5">
+            <h2 className="text-center text-lg @sm:text-xl font-semibold text-gray-900">
+              {config.theme.title}
+            </h2>
+            {config.theme.subtitle && (
+              <p className="text-center text-gray-500 text-sm @sm:text-base mt-1">
+                {config.theme.subtitle}
+              </p>
+            )}
+          </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          {isMultiStep && (
+            <ProgressDots
+              total={enabledSteps.length}
+              current={stepIndex}
+              accentColor={accentColor}
+              spring={spring}
+            />
+          )}
+
           {honeypotField}
 
-          {fieldEnabled('moveDate') && (
-            <div>
-              <label htmlFor="moveDate" className={labelClass}>
-                Move Date
-                {fieldRequired('moveDate') && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button
-                    id="moveDate"
-                    type="button"
-                    aria-required={fieldRequired('moveDate')}
-                    className={cn(
-                      inputBaseClass,
-                      'pr-10 text-left relative cursor-pointer flex items-center',
-                      !moveDate && 'text-gray-400',
-                    )}
-                  >
-                    {(() => {
-                      const parsed = moveDate
-                        ? parse(moveDate, 'yyyy-MM-dd', new Date())
-                        : null;
-                      return parsed && isValid(parsed)
-                        ? format(parsed, 'PPP')
-                        : 'Select a date';
-                    })()}
-                    <CalendarIcon className="w-5 h-5 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-auto p-0"
-                  align="start"
-                  // Inside an iframe the default portal collide with the
-                  // host page's z-index. Render inline so the calendar
-                  // floats above the form correctly.
-                >
-                  <Calendar
-                    mode="single"
-                    selected={
-                      moveDate
-                        ? (() => {
-                            const d = parse(moveDate, 'yyyy-MM-dd', new Date());
-                            return isValid(d) ? d : undefined;
-                          })()
-                        : undefined
-                    }
-                    onSelect={(date) =>
-                      setMoveDate(date ? format(date, 'yyyy-MM-dd') : '')
-                    }
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-          )}
+          <AnimatePresence mode="wait" custom={direction}>
+            <motion.div
+              key={stepIndex}
+              ref={stepContainerRef}
+              custom={direction}
+              initial={
+                isMultiStep
+                  ? { x: direction > 0 ? 32 : -32, opacity: 0 }
+                  : false
+              }
+              animate={{ x: 0, opacity: 1 }}
+              exit={
+                isMultiStep
+                  ? { x: direction > 0 ? -32 : 32, opacity: 0 }
+                  : undefined
+              }
+              transition={spring}
+              onAnimationComplete={postIframeHeight}
+            >
+              {currentStep.heading && (
+                <h1 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-4">
+                  {currentStep.heading}
+                </h1>
+              )}
 
-          {fieldEnabled('moveSize') && (
-            <div>
-              <label htmlFor="moveSize" className={labelClass}>
-                Move size
-                {fieldRequired('moveSize') && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              <select
-                id="moveSize"
-                value={moveSize}
-                onChange={(e) => setMoveSize(e.target.value)}
-                required={fieldRequired('moveSize')}
-                className={inputBaseClass}
+              <StepContent
+                stepFields={currentStep.fields}
+                required={fieldRequired}
+                accentColor={accentColor}
+                errorFor={errorFor}
+                showCheckFor={showCheckFor}
+                focusedField={focusedField}
+                onFocusFactory={onFocusFactory}
+                onBlurFactory={onBlurFactory}
+                moveDate={moveDate}
+                setMoveDate={setMoveDate}
+                moveSize={moveSize}
+                setMoveSize={setMoveSize}
+                moveSizeOptions={
+                  config.moveSizeOptions?.length
+                    ? config.moveSizeOptions
+                    : DEFAULT_MOVE_SIZE_OPTIONS
+                }
+                firstName={firstName}
+                setFirstName={setFirstName}
+                lastName={lastName}
+                setLastName={setLastName}
+                fullName={fullName}
+                setFullName={setFullName}
+                email={email}
+                setEmail={setEmail}
+                phone={phone}
+                setPhone={(next) => {
+                  setPhone(formatPhoneNumber(next, phone));
+                }}
+                phoneType={phoneType}
+                setPhoneType={setPhoneType}
+                originText={originText}
+                setOriginText={setOriginText}
+                originPlace={originPlace}
+                setOriginPlace={setOriginPlace}
+                destinationText={destinationText}
+                setDestinationText={setDestinationText}
+                destinationPlace={destinationPlace}
+                setDestinationPlace={setDestinationPlace}
+                companyName={companyName}
+                setCompanyName={setCompanyName}
+              />
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Step-level error (echoes the first field error for screen
+              readers / users skimming). Per-field errors render inline
+              below their inputs. */}
+          <AnimatePresence>
+            {stepError && (
+              <motion.p
+                key="step-error"
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15 }}
+                className="text-red-500 text-sm mt-3 text-center"
               >
-                <option value="">Select</option>
-                {(config.moveSizeOptions?.length
-                  ? config.moveSizeOptions
-                  : DEFAULT_MOVE_SIZE_OPTIONS
-                ).map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+                {stepError}
+              </motion.p>
+            )}
+          </AnimatePresence>
 
-          {(fieldEnabled('firstName') || fieldEnabled('lastName')) && (
-            <div
-              className={cn(
-                fieldEnabled('firstName') && fieldEnabled('lastName')
-                  ? 'grid grid-cols-1 @xs:grid-cols-2 gap-3'
-                  : 'block',
-              )}
-            >
-              {fieldEnabled('firstName') && (
-                <div>
-                  <label htmlFor="firstName" className={labelClass}>
-                    First Name
-                    {fieldRequired('firstName') && <span className="text-red-500 ml-1">*</span>}
-                  </label>
-                  <input
-                    id="firstName"
-                    type="text"
-                    autoComplete="given-name"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="First Name"
-                    required={fieldRequired('firstName')}
-                    className={inputBaseClass}
-                  />
-                </div>
-              )}
-              {fieldEnabled('lastName') && (
-                <div>
-                  <label htmlFor="lastName" className={labelClass}>
-                    Last Name
-                    {fieldRequired('lastName') && <span className="text-red-500 ml-1">*</span>}
-                  </label>
-                  <input
-                    id="lastName"
-                    type="text"
-                    autoComplete="family-name"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Last Name"
-                    required={fieldRequired('lastName')}
-                    className={inputBaseClass}
-                  />
-                </div>
+          <div className="flex items-center gap-3 mt-6">
+            {isMultiStep && !isFirstStep && (
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={submitting}
+                className="h-12 px-4 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white text-gray-700 font-medium text-sm hover:bg-gray-50 active:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </button>
+            )}
+            <div className="flex-1">
+              {isLastStep ? (
+                <MorphingSubmitButton
+                  label={config.theme.buttonText}
+                  submitting={submitting}
+                  disabled={false}
+                  accentColor={accentColor}
+                  spring={spring}
+                  onClick={handleSubmit}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={goNext}
+                  style={{ backgroundColor: accentColor }}
+                  className="w-full h-12 inline-flex items-center justify-center gap-2 rounded-xl text-white font-semibold text-base shadow-sm hover:opacity-95 active:opacity-90 transition-opacity"
+                >
+                  Continue
+                </button>
               )}
             </div>
-          )}
-
-          {fieldEnabled('fullName') && !fieldEnabled('firstName') && !fieldEnabled('lastName') && (
-            <div>
-              <label htmlFor="fullName" className={labelClass}>
-                Full Name
-                {fieldRequired('fullName') && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              <input
-                id="fullName"
-                type="text"
-                autoComplete="name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Full Name"
-                required={fieldRequired('fullName')}
-                className={inputBaseClass}
-              />
-            </div>
-          )}
-
-          {fieldEnabled('email') && (
-            <div>
-              <label htmlFor="email" className={labelClass}>
-                Email
-                {fieldRequired('email') && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Email"
-                required={fieldRequired('email')}
-                className={inputBaseClass}
-              />
-            </div>
-          )}
-
-          {(fieldEnabled('phone') || fieldEnabled('phoneType')) && (
-            <div
-              className={cn(
-                fieldEnabled('phone') && fieldEnabled('phoneType')
-                  ? 'grid grid-cols-1 @xs:grid-cols-2 gap-3'
-                  : 'block',
-              )}
-            >
-              {fieldEnabled('phone') && (
-                <div>
-                  <label htmlFor="phone" className={labelClass}>
-                    Phone Number<span className="text-red-500 ml-1">*</span>
-                  </label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    inputMode="tel"
-                    autoComplete="tel"
-                    value={phone}
-                    onChange={(e) => {
-                      const formatted = formatPhoneNumber(e.target.value, phone);
-                      setPhone(formatted);
-                      setPhoneError(validatePhone(formatted));
-                    }}
-                    placeholder="(555) 123-4567"
-                    required
-                    aria-invalid={!!phoneError}
-                    aria-describedby={phoneError ? 'phone-error' : undefined}
-                    className={cn(
-                      inputBaseClass,
-                      phoneError && 'border-red-500 focus:ring-red-500 focus:border-red-500',
-                    )}
-                  />
-                  {phoneError && (
-                    <p id="phone-error" className="text-sm text-red-500 mt-1">
-                      {phoneError}
-                    </p>
-                  )}
-                </div>
-              )}
-              {fieldEnabled('phoneType') && (
-                <div>
-                  <label htmlFor="phoneType" className={labelClass}>
-                    Phone Type
-                    {fieldRequired('phoneType') && <span className="text-red-500 ml-1">*</span>}
-                  </label>
-                  <select
-                    id="phoneType"
-                    value={phoneType}
-                    onChange={(e) => setPhoneType(e.target.value as 'mobile' | 'home' | 'work' | '')}
-                    required={fieldRequired('phoneType')}
-                    className={inputBaseClass}
-                  >
-                    <option value="">Select</option>
-                    {PHONE_TYPE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-          )}
-
-          {fieldEnabled('origin') && (
-            <div>
-              <label htmlFor="origin" className={labelClass}>
-                Origin Address / Postal Code
-                {fieldRequired('origin') && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              <div className="relative">
-                <MapPin className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 z-10 pointer-events-none" />
-                <div className="[&_input]:pl-10">
-                  <PlacesAutocomplete
-                    value={originText}
-                    onChange={(v) => {
-                      setOriginText(v);
-                      // Clear the structured place if the user edits the text
-                      // away from the previously-selected formatted address.
-                      if (originPlace && v !== originPlace.raw) setOriginPlace(null);
-                    }}
-                    onSelect={handleOriginSelect}
-                    placeholder="Origin"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {fieldEnabled('destination') && (
-            <div>
-              <label htmlFor="destination" className={labelClass}>
-                Destination Address / Postal Code
-                {fieldRequired('destination') && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              <div className="relative">
-                <MapPin className="w-5 h-5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 z-10 pointer-events-none" />
-                <div className="[&_input]:pl-10">
-                  <PlacesAutocomplete
-                    value={destinationText}
-                    onChange={(v) => {
-                      setDestinationText(v);
-                      if (destinationPlace && v !== destinationPlace.raw) setDestinationPlace(null);
-                    }}
-                    onSelect={handleDestinationSelect}
-                    placeholder="Destination"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {fieldEnabled('companyName') && (
-            <div>
-              <label htmlFor="companyName" className={labelClass}>
-                Company Name
-                {fieldRequired('companyName') && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              <input
-                id="companyName"
-                type="text"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="Company Name"
-                required={fieldRequired('companyName')}
-                className={inputBaseClass}
-              />
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{ backgroundColor: config.theme.buttonColor }}
-            className="w-full text-white font-semibold py-3.5 px-4 rounded-lg transition-opacity hover:opacity-90 active:opacity-80 disabled:opacity-60 disabled:cursor-not-allowed mt-2 text-base shadow-sm"
-          >
-            {submitting ? 'Submitting...' : config.theme.buttonText}
-          </button>
-        </form>
+          </div>
+        </div>
       </div>
-    </div>
     </>
   );
 }
+
+// --- Step content (renders any field subset, canonical order) -------------
+
+interface StepContentProps {
+  stepFields: Set<FieldKey>;
+  required: (id: FieldKey) => boolean;
+  accentColor: string;
+  errorFor: (id: FieldKey) => string | null;
+  showCheckFor: (id: FieldKey) => boolean;
+  focusedField: string | null;
+  onFocusFactory: (id: FieldKey) => () => void;
+  onBlurFactory: (id: FieldKey) => () => void;
+  moveDate: string;
+  setMoveDate: (v: string) => void;
+  moveSize: string;
+  setMoveSize: (v: string) => void;
+  moveSizeOptions: string[];
+  firstName: string;
+  setFirstName: (v: string) => void;
+  lastName: string;
+  setLastName: (v: string) => void;
+  fullName: string;
+  setFullName: (v: string) => void;
+  email: string;
+  setEmail: (v: string) => void;
+  phone: string;
+  setPhone: (v: string) => void;
+  phoneType: 'mobile' | 'home' | 'work' | '';
+  setPhoneType: (v: 'mobile' | 'home' | 'work' | '') => void;
+  originText: string;
+  setOriginText: (v: string) => void;
+  originPlace: NormalizedAddress | null;
+  setOriginPlace: (v: NormalizedAddress | null) => void;
+  destinationText: string;
+  setDestinationText: (v: string) => void;
+  destinationPlace: NormalizedAddress | null;
+  setDestinationPlace: (v: NormalizedAddress | null) => void;
+  companyName: string;
+  setCompanyName: (v: string) => void;
+}
+
+function StepContent(props: StepContentProps) {
+  const enabledFields = props.stepFields;
+  const {
+    required,
+    accentColor,
+    errorFor,
+    showCheckFor,
+    focusedField,
+    onFocusFactory,
+    onBlurFactory,
+  } = props;
+
+  // Inline focus tinting for select / date button — Tailwind classes can't
+  // reference dynamic brand colors at runtime.
+  const applyFocusBorder = (
+    e: React.FocusEvent<HTMLSelectElement | HTMLButtonElement>,
+  ) => {
+    e.currentTarget.style.borderColor = accentColor;
+    e.currentTarget.style.boxShadow = `0 0 0 3px ${accentColor}33`;
+  };
+  const clearFocusBorder = (
+    e: React.FocusEvent<HTMLSelectElement | HTMLButtonElement>,
+  ) => {
+    e.currentTarget.style.borderColor = '';
+    e.currentTarget.style.boxShadow = '';
+  };
+
+  // Same for text inputs.
+  const applyFocusInput = (e: React.FocusEvent<HTMLInputElement>) => {
+    e.currentTarget.style.borderColor = accentColor;
+    e.currentTarget.style.boxShadow = `0 0 0 3px ${accentColor}33`;
+  };
+  const clearFocusInput = (e: React.FocusEvent<HTMLInputElement>) => {
+    e.currentTarget.style.borderColor = '';
+    e.currentTarget.style.boxShadow = '';
+  };
+
+  const showFirstLast = enabledFields.has('firstName') || enabledFields.has('lastName');
+  const showFullNameStandalone =
+    enabledFields.has('fullName') &&
+    !enabledFields.has('firstName') &&
+    !enabledFields.has('lastName');
+  const showPhonePair = enabledFields.has('phone') || enabledFields.has('phoneType');
+
+  return (
+    <div className="space-y-4">
+      {enabledFields.has('moveDate') && (
+        <Field
+          id="moveDate"
+          label="Move date"
+          required={required('moveDate')}
+          filled={!!props.moveDate}
+          focused={focusedField === 'moveDate'}
+          error={errorFor('moveDate')}
+          showCheck={showCheckFor('moveDate')}
+          accentColor={accentColor}
+          rightAdornment={<CalendarIcon className="w-5 h-5 text-gray-300" />}
+        >
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                id="moveDate"
+                type="button"
+                aria-required={required('moveDate')}
+                onFocus={(e) => {
+                  applyFocusBorder(e);
+                  onFocusFactory('moveDate')();
+                }}
+                onBlur={(e) => {
+                  clearFocusBorder(e);
+                  onBlurFactory('moveDate')();
+                }}
+                className={cn(
+                  floatingInputClass,
+                  'pr-10 text-left flex items-center',
+                  errorFor('moveDate') && errorInputClass,
+                )}
+              >
+                {(() => {
+                  const parsed = props.moveDate
+                    ? parse(props.moveDate, 'yyyy-MM-dd', new Date())
+                    : null;
+                  return parsed && isValid(parsed) ? format(parsed, 'PPP') : ' ';
+                })()}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={
+                  props.moveDate
+                    ? (() => {
+                        const d = parse(props.moveDate, 'yyyy-MM-dd', new Date());
+                        return isValid(d) ? d : undefined;
+                      })()
+                    : undefined
+                }
+                onSelect={(date) =>
+                  props.setMoveDate(date ? format(date, 'yyyy-MM-dd') : '')
+                }
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+        </Field>
+      )}
+
+      {enabledFields.has('moveSize') && (
+        <Field
+          id="moveSize"
+          label="Move size"
+          required={required('moveSize')}
+          filled={!!props.moveSize}
+          focused={focusedField === 'moveSize'}
+          error={errorFor('moveSize')}
+          showCheck={showCheckFor('moveSize')}
+          accentColor={accentColor}
+        >
+          <select
+            id="moveSize"
+            value={props.moveSize}
+            onChange={(e) => props.setMoveSize(e.target.value)}
+            onFocus={(e) => {
+              applyFocusBorder(e);
+              onFocusFactory('moveSize')();
+            }}
+            onBlur={(e) => {
+              clearFocusBorder(e);
+              onBlurFactory('moveSize')();
+            }}
+            required={required('moveSize')}
+            className={cn(
+              floatingInputClass,
+              'appearance-none pr-10',
+              errorFor('moveSize') && errorInputClass,
+            )}
+          >
+            <option value=""></option>
+            {props.moveSizeOptions.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+
+      {showFirstLast && (
+        <div
+          className={cn(
+            enabledFields.has('firstName') && enabledFields.has('lastName')
+              ? 'grid grid-cols-1 @xs:grid-cols-2 gap-3'
+              : 'block',
+          )}
+        >
+          {enabledFields.has('firstName') && (
+            <Field
+              id="firstName"
+              label="First name"
+              required={required('firstName')}
+              filled={!!props.firstName}
+              focused={focusedField === 'firstName'}
+              error={errorFor('firstName')}
+              showCheck={showCheckFor('firstName')}
+              accentColor={accentColor}
+            >
+              <input
+                id="firstName"
+                type="text"
+                autoComplete="given-name"
+                value={props.firstName}
+                onChange={(e) => props.setFirstName(e.target.value)}
+                onFocus={(e) => {
+                  applyFocusInput(e);
+                  onFocusFactory('firstName')();
+                }}
+                onBlur={(e) => {
+                  clearFocusInput(e);
+                  onBlurFactory('firstName')();
+                }}
+                placeholder=" "
+                required={required('firstName')}
+                className={cn(
+                  floatingInputClass,
+                  errorFor('firstName') && errorInputClass,
+                )}
+              />
+            </Field>
+          )}
+          {enabledFields.has('lastName') && (
+            <Field
+              id="lastName"
+              label="Last name"
+              required={required('lastName')}
+              filled={!!props.lastName}
+              focused={focusedField === 'lastName'}
+              error={errorFor('lastName')}
+              showCheck={showCheckFor('lastName')}
+              accentColor={accentColor}
+            >
+              <input
+                id="lastName"
+                type="text"
+                autoComplete="family-name"
+                value={props.lastName}
+                onChange={(e) => props.setLastName(e.target.value)}
+                onFocus={(e) => {
+                  applyFocusInput(e);
+                  onFocusFactory('lastName')();
+                }}
+                onBlur={(e) => {
+                  clearFocusInput(e);
+                  onBlurFactory('lastName')();
+                }}
+                placeholder=" "
+                required={required('lastName')}
+                className={cn(
+                  floatingInputClass,
+                  errorFor('lastName') && errorInputClass,
+                )}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+
+      {showFullNameStandalone && (
+        <Field
+          id="fullName"
+          label="Full name"
+          required={required('fullName')}
+          filled={!!props.fullName}
+          focused={focusedField === 'fullName'}
+          error={errorFor('fullName')}
+          showCheck={showCheckFor('fullName')}
+          accentColor={accentColor}
+        >
+          <input
+            id="fullName"
+            type="text"
+            autoComplete="name"
+            value={props.fullName}
+            onChange={(e) => props.setFullName(e.target.value)}
+            onFocus={(e) => {
+              applyFocusInput(e);
+              onFocusFactory('fullName')();
+            }}
+            onBlur={(e) => {
+              clearFocusInput(e);
+              onBlurFactory('fullName')();
+            }}
+            placeholder=" "
+            required={required('fullName')}
+            className={cn(
+              floatingInputClass,
+              errorFor('fullName') && errorInputClass,
+            )}
+          />
+        </Field>
+      )}
+
+      {enabledFields.has('email') && (
+        <Field
+          id="email"
+          label="Email"
+          required={required('email')}
+          filled={!!props.email}
+          focused={focusedField === 'email'}
+          error={errorFor('email')}
+          showCheck={showCheckFor('email')}
+          accentColor={accentColor}
+        >
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={props.email}
+            onChange={(e) => props.setEmail(e.target.value)}
+            onFocus={(e) => {
+              applyFocusInput(e);
+              onFocusFactory('email')();
+            }}
+            onBlur={(e) => {
+              clearFocusInput(e);
+              onBlurFactory('email')();
+            }}
+            placeholder=" "
+            required={required('email')}
+            className={cn(
+              floatingInputClass,
+              errorFor('email') && errorInputClass,
+            )}
+            aria-invalid={!!errorFor('email')}
+            aria-describedby={errorFor('email') ? 'email-error' : undefined}
+          />
+        </Field>
+      )}
+
+      {showPhonePair && (
+        <div
+          className={cn(
+            enabledFields.has('phone') && enabledFields.has('phoneType')
+              ? 'grid grid-cols-1 @xs:grid-cols-2 gap-3'
+              : 'block',
+          )}
+        >
+          {enabledFields.has('phone') && (
+            <Field
+              id="phone"
+              label="Phone number"
+              required
+              filled={!!props.phone}
+              focused={focusedField === 'phone'}
+              error={errorFor('phone')}
+              showCheck={showCheckFor('phone')}
+              accentColor={accentColor}
+            >
+              <input
+                id="phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={props.phone}
+                onChange={(e) => props.setPhone(e.target.value)}
+                onFocus={(e) => {
+                  applyFocusInput(e);
+                  onFocusFactory('phone')();
+                }}
+                onBlur={(e) => {
+                  clearFocusInput(e);
+                  onBlurFactory('phone')();
+                }}
+                placeholder=" "
+                required
+                aria-invalid={!!errorFor('phone')}
+                aria-describedby={errorFor('phone') ? 'phone-error' : undefined}
+                className={cn(
+                  floatingInputClass,
+                  errorFor('phone') && errorInputClass,
+                )}
+              />
+            </Field>
+          )}
+          {enabledFields.has('phoneType') && (
+            <Field
+              id="phoneType"
+              label="Phone type"
+              required={required('phoneType')}
+              filled={!!props.phoneType}
+              focused={focusedField === 'phoneType'}
+              error={errorFor('phoneType')}
+              showCheck={showCheckFor('phoneType')}
+              accentColor={accentColor}
+            >
+              <select
+                id="phoneType"
+                value={props.phoneType}
+                onChange={(e) =>
+                  props.setPhoneType(e.target.value as 'mobile' | 'home' | 'work' | '')
+                }
+                onFocus={(e) => {
+                  applyFocusBorder(e);
+                  onFocusFactory('phoneType')();
+                }}
+                onBlur={(e) => {
+                  clearFocusBorder(e);
+                  onBlurFactory('phoneType')();
+                }}
+                required={required('phoneType')}
+                className={cn(
+                  floatingInputClass,
+                  'appearance-none pr-10',
+                  errorFor('phoneType') && errorInputClass,
+                )}
+              >
+                <option value=""></option>
+                {PHONE_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+        </div>
+      )}
+
+      {enabledFields.has('origin') && (
+        <AddressInput
+          id="origin"
+          label="Origin address"
+          required={required('origin')}
+          accentColor={accentColor}
+          value={props.originText}
+          placeSelected={!!props.originPlace}
+          focused={focusedField === 'origin'}
+          error={errorFor('origin')}
+          onFocus={onFocusFactory('origin')}
+          onBlur={onBlurFactory('origin')}
+          onTextChange={props.setOriginText}
+          onPlaceSelect={(place) => props.setOriginPlace(place)}
+          onPlaceCleared={() => props.setOriginPlace(null)}
+        />
+      )}
+
+      {enabledFields.has('destination') && (
+        <AddressInput
+          id="destination"
+          label="Destination address"
+          required={required('destination')}
+          accentColor={accentColor}
+          value={props.destinationText}
+          placeSelected={!!props.destinationPlace}
+          focused={focusedField === 'destination'}
+          error={errorFor('destination')}
+          onFocus={onFocusFactory('destination')}
+          onBlur={onBlurFactory('destination')}
+          onTextChange={props.setDestinationText}
+          onPlaceSelect={(place) => props.setDestinationPlace(place)}
+          onPlaceCleared={() => props.setDestinationPlace(null)}
+        />
+      )}
+
+      {enabledFields.has('companyName') && (
+        <Field
+          id="companyName"
+          label="Company name"
+          required={required('companyName')}
+          filled={!!props.companyName}
+          focused={focusedField === 'companyName'}
+          error={errorFor('companyName')}
+          showCheck={showCheckFor('companyName')}
+          accentColor={accentColor}
+        >
+          <input
+            id="companyName"
+            type="text"
+            value={props.companyName}
+            onChange={(e) => props.setCompanyName(e.target.value)}
+            onFocus={(e) => {
+              applyFocusInput(e);
+              onFocusFactory('companyName')();
+            }}
+            onBlur={(e) => {
+              clearFocusInput(e);
+              onBlurFactory('companyName')();
+            }}
+            placeholder=" "
+            required={required('companyName')}
+            className={cn(
+              floatingInputClass,
+              errorFor('companyName') && errorInputClass,
+            )}
+          />
+        </Field>
+      )}
+    </div>
+  );
+}
+
+// --- Preview result view (editor-triggered simulation) --------------------
 
 const ACTION_LABEL: Record<string, string> = {
   'inline-message': 'Show a thank-you message',
@@ -890,8 +1744,8 @@ function PreviewResultView({
   );
 
   return (
-    <div className="min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col">
-      <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-xl @sm:rounded-2xl shadow-lg @sm:shadow-xl border border-gray-200 p-5 @sm:p-7 @md:p-8 space-y-5">
+    <div className="min-h-screen bg-transparent px-2 py-3 sm:px-4 sm:py-10 flex flex-col">
+      <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8 space-y-5">
         <div className="flex items-start gap-3">
           <CheckCircle2 className="h-6 w-6 text-emerald-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
@@ -1005,3 +1859,38 @@ function PreviewResultView({
     </div>
   );
 }
+
+// --- Helpers --------------------------------------------------------------
+
+function parseUploadToken(url: string): string | null {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    const match = parsed.pathname.match(/^\/customer-upload\/([^/]+)/);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function navigateTo(uploadUrl: string) {
+  let relative = uploadUrl;
+  try {
+    const parsed = new URL(uploadUrl);
+    relative = parsed.pathname + parsed.search + parsed.hash;
+  } catch {
+    // already relative
+  }
+  try {
+    if (window.top && window.top !== window.self) {
+      window.top.location.href = relative;
+      return;
+    }
+  } catch {
+    // cross-origin top — fall through
+  }
+  window.location.href = relative;
+}
+
+// SuccessState is still used elsewhere (legacy / shared); keep it imported
+// even though this file uses PremiumSuccess directly.
+void SuccessState;

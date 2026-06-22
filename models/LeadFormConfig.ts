@@ -60,6 +60,21 @@ export interface MoveSizeRoutingRule {
 }
 
 /**
+ * Admin-configured wizard step. When `steps` is unset or empty, the form
+ * renders as a single screen with every enabled field — the default and the
+ * behavior for every form that pre-dates this feature.
+ *
+ * `fields` lists the FieldKeys that belong on this screen. Disabled fields
+ * are silently dropped at render time; steps that end up empty after
+ * filtering are skipped. `heading` is the optional title shown above the
+ * fields on that screen.
+ */
+export interface LeadFormStep {
+  heading?: string;
+  fields: FieldKey[];
+}
+
+/**
  * Per-form scheduling availability. Drives both the slot generator in the
  * embed scheduler endpoint and the overbooking guard that consults the
  * org's existing ScheduledVideoCall rows.
@@ -118,6 +133,10 @@ export interface ILeadFormConfig extends Document {
   // MoveSizeRoutingRule. Any moveSize value not listed here uses the
   // form-level `postSubmit`.
   moveSizeRouting?: MoveSizeRoutingRule[];
+  // Optional wizard steps. When set, the form renders one screen per step
+  // instead of putting every field on one page. Default (unset): single
+  // page with every enabled field. See `LeadFormStep`.
+  steps?: LeadFormStep[];
   // Round-robin pointer for assignee selection. Atomically $inc'd by the
   // scheduler endpoint; (cursor - 1) % assigneeUserIds.length is the
   // index of the next assignee. Lives at root (not under
@@ -162,6 +181,7 @@ const LeadFormConfigSchema: Schema = new Schema(
     schedulingCursor: { type: Number, required: false, default: 0 },
     moveSizeOptions: { type: [String], required: false },
     moveSizeRouting: { type: Schema.Types.Mixed, required: false },
+    steps: { type: Schema.Types.Mixed, required: false },
     createdBy: { type: String, required: true },
   },
   { timestamps: true }

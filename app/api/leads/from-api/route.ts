@@ -8,6 +8,7 @@ import connectMongoDB from '@/lib/mongodb';
 import LeadFormConfig from '@/models/LeadFormConfig';
 import { authenticateApiKey } from '@/lib/api-key-auth';
 import { ingestLead } from '@/lib/leads/pipeline';
+import { validateLeadSubmission } from '@/lib/leads/validateSubmission';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -30,6 +31,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { error: 'lead payload is required' },
         { status: 400 }
       );
+    }
+
+    const validationError = validateLeadSubmission(lead);
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
     await connectMongoDB();

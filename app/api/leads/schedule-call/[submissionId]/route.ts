@@ -303,7 +303,9 @@ export async function POST(
     }
 
     const tz =
-      typeof body?.timezone === 'string' && body.timezone
+      typeof body?.timezone === 'string' &&
+      body.timezone &&
+      body.timezone.length <= 100
         ? body.timezone
         : settings.hours.timezone;
 

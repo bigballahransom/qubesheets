@@ -35,7 +35,27 @@ export function SuccessState({ message }: { message: string }) {
   );
 }
 
-export function ErrorState({ message }: { message: string }) {
+/**
+ * @param message  Human-readable error.
+ * @param onRetry  Retry the failed action without losing form state. When
+ *                 provided, renders a primary "Try again" button. When
+ *                 omitted, falls back to a page reload (which DOES lose
+ *                 state — only use the fallback for terminal errors).
+ * @param onBack   Return to the form with state preserved. When provided,
+ *                 renders a secondary "Back to form" button. Lets the
+ *                 customer fix a typo (e.g., bad email) and resubmit
+ *                 without re-typing everything.
+ */
+export function ErrorState({
+  message,
+  onRetry,
+  onBack,
+}: {
+  message: string;
+  onRetry?: () => void;
+  onBack?: () => void;
+}) {
+  const hasInPlaceActions = !!onRetry || !!onBack;
   return (
     <div className={EMBED_OUTER}>
       <div className={`${EMBED_CARD} text-center`}>
@@ -49,13 +69,36 @@ export function ErrorState({ message }: { message: string }) {
         <p className="text-gray-600 text-sm @sm:text-base leading-relaxed mb-5">
           {message}
         </p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="px-5 py-2.5 rounded-lg bg-gray-900 text-white font-medium hover:bg-gray-800 transition-colors"
-        >
-          Try again
-        </button>
+        <div className="flex flex-col @xs:flex-row gap-2 justify-center">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="px-5 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 transition-colors"
+            >
+              Back to form
+            </button>
+          )}
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="px-5 py-2.5 rounded-lg bg-gray-900 text-white font-medium hover:bg-gray-800 transition-colors"
+            >
+              Try again
+            </button>
+          ) : (
+            !hasInPlaceActions && (
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="px-5 py-2.5 rounded-lg bg-gray-900 text-white font-medium hover:bg-gray-800 transition-colors"
+              >
+                Try again
+              </button>
+            )
+          )}
+        </div>
       </div>
     </div>
   );

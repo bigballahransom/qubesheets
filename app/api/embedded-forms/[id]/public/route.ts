@@ -57,6 +57,8 @@ export async function GET(
       moveSizeOptions: Array.isArray(config.moveSizeOptions)
         ? config.moveSizeOptions
         : undefined,
+      // Wizard step layout. Unset/empty = single-page (the default).
+      steps: Array.isArray(config.steps) ? config.steps : undefined,
     };
 
     return NextResponse.json(publicConfig, { status: 200, headers: corsHeaders });

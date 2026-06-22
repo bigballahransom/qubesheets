@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import LeadFormConfig from '@/models/LeadFormConfig';
 import { getAuthContext } from '@/lib/auth-helpers';
+import { validateConfigPatch } from '@/lib/leads/validateConfig';
 
 // Whitelist of fields that PATCH callers may modify. Note the explicit
 // exclusion of organizationId, createdBy, _id, createdAt, updatedAt.
@@ -20,6 +21,7 @@ const PATCH_ALLOWED_FIELDS = [
   'schedulingSettings',
   'moveSizeOptions',
   'moveSizeRouting',
+  'steps',
 ] as const;
 
 export async function GET(
@@ -74,12 +76,23 @@ export async function PATCH(
       return NextResponse.json({ error: 'id required' }, { status: 400 });
     }
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
+
+    // Restrict to the whitelist BEFORE validating so a stray field doesn't
+    // produce a confusing error about a field the caller wasn't trying to set.
     const update: Record<string, unknown> = {};
     for (const key of PATCH_ALLOWED_FIELDS) {
       if (Object.prototype.hasOwnProperty.call(body, key)) {
-        update[key] = body[key];
+        update[key] = (body as Record<string, unknown>)[key];
       }
+    }
+
+    const validationError = validateConfigPatch(update);
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
     await connectMongoDB();

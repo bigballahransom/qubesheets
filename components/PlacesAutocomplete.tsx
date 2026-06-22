@@ -7,13 +7,27 @@ export interface PlacesAutocompleteProps {
   onChange: (value: string) => void;
   onSelect: (place: google.maps.places.PlaceResult) => void;
   placeholder?: string;
+  /** Override the default input styling. Pass an empty string with a non-
+   *  empty `className` to take full control. */
+  className?: string;
+  /** Forwarded so a parent can manage focus state (e.g., floating labels). */
+  onFocus?: () => void;
+  onBlur?: () => void;
+  id?: string;
 }
+
+const DEFAULT_PLACES_INPUT_CLASS =
+  'w-full px-3 py-3 border-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-base';
 
 export default function PlacesAutocomplete({
   value,
   onChange,
   onSelect,
   placeholder = 'Enter address...',
+  className,
+  onFocus,
+  onBlur,
+  id,
 }: PlacesAutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
@@ -61,11 +75,14 @@ export default function PlacesAutocomplete({
   return (
     <input
       ref={inputRef}
+      id={id}
       type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onFocus={onFocus}
+      onBlur={onBlur}
       placeholder={placeholder}
-      className="w-full px-3 py-3 border-2 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-base"
+      className={className ?? DEFAULT_PLACES_INPUT_CLASS}
     />
   );
 }

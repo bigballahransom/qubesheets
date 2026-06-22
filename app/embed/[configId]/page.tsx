@@ -10,10 +10,13 @@
 // tweaks. Since there's nothing useful to SSR for the form anyway (it
 // needs the Google Maps script, which only exists in the browser), we
 // just do the fetch in useEffect and render entirely on the client.
+//
+// While the config is in flight, render a skeleton card whose shape matches
+// the form so the user sees something tangible immediately and there's no
+// layout shift when the real form takes over.
 
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
 import LeadForm from '@/components/embed/LeadForm';
 
 interface PublicFormConfig {
@@ -29,6 +32,71 @@ interface PublicFormConfig {
     logoUrl?: string;
   };
   postSubmit: { kind: 'inline-message' | 'redirect-chooser'; message?: string };
+  moveSizeOptions?: string[];
+  steps?: Array<{ heading?: string; fields: string[] }>;
+}
+
+// Same outer-shell dimensions as the real form so the skeleton occupies the
+// same footprint — zero layout shift when the form swaps in.
+function FormSkeleton() {
+  return (
+    <div className="min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col">
+      <div
+        className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-5 @sm:p-7 @md:p-8"
+        aria-busy="true"
+        aria-label="Loading form"
+      >
+        {/* Title bar */}
+        <div className="h-6 w-2/3 mx-auto rounded-md bg-gray-100 animate-pulse mb-3" />
+        <div className="h-4 w-1/2 mx-auto rounded-md bg-gray-100 animate-pulse mb-6" />
+        {/* Progress dots placeholder */}
+        <div className="flex items-center justify-center gap-1.5 mb-6">
+          <div className="h-1.5 w-7 rounded-full bg-gray-200" />
+          <div className="h-1.5 w-1.5 rounded-full bg-gray-200" />
+          <div className="h-1.5 w-1.5 rounded-full bg-gray-200" />
+        </div>
+        {/* Heading */}
+        <div className="h-7 w-3/4 rounded-md bg-gray-100 animate-pulse mb-5" />
+        {/* Two input shapes */}
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <div className="h-3 w-20 rounded bg-gray-100 animate-pulse" />
+            <div className="h-12 w-full rounded-xl bg-gray-100 animate-pulse" />
+          </div>
+          <div className="space-y-1.5">
+            <div className="h-3 w-24 rounded bg-gray-100 animate-pulse" />
+            <div className="h-12 w-full rounded-xl bg-gray-100 animate-pulse" />
+          </div>
+        </div>
+        {/* Button */}
+        <div className="h-12 w-full rounded-xl bg-gray-200 animate-pulse mt-6" />
+      </div>
+    </div>
+  );
+}
+
+function Unavailable() {
+  return (
+    <div className="min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col">
+      <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-8 text-center">
+        <p className="text-gray-600 text-base">This form is not available.</p>
+      </div>
+    </div>
+  );
+}
+
+// Notify the parent iframe of our body height after every render — covers the
+// skeleton, the error state, and any transient state before LeadForm takes
+// over its own height management.
+function postIframeHeight() {
+  if (typeof window === 'undefined') return;
+  if (window.parent === window) return;
+  try {
+    const height = document.documentElement.scrollHeight;
+    window.parent.postMessage({ type: 'qubesheets-form-resize', height }, '*');
+  } catch {
+    // cross-origin parent is fine; the postMessage still goes through
+  }
 }
 
 export default function EmbedPage() {
@@ -74,20 +142,18 @@ export default function EmbedPage() {
     };
   }, [configId]);
 
+  // Keep the host iframe sized correctly while we're in skeleton/unavailable
+  // states. Once <LeadForm /> mounts it takes over height reporting itself.
+  useEffect(() => {
+    postIframeHeight();
+  }, [loading, unavailable]);
+
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-6 py-12 bg-transparent">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-500" aria-label="Loading form" />
-      </div>
-    );
+    return <FormSkeleton />;
   }
 
   if (unavailable || !config) {
-    return (
-      <div className="p-8 text-center text-gray-600">
-        This form is not available.
-      </div>
-    );
+    return <Unavailable />;
   }
 
   return <LeadForm config={config} configId={configId} previewMode={previewMode} />;

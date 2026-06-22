@@ -33,12 +33,14 @@ import { CrmRoutingTab } from './tabs/CrmRoutingTab';
 import { EmbedCodeTab } from './tabs/EmbedCodeTab';
 import { PostSubmitTab } from './tabs/PostSubmitTab';
 import { JavaScriptPluginTab } from './tabs/JavaScriptPluginTab';
+import { AppearanceTab } from './tabs/AppearanceTab';
 import { FormStatsStrip } from './FormStatsStrip';
 import type {
   ILeadFormConfig,
   ILeadFormConfigCrmRouting,
   ILeadFormConfigField,
   LeadFormPostSubmit,
+  LeadFormStep,
   MoveSizeRoutingRule,
   SchedulingSettings,
 } from '@/models/LeadFormConfig';
@@ -58,6 +60,7 @@ export interface LeadFormConfigDTO {
   schedulingSettings?: SchedulingSettings;
   moveSizeOptions?: string[];
   moveSizeRouting?: MoveSizeRoutingRule[];
+  steps?: LeadFormStep[];
 }
 
 // Mutable subset that the Save button sends back.
@@ -66,9 +69,11 @@ interface EditableState {
   fields: ILeadFormConfigField[];
   crmRouting: ILeadFormConfigCrmRouting;
   postSubmit: LeadFormPostSubmit;
+  theme: ILeadFormConfig['theme'];
   schedulingSettings?: SchedulingSettings;
   moveSizeOptions?: string[];
   moveSizeRouting?: MoveSizeRoutingRule[];
+  steps?: LeadFormStep[];
 }
 
 function toEditable(config: LeadFormConfigDTO): EditableState {
@@ -79,6 +84,11 @@ function toEditable(config: LeadFormConfigDTO): EditableState {
     postSubmit: JSON.parse(
       JSON.stringify(config.postSubmit ?? { kind: 'redirect-chooser' })
     ),
+    theme: JSON.parse(JSON.stringify(config.theme ?? {
+      title: 'Get a Quote',
+      buttonText: 'Get a Quote',
+      buttonColor: '#2563eb',
+    })),
     schedulingSettings: config.schedulingSettings
       ? JSON.parse(JSON.stringify(config.schedulingSettings))
       : undefined,
@@ -87,6 +97,12 @@ function toEditable(config: LeadFormConfigDTO): EditableState {
       : undefined,
     moveSizeRouting: Array.isArray(config.moveSizeRouting)
       ? config.moveSizeRouting.map((r) => ({ ...r }))
+      : undefined,
+    steps: Array.isArray(config.steps)
+      ? config.steps.map((s) => ({
+          heading: s.heading,
+          fields: [...s.fields],
+        }))
       : undefined,
   };
 }
@@ -153,9 +169,11 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
           fields: draft.fields,
           crmRouting: draft.crmRouting,
           postSubmit: draft.postSubmit,
+          theme: draft.theme,
           schedulingSettings: draft.schedulingSettings ?? null,
           moveSizeOptions: draft.moveSizeOptions ?? null,
           moveSizeRouting: draft.moveSizeRouting ?? null,
+          steps: draft.steps ?? null,
         }),
       });
       if (!response.ok) {
@@ -350,6 +368,7 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
         <TabsList>
           <TabsTrigger value="fields">Fields</TabsTrigger>
           <TabsTrigger value="post-submit">After Submit</TabsTrigger>
+          <TabsTrigger value="appearance">Appearance</TabsTrigger>
           <TabsTrigger value="crm-routing">CRM Routing</TabsTrigger>
           <TabsTrigger value="embed-code">Embed Code</TabsTrigger>
           <TabsTrigger value="js-plugin">JavaScript Plugin</TabsTrigger>
@@ -362,6 +381,8 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
             onMoveSizeOptionsChange={(opts) =>
               setDraft((d) => ({ ...d, moveSizeOptions: opts }))
             }
+            steps={draft.steps}
+            onStepsChange={(steps) => setDraft((d) => ({ ...d, steps }))}
           />
         </TabsContent>
         <TabsContent value="post-submit" className="pt-4">
@@ -384,6 +405,12 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
             onMoveSizeRoutingChange={(moveSizeRouting) =>
               setDraft((d) => ({ ...d, moveSizeRouting }))
             }
+          />
+        </TabsContent>
+        <TabsContent value="appearance" className="pt-4">
+          <AppearanceTab
+            theme={draft.theme}
+            onChange={(theme) => setDraft((d) => ({ ...d, theme }))}
           />
         </TabsContent>
         <TabsContent value="crm-routing" className="pt-4">

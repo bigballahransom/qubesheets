@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import LeadFormConfig from '@/models/LeadFormConfig';
 import { getAuthContext } from '@/lib/auth-helpers';
+import { validateConfigCreate } from '@/lib/leads/validateConfig';
 
 export async function GET(): Promise<NextResponse> {
   try {
@@ -39,30 +40,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Organization required' }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+    }
 
-    if (!body?.name || typeof body.name !== 'string' || !body.name.trim()) {
-      return NextResponse.json(
-        { error: 'name is required' },
-        { status: 400 }
-      );
-    }
-    if (!body?.postSubmit || typeof body.postSubmit !== 'object') {
-      return NextResponse.json(
-        { error: 'postSubmit is required' },
-        { status: 400 }
-      );
-    }
-    if (
-      !body?.theme ||
-      typeof body.theme !== 'object' ||
-      !body.theme.title ||
-      typeof body.theme.title !== 'string'
-    ) {
-      return NextResponse.json(
-        { error: 'theme.title is required' },
-        { status: 400 }
-      );
+    const validationError = validateConfigCreate(body as Record<string, unknown>);
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
     await connectMongoDB();

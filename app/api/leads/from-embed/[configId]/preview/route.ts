@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import LeadFormConfig from '@/models/LeadFormConfig';
 import { normalize } from '@/lib/leads/normalize';
+import { validateLeadSubmission } from '@/lib/leads/validateSubmission';
 import { selectTerminal, findMoveSizeRoutingMatch } from '@/lib/leads/pipeline';
 import {
   actionConsumesCredit,
@@ -87,7 +88,7 @@ export async function POST(
 
     const body = await request.json().catch(() => ({}));
     // Honeypot: silently succeed so bots learn nothing. Same convention as
-    // the real submit endpoint.
+    // the real submit endpoint — and runs BEFORE validation for the same reason.
     if (typeof body?._hp_company === 'string' && body._hp_company.length > 0) {
       return NextResponse.json(
         {
@@ -107,6 +108,17 @@ export async function POST(
           },
         } satisfies PreviewResponse,
         { status: 200, headers: corsHeaders },
+      );
+    }
+
+    // Validate payload shape + caps. Same defensive surface as the real
+    // submit endpoint — even though the preview is owner-initiated, we don't
+    // want to render simulation cards for arbitrary blobs.
+    const validationError = validateLeadSubmission(body);
+    if (validationError) {
+      return NextResponse.json(
+        { error: validationError },
+        { status: 400, headers: corsHeaders },
       );
     }
 
