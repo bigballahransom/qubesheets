@@ -36,8 +36,8 @@ type ViewState =
   | { kind: 'booking'; data: SlotsPayload; scheduledFor: string }
   | { kind: 'booked'; data: SlotsPayload; scheduledFor: string };
 
-const EMBED_OUTER =
-  'min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col justify-center';
+// Content-sized; iframe shrinks to fit via postMessage.
+const EMBED_OUTER = 'bg-transparent p-2 sm:p-3';
 const EMBED_CARD =
   '@container max-w-md w-full mx-auto bg-white rounded-xl @sm:rounded-2xl shadow-lg @sm:shadow-xl border border-gray-200 p-5 @sm:p-7 @md:p-8';
 

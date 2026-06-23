@@ -496,12 +496,12 @@ function PremiumSuccess({
   spring: Transition;
 }) {
   return (
-    <div className="min-h-screen bg-transparent flex items-center justify-center px-4 py-10">
+    <div className="bg-transparent p-2 sm:p-3">
       <motion.div
         initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={spring}
-        className="@container max-w-md w-full bg-white rounded-2xl shadow-xl border border-gray-100 p-6 @sm:p-8 text-center"
+        className="@container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-6 @sm:p-8 text-center"
       >
         <motion.div
           initial={{ scale: 0 }}
@@ -1005,11 +1005,11 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
   return (
     <>
       {previewBanner}
-      <div className="min-h-screen bg-transparent px-2 py-3 sm:px-4 sm:py-10 flex flex-col">
+      <div className="bg-transparent p-2 sm:p-3">
         {/* @container drives padding + grid behavior off the card's width,
             not the viewport. Critical for iframe embeds where viewport tells
             us nothing useful about the available width. */}
-        <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8">
+        <div className="@container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8">
           {config.theme.logoUrl && (
             <img
               src={config.theme.logoUrl}
@@ -1744,8 +1744,8 @@ function PreviewResultView({
   );
 
   return (
-    <div className="min-h-screen bg-transparent px-2 py-3 sm:px-4 sm:py-10 flex flex-col">
-      <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8 space-y-5">
+    <div className="bg-transparent p-2 sm:p-3">
+      <div className="@container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8 space-y-5">
         <div className="flex items-start gap-3">
           <CheckCircle2 className="h-6 w-6 text-emerald-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">

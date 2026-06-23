@@ -19,8 +19,19 @@ export default function EmbedLayout({
           background color or hero image the host page uses behind the
           iframe. The companion <iframe> snippet sets the iframe element's
           background to transparent as well. */}
-      <style>{`html, body { background: transparent !important; }`}</style>
-      <div className="min-h-screen bg-transparent">{children}</div>
+      {/* Strip ALL default html/body margins + min-heights so the host iframe
+          can shrink to fit content. Without this the body has the user
+          agent's default ~8px margin AND the form's wrapper renders inside
+          a min-height: 100% body, both of which inflate scrollHeight. */}
+      <style>{`
+        html, body {
+          background: transparent !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          min-height: 0 !important;
+        }
+      `}</style>
+      <div className="bg-transparent">{children}</div>
     </>
   );
 }

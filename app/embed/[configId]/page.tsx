@@ -40,9 +40,9 @@ interface PublicFormConfig {
 // same footprint — zero layout shift when the form swaps in.
 function FormSkeleton() {
   return (
-    <div className="min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col">
+    <div className="bg-transparent p-2 sm:p-3">
       <div
-        className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-5 @sm:p-7 @md:p-8"
+        className="@container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-5 @sm:p-7 @md:p-8"
         aria-busy="true"
         aria-label="Loading form"
       >
@@ -77,8 +77,8 @@ function FormSkeleton() {
 
 function Unavailable() {
   return (
-    <div className="min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col">
-      <div className="@container max-w-md w-full mx-auto flex-1 bg-white rounded-2xl shadow-xl border border-gray-100 p-8 text-center">
+    <div className="bg-transparent p-2 sm:p-3">
+      <div className="@container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-8 text-center">
         <p className="text-gray-600 text-base">This form is not available.</p>
       </div>
     </div>

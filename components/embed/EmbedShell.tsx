@@ -11,8 +11,9 @@ import { CheckCircle, AlertCircle } from 'lucide-react';
 
 // Match UploadChooser / ScheduleCallView exactly so all post-submit
 // views share width + framing.
-const EMBED_OUTER =
-  'min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col justify-center';
+// Content-sized so the host iframe can shrink to fit. No min-height,
+// no flex centering — the iframe is sized to the card via postMessage.
+const EMBED_OUTER = 'bg-transparent p-2 sm:p-3';
 const EMBED_CARD =
   '@container max-w-md w-full mx-auto bg-white rounded-xl @sm:rounded-2xl shadow-lg @sm:shadow-xl border border-gray-200 p-5 @sm:p-7 @md:p-8';
 

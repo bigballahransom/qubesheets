@@ -16,12 +16,32 @@ interface EmbedCodeTabProps {
 }
 
 function buildSnippet(origin: string, configId: string): string {
+  // The snippet ships TWO things:
+  //   1. An <iframe> with a small initial min-height so something is visible
+  //      while the form's bundle is loading.
+  //   2. A tiny inline <script> that listens for the form's
+  //      `qubesheets-form-resize` postMessages and sets the iframe height
+  //      to the reported content size. This is what makes the iframe
+  //      "shrink to fit" the form (and grow when the wizard advances).
+  const iframeId = `qs-leadform-${configId}`;
   return `<iframe
+  id="${iframeId}"
   src="${origin}/embed/${configId}"
-  style="width: 100%; height: 100%; min-height: 900px; min-width: 320px; border: 0; background: transparent;"
+  style="width: 100%; min-height: 200px; min-width: 320px; border: 0; background: transparent; display: block;"
   frameborder="0"
-  allowtransparency="true">
-</iframe>`;
+  allowtransparency="true"
+></iframe>
+<script>
+(function () {
+  var iframe = document.getElementById(${JSON.stringify(iframeId)});
+  if (!iframe) return;
+  window.addEventListener('message', function (e) {
+    if (!e.data || e.data.type !== 'qubesheets-form-resize') return;
+    if (e.source !== iframe.contentWindow) return;
+    iframe.style.height = e.data.height + 'px';
+  });
+})();
+</script>`;
 }
 
 export function EmbedCodeTab({ configId }: EmbedCodeTabProps) {
@@ -66,7 +86,7 @@ export function EmbedCodeTab({ configId }: EmbedCodeTabProps) {
         <Textarea
           readOnly
           value={snippet}
-          className="font-mono text-xs mt-4 min-h-[160px]"
+          className="font-mono text-xs mt-4 min-h-[280px]"
           onFocus={(e) => e.currentTarget.select()}
         />
       </div>

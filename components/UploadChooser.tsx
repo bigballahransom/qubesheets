@@ -68,13 +68,10 @@ const DEFAULT_VALIDATION: UploadChooserValidation = {
   photosEnabled: true,
 };
 
-// Outer wrapper + card classes that match LeadForm's framing. The card is
-// content-driven (no `flex-1`) so it collapses to just what it needs —
-// the second screen doesn't have to match the form's height. The outer
-// uses `min-h-screen` + `justify-center` so the card is vertically
-// centered within the same iframe area the form occupied.
-const EMBED_OUTER =
-  'min-h-screen bg-transparent px-3 py-4 sm:px-4 sm:py-10 flex flex-col justify-center';
+// Outer wrapper + card classes that match LeadForm's framing. Content-sized
+// (no min-height) so the host iframe shrinks to the chooser's actual height
+// — same approach LeadForm uses, keeping the post-submit transition tight.
+const EMBED_OUTER = 'bg-transparent p-2 sm:p-3';
 const EMBED_CARD =
   '@container max-w-md w-full mx-auto bg-white rounded-xl @sm:rounded-2xl shadow-lg @sm:shadow-xl border border-gray-200 p-5 @sm:p-7 @md:p-8';
 

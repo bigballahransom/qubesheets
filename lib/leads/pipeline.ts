@@ -136,7 +136,6 @@ export async function ingestLead(
     source: source.kind,
     resultingProjectId: new mongoose.Types.ObjectId(projectId),
     resultingCustomerId: new mongoose.Types.ObjectId(customerId),
-    crmDispatchIds: [],
     consumedCredit,
   });
   const submissionId = String(submission._id);

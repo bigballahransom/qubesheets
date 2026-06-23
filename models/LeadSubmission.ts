@@ -12,7 +12,6 @@ export interface ILeadSubmission extends Document {
   source: 'embed' | 'api';
   resultingProjectId?: mongoose.Types.ObjectId;
   resultingCustomerId?: mongoose.Types.ObjectId;
-  crmDispatchIds?: string[];   // SQS message IDs for queued CRM fan-outs
   // True iff the action the customer actually saw was anything other
   // than `inline-message`. Counted into the org's monthly Lead Forms
   // credit pool. Undefined on legacy rows = treated as false.
@@ -49,7 +48,6 @@ const LeadSubmissionSchema: Schema = new Schema(
       ref: 'Customer',
       required: false,
     },
-    crmDispatchIds: { type: [String], required: false },
     consumedCredit: { type: Boolean, required: false, default: false },
     submittedAt: { type: Date, default: Date.now, index: true },
   },
