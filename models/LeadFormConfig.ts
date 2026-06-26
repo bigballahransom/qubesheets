@@ -27,6 +27,10 @@ export interface ILeadFormConfigCrmRouting {
     jobType: string;
     salespersonEmail?: string;
   };
+  chariot?: {
+    referralSource?: string;
+    salespersonEmail?: string;
+  };
 }
 
 export interface PostSubmitBusinessHours {

@@ -244,6 +244,7 @@ export default function ProjectsPage() {
             {filteredProjects.map((project) => {
               const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
               const isSyncedToSupermove = !!project.metadata?.supermoveSync?.synced;
+              const isSyncedToChariot = !!project.metadata?.chariotSync?.synced;
 
               return (
                 <div
@@ -274,6 +275,17 @@ export default function ProjectsPage() {
                             <Image
                               src="/supermovetiny.png"
                               alt="Synced to Supermove"
+                              width={14}
+                              height={14}
+                              className="flex-shrink-0"
+                            />
+                          </span>
+                        )}
+                        {isSyncedToChariot && (
+                          <span title="Synced with Chariot">
+                            <Image
+                              src="/chariottiny.png"
+                              alt="Synced to Chariot"
                               width={14}
                               height={14}
                               className="flex-shrink-0"

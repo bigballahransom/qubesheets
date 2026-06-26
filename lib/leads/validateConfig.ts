@@ -171,6 +171,19 @@ function validateCrmRouting(v: unknown): string | null {
       }
     }
   }
+
+  if (v.chariot !== undefined) {
+    const ch = v.chariot;
+    if (!isObject(ch)) return 'crmRouting.chariot must be an object';
+    for (const key of ['referralSource', 'salespersonEmail'] as const) {
+      if (ch[key] !== undefined) {
+        if (!isString(ch[key])) return `crmRouting.chariot.${key} must be a string`;
+        if ((ch[key] as string).length > CONFIG_LIMITS.CRM_FIELD_MAX) {
+          return `crmRouting.chariot.${key} exceeds ${CONFIG_LIMITS.CRM_FIELD_MAX} characters`;
+        }
+      }
+    }
+  }
   return null;
 }
 

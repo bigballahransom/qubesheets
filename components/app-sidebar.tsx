@@ -66,6 +66,10 @@ interface Project {
       synced: boolean;
       syncedAt: string;
     };
+    chariotSync?: {
+      synced: boolean;
+      syncedAt: string;
+    };
   };
 }
 
@@ -427,6 +431,7 @@ export function AppSidebar() {
                       // Show SmartMoving logo only for projects that have been synced (have syncedAt timestamp)
                       const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
                       const isSyncedToSupermove = !!project.metadata?.supermoveSync?.synced;
+                      const isSyncedToChariot = !!project.metadata?.chariotSync?.synced;
 
                       return (
                         <li key={project._id}>
@@ -456,6 +461,17 @@ export function AppSidebar() {
                                     <Image
                                       src="/supermovetiny.png"
                                       alt="Synced to Supermove"
+                                      width={14}
+                                      height={14}
+                                      className="flex-shrink-0"
+                                    />
+                                  </span>
+                                )}
+                                {isSyncedToChariot && (
+                                  <span title="Synced with Chariot">
+                                    <Image
+                                      src="/chariottiny.png"
+                                      alt="Synced to Chariot"
                                       width={14}
                                       height={14}
                                       className="flex-shrink-0"

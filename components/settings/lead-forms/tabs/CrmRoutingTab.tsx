@@ -2,8 +2,8 @@
 
 // components/settings/lead-forms/tabs/CrmRoutingTab.tsx
 //
-// Two routing sections (SmartMoving / Supermove). Each section is gated
-// behind the org actually having that integration configured. We fetch
+// Three routing sections (SmartMoving / Supermove / Chariot). Each section is
+// gated behind the org actually having that integration configured. We fetch
 // configuration status from existing endpoints on mount.
 
 import { useEffect, useState } from 'react';
@@ -23,6 +23,7 @@ interface CrmRoutingTabProps {
 interface IntegrationStatus {
   smartmoving: boolean;
   supermove: boolean;
+  chariot: boolean;
   loading: boolean;
 }
 
@@ -31,6 +32,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
   const [status, setStatus] = useState<IntegrationStatus>({
     smartmoving: false,
     supermove: false,
+    chariot: false,
     loading: true,
   });
 
@@ -49,12 +51,20 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
             .catch(() => false)
         : Promise.resolve(false);
 
-      const [smartmoving, supermove] = await Promise.all([
+      const chariotPromise = organization?.id
+        ? fetch(`/api/organizations/${organization.id}/chariot`)
+            .then((r) => (r.ok ? r.json() : { configured: false }))
+            .then((d) => !!d?.configured)
+            .catch(() => false)
+        : Promise.resolve(false);
+
+      const [smartmoving, supermove, chariot] = await Promise.all([
         smartmovingPromise,
         supermovePromise,
+        chariotPromise,
       ]);
       if (cancelled) return;
-      setStatus({ smartmoving, supermove, loading: false });
+      setStatus({ smartmoving, supermove, chariot, loading: false });
     };
     load();
     return () => {
@@ -64,6 +74,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
 
   const smartmovingEnabled = !!routing.smartmoving;
   const supermoveEnabled = !!routing.supermove;
+  const chariotEnabled = !!routing.chariot;
 
   const toggleSmartmoving = (next: boolean) => {
     if (next) {
@@ -117,6 +128,33 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
         projectType: routing.supermove?.projectType ?? '',
         jobType: routing.supermove?.jobType ?? '',
         salespersonEmail: routing.supermove?.salespersonEmail,
+        ...patch,
+      },
+    });
+  };
+
+  const toggleChariot = (next: boolean) => {
+    if (next) {
+      onChange({
+        ...routing,
+        chariot: routing.chariot ?? {
+          referralSource: '',
+          salespersonEmail: '',
+        },
+      });
+    } else {
+      const { chariot: _drop, ...rest } = routing;
+      onChange(rest);
+    }
+  };
+
+  const updateChariot = (
+    patch: Partial<NonNullable<ILeadFormConfigCrmRouting['chariot']>>
+  ) => {
+    onChange({
+      ...routing,
+      chariot: {
+        ...(routing.chariot ?? {}),
         ...patch,
       },
     });
@@ -289,6 +327,65 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
                   value={routing.supermove?.salespersonEmail ?? ''}
                   onChange={(e) =>
                     updateSupermove({ salespersonEmail: e.target.value })
+                  }
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+          )
+        )}
+      </section>
+
+      {/* Chariot */}
+      <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-start justify-between gap-4 px-6 py-5">
+          <div>
+            <h2 className="text-base font-medium text-gray-900">Chariot</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Send leads to Chariot as new lead records.
+            </p>
+          </div>
+          <Switch
+            checked={chariotEnabled}
+            disabled={!status.chariot}
+            onCheckedChange={toggleChariot}
+          />
+        </div>
+
+        {!status.chariot ? (
+          <div className="border-t border-gray-100 px-6 py-4 bg-gray-50/60 text-sm text-gray-600">
+            Connect Chariot first.{' '}
+            <Link
+              href="/settings/integrations"
+              className="text-blue-600 hover:underline"
+            >
+              Go to Settings → Integrations
+            </Link>
+            .
+          </div>
+        ) : (
+          chariotEnabled && (
+            <div className="border-t border-gray-100 px-6 py-5 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="ch-referral">Referral source</Label>
+                <Input
+                  id="ch-referral"
+                  type="text"
+                  value={routing.chariot?.referralSource ?? ''}
+                  onChange={(e) =>
+                    updateChariot({ referralSource: e.target.value })
+                  }
+                  placeholder="Optional"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ch-email">Salesperson email</Label>
+                <Input
+                  id="ch-email"
+                  type="email"
+                  value={routing.chariot?.salespersonEmail ?? ''}
+                  onChange={(e) =>
+                    updateChariot({ salespersonEmail: e.target.value })
                   }
                   placeholder="Optional"
                 />

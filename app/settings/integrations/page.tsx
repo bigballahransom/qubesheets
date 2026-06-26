@@ -24,6 +24,13 @@ export default function IntegrationsPage() {
   const [sendUploadLinkOnCreate, setSendUploadLinkOnCreate] = useState(false);
   const [syncCrewLinkOnSync, setSyncCrewLinkOnSync] = useState(true);
 
+  // Chariot integration state
+  const [chariotEnabled, setChariotEnabled] = useState(false);
+  const [chariotSubdomain, setChariotSubdomain] = useState('');
+  const [chariotAuthToken, setChariotAuthToken] = useState('');
+  const [chariotAccountId, setChariotAccountId] = useState('');
+  const [hasChariotIntegration, setHasChariotIntegration] = useState(false);
+
   useEffect(() => {
     loadIntegrations();
   }, [user, organization]);
@@ -46,6 +53,22 @@ export default function IntegrationsPage() {
           }
         }
       }
+
+      // Load existing Chariot integration
+      const chariotRes = await fetch('/api/integrations/chariot');
+      if (chariotRes.ok) {
+        const cdata = await chariotRes.json();
+        if (cdata.exists) {
+          setHasChariotIntegration(true);
+          setChariotEnabled(cdata.integration.enabled !== false);
+          setChariotSubdomain(cdata.integration.clientSubdomain || '');
+          setChariotAccountId(cdata.integration.accountId || '');
+          if (cdata.integration.hasAuthToken) {
+            setChariotAuthToken('••••••••••••••••');
+          }
+        }
+      }
+
       setLoading(false);
     } catch (error) {
       console.error('Error loading integrations:', error);
@@ -115,6 +138,68 @@ export default function IntegrationsPage() {
         setSendUploadLinkOnCreate(false);
       } else if (smartMovingEnabled && (!smartMovingClientId || !smartMovingApiKey)) {
         toast.error('Please provide both Client ID and API Key');
+        return;
+      }
+
+      // Chariot save logic (parallel to SmartMoving above)
+      if (
+        chariotEnabled &&
+        chariotSubdomain &&
+        chariotAuthToken &&
+        !chariotAuthToken.includes('•')
+      ) {
+        const response = await fetch('/api/integrations/chariot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientSubdomain: chariotSubdomain,
+            authToken: chariotAuthToken,
+            accountId: chariotAccountId || undefined,
+            enabled: true,
+          }),
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to save Chariot integration');
+        }
+        toast.success('Chariot integration saved successfully!');
+        setHasChariotIntegration(true);
+        setChariotAuthToken('••••••••••••••••');
+      } else if (
+        chariotEnabled &&
+        hasChariotIntegration &&
+        chariotAuthToken.includes('•')
+      ) {
+        // Settings-only update (subdomain or account ID may have changed)
+        const response = await fetch('/api/integrations/chariot', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientSubdomain: chariotSubdomain,
+            accountId: chariotAccountId || undefined,
+            enabled: true,
+          }),
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update Chariot settings');
+        }
+        toast.success('Chariot settings updated successfully!');
+      } else if (!chariotEnabled && hasChariotIntegration) {
+        const response = await fetch('/api/integrations/chariot', {
+          method: 'DELETE',
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to delete Chariot integration');
+        }
+        toast.success('Chariot integration removed');
+        setHasChariotIntegration(false);
+        setChariotSubdomain('');
+        setChariotAuthToken('');
+        setChariotAccountId('');
+      } else if (chariotEnabled && (!chariotSubdomain || !chariotAuthToken)) {
+        toast.error('Please provide both Chariot subdomain and auth token');
         return;
       }
     } catch (error) {
@@ -444,8 +529,93 @@ export default function IntegrationsPage() {
                 </div>
               </div>
 
+              {/* Chariot Integration */}
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <img src="/chariot.png" alt="Chariot" className="h-16 w-auto mb-4" />
+                <h2 className="text-lg font-medium mb-2">Chariot Integration</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Connect Chariot to push AI-generated inventories into Chariot jobs.
+                </p>
+
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="chariot-enabled"
+                      checked={chariotEnabled}
+                      onChange={(e) => setChariotEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="chariot-enabled" className="text-sm">
+                      Enable Chariot integration
+                    </label>
+                  </div>
+
+                  {chariotEnabled && (
+                    <div className="space-y-4 pt-4 border-t">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          Client Subdomain
+                        </label>
+                        <input
+                          type="text"
+                          value={chariotSubdomain}
+                          onChange={(e) => setChariotSubdomain(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 font-mono"
+                          placeholder="e.g. iansmoving (or groovinmovin.demo)"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          The subdomain part of your Chariot URL. We resolve to{' '}
+                          <code className="bg-gray-100 px-1 rounded">
+                            https://{chariotSubdomain || '<subdomain>'}.chariotmove.com
+                          </code>
+                          .
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          <Key className="inline h-4 w-4 mr-1" />
+                          Auth Token
+                        </label>
+                        <input
+                          type="password"
+                          value={chariotAuthToken}
+                          onChange={(e) => setChariotAuthToken(e.target.value)}
+                          onFocus={() => {
+                            if (chariotAuthToken.includes('•')) setChariotAuthToken('');
+                          }}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder={hasChariotIntegration ? 'Enter new auth token to update' : 'Your Chariot auth token'}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Sent to Chariot as <code className="bg-gray-100 px-1 rounded">X-Auth-Token</code>.
+                          Keep this value secret.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          Account ID (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={chariotAccountId}
+                          onChange={(e) => setChariotAccountId(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 font-mono"
+                          placeholder="If your Chariot endpoints require X-Account-Id"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Required by some Chariot endpoints (e.g. validate_job). Leave blank if Chariot didn't issue you one.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Save Button */}
-              <Button 
+              <Button
                 onClick={saveIntegrations}
                 disabled={saving}
                 className="w-full"

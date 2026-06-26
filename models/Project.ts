@@ -64,6 +64,19 @@ export interface IProject extends Document {
       itemCount: number;
       syncedItemsHash: string;
     };
+    chariotSync?: {
+      synced: boolean;
+      jobId: string;
+      syncedAt: Date;
+      itemCount: number;
+      syncedItemsHash: string;
+      lastValidatedAt?: Date;
+      phoneMatched?: boolean;
+      // Chariot's inventory record ID returned on first sync. When present,
+      // we pass it back as `id` in the payload so subsequent syncs UPDATE
+      // the existing record instead of creating duplicates.
+      chariotInventoryId?: string | number;
+    };
     [key: string]: any;
   };
   // Weight configuration (per-project override)

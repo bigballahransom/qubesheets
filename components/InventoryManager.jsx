@@ -31,6 +31,7 @@ import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
 import SupermoveSyncModal from './modals/SupermoveSyncModal';
 import SmartMovingSyncModal from './modals/SmartMovingSyncModal';
+import ChariotSyncModal from './modals/ChariotSyncModal';
 import EditProjectDetailsModal from './modals/EditProjectDetailsModal';
 import InventoryNotes from './InventoryNotes';
 import VideoRecordingsTab from './VideoRecordingsTab';
@@ -158,6 +159,10 @@ const [smartMovingSyncStatus, setSmartMovingSyncStatus] = useState(null);
 const [smartMovingLoading, setSmartMovingLoading] = useState(false);
 const [smartMovingSyncModalOpen, setSmartMovingSyncModalOpen] = useState(false);
 const [smartMovingSyncResult, setSmartMovingSyncResult] = useState(null);
+const [chariotEnabled, setChariotEnabled] = useState(false);
+const [chariotSyncStatus, setChariotSyncStatus] = useState(null);
+const [chariotLoading, setChariotLoading] = useState(false);
+const [chariotSyncModalOpen, setChariotSyncModalOpen] = useState(false);
 const [editProjectModalOpen, setEditProjectModalOpen] = useState(false);
 const [refreshTrigger, setRefreshTrigger] = useState(0); // For cross-device inventory refresh
 const [notesCount, setNotesCount] = useState(0);
@@ -2258,6 +2263,102 @@ useEffect(() => {
     }
   }, [smartMovingEnabled, fetchSmartMovingSyncStatus]);
 
+  // Chariot Integration Functions
+  const checkChariotIntegration = useCallback(async () => {
+    if (!currentProject?.organizationId) return;
+    try {
+      const response = await fetch(`/api/organizations/${currentProject.organizationId}/chariot`);
+      if (response.ok) {
+        const data = await response.json();
+        setChariotEnabled(!!(data.enabled && data.configured));
+      }
+    } catch (error) {
+      console.error('Error checking Chariot integration:', error);
+      setChariotEnabled(false);
+    }
+  }, [currentProject?.organizationId]);
+
+  const fetchChariotSyncStatus = useCallback(async () => {
+    if (!currentProject?._id || !chariotEnabled) return;
+    try {
+      const response = await fetch(`/api/chariot/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setChariotSyncStatus(data);
+      }
+    } catch (error) {
+      console.error('Error fetching Chariot sync status:', error);
+    }
+  }, [currentProject?._id, chariotEnabled]);
+
+  const handleChariotSync = useCallback(async () => {
+    if (!currentProject?._id) return;
+    // Refresh status so the modal opens with current stats + jobId.
+    try {
+      const response = await fetch(`/api/chariot/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setChariotSyncStatus(data);
+        if (!data.inventoryStats?.goingItems) {
+          toast.error('No items marked as going to sync to Chariot');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Error pre-fetching Chariot status:', error);
+    }
+    setChariotSyncModalOpen(true);
+  }, [currentProject?._id]);
+
+  const handleChariotSyncConfirm = useCallback(
+    async (jobId, syncOptions, includeNotGoing = false) => {
+      if (!currentProject?._id) return;
+      setChariotLoading(true);
+      try {
+        const response = await fetch('/api/chariot/sync-inventory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: currentProject._id,
+            jobId,
+            syncOptions,
+            includeNotGoing,
+            phoneNumber: currentProject.phone,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || data.error || 'Chariot sync failed');
+        }
+        toast.success(
+          `Successfully synced ${data.syncDetails?.itemsSynced ?? ''} items to Chariot!`
+        );
+        setChariotSyncModalOpen(false);
+        await fetchChariotSyncStatus();
+      } catch (error) {
+        console.error('Chariot sync error:', error);
+        toast.error(error.message || 'Failed to sync to Chariot');
+      } finally {
+        setChariotLoading(false);
+      }
+    },
+    [currentProject?._id, currentProject?.phone, fetchChariotSyncStatus]
+  );
+
+  // Check Chariot integration when project loads
+  useEffect(() => {
+    if (currentProject) {
+      checkChariotIntegration();
+    }
+  }, [currentProject, checkChariotIntegration]);
+
+  // Fetch Chariot sync status when enabled
+  useEffect(() => {
+    if (chariotEnabled) {
+      fetchChariotSyncStatus();
+    }
+  }, [chariotEnabled, fetchChariotSyncStatus]);
+
   // Memoize filtered inventory for galleries to prevent re-renders when parent state changes
   const imageInventoryItems = useMemo(() => {
     return inventoryItems.filter(item => item.sourceImageId);
@@ -4329,6 +4430,32 @@ const ProcessingNotification = () => {
                 </MenubarItem>
               </>
             )}
+            {chariotEnabled && (
+              <>
+                <MenubarSeparator />
+                <MenubarItem
+                  onClick={handleChariotSync}
+                  disabled={chariotLoading}
+                >
+                  {chariotLoading ? (
+                    <>
+                      <Loader2 size={16} className="mr-1 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : chariotSyncStatus?.isSynced ? (
+                    <>
+                      <RefreshCw size={16} className="mr-1" />
+                      Re-sync to Chariot
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink size={16} className="mr-1" />
+                      Sync to Chariot
+                    </>
+                  )}
+                </MenubarItem>
+              </>
+            )}
             <MenubarSeparator />
             <MenubarItem onClick={() => handleDownloadProject()}>
               <Download size={16} className="mr-1" />
@@ -4752,6 +4879,23 @@ const ProcessingNotification = () => {
   onReset={handleSmartMovingSyncReset}
   inventoryStats={computedInventoryStats}
   isResync={!!smartMovingSyncStatus?.syncedAt}
+/>
+
+{/* Chariot Sync Modal */}
+<ChariotSyncModal
+  open={chariotSyncModalOpen}
+  onOpenChange={setChariotSyncModalOpen}
+  onSync={handleChariotSyncConfirm}
+  loading={chariotLoading}
+  projectPhone={currentProject?.phone}
+  inventoryStats={chariotSyncStatus?.inventoryStats || computedInventoryStats}
+  initialJobId={chariotSyncStatus?.jobId || ''}
+  isResync={!!chariotSyncStatus?.isSynced}
+  previousSyncedAt={chariotSyncStatus?.syncDetails?.syncedAt}
+  hasChariotInventoryId={
+    chariotSyncStatus?.syncDetails?.chariotInventoryId !== undefined &&
+    chariotSyncStatus?.syncDetails?.chariotInventoryId !== null
+  }
 />
 
 {/* Edit Project Details Modal */}
