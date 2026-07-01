@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
+import {
+  fetchReferralSources,
+  pickDefaultReferralSource,
+} from '@/lib/smartmoving/referenceData';
 
 // GET - Retrieve SmartMoving integration for the organization
 export async function GET() {
@@ -96,12 +100,40 @@ export async function POST(request: Request) {
     const integration = await SmartMovingIntegration.findOneAndUpdate(
       { organizationId: orgId }, // Query by org only
       integrationData,
-      { 
-        upsert: true, 
-        new: true, 
-        runValidators: true 
+      {
+        upsert: true,
+        new: true,
+        runValidators: true
       }
     );
+
+    // Auto-populate defaultReferralSourceId so lead-form submissions work
+    // without the customer touching any additional config. Best-effort:
+    // if SmartMoving is unreachable or the creds are bad, the send-time
+    // self-heal in the lead adapter will catch it on the next lead.
+    try {
+      const sources = await fetchReferralSources(
+        integration.smartMovingApiKey,
+        integration.smartMovingClientId,
+      );
+      if (sources.length > 0) {
+        const currentIsValid =
+          integration.defaultReferralSourceId &&
+          sources.some((s) => s.id === integration.defaultReferralSourceId);
+        if (!currentIsValid) {
+          const pick = pickDefaultReferralSource(sources);
+          if (pick) {
+            integration.defaultReferralSourceId = pick.id;
+            await integration.save();
+          }
+        }
+      }
+    } catch (err) {
+      console.error(
+        '[smartmoving.POST] auto-pick default referral source failed',
+        err,
+      );
+    }
 
     return NextResponse.json({
       success: true,

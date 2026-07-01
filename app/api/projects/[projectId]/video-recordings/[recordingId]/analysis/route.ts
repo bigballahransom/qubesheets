@@ -36,9 +36,20 @@ export async function GET(
       status: 'completed'
     }).sort({ segmentIndex: 1 }).lean();
 
-    // Extract analysis data from segments
+    // Extract analysis data from segments.
+    // `items` carries per-item room+timestamp from Gemini — this is the source
+    // of truth for chapter derivation. The segment-level `room` field is
+    // deprecated (always "Unknown") in the current pipeline.
     const segmentAnalyses = segments.map((segment: any) => {
       const rawAnalysis = segment.rawAnalysis || {};
+      const items = [
+        ...(rawAnalysis.furniture_items || []),
+        ...(rawAnalysis.packed_boxes || []),
+        ...(rawAnalysis.boxes_needed || []),
+      ]
+        .filter((i: any) => i?.room && i?.timestamp)
+        .map((i: any) => ({ room: i.room, timestamp: i.timestamp }));
+
       return {
         segmentIndex: segment.segmentIndex,
         summary: rawAnalysis.summary || '',
@@ -47,7 +58,8 @@ export async function GET(
         transcript_highlights: rawAnalysis.transcript_highlights || [],
         itemCount: (rawAnalysis.furniture_items?.length || 0) +
                    (rawAnalysis.packed_boxes?.length || 0) +
-                   (rawAnalysis.boxes_needed?.length || 0)
+                   (rawAnalysis.boxes_needed?.length || 0),
+        items,
       };
     });
 
@@ -76,6 +88,11 @@ export async function GET(
       consolidationResult: (recording as any).consolidationResult,
       totalSegments: segments.length,
       segments: segmentAnalyses,
+      // Canonical room catalog from the rooms pre-pass. Each entry carries
+      // `visitTimestamps[]` ("MM:SS") for every time the customer entered that
+      // room — the authoritative source for chapter generation. Empty for
+      // recordings processed before the catalog was introduced.
+      roomCatalog: (recording as any).analysisResult?.roomCatalog || [],
       // Combined data across all segments
       transcriptHighlights: allTranscriptHighlights,
       packingNotes: allPackingNotes,

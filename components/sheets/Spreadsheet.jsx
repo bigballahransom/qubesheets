@@ -4,6 +4,8 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, memo } from 'react';
 import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info, Pencil, Check, Tags } from 'lucide-react';
 import VideoRecordingModal from '../VideoRecordingModal';
+import VideoChapters from '../video/VideoChapters';
+import { useVideoChapters } from '@/lib/hooks/useVideoChapters';
 import {
   Dialog,
   DialogContent,
@@ -19,6 +21,10 @@ import {
 } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
+import { useInventoryWrites } from '@/lib/inventory/InventoryWritesContext';
+import { getRoomTotals } from '@/lib/inventory/aggregates';
+import RoomItemsTable from '@/components/inventory/RoomItemsTable';
+import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
@@ -195,6 +201,88 @@ export default function Spreadsheet({
   weightConfig = { weightMode: 'actual', customWeightMultiplier: 7 },
   onWeightConfigChange = null
 }) {
+  // Inventory-write coordination: lets us mark items dirty (so polls
+  // preserve in-flight edits) and push server responses straight into the
+  // parent's inventoryItems via `mergeUpdatedItem` — no full refetch needed.
+  const writesCtx = useInventoryWrites();
+
+  // Per-item debounce + single-flight queue for count PATCHes. Spamming +/-
+  // used to fire one PATCH per click and the responses raced — a server
+  // response for an older `quantity` would clobber a newer optimistic value
+  // and the displayed count would bounce. With this queue:
+  //  - Rapid clicks within 300 ms coalesce into one PATCH with the latest
+  //    payload.
+  //  - At most one PATCH per item is in flight; new clicks while one's in
+  //    flight extend `latestPayload` and auto-fire when the prior commits.
+  //  - `mergeUpdatedItem(serverItem)` only runs when the queue is fully
+  //    drained for that item, so server responses can't overwrite a still-
+  //    pending optimistic value.
+  // Map<inventoryItemId, { timer, latestPayload, inFlight }>
+  const patchQueueRef = useRef(new Map());
+  const schedulePatch = useCallback((inventoryItemId, payload) => {
+    if (!projectId || !inventoryItemId) return;
+    const queue = patchQueueRef.current;
+    let entry = queue.get(inventoryItemId);
+    if (!entry) {
+      entry = { timer: null, latestPayload: null, inFlight: false };
+      queue.set(inventoryItemId, entry);
+    }
+    entry.latestPayload = { ...(entry.latestPayload || {}), ...payload };
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+      entry.timer = null;
+    }
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      flushPatchRef.current?.(inventoryItemId);
+    }, 300);
+  }, [projectId]);
+
+  // `flushPatch` needs `schedulePatch`'s entry to exist already. To break the
+  // useCallback cycle we keep a ref and assign below.
+  const flushPatchRef = useRef(null);
+  const flushPatch = useCallback(async (inventoryItemId) => {
+    const queue = patchQueueRef.current;
+    const entry = queue.get(inventoryItemId);
+    if (!entry) return;
+    if (entry.inFlight) return; // will auto-retry on commit
+    const payload = entry.latestPayload;
+    if (!payload) {
+      writesCtx?.markClean?.(inventoryItemId);
+      return;
+    }
+    entry.latestPayload = null;
+    entry.inFlight = true;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to persist quantity change');
+      let updated = null;
+      try { updated = await res.json(); } catch {}
+      // Only adopt the server's view if no further user edits are pending.
+      // If `latestPayload` was set during the flight, the next flush carries
+      // those — let it own the next mergeUpdatedItem so we don't overwrite
+      // the user's newest value with a stale server snapshot.
+      if (updated && !entry.latestPayload && writesCtx?.mergeUpdatedItem) {
+        writesCtx.mergeUpdatedItem(updated);
+      }
+    } catch (err) {
+      console.error('Failed to persist quantity change:', err);
+    } finally {
+      entry.inFlight = false;
+      if (entry.latestPayload) {
+        // More clicks came in during flight — fire the follow-up PATCH.
+        flushPatchRef.current?.(inventoryItemId);
+      } else {
+        writesCtx?.markClean?.(inventoryItemId);
+      }
+    }
+  }, [projectId, writesCtx]);
+  flushPatchRef.current = flushPatch;
+
   // State for spreadsheet data
   const [columns, setColumns] = useState(
     initialColumns.length > 0
@@ -239,6 +327,23 @@ export default function Spreadsheet({
   const [previewMedia, setPreviewMedia] = useState(null); // For media preview modal
   const [selectedMedia, setSelectedMedia] = useState(null); // Full media data with details
   const [loadingMedia, setLoadingMedia] = useState(false);
+  const previewVideoRef = useRef(null);
+  const [previewVideoTime, setPreviewVideoTime] = useState(0);
+
+  const isPreviewVideo = selectedMedia?.type === 'video';
+  const { chapters: previewChapters, activeChapter: previewActiveChapter } = useVideoChapters({
+    projectId,
+    videoId: isPreviewVideo ? selectedMedia?._id : null,
+    currentTime: previewVideoTime,
+    enabled: isPreviewVideo,
+  });
+
+  const seekPreviewVideoTo = (timeSec) => {
+    const v = previewVideoRef.current;
+    if (!v) return;
+    v.currentTime = timeSec;
+    setPreviewVideoTime(timeSec);
+  };
   const [videoCallModalOpen, setVideoCallModalOpen] = useState(false); // For video call recording modal
   const [selectedVideoRecording, setSelectedVideoRecording] = useState(null);
   const [loadingVideoCall, setLoadingVideoCall] = useState(false);
@@ -263,7 +368,10 @@ export default function Spreadsheet({
     isSaving: false
   });
 
-  // Stock inventory picker modal state
+  // Stock inventory picker modal state — used only by the spreadsheet's
+  // OWN bottom + Inventory button now. The media-preview modal's picker
+  // (with per-room defaultRoom + mediaSource attach) is owned internally
+  // by `MediaInventoryModal` after PR 2 of the modal consolidation.
   const [stockPickerOpen, setStockPickerOpen] = useState(false);
 
 
@@ -276,8 +384,10 @@ export default function Spreadsheet({
   const spreadsheetRef = useRef(null);
   const columnRefs = useRef({});
   const scrollPositionRef = useRef(null);  // Track scroll position for preservation
-  const localUpdateInProgressRef = useRef(false);  // Track local updates to prevent parent sync race condition
-  const localUpdateTimeoutRef = useRef(null);  // Track timeout to prevent race conditions from rapid clicks
+  // (Previously a 5 s `localUpdateInProgressRef` timer muted parent-driven
+  // syncs after a local edit. Retired in round 2 — `writesCtx.markDirty` /
+  // `markClean` is now the canonical mechanism, and is tied to the actual
+  // PATCH lifecycle rather than a guessed wall-clock window.)
   
 
   // Fetch media data on-demand when user clicks with caching and deduplication
@@ -524,12 +634,6 @@ export default function Spreadsheet({
   // This ensures external updates (like ToggleGoingBadge) are reflected
   // BUT skip updates that are just local changes echoing back from parent
   useEffect(() => {
-    // Skip sync if a local update is in progress (prevents race condition)
-    if (localUpdateInProgressRef.current) {
-      setIsLoading(false);
-      return;
-    }
-
     if (initialRows && initialRows.length > 0) {
       // Check if this is a real structural change vs just a local update echoing back
       // Sync on add/remove/reorder, name changes, AND per-unit cuft/weight changes
@@ -660,6 +764,17 @@ export default function Spreadsheet({
   // library — i.e. one-offs added to other items. Surfaced in the TagsCell
   // picker under "In this project" so the user can reapply them quickly
   // (and optionally promote them to the org library) without retyping.
+  // Rooms surfaced to RoomItemsTable's location-edit popover inside the
+  // preview modal. Mirrors the gallery modals' pattern.
+  const availableRooms = useMemo(() => {
+    const set = new Set();
+    for (const item of inventoryItems || []) {
+      const loc = (item?.location || '').trim();
+      if (loc) set.add(loc);
+    }
+    return Array.from(set);
+  }, [inventoryItems]);
+
   const projectOnlyTags = useMemo(() => {
     const orgSet = new Set(
       orgSmartTags.map((t) => String(t?.name || '').trim().toLowerCase())
@@ -955,9 +1070,6 @@ export default function Spreadsheet({
 
   // Handle +/- button clicks for Count column
   const handleCountChange = useCallback((rowId, delta) => {
-    // Mark local update in progress to prevent parent sync race condition
-    localUpdateInProgressRef.current = true;
-
     // Save scroll position before updating rows
     // Only save if not already pending restoration (prevents rapid click race condition)
     if (spreadsheetRef.current && !scrollPositionRef.current) {
@@ -992,18 +1104,6 @@ export default function Spreadsheet({
           newCells.col5 = (r.perUnitWeight * newCount).toString();
         }
 
-        // Persist directly to API (bypass parent state to avoid race condition)
-        if (projectId && r.inventoryItemId) {
-          fetch(`/api/projects/${projectId}/inventory/${r.inventoryItemId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              quantity: newCount,
-              goingQuantity: newCount  // Always all going
-            }),
-          }).catch(err => console.error('Failed to persist quantity change:', err));
-        }
-
         return { ...r, cells: newCells, quantity: newCount };
       }
       return r;
@@ -1013,22 +1113,25 @@ export default function Spreadsheet({
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
 
-    // Clear any existing timeout to prevent race conditions from rapid clicks
-    if (localUpdateTimeoutRef.current) {
-      clearTimeout(localUpdateTimeoutRef.current);
+    // Persist with the per-item queue: rapid +/- clicks coalesce into one
+    // PATCH and races on the response can't bounce the displayed count.
+    if (row.inventoryItemId) {
+      const inventoryItemId = row.inventoryItemId;
+      writesCtx?.markDirty?.(inventoryItemId);
+      writesCtx?.mergeUpdatedItem?.({
+        _id: inventoryItemId,
+        quantity: newCount,
+        goingQuantity: newGoingQty,
+      });
+      schedulePatch(inventoryItemId, {
+        quantity: newCount,
+        goingQuantity: newGoingQty,
+      });
     }
-    // Clear flag after React processes the update AND polling cycle
-    localUpdateTimeoutRef.current = setTimeout(() => {
-      localUpdateInProgressRef.current = false;
-      localUpdateTimeoutRef.current = null;
-    }, 5000);  // Extended to cover polling interval
-  }, [rows, onRowsChange, projectId, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay]);
+  }, [rows, onRowsChange, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay, writesCtx, schedulePatch]);
 
   // Set count to an absolute value (for input field - avoids delta timing issues)
   const setCountAbsolute = useCallback((rowId, newCount) => {
-    // Mark local update in progress to prevent parent sync race condition
-    localUpdateInProgressRef.current = true;
-
     // Save scroll position before updating rows
     // Only save if not already pending restoration (prevents rapid click race condition)
     if (spreadsheetRef.current && !scrollPositionRef.current) {
@@ -1063,18 +1166,6 @@ export default function Spreadsheet({
           newCells.col5 = (r.perUnitWeight * validCount).toString();
         }
 
-        // Persist directly to API (bypass parent state to avoid race condition)
-        if (projectId && r.inventoryItemId) {
-          fetch(`/api/projects/${projectId}/inventory/${r.inventoryItemId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              quantity: validCount,
-              goingQuantity: validCount  // Always all going
-            }),
-          }).catch(err => console.error('Failed to persist quantity change:', err));
-        }
-
         return { ...r, cells: newCells, quantity: validCount };
       }
       return r;
@@ -1084,22 +1175,23 @@ export default function Spreadsheet({
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
 
-    // Clear any existing timeout to prevent race conditions from rapid clicks
-    if (localUpdateTimeoutRef.current) {
-      clearTimeout(localUpdateTimeoutRef.current);
+    if (row.inventoryItemId) {
+      const inventoryItemId = row.inventoryItemId;
+      writesCtx?.markDirty?.(inventoryItemId);
+      writesCtx?.mergeUpdatedItem?.({
+        _id: inventoryItemId,
+        quantity: validCount,
+        goingQuantity: newGoingQty,
+      });
+      schedulePatch(inventoryItemId, {
+        quantity: validCount,
+        goingQuantity: newGoingQty,
+      });
     }
-    // Clear flag after React processes the update AND polling cycle
-    localUpdateTimeoutRef.current = setTimeout(() => {
-      localUpdateInProgressRef.current = false;
-      localUpdateTimeoutRef.current = null;
-    }, 5000);  // Extended to cover polling interval
-  }, [rows, onRowsChange, projectId, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay]);
+  }, [rows, onRowsChange, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay, writesCtx, schedulePatch]);
 
   // Callback for CountInput component - handles count changes with cuft/weight recalculation
   const handleCountInputChange = useCallback((rowId, newCount, perUnitCuft, perUnitWeight, inventoryItemId) => {
-    // Mark local update in progress to prevent parent sync race condition
-    localUpdateInProgressRef.current = true;
-
     // Save scroll position before updating rows
     // Only save if not already pending restoration (prevents rapid click race condition)
     if (spreadsheetRef.current && !scrollPositionRef.current) {
@@ -1143,28 +1235,21 @@ export default function Spreadsheet({
     onRowsChange(updatedRows);  // Sync with parent
     setSaveStatus('saving');
 
-    // Persist directly to API (bypass parent state to avoid race condition)
-    if (projectId && inventoryItemId) {
-      fetch(`/api/projects/${projectId}/inventory/${inventoryItemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quantity: validCount,
-          goingQuantity: validCount  // Always all going
-        }),
-      }).catch(err => console.error('Failed to persist quantity change:', err));
+    // Per-item queue: coalesce rapid clicks into one PATCH, serialize
+    // per-item so a slow response can't overwrite a freshly-clicked value.
+    if (inventoryItemId) {
+      writesCtx?.markDirty?.(inventoryItemId);
+      writesCtx?.mergeUpdatedItem?.({
+        _id: inventoryItemId,
+        quantity: validCount,
+        goingQuantity: newGoingQty,
+      });
+      schedulePatch(inventoryItemId, {
+        quantity: validCount,
+        goingQuantity: newGoingQty,
+      });
     }
-
-    // Clear any existing timeout to prevent race conditions from rapid clicks
-    if (localUpdateTimeoutRef.current) {
-      clearTimeout(localUpdateTimeoutRef.current);
-    }
-    // Clear flag after React processes the update AND polling cycle
-    localUpdateTimeoutRef.current = setTimeout(() => {
-      localUpdateInProgressRef.current = false;
-      localUpdateTimeoutRef.current = null;
-    }, 5000);  // Extended to cover polling interval
-  }, [rows, onRowsChange, projectId, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay]);
+  }, [rows, onRowsChange, parseGoingQuantity, calculateNewGoingQuantity, formatGoingDisplay, writesCtx, schedulePatch]);
 
   const handleKeyDown = useCallback((e) => {
     if (!activeCell) return;
@@ -3306,26 +3391,49 @@ export default function Spreadsheet({
       </div>
       
       
-      {/* Enhanced Media Preview Modal */}
-      <Dialog open={previewMedia !== null} onOpenChange={(open) => {
-        if (!open) {
+      {/* Enhanced Media Preview Modal — migrated to the shared
+          `MediaInventoryModal` shell (PR 2 of the modal consolidation).
+          The shell owns: DialogContent shape, min-w-0 wrapper, room
+          accordion + RoomItemsTable, per-room and bottom + Inventory
+          buttons, stock-picker mount with defaultRoom + mediaSource
+          attach. This component supplies only the media element itself,
+          the chapter timeline (video previews), and the analysis-results
+          block via slots. */}
+      <MediaInventoryModal
+        isOpen={previewMedia !== null}
+        onClose={() => {
           setPreviewMedia(null);
           setSelectedMedia(null);
+        }}
+        projectId={projectId}
+        inventoryItems={inventoryItems}
+        onInventoryUpdate={onInventoryUpdate}
+        onAddStockItem={onAddStockItem}
+        desktopLayout="panels"
+        media={{
+          kind: previewMedia?.type === 'video' ? 'video' : 'image',
+          id: selectedMedia?._id,
+          filter: (item) => {
+            const mediaId =
+              item.sourceImageId?._id || item.sourceImageId ||
+              item.sourceVideoId?._id || item.sourceVideoId;
+            return !!selectedMedia?._id && mediaId === selectedMedia._id;
+          },
+          sourceKey: previewMedia?.type === 'video' ? 'sourceVideoId' : 'sourceImageId',
+          chapters: previewChapters,
+        }}
+        headerTitle={
+          <span className="flex items-center gap-2">
+            {previewMedia?.type === 'image' ? (
+              <Camera size={20} className="text-blue-500" />
+            ) : (
+              <Video size={20} className="text-purple-500" />
+            )}
+            {truncateFileName(selectedMedia?.originalName || previewMedia?.name)}
+          </span>
         }
-      }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              {previewMedia?.type === 'image' ? (
-                <Camera size={20} className="text-blue-500" />
-              ) : (
-                <Video size={20} className="text-purple-500" />
-              )}
-              {truncateFileName(selectedMedia?.originalName || previewMedia?.name)}
-            </DialogTitle>
-          </DialogHeader>
-          
-          {loadingMedia ? (
+        mediaSlot={
+          loadingMedia ? (
             <div className="flex flex-col items-center justify-center py-8 space-y-3">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
               <div className="text-center">
@@ -3336,7 +3444,6 @@ export default function Spreadsheet({
               </div>
             </div>
           ) : selectedMedia?.error ? (
-            // Error state
             <div className="flex flex-col items-center justify-center py-12 space-y-4">
               <div className="p-4 bg-red-50 rounded-full">
                 <X className="w-8 h-8 text-red-500" />
@@ -3353,239 +3460,96 @@ export default function Spreadsheet({
               </button>
             </div>
           ) : selectedMedia ? (
-            <div className="space-y-4">
-              {/* Media Display */}
-              <div className="relative bg-gray-100 rounded-lg overflow-hidden">
-                {selectedMedia.type === 'image' ? (
-                  // Display image using base64 from MongoDB
-                  selectedMedia.dataUrl ? (
-                    <img
-                      src={selectedMedia.dataUrl}
-                      alt={selectedMedia.originalName}
-                      className="w-full h-auto max-h-96 object-contain"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center p-8 text-gray-500">
-                      <Camera className="w-16 h-16 mb-4" />
-                      <span className="text-center">No image data available</span>
-                    </div>
-                  )
+            <div className="relative bg-gray-100 rounded-lg overflow-hidden">
+              {selectedMedia.type === 'image' ? (
+                selectedMedia.dataUrl ? (
+                  <img
+                    src={selectedMedia.dataUrl}
+                    alt={selectedMedia.originalName}
+                    className="w-full h-auto max-h-96 object-contain"
+                  />
                 ) : (
-                  // Display video using S3 streaming
-                  selectedMedia.streamUrl ? (
-                    <video
-                      src={selectedMedia.streamUrl}
-                      controls
-                      preload="metadata"
-                      className="w-full h-auto max-h-96 object-contain"
-                      style={{ maxHeight: '400px' }}
-                      onLoadedMetadata={(e) => {
-                        console.log('Video metadata loaded successfully');
-                        e.target.currentTime = 0;
-                      }}
-                      onError={(e) => {
-                        const videoElement = e.target;
-                        const error = videoElement.error;
-                        console.error('Video stream error details:', {
-                          error: error,
-                          code: error?.code,
-                          message: error?.message,
-                          MEDIA_ERR_ABORTED: error?.code === 1 ? 'MEDIA_ERR_ABORTED' : null,
-                          MEDIA_ERR_NETWORK: error?.code === 2 ? 'MEDIA_ERR_NETWORK' : null,
-                          MEDIA_ERR_DECODE: error?.code === 3 ? 'MEDIA_ERR_DECODE' : null,
-                          MEDIA_ERR_SRC_NOT_SUPPORTED: error?.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' : null,
-                          streamUrl: selectedMedia.streamUrl,
-                          videoId: selectedMedia._id,
-                          readyState: videoElement.readyState,
-                          networkState: videoElement.networkState,
-                          currentSrc: videoElement.currentSrc
-                        });
-                        
-                        // Test the URL directly
-                        fetch(selectedMedia.streamUrl, { method: 'HEAD' })
-                          .then(response => {
-                            console.log('Direct URL test:', {
-                              url: selectedMedia.streamUrl,
-                              status: response.status,
-                              statusText: response.statusText,
-                              headers: Object.fromEntries(response.headers.entries())
-                            });
-                          })
-                          .catch(fetchError => {
-                            console.error('Direct URL test failed:', {
-                              url: selectedMedia.streamUrl,
-                              error: fetchError.message
-                            });
-                          });
-                      }}
-                      onCanPlay={() => {
-                        console.log('Video can start playing');
-                      }}
-                    />
-                  ) : (
-                    // Video streaming URL not available
-                    <div className="w-full h-96 flex flex-col items-center justify-center gap-4 bg-gray-100">
-                      <Video className="w-12 h-12 text-gray-400" />
-                      <p className="text-sm text-gray-600 text-center">
-                        Video not available
-                      </p>
-                    </div>
-                  )
-                )}
-              </div>
-              
-              {/* Items, Boxes, and Recommended Boxes from this media - Grouped by Room */}
-              {(() => {
-                const allItems = inventoryItems.filter(item => {
-                  const mediaId = item.sourceImageId?._id || item.sourceImageId || item.sourceVideoId?._id || item.sourceVideoId;
-                  return mediaId === selectedMedia._id;
-                });
-
-                if (allItems.length === 0) return null;
-
-                // Group all items by room first
-                const roomGroups = groupByRoom(allItems);
-
-                return (
-                  <div className="mb-4">
-                    <Accordion type="multiple" className="w-full">
-                      {Object.entries(roomGroups).map(([room, roomItems]) => {
-                        // Separate items within this room by type
-                        const roomRegularItems = roomItems.filter(item =>
-                          item.itemType === 'furniture' ||
-                          item.itemType === 'regular_item' ||
-                          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                        );
-                        const roomExistingBoxes = roomItems.filter(item =>
-                          item.itemType === 'existing_box' ||
-                          item.itemType === 'packed_box'
-                        );
-                        const roomRecommendedBoxes = roomItems.filter(item =>
-                          item.itemType === 'boxes_needed'
-                        );
-
-                        const totalCount = roomItems.reduce((sum, i) => sum + (i.quantity || 1), 0);
-
-                        return (
-                          <AccordionItem key={room} value={room}>
-                            <AccordionTrigger className="py-2 text-sm font-medium">
-                              {room} ({totalCount})
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <div className="space-y-3">
-                                {/* Regular Items in this room */}
-                                {roomRegularItems.length > 0 && (
-                                  <div>
-                                    <h5 className="text-xs font-medium text-gray-600 mb-1">Items</h5>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomRegularItems.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Existing Boxes in this room */}
-                                {roomExistingBoxes.length > 0 && (
-                                  <div>
-                                    <div className="flex items-center gap-1 mb-1">
-                                      <h5 className="text-xs font-medium text-gray-600">Boxes</h5>
-                                      <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                        B
-                                      </span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomExistingBoxes.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Recommended Boxes in this room */}
-                                {roomRecommendedBoxes.length > 0 && (
-                                  <div>
-                                    <div className="flex items-center gap-1 mb-1">
-                                      <h5 className="text-xs font-medium text-gray-600">Recommended Boxes</h5>
-                                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                        R
-                                      </span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomRecommendedBoxes.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        );
-                      })}
-                    </Accordion>
+                  <div className="flex flex-col items-center justify-center p-8 text-gray-500">
+                    <Camera className="w-16 h-16 mb-4" />
+                    <span className="text-center">No image data available</span>
                   </div>
-                );
-              })()}
-
+                )
+              ) : (
+                selectedMedia.streamUrl ? (
+                  <video
+                    ref={previewVideoRef}
+                    src={selectedMedia.streamUrl}
+                    controls
+                    preload="metadata"
+                    className="w-full h-auto max-h-96 object-contain"
+                    style={{ maxHeight: '400px' }}
+                    onLoadedMetadata={(e) => {
+                      e.target.currentTime = 0;
+                      setPreviewVideoTime(0);
+                    }}
+                    onTimeUpdate={(e) => setPreviewVideoTime(e.target.currentTime)}
+                    onError={(e) => {
+                      const videoElement = e.target;
+                      const error = videoElement.error;
+                      console.error('Video stream error details:', {
+                        error, code: error?.code, message: error?.message,
+                        streamUrl: selectedMedia.streamUrl,
+                        videoId: selectedMedia._id,
+                        readyState: videoElement.readyState,
+                        networkState: videoElement.networkState,
+                        currentSrc: videoElement.currentSrc,
+                      });
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-96 flex flex-col items-center justify-center gap-4 bg-gray-100">
+                    <Video className="w-12 h-12 text-gray-400" />
+                    <p className="text-sm text-gray-600 text-center">Video not available</p>
+                  </div>
+                )
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center py-8 text-gray-500">
+              <span>No media data available</span>
+            </div>
+          )
+        }
+        extrasSlot={
+          isPreviewVideo && selectedMedia && !loadingMedia && !selectedMedia.error ? (
+            <VideoChapters
+              chapters={previewChapters}
+              activeChapter={previewActiveChapter}
+              onSeek={seekPreviewVideoTo}
+            />
+          ) : null
+        }
+        analysisSlot={
+          selectedMedia && !loadingMedia && !selectedMedia.error ? (
+            <>
               {selectedMedia.analysisResult && (
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
                   <div className="space-y-2 text-sm">
                     {(() => {
                       const mediaInventoryItems = inventoryItems.filter(item => {
-                        const mediaId = selectedMedia.type === 'image' 
+                        const mediaId = selectedMedia.type === 'image'
                           ? (item.sourceImageId?._id || item.sourceImageId)
                           : (item.sourceVideoId?._id || item.sourceVideoId);
                         return mediaId === selectedMedia._id;
                       });
-                      
-                      const regularItems = mediaInventoryItems.filter(item => 
+                      const regularItems = mediaInventoryItems.filter(item =>
                         item.itemType === 'regular_item' || item.itemType === 'furniture'
                       );
-                      
-                      const boxes = mediaInventoryItems.filter(item => 
+                      const boxes = mediaInventoryItems.filter(item =>
                         item.itemType === 'existing_box' || item.itemType === 'packed_box'
                       );
-                      
-                      const recommendedBoxes = mediaInventoryItems.filter(item => 
+                      const recommendedBoxes = mediaInventoryItems.filter(item =>
                         item.itemType === 'boxes_needed'
                       );
-                      
                       const regularItemsCount = regularItems.reduce((total, item) => total + (item.quantity || 1), 0);
                       const boxesCount = boxes.reduce((total, item) => total + (item.quantity || 1), 0);
                       const recommendedBoxesCount = recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
-                      
                       return (
                         <>
                           {regularItemsCount > 0 && (
@@ -3627,7 +3591,6 @@ export default function Spreadsheet({
                       </span>
                     </div>
                   </div>
-                  
                   {selectedMedia.analysisResult.summary && (
                     <div className="mt-3">
                       <h5 className="font-medium text-gray-900 mb-1">Summary</h5>
@@ -3638,21 +3601,16 @@ export default function Spreadsheet({
                   )}
                 </div>
               )}
-              
               {selectedMedia.description && (
                 <div>
                   <h4 className="font-medium text-gray-900 mb-2">Description</h4>
                   <p className="text-sm text-gray-600">{selectedMedia.description}</p>
                 </div>
               )}
-            </div>
-          ) : (
-            <div className="flex items-center justify-center py-8 text-gray-500">
-              <span>No media data available</span>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            </>
+          ) : null
+        }
+      />
 
       {/* Video Call Recording Modal */}
       <VideoRecordingModal
@@ -3667,6 +3625,7 @@ export default function Spreadsheet({
         inventoryItems={inventoryItems}
         onInventoryUpdate={onInventoryUpdate}
         initialItem={clickedInventoryItem}
+        onAddStockItem={onAddStockItem}
       />
 
       {/* Location Update Choice Dialog */}
@@ -4050,7 +4009,11 @@ export default function Spreadsheet({
         </DialogContent>
       </Dialog>
 
-      {/* Stock Inventory Picker Modal */}
+      {/* Stock Inventory Picker Modal — driven by the spreadsheet's own
+          bottom + Inventory button (adds globally, no media attachment).
+          The media-preview modal's picker is now owned internally by
+          `MediaInventoryModal`, so this mount no longer needs to track
+          media source or default room. */}
       <StockInventoryPickerModal
         isOpen={stockPickerOpen}
         onClose={() => setStockPickerOpen(false)}

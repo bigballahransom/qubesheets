@@ -65,7 +65,7 @@ export async function syncInventoryToSmartMoving(
     
     await connectMongoDB();
     console.log(`✅ [SMARTMOVING-SYNC] MongoDB connected successfully`);
-    
+
     // 1. Get project and check if it has SmartMoving integration
     console.log(`🔍 [SMARTMOVING-SYNC] Looking up project ${projectId}`);
     const project = await Project.findById(projectId);

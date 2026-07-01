@@ -57,6 +57,11 @@ type TagsCellProps = {
   // org Smart Tag library yet (one-offs). Surfaced as quick-pick suggestions
   // and can be promoted to the org library inline.
   projectTags?: string[];
+  // Optional pre-loaded org Smart Tags. When provided, the popover skips its
+  // own /api/settings/smart-tags fetch and renders from this list — used by
+  // the inventory modals via `useOrgSmartTags()` so the same data is shared
+  // across many cells without re-fetching per popover open.
+  orgTags?: OrgTag[] | null;
   onTagsChange?: (rowId: string, tags: string[]) => void;
   readOnly?: boolean;
 };
@@ -70,6 +75,7 @@ export default function TagsCell({
   inventoryItemId,
   projectId,
   projectTags = [],
+  orgTags = null,
   onTagsChange,
   readOnly = false
 }: TagsCellProps) {
@@ -123,6 +129,7 @@ export default function TagsCell({
           anchor={triggerRef.current}
           appliedTags={appliedTags}
           projectTags={projectTags}
+          initialOrgTags={orgTags}
           onClose={() => setIsOpen(false)}
           onAppliedTagsChange={(next) => {
             onTagsChange?.(rowId, next);
@@ -179,12 +186,16 @@ function TagsPopover({
   anchor,
   appliedTags,
   projectTags,
+  initialOrgTags,
   onClose,
   onAppliedTagsChange
 }: {
   anchor: HTMLElement | null;
   appliedTags: string[];
   projectTags: string[];
+  // Pre-loaded org tag list from the parent. When provided, skip the
+  // /api/settings/smart-tags fetch entirely and seed state with it.
+  initialOrgTags?: OrgTag[] | null;
   onClose: () => void;
   onAppliedTagsChange: (next: string[]) => void;
 }) {
@@ -201,8 +212,13 @@ function TagsPopover({
   const popoverRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const [orgTags, setOrgTags] = useState<OrgTag[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [orgTags, setOrgTags] = useState<OrgTag[]>(
+    Array.isArray(initialOrgTags) ? initialOrgTags : []
+  );
+  // Skip the loading state when the parent already provided a list.
+  const [loading, setLoading] = useState(
+    !(Array.isArray(initialOrgTags) && initialOrgTags.length > 0)
+  );
   const [search, setSearch] = useState('');
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState<string | null>(null);
@@ -258,7 +274,11 @@ function TagsPopover({
   }, [anchor, onClose]);
 
   // Load org tags + autofocus search.
+  // Skip the fetch when the parent passed `initialOrgTags` — the inventory
+  // modals do this via `useOrgSmartTags()` so the same list is reused for
+  // every TagsCell on the page instead of N parallel GETs.
   useEffect(() => {
+    if (Array.isArray(initialOrgTags) && initialOrgTags.length > 0) return;
     let cancelled = false;
     (async () => {
       try {
@@ -276,6 +296,7 @@ function TagsPopover({
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

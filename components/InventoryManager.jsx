@@ -41,6 +41,9 @@ import 'jspdf-autotable';
 import simpleRealTimeDatabase from '@/lib/simple-realtime-database';
 import { parseTagsCell, tagRgbFor } from '@/lib/tagColors';
 import { toast } from 'sonner';
+import { InventoryWritesContext } from '@/lib/inventory/InventoryWritesContext';
+import { fetchWithRetry, FetchRetryError } from '@/lib/fetchWithRetry';
+import { Skeleton } from './ui/skeleton';
 
 import {
   Menubar,
@@ -108,10 +111,10 @@ const isBoxItem = (item) => {
   return itemType === 'boxes_needed' || itemType === 'existing_box' || itemType === 'packed_box';
 };
 
-export default function InventoryManager() {
+export default function InventoryManager({ initialProject = null, onProjectRefresh = null } = {}) {
   const router = useRouter();
   const params = useParams();
-  const projectId = params?.projectId;
+  const projectId = initialProject?._id ?? params?.projectId;
   const { organization } = useOrganization();
   const { userId } = useAuth();
 
@@ -124,13 +127,80 @@ export default function InventoryManager() {
   const [assigningProject, setAssigningProject] = useState(false);
 
   const [inventoryItems, setInventoryItems] = useState([]);
+
+  // ── Dirty-aware refetch merge ────────────────────────────────────────
+  // Track which item IDs have unsaved local edits. When the server returns
+  // a full inventory list (poll, refetch, SSE refresh), we preserve the
+  // local copy for any item in this set so a refresh can't clobber the
+  // user's in-flight edit. Writers call markDirty(id) when an edit starts
+  // and markClean(id) once their queue drains. `mergeUpdatedItem` is the
+  // single-item path for the writer's onCommitted callback.
+  const dirtyItemIdsRef = useRef(new Set());
+
+  const markDirty = useCallback((itemId) => {
+    if (!itemId) return;
+    dirtyItemIdsRef.current.add(String(itemId));
+  }, []);
+
+  const markClean = useCallback((itemId) => {
+    if (!itemId) return;
+    dirtyItemIdsRef.current.delete(String(itemId));
+  }, []);
+
+  const mergeItemsFromServer = useCallback((serverItems) => {
+    if (!Array.isArray(serverItems)) return;
+    setInventoryItems((prev) => {
+      const prevById = new Map((prev || []).map((p) => [String(p._id), p]));
+      const dirty = dirtyItemIdsRef.current;
+      const merged = serverItems.map((s) => {
+        const id = String(s._id);
+        if (dirty.has(id)) {
+          // User is editing this row — keep their optimistic copy.
+          return prevById.get(id) ?? s;
+        }
+        return s;
+      });
+      // Also preserve any locally-dirty items that the server doesn't have
+      // yet (e.g., newly created on the client and not yet flushed).
+      for (const [id, local] of prevById) {
+        if (!merged.find((m) => String(m._id) === id) && dirty.has(id)) {
+          merged.push(local);
+        }
+      }
+      return merged;
+    });
+  }, []);
+
+  const mergeUpdatedItem = useCallback((updatedItem) => {
+    if (!updatedItem || !updatedItem._id) return;
+    const id = String(updatedItem._id);
+    setInventoryItems((prev) => {
+      const next = (prev || []).slice();
+      const idx = next.findIndex((p) => String(p._id) === id);
+      if (idx === -1) {
+        next.push(updatedItem);
+      } else {
+        next[idx] = { ...next[idx], ...updatedItem };
+      }
+      return next;
+    });
+  }, []);
+
+  // Stable context value for descendants (writer hook + cell editors).
+  const inventoryWritesValue = useMemo(
+    () => ({ markDirty, markClean, mergeUpdatedItem }),
+    [markDirty, markClean, mergeUpdatedItem],
+  );
+
   const [isUploaderOpen, setIsUploaderOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadedImages, setUploadedImages] = useState([]);
   const [pendingJobIds, setPendingJobIds] = useState([]);
-  const [currentProject, setCurrentProject] = useState(null);
+  const [currentProject, setCurrentProject] = useState(initialProject);
   const [loading, setLoading] = useState(true);
+  const [inventoryLoaded, setInventoryLoaded] = useState(false);
   const [error, setError] = useState(null);
+  const [errorKind, setErrorKind] = useState(null); // 'auth' | 'network' | 'server' | 'unknown' | null
   const [savingStatus, setSavingStatus] = useState('idle'); // 'idle', 'saving', 'saved', 'error'
   const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
   const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of image gallery
@@ -510,15 +580,62 @@ const inventoryDataChanged = (oldItems, newItems) => {
     });
   }, [weightConfig.weightMode, weightConfig.customWeightMultiplier]);
 
+  // Layer item-derived data (col1-col8 + perUnit fields + itemType etc.) onto
+  // user-owned layout (row order, custom columns col9+, react keys). This is
+  // the resolution of the round-2 "rows blob is layout, InventoryItem is data"
+  // split: the saved blob no longer carries per-item fields, and on every
+  // items change we overlay the canonical values onto whatever rows the user
+  // has arranged.
+  //
+  // Behavior:
+  //  - Each saved row with an inventoryItemId is rebuilt from items, but
+  //    keeps its saved `id` (React key stability) and any custom col9+ cells.
+  //  - Manual rows (no inventoryItemId) are returned unchanged.
+  //  - Items that don't appear in savedRows are appended (e.g., a new image
+  //    upload that produced an item after the user saved the layout).
+  //  - Items deleted server-side cause their saved row to drop out.
+  const overlayItemsOntoRows = useCallback((savedRows, items) => {
+    if (!Array.isArray(items) || items.length === 0) {
+      return Array.isArray(savedRows) ? savedRows : [];
+    }
+    if (!Array.isArray(savedRows) || savedRows.length === 0) {
+      return convertItemsToRows(items);
+    }
+    const fresh = convertItemsToRows(items);
+    const fromById = new Map(fresh.map((r) => [String(r.inventoryItemId), r]));
+    const seen = new Set();
+    const merged = [];
+    for (const saved of savedRows) {
+      if (!saved?.inventoryItemId) {
+        merged.push(saved);
+        continue;
+      }
+      const key = String(saved.inventoryItemId);
+      const fromItem = fromById.get(key);
+      if (!fromItem) continue; // item deleted server-side
+      seen.add(key);
+      merged.push({
+        ...saved,
+        ...fromItem,
+        id: saved.id, // preserve react key
+        cells: { ...saved.cells, ...fromItem.cells },
+      });
+    }
+    for (const f of fresh) {
+      if (!seen.has(String(f.inventoryItemId))) merged.push(f);
+    }
+    return merged;
+  }, [convertItemsToRows]);
+
   // Helper to refresh inventory items
   const fetchInventoryItems = useCallback(async () => {
     if (!currentProject) return;
-    
+
     try {
       const response = await fetch(`/api/projects/${currentProject._id}/inventory`);
       if (response.ok) {
         const items = await response.json();
-        setInventoryItems(items);
+        mergeItemsFromServer(items);
 
         // Note: Spreadsheet rows are updated via useEffect that waits for weightConfigLoaded
         // to prevent flickering when custom weight mode is set
@@ -686,25 +803,36 @@ const inventoryDataChanged = (oldItems, newItems) => {
               if (itemsResponse.ok) {
                 const newItems = await itemsResponse.json();
 
-                // Only update state if inventory data actually changed (prevents video card flickering)
+                // Dirty-aware merge: items the user is currently editing
+                // (tracked in dirtyItemIdsRef) keep their local optimistic
+                // copy. Everything else takes the server's version. This
+                // is what stops poll-driven refetches from reverting an
+                // in-progress count edit.
                 setInventoryItems(prevItems => {
-                  if (inventoryDataChanged(prevItems, newItems)) {
+                  const prevById = new Map((prevItems || []).map(p => [String(p._id), p]));
+                  const dirty = dirtyItemIdsRef.current;
+                  const merged = newItems.map(s => {
+                    const id = String(s._id);
+                    return dirty.has(id) ? (prevById.get(id) ?? s) : s;
+                  });
+                  // Preserve any locally-dirty rows the server hasn't seen yet.
+                  for (const [id, local] of prevById) {
+                    if (!merged.find(m => String(m._id) === id) && dirty.has(id)) {
+                      merged.push(local);
+                    }
+                  }
+
+                  // Only cascade UI side-effects if the merged result really differs.
+                  if (inventoryDataChanged(prevItems, merged)) {
                     console.log('📦 Inventory data changed, updating state');
-
-                    // Regenerate spreadsheet rows from updated inventory items
-                    const updatedRows = convertItemsToRows(newItems);
+                    const updatedRows = convertItemsToRows(merged);
                     setSpreadsheetRows(updatedRows);
-
-                    // Save the updated spreadsheet data
                     saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
-
-                    // Refresh image gallery (video gallery doesn't need refresh - cards use SSE)
                     setImageGalleryKey(prev => prev + 1);
-
-                    return newItems;
+                    return merged;
                   }
                   console.log('📦 Inventory unchanged, skipping update');
-                  return prevItems; // Return same reference - no re-render cascade
+                  return prevItems;
                 });
               }
             } catch (dataError) {
@@ -776,25 +904,19 @@ useEffect(() => {
   };
 }, [currentProject]);
   
-  // Initialize with project from URL parameter
+  // Initialize and re-load inventory whenever the project prop changes.
+  // page.jsx owns the project fetch (including the organizationDataRefresh listener)
+  // and re-mounts us with a fresh initialProject; we only re-load the inventory layer.
   useEffect(() => {
-    if (projectId) {
-      fetchProject(projectId);
+    if (initialProject) {
+      setCurrentProject(initialProject);
+      loadProjectData(initialProject._id);
+    } else if (projectId) {
+      // Fallback for callers that don't pass initialProject yet.
+      loadProjectData(projectId);
     }
-  }, [projectId]);
-  
-  // Listen for organization data refresh events
-  useEffect(() => {
-    const handleDataRefresh = () => {
-      if (projectId) {
-        console.log('Refreshing inventory data due to organization change');
-        fetchProject(projectId);
-      }
-    };
-    
-    window.addEventListener('organizationDataRefresh', handleDataRefresh);
-    return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
-  }, [projectId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProject, projectId]);
 
   // IMMEDIATE: Listen for customer upload processing events
   useEffect(() => {
@@ -893,49 +1015,32 @@ useEffect(() => {
     fetchWeightConfig();
   }, [currentProject?._id]);
 
-  // Function to fetch project details
-  const fetchProject = async (id) => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const response = await fetch(`/api/projects/${id}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch project');
-      }
-      
-      const project = await response.json();
-      setCurrentProject(project);
-      
-      // Now load project data
-      await loadProjectData(id);
-    } catch (err) {
-      console.error('Error fetching project:', err);
-      setError('Failed to load project. Please try again.');
-      setLoading(false);
-    }
-  };
-  
   // Function to load project data
   const loadProjectData = async (id) => {
+    setLoading(true);
+    setInventoryLoaded(false);
+    setError(null);
+    setErrorKind(null);
+
     try {
       let items = []; // Declare items at function scope
-      
+
       // IMMEDIATE: Load inventory items and spreadsheet data in parallel for faster loading
       const [itemsResponse, spreadsheetResponse, notesCountResponse] = await Promise.all([
-        fetch(`/api/projects/${id}/inventory`),
-        fetch(`/api/projects/${id}/spreadsheet`),
-        fetch(`/api/projects/${id}/notes/count`)
+        fetchWithRetry(`/api/projects/${id}/inventory`, { cache: 'no-store' }),
+        fetchWithRetry(`/api/projects/${id}/spreadsheet`, { cache: 'no-store' }),
+        fetchWithRetry(`/api/projects/${id}/notes/count`, { cache: 'no-store' }),
       ]);
-      
+
       // Set inventory items immediately when available
       if (itemsResponse.ok) {
         items = await itemsResponse.json(); // Assign to existing variable
-        setInventoryItems(items);
+        // First-load: dirty set is empty so this is equivalent to a direct
+        // set, but routing through the merge keeps the write path uniform.
+        mergeItemsFromServer(items);
         // Don't clear loading yet - wait until spreadsheet is fully processed
       } else {
-        throw new Error('Failed to fetch inventory items');
+        throw new FetchRetryError('Failed to fetch inventory items', { status: itemsResponse.status, response: itemsResponse });
       }
       
       // Process spreadsheet data (this can be slower due to migration logic)
@@ -1086,9 +1191,15 @@ useEffect(() => {
           const rowsWithInventoryIds = spreadsheetData.rows.filter(r => !!r.inventoryItemId);
           const manualRows = spreadsheetData.rows.filter(r => !r.inventoryItemId);
           console.log(`📊 Breakdown: ${rowsWithInventoryIds.length} rows with inventory IDs, ${manualRows.length} manual rows`);
-          setSpreadsheetRows(spreadsheetData.rows);
+          // Overlay item-derived col1-col8 onto the saved layout. New saves
+          // (round 2 and later) strip col1-col8 from the rows blob — without
+          // this overlay, those rows would render with empty cells. Older
+          // rows in MongoDB that still carry the stale cells get harmlessly
+          // overwritten by the canonical InventoryItem values.
+          const overlaid = overlayItemsOntoRows(spreadsheetData.rows, items);
+          setSpreadsheetRows(overlaid);
           // PERFORMANCE: Skip expensive deep cloning during initial load
-          previousRowsRef.current = spreadsheetData.rows;
+          previousRowsRef.current = overlaid;
           dataLoadedRef.current = true;
         } else if (items.length > 0) {
           // Convert inventory items to rows if no existing rows but we have items
@@ -1147,10 +1258,24 @@ useEffect(() => {
       }
       
       // Clear loading state only after ALL data is processed and ready to display
+      setInventoryLoaded(true);
       setLoading(false);
     } catch (err) {
       console.error('Error loading project data:', err);
-      setError('Failed to load project data. Please try again.');
+      let kind = 'unknown';
+      if (err instanceof FetchRetryError) {
+        if (err.status === 401 || err.status === 403) kind = 'auth';
+        else if (err.status && err.status >= 500) kind = 'server';
+        else if (err.status === null) kind = 'network';
+      }
+      setErrorKind(kind);
+      const messages = {
+        auth: 'Your session expired. Please sign in again.',
+        network: 'Connection lost. Check your network and retry.',
+        server: 'The service is temporarily unavailable. Please retry in a moment.',
+        unknown: 'Failed to load project data. Please try again.',
+      };
+      setError(messages[kind]);
       setLoading(false);
     }
   };
@@ -1297,9 +1422,28 @@ useEffect(() => {
   // Function to save spreadsheet data to MongoDB
   const saveSpreadsheetData = async (projId, columns, rows) => {
     if (!projId || !currentProject) return;
-    
+
     setSavingStatus('saving');
-    
+
+    // SINGLE SOURCE OF TRUTH: every per-item field (quantity, going, cuft,
+    // weight, packed_by, tags, location, name) belongs to the InventoryItem
+    // collection — col1-col8 in the rows blob is a derived projection. We
+    // strip them here so a slow rows-blob PUT can never overwrite a freshly
+    // PATCHed item with stale cells. The load path reconstructs col1-col8
+    // via `overlayItemsOntoRows(savedRows, inventoryItems)` so consumers
+    // never see empty cells — the saved blob is now layout (row order,
+    // column metadata, custom col9+ values) only.
+    const layoutOnlyRows = Array.isArray(rows)
+      ? rows.map((r) => {
+          if (!r || !r.cells) return r;
+          const layoutCells = { ...r.cells };
+          delete layoutCells.col1; delete layoutCells.col2; delete layoutCells.col3;
+          delete layoutCells.col4; delete layoutCells.col5; delete layoutCells.col6;
+          delete layoutCells.col7; delete layoutCells.col8;
+          return { ...r, cells: layoutCells };
+        })
+      : rows;
+
     try {
       const response = await fetch(`/api/projects/${projId}/spreadsheet`, {
         method: 'PUT',
@@ -1308,7 +1452,7 @@ useEffect(() => {
         },
         body: JSON.stringify({
           columns,
-          rows,
+          rows: layoutOnlyRows,
         }),
       });
       
@@ -1449,13 +1593,16 @@ useEffect(() => {
       
       console.log('✅ Inventory item deleted successfully');
       
-      // Refresh inventory items to update the UI and stats
+      // Refresh inventory items to update the UI and stats.
+      // Goes through the dirty-aware merge so unrelated rows mid-edit aren't
+      // clobbered by the post-delete refetch.
       const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
       if (itemsResponse.ok) {
         const updatedItems = await itemsResponse.json();
         console.log(`📊 Refreshing inventory stats: ${inventoryItems.length} -> ${updatedItems.length} items`);
-        console.log('📊 Updated inventory items:', updatedItems.map(item => ({ id: item._id, name: item.name, location: item.location })));
-        setInventoryItems(updatedItems);
+        // The just-deleted item also drops out of dirtyItemIdsRef.
+        dirtyItemIdsRef.current.delete(String(itemId));
+        mergeItemsFromServer(updatedItems);
       } else {
         console.error('❌ Failed to refresh inventory items after deletion');
       }
@@ -1524,8 +1671,8 @@ useEffect(() => {
       }
       
       const items = await itemsResponse.json();
-      setInventoryItems(items);
-      
+      mergeItemsFromServer(items);
+
       // Generate new spreadsheet rows from fresh inventory
       const updatedRows = convertItemsToRows(items);
       setSpreadsheetRows(updatedRows);
@@ -1591,22 +1738,33 @@ useEffect(() => {
     }
   }, [currentProject?._id]);
 
-  // Recalculate spreadsheet rows when weight config changes
-  // Only recalculate after weight config is loaded to prevent flickering
+  // Recalculate spreadsheet rows when weight config changes, OR when
+  // inventoryItems changes (e.g. a writer's onCommitted merge, a poll
+  // refetch, a delete). Use the overlay so we don't blow away saved row
+  // order or custom col9+ columns.
   useEffect(() => {
     if (inventoryItems.length > 0 && currentProject && weightConfigLoaded) {
-      console.log('🔄 Weight config changed, recalculating rows...');
-      const updatedRows = convertItemsToRows(inventoryItems);
-      setSpreadsheetRows(updatedRows);
+      setSpreadsheetRows((prev) => overlayItemsOntoRows(prev, inventoryItems));
     }
-  }, [weightConfig.weightMode, weightConfig.customWeightMultiplier, inventoryItems, convertItemsToRows, currentProject, weightConfigLoaded]);
+  }, [weightConfig.weightMode, weightConfig.customWeightMultiplier, inventoryItems, overlayItemsOntoRows, currentProject, weightConfigLoaded]);
 
   // Function to immediately update inventory item status for real-time stat updates
   // When newQuantity is provided, it updates both quantity and goingQuantity together
   const handleInventoryUpdate = useCallback(async (inventoryItemId, newGoingQuantity, newQuantity = null) => {
+    // Defensive bail. This is a per-ITEM delta handler — some legacy
+    // callers (modal stock-picker callbacks) used to invoke it with no
+    // args as a generic "please refresh" hook. That fell through to a
+    // PATCH on `/inventory/undefined` and the server replied 500. The
+    // correct refresh path is `reloadInventoryItems`, not this handler.
+    if (!inventoryItemId) {
+      console.warn('handleInventoryUpdate called without inventoryItemId — ignoring');
+      return;
+    }
     console.log(`🔄 Immediately updating inventory item ${inventoryItemId} goingQuantity to ${newGoingQuantity}${newQuantity ? `, quantity to ${newQuantity}` : ''}`);
 
-    // First, update the local state immediately for instant UI feedback
+    // Always do the local merge — this is the "echo to all surfaces"
+    // contract that consumers (ImageGallery, VideoGallery, BoxesManager,
+    // Spreadsheet) depend on for instant feedback.
     setInventoryItems(prev => {
       const updated = prev.map(item => {
         if (item._id === inventoryItemId) {
@@ -1631,9 +1789,25 @@ useEffect(() => {
       return updated;
     });
 
-    // Then, persist the change to the server to ensure it's saved
+    // Dirty-aware PATCH: a writer (ToggleGoingBadge, RoomItemsTable's
+    // ItemRow, the spreadsheet count handlers) may already own the in-
+    // flight PATCH for this item. Issuing a second PATCH here is the
+    // duplicate-write race that surfaced as "Failed to persist inventory
+    // update for item ..." errors. Skip the PATCH whenever the dirty set
+    // says somebody else is handling it — our local merge above already
+    // gave the user the instant feedback they need, and the writer's own
+    // mergeUpdatedItem will overwrite with the authoritative server copy
+    // when its PATCH commits.
+    if (dirtyItemIdsRef.current.has(String(inventoryItemId))) {
+      console.log(`⏭️ Skipping handleInventoryUpdate PATCH for ${inventoryItemId} — writer is in flight`);
+      return;
+    }
+
+    // Otherwise this came from a non-writer path (legacy gallery flows).
+    // Participate in the merge contract so OTHER surfaces still see the
+    // dirty-aware refetch + server-confirmed merge.
+    markDirty(inventoryItemId);
     try {
-      // Build the update payload - include quantity if provided
       const updatePayload = { goingQuantity: newGoingQuantity };
       if (newQuantity !== null) {
         updatePayload.quantity = newQuantity;
@@ -1648,16 +1822,20 @@ useEffect(() => {
       });
 
       if (!response.ok) {
-        console.error(`Failed to persist inventory update for item ${inventoryItemId}`);
-        // Note: We don't revert the local state here to avoid UI flicker
-        // The local state will be corrected on next data refresh if needed
+        console.error(`Failed to persist inventory update for item ${inventoryItemId}: ${response.status}`);
       } else {
+        try {
+          const updated = await response.json();
+          if (updated && updated._id) mergeUpdatedItem(updated);
+        } catch {}
         console.log(`✅ Successfully persisted goingQuantity ${newGoingQuantity}${newQuantity ? ` and quantity ${newQuantity}` : ''} for item ${inventoryItemId}`);
       }
     } catch (error) {
       console.error('Error persisting inventory update:', error);
+    } finally {
+      markClean(inventoryItemId);
     }
-  }, [convertItemsToRows, currentProject]);
+  }, [convertItemsToRows, currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle cuft/weight updates from Spreadsheet
   // newWeight is optional - if null, only cuft is updated (used in custom mode or when keeping current weight)
@@ -1685,6 +1863,10 @@ useEffect(() => {
       return updated;
     });
 
+    // Mark dirty so a poll/refetch arriving mid-PATCH can't clobber the
+    // optimistic value above with stale server data.
+    markDirty(inventoryItemId);
+
     // Then, persist the change to the server
     try {
       // Build payload - only include weight if provided
@@ -1704,12 +1886,20 @@ useEffect(() => {
       if (!response.ok) {
         console.error(`Failed to persist cuft update for item ${inventoryItemId}`);
       } else {
+        // Merge the server's authoritative item into local state — single
+        // source of truth, no full refetch needed.
+        try {
+          const updated = await response.json();
+          if (updated && updated._id) mergeUpdatedItem(updated);
+        } catch {}
         console.log(`✅ Successfully persisted cuft ${newCuft}${newWeight !== null ? ` and weight ${newWeight}` : ''} for item ${inventoryItemId}`);
       }
     } catch (error) {
       console.error('Error persisting cuft/weight update:', error);
+    } finally {
+      markClean(inventoryItemId);
     }
-  }, [convertItemsToRows, currentProject]);
+  }, [convertItemsToRows, currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle Smart Tag updates from Spreadsheet's TagsCell popover. The
   // TagsCell already optimistically updated the spreadsheet row's col8
@@ -1727,6 +1917,7 @@ useEffect(() => {
       )
     );
 
+    markDirty(inventoryItemId);
     try {
       const response = await fetch(
         `/api/projects/${currentProject._id}/inventory/${inventoryItemId}`,
@@ -1738,11 +1929,18 @@ useEffect(() => {
       );
       if (!response.ok) {
         console.error(`Failed to persist tags update for item ${inventoryItemId}`);
+      } else {
+        try {
+          const updated = await response.json();
+          if (updated && updated._id) mergeUpdatedItem(updated);
+        } catch {}
       }
     } catch (error) {
       console.error('Error persisting tags update:', error);
+    } finally {
+      markClean(inventoryItemId);
     }
-  }, [currentProject]);
+  }, [currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle packed_by (CP/PBO) updates from Spreadsheet
   const handlePackedByUpdate = useCallback(async (inventoryItemId, newPackedBy) => {
@@ -1757,7 +1955,7 @@ useEffect(() => {
       )
     );
 
-    // Persist to database
+    markDirty(inventoryItemId);
     try {
       const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
         method: 'PATCH',
@@ -1768,12 +1966,18 @@ useEffect(() => {
       if (!response.ok) {
         console.error(`Failed to persist packed_by update for item ${inventoryItemId}`);
       } else {
+        try {
+          const updated = await response.json();
+          if (updated && updated._id) mergeUpdatedItem(updated);
+        } catch {}
         console.log(`✅ Successfully persisted packed_by ${newPackedBy} for item ${inventoryItemId}`);
       }
     } catch (error) {
       console.error('Error persisting packed_by update:', error);
+    } finally {
+      markClean(inventoryItemId);
     }
-  }, [currentProject]);
+  }, [currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle location updates from Spreadsheet.
   // Throws on failure so the Spreadsheet's location dialog can await the
@@ -1790,19 +1994,27 @@ useEffect(() => {
       )
     );
 
-    // Persist to database
-    const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: newLocation }),
-    });
+    markDirty(inventoryItemId);
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: newLocation }),
+      });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`Failed to persist location for item ${inventoryItemId}: ${response.status} ${body}`);
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`Failed to persist location for item ${inventoryItemId}: ${response.status} ${body}`);
+      }
+      try {
+        const updated = await response.json();
+        if (updated && updated._id) mergeUpdatedItem(updated);
+      } catch {}
+      console.log(`✅ Successfully persisted location ${newLocation} for item ${inventoryItemId}`);
+    } finally {
+      markClean(inventoryItemId);
     }
-    console.log(`✅ Successfully persisted location ${newLocation} for item ${inventoryItemId}`);
-  }, [currentProject]);
+  }, [currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle going status updates from Spreadsheet dropdown (without regenerating rows)
   // This avoids triggering initialRows change which causes scroll jump
@@ -1823,6 +2035,7 @@ useEffect(() => {
     );
 
     // Persist to database
+    markDirty(inventoryItemId);
     try {
       const response = await fetch(`/api/projects/${currentProject._id}/inventory/${inventoryItemId}`, {
         method: 'PATCH',
@@ -1833,12 +2046,18 @@ useEffect(() => {
       if (!response.ok) {
         console.error(`Failed to persist goingQuantity update for item ${inventoryItemId}`);
       } else {
+        try {
+          const updated = await response.json();
+          if (updated && updated._id) mergeUpdatedItem(updated);
+        } catch {}
         console.log(`✅ Successfully persisted goingQuantity ${newGoingQuantity} for item ${inventoryItemId}`);
       }
     } catch (error) {
       console.error('Error persisting goingQuantity update:', error);
+    } finally {
+      markClean(inventoryItemId);
     }
-  }, [currentProject]);
+  }, [currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle bulk packed_by (CP/PBO) updates from Spreadsheet
   const handleBulkPackedByUpdate = useCallback(async (itemIds, newPackedBy) => {
@@ -1874,8 +2093,16 @@ useEffect(() => {
     }
   }, [currentProject]);
 
-  // Handle stock inventory changes - PATCH existing items, POST new ones, DELETE removed ones
-  const handleAddStockItems = useCallback(async (changedItems) => {
+  // Handle stock inventory changes - PATCH existing items, POST new ones, DELETE removed ones.
+  // `mediaSource` is the optional 2nd arg passed by modals that want their
+  // newly-added stock items attached to the piece of media currently being
+  // viewed. Shape: `{ sourceImageId }` | `{ sourceVideoId }` |
+  // `{ sourceVideoRecordingId }`. Spread directly into each newly-created
+  // inventory item so it shows up in that modal's media-filtered view.
+  // Stock items intentionally carry no `videoTimestamp` — RoomItemsTable's
+  // "Find in video" affordance only renders when `item.videoTimestamp` is
+  // truthy, so the row stays seek-free.
+  const handleAddStockItems = useCallback(async (changedItems, mediaSource = {}) => {
     if (!currentProject?._id) {
       toast.error('No project selected');
       return;
@@ -1964,6 +2191,11 @@ useEffect(() => {
             goingQuantity: quantity,
             packed_by: 'N/A',
             location: location || '', // Set location/room if specified
+            // Attach to the media (image / video / video recording) the
+            // user is viewing in the modal, when the caller passed one.
+            // No-op for the spreadsheet's bottom + Inventory button which
+            // adds globally.
+            ...mediaSource,
           };
           // Only include stockItemId if it's a valid ObjectId (not a custom_ prefix)
           if (!isCustomItem) {
@@ -2910,7 +3142,7 @@ useEffect(() => {
           effectiveRows = convertItemsToRows(freshItems);
           // Push to state so the UI catches up too — but read from the local
           // vars in this closure; setState won't be visible here synchronously.
-          setInventoryItems(freshItems);
+          mergeItemsFromServer(freshItems);
           setSpreadsheetRows(effectiveRows);
         }
       } catch (e) {
@@ -4122,19 +4354,42 @@ const ProcessingNotification = () => {
   }
   
   if (error) {
+    const errorTitle =
+      errorKind === 'auth' ? 'Session expired'
+      : errorKind === 'network' ? 'Connection lost'
+      : errorKind === 'server' ? 'Service temporarily unavailable'
+      : 'Error';
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50">
         <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full">
           <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-4">
-            <p className="font-semibold mb-2">Error</p>
+            <p className="font-semibold mb-2">{errorTitle}</p>
             <p>{error}</p>
           </div>
-          <Button 
-            className="w-full bg-blue-500 hover:bg-blue-600"
-            onClick={() => router.push('/projects')}
-          >
-            Return to Projects
-          </Button>
+          {errorKind === 'auth' ? (
+            <Button
+              className="w-full bg-blue-500 hover:bg-blue-600"
+              onClick={() => router.push('/sign-in')}
+            >
+              Sign in
+            </Button>
+          ) : (
+            <div className="flex gap-2">
+              <Button
+                className="flex-1 bg-blue-500 hover:bg-blue-600"
+                onClick={() => projectId && loadProjectData(projectId)}
+              >
+                Retry
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => router.push('/projects')}
+              >
+                Back to Projects
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -4244,6 +4499,7 @@ const ProcessingNotification = () => {
 
   // Main content - show an empty editable spreadsheet if no items yet
   return (
+    <InventoryWritesContext.Provider value={inventoryWritesValue}>
     <div className="min-h-screen bg-slate-50">
       {/* Main content wrapper */}
       <div className="pt-16 lg:pl-64 lg:pt-16"> {/* Add top padding for mobile header and left padding for sidebar on large screens */}
@@ -4491,34 +4747,47 @@ const ProcessingNotification = () => {
               <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center mr-3 flex-shrink-0">
                 <ShoppingBag className="h-5 w-5 text-blue-600" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-medium text-slate-500">Items</p>
-                <p className="text-2xl font-bold text-slate-800">{totalItems}</p>
+                {inventoryLoaded ? (
+                  <p className="text-2xl font-bold text-slate-800">{totalItems}</p>
+                ) : (
+                  <Skeleton className="h-7 w-12 mt-1" />
+                )}
               </div>
             </div>
-            
+
             {/* Box 2: Total Boxes */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
               <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center mr-3 flex-shrink-0">
                 <Package className="h-5 w-5 text-purple-600" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-medium text-slate-500">Boxes</p>
-                <p className="text-2xl font-bold text-slate-800">{totalBoxesWithoutRecommended}</p>
-                <div className="flex items-center gap-1">
-                  <p className="text-xs text-slate-500">Total w/ rec: {totalBoxes}</p>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-3 w-3 text-slate-400 cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p className="text-xs">Total including recommended boxes needed for packing</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
+                {inventoryLoaded ? (
+                  <>
+                    <p className="text-2xl font-bold text-slate-800">{totalBoxesWithoutRecommended}</p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-xs text-slate-500">Total w/ rec: {totalBoxes}</p>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3 w-3 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">Total including recommended boxes needed for packing</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Skeleton className="h-7 w-12 mt-1" />
+                    <Skeleton className="h-3 w-24 mt-2" />
+                  </>
+                )}
               </div>
             </div>
-            
+
             {/* Box 3: Total Cubic Feet */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
               <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center mr-3 flex-shrink-0">
@@ -4526,42 +4795,60 @@ const ProcessingNotification = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6.429 9.75 2.25 12l4.179 2.25m0-4.5 5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0 4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0-5.571 3-5.571-3" />
                 </svg>
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-medium text-slate-500">Volume</p>
-                <p className="text-2xl font-bold text-slate-800">{totalCubicFeet} <span className="text-sm font-medium text-slate-500">cuft</span></p>
-                <div className="flex items-center gap-1">
-                  <p className="text-xs text-slate-500">Without rec: {totalCubicFeetWithoutRecommended} cuft</p>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-3 w-3 text-slate-400 cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p className="text-xs">Total volume excluding recommended boxes needed for packing</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
+                {inventoryLoaded ? (
+                  <>
+                    <p className="text-2xl font-bold text-slate-800">{totalCubicFeet} <span className="text-sm font-medium text-slate-500">cuft</span></p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-xs text-slate-500">Without rec: {totalCubicFeetWithoutRecommended} cuft</p>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3 w-3 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">Total volume excluding recommended boxes needed for packing</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Skeleton className="h-7 w-20 mt-1" />
+                    <Skeleton className="h-3 w-28 mt-2" />
+                  </>
+                )}
               </div>
             </div>
-            
+
             {/* Box 4: Total Weight */}
             <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center shadow-sm hover:shadow-md transition-shadow">
               <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center mr-3 flex-shrink-0">
                 <Scale className="h-5 w-5 text-amber-600" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-medium text-slate-500">Weight</p>
-                <p className="text-2xl font-bold text-slate-800">{totalWeight} <span className="text-sm font-medium text-slate-500">lbs</span></p>
-                <div className="flex items-center gap-1">
-                  <p className="text-xs text-slate-500">Without rec: {totalWeightWithoutRecommended} lbs</p>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-3 w-3 text-slate-400 cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p className="text-xs">Total weight excluding recommended boxes needed for packing</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
+                {inventoryLoaded ? (
+                  <>
+                    <p className="text-2xl font-bold text-slate-800">{totalWeight} <span className="text-sm font-medium text-slate-500">lbs</span></p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-xs text-slate-500">Without rec: {totalWeightWithoutRecommended} lbs</p>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3 w-3 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">Total weight excluding recommended boxes needed for packing</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Skeleton className="h-7 w-20 mt-1" />
+                    <Skeleton className="h-3 w-28 mt-2" />
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -4631,8 +4918,19 @@ const ProcessingNotification = () => {
                 
                 {/* Spreadsheet Component */}
                 <div className="h-[calc(100vh-320px)]">
-                  {currentProject && (
-                    <Spreadsheet 
+                  {!inventoryLoaded ? (
+                    <div className="p-4 space-y-2">
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                      <Skeleton className="h-8 w-full" />
+                    </div>
+                  ) : currentProject ? (
+                    <Spreadsheet
                       key={`spreadsheet-${spreadsheetUpdateKey}`}
                       initialRows={showProcessingNotification ? [
                         {
@@ -4647,7 +4945,7 @@ const ProcessingNotification = () => {
                           isAnalyzing: true
                         },
                         ...spreadsheetRows.filter(row => !row.isAnalyzing)
-                      ] : spreadsheetRows.filter(row => !row.isAnalyzing)} 
+                      ] : spreadsheetRows.filter(row => !row.isAnalyzing)}
                       initialColumns={spreadsheetColumns}
                       onRowsChange={handleSpreadsheetRowsChange}
                       onColumnsChange={handleSpreadsheetColumnsChange}
@@ -4667,7 +4965,7 @@ const ProcessingNotification = () => {
                       weightConfig={weightConfig}
                       onWeightConfigChange={handleWeightConfigChange}
                     />
-                  )}
+                  ) : null}
                 </div>
               </div>
             </TabsContent>
@@ -4685,6 +4983,7 @@ const ProcessingNotification = () => {
                       refreshSpreadsheet={reloadInventoryItems}
                       inventoryItems={imageInventoryItems}
                       onInventoryUpdate={handleInventoryUpdate}
+                      onAddStockItem={handleAddStockItems}
                     />
                   )}
                 </div>
@@ -4707,6 +5006,7 @@ const ProcessingNotification = () => {
                       refreshSpreadsheet={reloadInventoryItems}
                       inventoryItems={videoInventoryItems}
                       onInventoryUpdate={handleInventoryUpdate}
+                      onAddStockItem={handleAddStockItems}
                     />
                   )}
                 </div>
@@ -4761,6 +5061,7 @@ const ProcessingNotification = () => {
                       projectName={currentProject.name}
                       refreshTrigger={videoRecordingsKey}
                       refreshSpreadsheet={reloadInventoryItems}
+                      onAddStockItem={handleAddStockItems}
                     />
                   ) : (
                     <div>No current project loaded</div>
@@ -4958,5 +5259,6 @@ const ProcessingNotification = () => {
   </DialogContent>
 </Dialog>
     </div>
+    </InventoryWritesContext.Provider>
   );
 }

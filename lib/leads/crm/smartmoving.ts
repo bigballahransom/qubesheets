@@ -1,6 +1,10 @@
 // lib/leads/crm/smartmoving.ts
 import connectMongoDB from '@/lib/mongodb';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
+import {
+  fetchReferralSources,
+  pickDefaultReferralSource,
+} from '@/lib/smartmoving/referenceData';
 import type { CrmAdapter, SendCtx, SendResult, ValidationResult } from './types';
 import type { NormalizedLead } from '../types';
 import type { ILeadFormConfig } from '@/models/LeadFormConfig';
@@ -43,6 +47,97 @@ function pickUtm(utm: Record<string, string> | undefined): Record<string, string
     if (v) out[k] = v;
   }
   return out;
+}
+
+interface PostLeadAttempt {
+  ok: boolean;
+  status: number;
+  rawText: string;
+  parsed: unknown;
+}
+
+async function postLead(
+  apiKey: string,
+  clientId: string,
+  body: Record<string, unknown>,
+): Promise<PostLeadAttempt> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(SMARTMOVING_LEADS_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  const rawText = await response.text();
+  let parsed: unknown = undefined;
+  if (rawText) {
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      parsed = rawText;
+    }
+  }
+  return { ok: response.ok, status: response.status, rawText, parsed };
+}
+
+/**
+ * SmartMoving returns 400 with a body like
+ *   "Unable to resolve referral source. Provide ReferralSource, ReferralSourceId..."
+ * when either the referralSource string doesn't match any source in the
+ * tenant or the referralSourceId points at a source that no longer exists.
+ * Match on the phrase rather than the exact wording so minor upstream
+ * copy changes don't defeat the self-heal.
+ */
+function isUnresolvedReferralSourceError(
+  rawText: string,
+  status: number,
+): boolean {
+  if (status !== 400) return false;
+  return /resolve\s+referral\s+source/i.test(rawText);
+}
+
+/**
+ * Refresh referral sources from SmartMoving, pick a new sensible default,
+ * persist it on the integration if it changed, and hand the id back so the
+ * caller can retry. Returns null when nothing usable was found OR when the
+ * pick matches the id that just failed (retrying would fail identically).
+ */
+async function healReferralSource(params: {
+  organizationId: string;
+  apiKey: string;
+  clientId: string;
+  currentDefaultId?: string;
+  failedWithReferralSourceId?: string;
+}): Promise<string | null> {
+  try {
+    const sources = await fetchReferralSources(params.apiKey, params.clientId);
+    if (sources.length === 0) return null;
+    const pick = pickDefaultReferralSource(sources);
+    if (!pick) return null;
+    // If we just tried this exact id and got the unresolved error, retrying
+    // would fail the same way. Bail so the caller returns the original error.
+    if (pick.id === params.failedWithReferralSourceId) return null;
+    if (pick.id !== params.currentDefaultId) {
+      await SmartMovingIntegration.updateOne(
+        { organizationId: params.organizationId },
+        { $set: { defaultReferralSourceId: pick.id } },
+      );
+    }
+    return pick.id;
+  } catch (err) {
+    console.error('[smartmoving.healReferralSource] failed', err);
+    return null;
+  }
 }
 
 export const smartmoving: CrmAdapter = {
@@ -138,9 +233,14 @@ export const smartmoving: CrmAdapter = {
       if (lead.moveSize) body.moveSize = lead.moveSize;
       if (lead.notes) body.notes = lead.notes;
 
-      if (routing.referralSource) body.referralSource = routing.referralSource;
-      if (integration.defaultReferralSourceId)
+      // SmartMoving rejects requests that carry both referralSource and
+      // referralSourceId ("You cannot specify both..."). Form-level routing
+      // wins when set; otherwise fall back to the integration default.
+      if (routing.referralSource) {
+        body.referralSource = routing.referralSource;
+      } else if (integration.defaultReferralSourceId) {
         body.referralSourceId = integration.defaultReferralSourceId;
+      }
       if (routing.serviceType) body.serviceType = routing.serviceType;
       if (routing.branchId) body.branchId = routing.branchId;
 
@@ -156,53 +256,58 @@ export const smartmoving: CrmAdapter = {
         };
       }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        REQUEST_TIMEOUT_MS
+      let attempt = await postLead(
+        integration.smartMovingApiKey,
+        integration.smartMovingClientId!,
+        body,
       );
 
-      let response: Response;
-      try {
-        response = await fetch(SMARTMOVING_LEADS_URL, {
-          method: 'POST',
-          headers: {
-            'x-api-key': integration.smartMovingApiKey,
-            'Ocp-Apim-Subscription-Key': integration.smartMovingClientId,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-          signal: controller.signal,
+      // Self-heal: if SmartMoving can't resolve the referral source (either
+      // the form-level name doesn't match any source in the tenant, or the
+      // stored defaultReferralSourceId is stale), fetch the live list, pick a
+      // fresh default, save it back to the integration, and retry once with
+      // the new ID. Keeps lead capture working even when config drifts.
+      if (
+        !attempt.ok &&
+        isUnresolvedReferralSourceError(attempt.rawText, attempt.status)
+      ) {
+        const failedWithReferralSourceId =
+          typeof body.referralSourceId === 'string'
+            ? body.referralSourceId
+            : undefined;
+        const healed = await healReferralSource({
+          organizationId: ctx.organizationId,
+          apiKey: integration.smartMovingApiKey,
+          clientId: integration.smartMovingClientId!,
+          currentDefaultId: integration.defaultReferralSourceId,
+          failedWithReferralSourceId,
         });
-      } finally {
-        clearTimeout(timeoutId);
-      }
-
-      const rawText = await response.text();
-      let parsed: unknown = undefined;
-      if (rawText) {
-        try {
-          parsed = JSON.parse(rawText);
-        } catch {
-          parsed = rawText;
+        if (healed) {
+          delete body.referralSource;
+          body.referralSourceId = healed;
+          attempt = await postLead(
+            integration.smartMovingApiKey,
+            integration.smartMovingClientId!,
+            body,
+          );
         }
       }
 
-      if (!response.ok) {
+      if (!attempt.ok) {
         return {
           ok: false,
-          retriable: response.status >= 500,
-          error: `${response.status} ${rawText}`.trim(),
-          raw: parsed,
+          retriable: attempt.status >= 500,
+          error: `${attempt.status} ${attempt.rawText}`.trim(),
+          raw: attempt.parsed,
         };
       }
 
       const leadId =
-        parsed && typeof parsed === 'object' && 'leadId' in parsed
-          ? String((parsed as { leadId: unknown }).leadId ?? '')
+        attempt.parsed && typeof attempt.parsed === 'object' && 'leadId' in attempt.parsed
+          ? String((attempt.parsed as { leadId: unknown }).leadId ?? '')
           : '';
 
-      return { ok: true, externalId: leadId, raw: parsed };
+      return { ok: true, externalId: leadId, raw: attempt.parsed };
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'unknown error in smartmoving.send';

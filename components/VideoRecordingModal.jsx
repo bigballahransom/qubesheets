@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   X,
   Play,
@@ -20,37 +20,26 @@ import {
   Package,
   Quote,
   RotateCcw,
-  RotateCw
+  RotateCw,
+  Plus
 } from 'lucide-react';
+import VideoChapters from './video/VideoChapters';
+import { useVideoChapters, computeOffsetSeconds } from '@/lib/hooks/useVideoChapters';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog';
 import { Slider } from './ui/slider';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { toast } from 'sonner';
 import VideoCallNotes from './VideoCallNotes';
 import { ToggleGoingBadge } from './ui/ToggleGoingBadge';
+import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
 
-// Helper to group items by location/room
-const groupByRoom = (items) => {
-  return items.reduce((acc, item) => {
-    const room = item.location || 'Unassigned';
-    if (!acc[room]) acc[room] = [];
-    acc[room].push(item);
-    return acc;
-  }, {});
-};
-
-const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryItems = [], onInventoryUpdate, initialItem = null }) => {
+const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryItems = [], onInventoryUpdate, initialItem = null, onAddStockItem = null }) => {
   const videoRef = useRef(null);
   const containerRef = useRef(null);
+  // Resize-drag close prevention + desktop/mobile detection are owned by
+  // MediaInventoryModal now. The shell wraps the whole modal in
+  // preventClose (blocking outside interactions) and internally toggles
+  // between panels (desktop) and stack (mobile) layouts.
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -64,6 +53,41 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
   const controlsTimeoutRef = useRef(null);
   const [analysisData, setAnalysisData] = useState(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+
+  // Rooms shown in the per-item edit popover. Combines the canonical
+  // catalog (preferred — canonical names + numbered duplicates) with any
+  // locations already observed on inventory items in this recording, so
+  // even legacy items whose room isn't in the catalog still resolve.
+  const availableRooms = useMemo(() => {
+    const set = new Set();
+    for (const r of (recording?.analysisResult?.roomCatalog || [])) {
+      if (r?.canonicalName) set.add(r.canonicalName);
+    }
+    for (const item of inventoryItems) {
+      if (item?.location) set.add(item.location);
+    }
+    return Array.from(set).sort();
+  }, [recording, inventoryItems]);
+
+  // Tag derivations (org smart tags + project-only tags) are owned by
+  // `MediaInventoryItemsColumn` now — the shell fetches once via
+  // `useOrgSmartTags` and filters project tags against it. `availableRooms`
+  // stays here because the recording modal enriches it with the recording's
+  // `roomCatalog` (see above); we forward it via `availableRoomsOverride`.
+
+  const { chapters, activeChapter } = useVideoChapters({
+    projectId,
+    recording,
+    currentTime,
+    enabled: isOpen,
+  });
+
+  const seekTo = (timeSec) => {
+    if (!videoRef.current) return;
+    setPlayingRoom(null); // any user-initiated seek breaks an active loop
+    videoRef.current.currentTime = timeSec;
+    setCurrentTime(timeSec);
+  };
 
   // Auto-hide controls after inactivity
   const resetControlsTimeout = () => {
@@ -150,107 +174,10 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     fetchAnalysisData();
   }, [isOpen, recording, projectId]);
 
-  // Auto-seek to initialItem's timestamp when video is ready
-  useEffect(() => {
-    // Find the item with timestamp from fresh inventoryItems data
-    // (spreadsheet row may have stale data without videoTimestamp)
-    let itemToSeek = initialItem;
-
-    if (initialItem && inventoryItems?.length > 0) {
-      // Try to find matching item by _id or inventoryItemId (spreadsheet rows use inventoryItemId)
-      const matchedItem = inventoryItems.find(item =>
-        (item._id === initialItem._id) ||
-        (item._id?.toString() === initialItem._id?.toString()) ||
-        (item._id === initialItem.inventoryItemId) ||
-        (item._id?.toString() === initialItem.inventoryItemId?.toString())
-      ) || inventoryItems.find(item =>
-        item.name === initialItem.name &&
-        item.sourceVideoRecordingId?.toString() === recording?._id?.toString()
-      );
-
-      if (matchedItem?.videoTimestamp) {
-        itemToSeek = matchedItem;
-      }
-    }
-
-    console.log('🎯 Auto-seek check:', {
-      isOpen,
-      initialItemName: initialItem?.name,
-      initialItem_id: initialItem?._id,
-      initialItemInventoryItemId: initialItem?.inventoryItemId,
-      itemToSeekName: itemToSeek?.name,
-      itemToSeek_id: itemToSeek?._id,
-      hasTimestamp: itemToSeek?.videoTimestamp,
-      segmentIndex: itemToSeek?.segmentIndex,
-      inventoryItemsCount: inventoryItems?.length,
-      streamUrl: !!streamUrl
-    });
-
-    if (!isOpen || !itemToSeek?.videoTimestamp || !streamUrl) return;
-
-    const video = videoRef.current;
-    if (!video) {
-      console.log('🎯 Auto-seek: video ref not available');
-      return;
-    }
-
-    const doSeek = () => {
-      // Parse timestamp "MM:SS" to seconds
-      const [min, sec] = itemToSeek.videoTimestamp.split(':').map(Number);
-      const timestampSeconds = (min || 0) * 60 + (sec || 0);
-
-      // Calculate absolute time: segment start + item timestamp
-      const segmentDuration = 300; // 5 minutes per segment
-      const segmentStart = (itemToSeek.segmentIndex || 0) * segmentDuration;
-
-      // Calculate offset between composite recording start and customer egress start
-      // Customer segments start when customer joins, but composite video starts when first participant (agent) joins
-      // NOTE: Find the REAL customer using customerIdentity - egress participants (EG_*) may be misclassified as customers
-      const customerParticipant = recording.customerIdentity
-        ? recording.participants?.find(p => p.identity === recording.customerIdentity)
-        : recording.participants?.find(p => p.type === 'customer' && !p.identity?.startsWith('EG_'));
-      const compositeStartTime = recording.startedAt ? new Date(recording.startedAt).getTime() : 0;
-      const customerJoinTime = customerParticipant?.joinedAt
-        ? new Date(customerParticipant.joinedAt).getTime()
-        : compositeStartTime;
-      const offsetSeconds = Math.max(0, Math.floor((customerJoinTime - compositeStartTime) / 1000));
-
-      // Add offset to account for time before customer joined
-      const absoluteTime = offsetSeconds + segmentStart + timestampSeconds;
-
-      console.log('🎯 Seeking to:', {
-        absoluteTime,
-        timestampSeconds,
-        segmentStart,
-        offsetSeconds,
-        videoTimestamp: itemToSeek.videoTimestamp,
-        segmentIndex: itemToSeek.segmentIndex
-      });
-
-      // Seek to that time (pause at timestamp, don't auto-play)
-      video.currentTime = absoluteTime;
-
-      toast.success(`Jumped to ${itemToSeek.name} at ${Math.floor(absoluteTime / 60)}:${String(Math.floor(absoluteTime % 60)).padStart(2, '0')}`);
-    };
-
-    // Check if video is already loaded (readyState >= 3 means HAVE_FUTURE_DATA)
-    if (video.readyState >= 3) {
-      console.log('🎯 Auto-seek: video ready, seeking immediately');
-      doSeek();
-    } else {
-      console.log('🎯 Auto-seek: video not ready, waiting for canplay. readyState:', video.readyState);
-      // Video not ready yet, wait for canplay event
-      const handleCanPlay = () => {
-        console.log('🎯 Auto-seek: canplay event fired');
-        doSeek();
-        video.removeEventListener('canplay', handleCanPlay);
-      };
-      video.addEventListener('canplay', handleCanPlay);
-      return () => {
-        video.removeEventListener('canplay', handleCanPlay);
-      };
-    }
-  }, [isOpen, initialItem, streamUrl, inventoryItems, recording]);
+  // Auto-seek to initialItem is owned by MediaInventoryModal via the
+  // shared `useAutoSeekOnInitialItem` hook — we forward videoRef, streamUrl,
+  // initialItem, and a recording-specific offset callback in the `media`
+  // prop below.
 
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
@@ -259,10 +186,57 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     }
   };
 
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+  // Per-room segment looping. When `playingRoom` is non-null we keep the
+  // playhead inside that room's chapter segments, jumping to the next one
+  // when the current one ends and looping back to the first after the last.
+  const [playingRoom, setPlayingRoom] = useState(null);
+
+  // Stock-inventory picker + open state are owned internally by
+  // `MediaInventoryItemsColumn` now — including the `sourceVideoRecordingId`
+  // attach passed via `media.sourceKey`. Nothing for this component to
+  // manage directly.
+
+  const getRoomSegments = useCallback((roomName) => {
+    return chapters
+      .filter((c) => c.room === roomName)
+      .map((c) => ({ startTime: c.startTime, endTime: c.endTime }));
+  }, [chapters]);
+
+  const togglePlayRoom = useCallback((roomName) => {
+    const segments = getRoomSegments(roomName);
+    if (segments.length === 0) return;
+
+    if (playingRoom === roomName) {
+      // Already looping this room → stop loop, leave video where it is.
+      setPlayingRoom(null);
+      return;
     }
+
+    setPlayingRoom(roomName);
+    const video = videoRef.current;
+    if (video) {
+      video.currentTime = segments[0].startTime;
+      video.play().catch(() => {});
+    }
+  }, [playingRoom, getRoomSegments]);
+
+  const handleTimeUpdate = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const t = video.currentTime;
+    setCurrentTime(t);
+
+    if (!playingRoom) return;
+    const segments = getRoomSegments(playingRoom);
+    if (segments.length === 0) {
+      setPlayingRoom(null);
+      return;
+    }
+    // Already inside one of the room's segments → keep playing.
+    if (segments.some((s) => t >= s.startTime && t < s.endTime)) return;
+    // Outside the room's segments → jump to the next start, or loop to first.
+    const next = segments.find((s) => s.startTime > t);
+    video.currentTime = (next ?? segments[0]).startTime;
   };
 
   const handlePlay = () => {
@@ -291,6 +265,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
 
   const handleSeek = (value) => {
     if (!videoRef.current) return;
+    setPlayingRoom(null); // scrubbing breaks an active room loop
     const newTime = (value[0] / 100) * duration;
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
@@ -298,6 +273,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
 
   const skipBy = (deltaSeconds) => {
     if (!videoRef.current) return;
+    setPlayingRoom(null); // ±5s buttons break an active room loop
     const newTime = Math.max(0, Math.min(duration || videoRef.current.duration || 0, videoRef.current.currentTime + deltaSeconds));
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
@@ -369,28 +345,16 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
   // Seek video to the timestamp when an item was seen
   const seekToItemTimestamp = (item) => {
     if (!videoRef.current || !item.videoTimestamp) return;
+    setPlayingRoom(null); // jumping to a specific item breaks an active loop
 
     // Parse timestamp "MM:SS" to seconds
     const [min, sec] = item.videoTimestamp.split(':').map(Number);
     const timestampSeconds = (min || 0) * 60 + (sec || 0);
 
-    // Calculate absolute time: segment start + item timestamp
+    // Calculate absolute time: segment start + item timestamp + offset
     const segmentDuration = 300; // 5 minutes per segment
     const segmentStart = (item.segmentIndex || 0) * segmentDuration;
-
-    // Calculate offset between composite recording start and customer egress start
-    // Customer segments start when customer joins, but composite video starts when first participant (agent) joins
-    // NOTE: Find the REAL customer using customerIdentity - egress participants (EG_*) may be misclassified as customers
-    const customerParticipant = recording.customerIdentity
-      ? recording.participants?.find(p => p.identity === recording.customerIdentity)
-      : recording.participants?.find(p => p.type === 'customer' && !p.identity?.startsWith('EG_'));
-    const compositeStartTime = recording.startedAt ? new Date(recording.startedAt).getTime() : 0;
-    const customerJoinTime = customerParticipant?.joinedAt
-      ? new Date(customerParticipant.joinedAt).getTime()
-      : compositeStartTime;
-    const offsetSeconds = Math.max(0, Math.floor((customerJoinTime - compositeStartTime) / 1000));
-
-    // Add offset to account for time before customer joined
+    const offsetSeconds = computeOffsetSeconds(recording);
     const absoluteTime = offsetSeconds + segmentStart + timestampSeconds;
 
     // Seek to 1 second before the timestamp and pause
@@ -402,28 +366,33 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
 
   if (!recording) return null;
 
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            {recording.source === 'self_serve' ? 'Customer Recording' : 'Customer Video Call'}
-          </DialogTitle>
-          <DialogDescription>
-            {recording.source === 'self_serve'
-              ? `Self-serve recording ${recording.selfServeSessionId ? `(${recording.selfServeSessionId.substring(0, 12)})` : ''}`
-              : `Video Room ID: Room ${recording.roomId.split('-').pop()}`
-            }
-          </DialogDescription>
-        </DialogHeader>
+  // Recording-specific filter for MediaInventoryItemsColumn. Items from
+  // photos or video uploads belong to their respective galleries — never
+  // show them here. Stock items belong only when explicitly attached via
+  // `sourceVideoRecordingId`. Also honors backwards-compat egress IDs.
+  const sessionFilter = (item) => {
+    if (item.sourceImageId) return false;
+    if (item.sourceVideoId) return false;
+    if (item.stockItemId) {
+      const stockRecId = item.sourceVideoRecordingId?._id || item.sourceVideoRecordingId;
+      return stockRecId?.toString() === recording?._id?.toString();
+    }
+    const itemRecordingId = item.sourceVideoRecordingId?._id || item.sourceVideoRecordingId;
+    if (itemRecordingId && itemRecordingId.toString() === recording._id?.toString()) {
+      return true;
+    }
+    if (item.sourceRecordingSessionId) {
+      return (
+        item.sourceRecordingSessionId === recording.sessionId ||
+        item.sourceRecordingSessionId === recording.egressId ||
+        item.sourceRecordingSessionId === recording.customerEgressId
+      );
+    }
+    return false;
+  };
 
-        <Tabs defaultValue="watch" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="watch">Watch</TabsTrigger>
-            <TabsTrigger value="notes">Notes</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="watch" className="space-y-4 mt-4">
+  const playerCol = (
+                <div className="space-y-4">
             {/* Video Player with YouTube-style Overlay Controls */}
             <div
               ref={containerRef}
@@ -488,7 +457,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                   }`}
                 >
                   {/* Progress Bar */}
-                  <div className="mb-2">
+                  <div className="mb-2 relative">
                     <Slider
                       value={[duration ? (currentTime / duration) * 100 : 0]}
                       onValueChange={handleSeek}
@@ -496,6 +465,15 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                       step={0.1}
                       className="w-full [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-white/30 [&_[data-slot=slider-range]]:bg-red-500 [&_[data-slot=slider-thumb]]:w-3 [&_[data-slot=slider-thumb]]:h-3 [&_[data-slot=slider-thumb]]:bg-red-500"
                     />
+                    {/* Chapter dividers - skip the first one (always at 0%) */}
+                    {duration > 0 && chapters.slice(1).map((chapter, idx) => (
+                      <div
+                        key={`${chapter.startTime}-${chapter.room}-${idx}`}
+                        className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-0.5 h-3 bg-white/90 rounded-sm pointer-events-none"
+                        style={{ left: `${Math.min(100, (chapter.startTime / duration) * 100)}%` }}
+                        title={chapter.room}
+                      />
+                    ))}
                   </div>
 
                   {/* Control Buttons */}
@@ -560,8 +538,14 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                       </div>
 
                       {/* Time Display */}
-                      <span className="text-white text-xs ml-2">
-                        {formatTime(currentTime)} / {formatTime(duration)}
+                      <span className="text-white text-xs ml-2 flex items-center gap-1.5">
+                        <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+                        {activeChapter && (
+                          <>
+                            <span className="text-white/40">·</span>
+                            <span className="text-white/90 font-medium">{activeChapter.room}</span>
+                          </>
+                        )}
                       </span>
                     </div>
 
@@ -589,197 +573,18 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
               )}
             </div>
 
-            {/* Inventory Items from Gemini Live */}
-            {(() => {
-              // Filter items that belong to this recording session
-              console.log('🎬 All inventory items:', inventoryItems.map(i => ({ name: i.name, videoTimestamp: i.videoTimestamp, segmentIndex: i.segmentIndex })));
-              const sessionItems = inventoryItems.filter(item => {
-                // EXPLICIT EXCLUSION: Items from photos or video uploads should NOT appear
-                // in video recording modals - they belong to their respective galleries
-                if (item.sourceImageId) {
-                  return false;
-                }
-                if (item.sourceVideoId) {
-                  return false;
-                }
-                // EXPLICIT EXCLUSION: Items from stock catalog should NOT appear
-                // in video recording modals - they were manually added, not detected
-                if (item.stockItemId) {
-                  return false;
-                }
+            <VideoChapters
+              chapters={chapters}
+              activeChapter={activeChapter}
+              onSeek={seekTo}
+            />
 
-                // New proper ObjectId comparison (sourceVideoRecordingId)
-                const itemRecordingId = item.sourceVideoRecordingId?._id || item.sourceVideoRecordingId;
-                if (itemRecordingId && itemRecordingId.toString() === recording._id?.toString()) {
-                  return true;
-                }
-                // Backwards compat with string egress IDs (sourceRecordingSessionId)
-                // FIXED: Only check if the item actually has a sourceRecordingSessionId
-                // This prevents undefined === undefined from matching all items
-                if (item.sourceRecordingSessionId) {
-                  return (
-                    item.sourceRecordingSessionId === recording.sessionId ||
-                    item.sourceRecordingSessionId === recording.egressId ||
-                    item.sourceRecordingSessionId === recording.customerEgressId
-                  );
-                }
-
-                return false;  // Item doesn't match this recording
-              });
-
-              if (sessionItems.length === 0) return null;
-
-              // Group ALL session items by room first
-              const roomGroups = groupByRoom(sessionItems);
-
-              return (
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <Accordion type="multiple" className="w-full">
-                    {Object.entries(roomGroups).map(([room, roomItems]) => {
-                      // Separate items within this room by type
-                      const roomRegularItems = roomItems.filter(item =>
-                        item.itemType === 'furniture' ||
-                        item.itemType === 'regular_item' ||
-                        (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                      );
-                      const roomExistingBoxes = roomItems.filter(item =>
-                        item.itemType === 'existing_box' ||
-                        item.itemType === 'packed_box'
-                      );
-                      const roomRecommendedBoxes = roomItems.filter(item =>
-                        item.itemType === 'boxes_needed'
-                      );
-
-                      const totalCount = roomItems.reduce((sum, i) => sum + (i.quantity || 1), 0);
-
-                      return (
-                        <AccordionItem key={room} value={room}>
-                          <AccordionTrigger className="py-2 text-sm font-medium">
-                            {room} ({totalCount})
-                          </AccordionTrigger>
-                          <AccordionContent>
-                            <div className="space-y-3">
-                              {/* Regular Items in this room */}
-                              {roomRegularItems.length > 0 && (
-                                <div>
-                                  <h5 className="text-xs font-medium text-gray-600 mb-1">Items</h5>
-                                  <div className="flex flex-wrap gap-1">
-                                    {roomRegularItems.map((invItem) => {
-                                      const quantity = invItem.quantity || 1;
-                                      return Array.from({ length: quantity }, (_, index) => (
-                                        <div key={`${invItem._id}-${index}`} className="flex items-center gap-0.5">
-                                          {invItem.videoTimestamp && (
-                                            <button
-                                              onClick={() => seekToItemTimestamp(invItem)}
-                                              className="p-0.5 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-800 transition-colors"
-                                              title={`Find in video`}
-                                            >
-                                              <Search className="w-3.5 h-3.5" />
-                                            </button>
-                                          )}
-                                          <ToggleGoingBadge
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                            className="text-xs"
-                                          />
-                                        </div>
-                                      ));
-                                    }).flat()}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Existing Boxes in this room */}
-                              {roomExistingBoxes.length > 0 && (
-                                <div>
-                                  <div className="flex items-center gap-1 mb-1">
-                                    <h5 className="text-xs font-medium text-gray-600">Boxes</h5>
-                                    <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                      B
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1">
-                                    {roomExistingBoxes.map((invItem) => {
-                                      const quantity = invItem.quantity || 1;
-                                      return Array.from({ length: quantity }, (_, index) => (
-                                        <div key={`${invItem._id}-${index}`} className="flex items-center gap-0.5">
-                                          {invItem.videoTimestamp && (
-                                            <button
-                                              onClick={() => seekToItemTimestamp(invItem)}
-                                              className="p-0.5 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-800 transition-colors"
-                                              title={`Find in video`}
-                                            >
-                                              <Search className="w-3.5 h-3.5" />
-                                            </button>
-                                          )}
-                                          <ToggleGoingBadge
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                            className="text-xs"
-                                          />
-                                        </div>
-                                      ));
-                                    }).flat()}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Recommended Boxes in this room */}
-                              {roomRecommendedBoxes.length > 0 && (
-                                <div>
-                                  <div className="flex items-center gap-1 mb-1">
-                                    <h5 className="text-xs font-medium text-gray-600">Recommended Boxes</h5>
-                                    <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                      R
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1">
-                                    {roomRecommendedBoxes.map((invItem) => {
-                                      const quantity = invItem.quantity || 1;
-                                      return Array.from({ length: quantity }, (_, index) => (
-                                        <div key={`${invItem._id}-${index}`} className="flex items-center gap-0.5">
-                                          {invItem.videoTimestamp && (
-                                            <button
-                                              onClick={() => seekToItemTimestamp(invItem)}
-                                              className="p-0.5 hover:bg-blue-100 rounded text-blue-600 hover:text-blue-800 transition-colors"
-                                              title={`Find in video`}
-                                            >
-                                              <Search className="w-3.5 h-3.5" />
-                                            </button>
-                                          )}
-                                          <ToggleGoingBadge
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                            className="text-xs"
-                                          />
-                                        </div>
-                                      ));
-                                    }).flat()}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </AccordionContent>
-                        </AccordionItem>
-                      );
-                    })}
-                  </Accordion>
-                </div>
-              );
-            })()}
-
-            {/* AI Analysis Summary - Below inventory items */}
+            {/* AI Analysis blocks (Summary / Packing Notes / Customer
+                Statements) live alongside the player + chapters so they
+                read top-to-bottom as "watch + analysis" while the items
+                accordion gets its own panel on the right. */}
             {analysisData && analysisData.totalSegments > 0 && (
-              <div className="mt-4 pt-4 border-t border-gray-200 space-y-3">
+              <div className="space-y-3">
                 {/* Room Summaries */}
                 {analysisData.segments?.some(seg => seg.summary) && (
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
@@ -852,20 +657,81 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                 )}
               </div>
             )}
-          </TabsContent>
+                </div>
+              );
 
-          <TabsContent value="notes" className="mt-4 h-[600px]">
-            <div className="h-full rounded-lg border bg-white overflow-hidden">
-              <VideoCallNotes
-                projectId={projectId}
-                recordingId={recording._id}
-                roomId={recording.roomId}
-              />
-            </div>
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
+  return (
+    <MediaInventoryModal
+      isOpen={isOpen}
+      onClose={onClose}
+      projectId={projectId}
+      inventoryItems={inventoryItems}
+      onInventoryUpdate={onInventoryUpdate}
+      onAddStockItem={onAddStockItem}
+      desktopLayout="panels"
+      preventClose
+      media={{
+        id: recording?._id,
+        sourceKey: 'sourceVideoRecordingId',
+        chapters,
+        onSeek: seekToItemTimestamp,
+        initialItem,
+        videoRef,
+        streamUrl,
+        computeOffsetSeconds: () => computeOffsetSeconds(recording),
+        filter: sessionFilter,
+      }}
+      headerTitle={
+        recording.source === 'self_serve' ? 'Customer Recording' : 'Customer Video Call'
+      }
+      headerSubtitle={
+        recording.source === 'self_serve'
+          ? `Self-serve recording ${recording.selfServeSessionId ? `(${recording.selfServeSessionId.substring(0, 12)})` : ''}`
+          : `Video Room ID: Room ${recording.roomId.split('-').pop()}`
+      }
+      availableRoomsOverride={availableRooms}
+      mediaSlot={playerCol}
+      notesSlot={
+        <div className="h-full rounded-lg border bg-white overflow-hidden">
+          <VideoCallNotes
+            projectId={projectId}
+            recordingId={recording._id}
+            roomId={recording.roomId}
+          />
+        </div>
+      }
+      renderRoomExtras={(room) => (
+        getRoomSegments(room).length > 0 ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePlayRoom(room);
+            }}
+            className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${
+              playingRoom === room
+                ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+            }`}
+            title={playingRoom === room
+              ? `Stop looping ${room}`
+              : `Loop all video segments where ${room} appears`}
+          >
+            {playingRoom === room ? (
+              <>
+                <Pause className="w-3 h-3" />
+                Stop looping
+              </>
+            ) : (
+              <>
+                <Play className="w-3 h-3" />
+                Loop segments
+              </>
+            )}
+          </button>
+        ) : null
+      )}
+    />
   );
 };
 

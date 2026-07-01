@@ -41,7 +41,7 @@ import VideoRecordingModal from './VideoRecordingModal';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refreshSpreadsheet }) => {
+const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refreshSpreadsheet, onAddStockItem = null }) => {
   const [recordings, setRecordings] = useState([]);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -992,6 +992,20 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
           onClose={handleCloseModal}
           inventoryItems={inventoryItems}
           onInventoryUpdate={fetchInventoryItems}
+          onAddStockItem={async (items, mediaSource) => {
+            // VideoRecordingsTab keeps its own local `inventoryItems`
+            // (fetchInventoryItems above) rather than sharing
+            // InventoryManager's prop directly. The canonical add
+            // (InventoryManager.handleAddStockItems) refreshes upstream
+            // state but not this tab's local copy — so after the await,
+            // refetch here so the modal sees the new items right away.
+            // `mediaSource` is the modal's attach-to-this-media context
+            // (`{ sourceVideoRecordingId }`); forward it untouched.
+            if (typeof onAddStockItem === 'function') {
+              await onAddStockItem(items, mediaSource);
+            }
+            await fetchInventoryItems();
+          }}
         />
       )}
     </div>

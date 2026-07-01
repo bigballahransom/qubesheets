@@ -22,7 +22,12 @@ import InventoryNote from '@/models/InventoryNote';
 import CrewReviewLink from '@/models/CrewReviewLink';
 import { logActivity } from '@/lib/activity-logger';
 
-const REQUEST_TIMEOUT_MS = 15_000;
+// Chariot's /api/external/inventory endpoint runs the whole upsert inside a
+// single DB transaction (their docs, "Transaction Safety"). Large payloads
+// (200+ items) routinely take 30-60s. We abort ~5s before the route's Vercel
+// function timeout (see maxDuration in app/api/chariot/sync-inventory/route.ts)
+// so we return a clean error string instead of a Vercel 504.
+const REQUEST_TIMEOUT_MS = 85_000;
 
 export const CHARIOT_INVENTORY_ENDPOINT = '/inventory';
 
@@ -577,10 +582,51 @@ export async function syncInventoryToChariot(
     };
   } catch (error) {
     console.error(`❌ [CHARIOT-SYNC] Error syncing project ${projectId}:`, error);
+    const isAbort =
+      error instanceof Error &&
+      (error.name === 'AbortError' ||
+        /aborted/i.test(error.message) ||
+        (error as any).code === 'ABORT_ERR');
+    const errMsg = isAbort
+      ? `Chariot took longer than ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s to respond. Try again, or use a narrower sync option (e.g. "Items Only") if the project is very large.`
+      : error instanceof Error
+      ? error.message
+      : 'Unknown error';
+
+    // Best-effort: record the failed attempt in syncHistory so it doesn't
+    // silently disappear. We can't rely on `integration` being in scope (the
+    // throw may have come from before we loaded it), so re-fetch by projectId.
+    try {
+      const project = await Project.findById(projectId).select('organizationId');
+      if (project?.organizationId) {
+        await ChariotIntegration.findOneAndUpdate(
+          { organizationId: project.organizationId },
+          {
+            $push: {
+              syncHistory: {
+                projectId,
+                jobId,
+                syncedAt: new Date(),
+                itemCount: 0,
+                success: false,
+                error: errMsg,
+              },
+            },
+          }
+        );
+      }
+    } catch (logErr) {
+      console.warn(
+        `⚠️ [CHARIOT-SYNC] Could not record failed sync in syncHistory: ${
+          logErr instanceof Error ? logErr.message : String(logErr)
+        }`
+      );
+    }
+
     return {
       success: false,
       syncedCount: 0,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: errMsg,
     };
   }
 }

@@ -62,6 +62,11 @@ interface StockInventoryPickerModalProps {
   onClose: () => void;
   onAddItems: (items: SelectedItem[]) => void;
   existingInventory?: ExistingInventoryItem[];
+  // Pre-select this room when the picker opens. Used by the per-room
+  // "+ Inventory" buttons inside each modal's room accordion so the room
+  // the user clicked from is already selected. Falls back to "All Rooms"
+  // when omitted.
+  defaultRoom?: string;
 }
 
 // Custom wide DialogContent for the picker - fixed size, never shrinks
@@ -100,6 +105,7 @@ export default function StockInventoryPickerModal({
   onClose,
   onAddItems,
   existingInventory = [],
+  defaultRoom = '',
 }: StockInventoryPickerModalProps) {
   const [items, setItems] = useState<StockInventoryItem[]>([]);
   const [aiItems, setAiItems] = useState<ExistingInventoryItem[]>([]); // AI-generated items from existing inventory
@@ -473,14 +479,18 @@ export default function StockInventoryPickerModal({
       // Fetch stock items
       fetchItems(true);
 
-      // Set default room and calculate initial quantities
-      const defaultRoom = 'All Rooms';
-      setSelectedRoom(defaultRoom);
-      const quantities = calculateQuantitiesForRoom(defaultRoom);
+      // Set default room and calculate initial quantities. When the parent
+      // passed a `defaultRoom` prop (e.g., a per-room "+ Inventory" button
+      // inside a modal accordion), use that so the user lands on the room
+      // they clicked from. Otherwise default to "All Rooms".
+      const room = defaultRoom?.trim() ? defaultRoom : 'All Rooms';
+      setSelectedRoom(room);
+      const quantities = calculateQuantitiesForRoom(room);
       setSelectedQuantities(quantities);
       setInitialQuantities({ ...quantities });
     }
-  }, [isOpen]); // Only depend on isOpen - snapshot existingInventory once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, defaultRoom]); // re-run when defaultRoom changes too so a different per-room click selects the new room
 
   // Recalculate quantities when selected room changes (not on existingInventory changes)
   useEffect(() => {

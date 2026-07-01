@@ -55,7 +55,7 @@ export async function syncInventoryToSupermove(
     
     await connectMongoDB();
     console.log(`✅ [SUPERMOVE-SYNC] MongoDB connected successfully`);
-    
+
     // 1. Get project and validate customer email
     console.log(`🔍 [SUPERMOVE-SYNC] Looking up project ${projectId}`);
     const project = await Project.findById(projectId);

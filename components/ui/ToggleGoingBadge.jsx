@@ -2,97 +2,108 @@
 
 import { useState } from 'react';
 import { Badge } from './badge';
-import { toast } from 'sonner';
+import { useInventoryItemWriter } from '@/lib/inventory/useInventoryItemWriter';
+import { useInventoryWrites } from '@/lib/inventory/InventoryWritesContext';
 
-export function ToggleGoingBadge({ 
-  inventoryItem, 
+/**
+ * Going-status badge for one quantity unit of an inventory item.
+ *
+ * Pre-writer migration this component read `inventoryItem.quantity` from
+ * props and PATCHed directly — a stale-prop read at the moment of click
+ * was the primary cause of the production "count reverts on going toggle"
+ * bug (a recent count edit hadn't propagated back into props yet).
+ *
+ * Now the component opens a writer keyed by the item. The writer:
+ *   - exposes optimistic state via `writer.state` (always fresh), so the
+ *     quantity used to compute the new goingQuantity reflects the user's
+ *     most recent count edit even if the parent hasn't refetched.
+ *   - serializes the PATCH through a single-flight queue, so a still-in-
+ *     flight count PATCH and this going PATCH can't arrive out of order.
+ *   - participates in the parent's dirty-aware refetch merge, so a
+ *     refetch can't blow away the edit mid-flight.
+ */
+export function ToggleGoingBadge({
+  inventoryItem,
   quantityIndex = 0,
   projectId,
   onInventoryUpdate,
-  className = "",
-  showItemName = true 
+  className = '',
+  showItemName = true,
 }) {
+  const { markDirty, markClean, mergeUpdatedItem } = useInventoryWrites();
+  const writer = useInventoryItemWriter({
+    item: inventoryItem,
+    projectId,
+    onCommitted: (updated) => {
+      // mergeUpdatedItem propagates the server's authoritative item into the
+      // parent's inventoryItems array, which triggers the spreadsheet's
+      // row-regen useEffect (InventoryManager.jsx:1690). We intentionally do
+      // NOT invoke onInventoryUpdate here — that callback was the legacy
+      // pre-writer path and its handler issued a second PATCH that races with
+      // the writer's own PATCH (visible as the "Failed to persist inventory
+      // update for item ..." console errors).
+      if (mergeUpdatedItem) mergeUpdatedItem(updated);
+    },
+    markDirty,
+    markClean,
+  });
+
   const [isUpdating, setIsUpdating] = useState(false);
-  
-  // Determine if this specific instance is going based on goingQuantity
-  const quantity = Math.max(1, inventoryItem.quantity || 1);
-  let goingQuantity = inventoryItem.goingQuantity;
-  
-  // Handle missing or undefined goingQuantity
+
+  const item = writer.state;
+  const quantity = Math.max(1, item.quantity || 1);
+
+  // Derive goingQuantity from the writer's optimistic state, which already
+  // reflects any in-flight count edits.
+  let goingQuantity = item.goingQuantity;
   if (goingQuantity === undefined || goingQuantity === null) {
-    if (inventoryItem.going === 'not going') {
-      goingQuantity = 0;
-    } else if (inventoryItem.going === 'partial') {
-      goingQuantity = Math.floor(quantity / 2);
-    } else {
-      goingQuantity = quantity;
-    }
+    if (item.going === 'not going') goingQuantity = 0;
+    else if (item.going === 'partial') goingQuantity = Math.floor(quantity / 2);
+    else goingQuantity = quantity;
   }
-  
-  // Validate bounds
   goingQuantity = Math.max(0, Math.min(quantity, goingQuantity));
   const isThisInstanceGoing = quantityIndex < goingQuantity;
 
-  const handleToggle = async (e) => {
+  const handleToggle = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
     if (isUpdating) return;
-    
+
     setIsUpdating(true);
-    
-    // Calculate new goingQuantity based on toggle
-    const newGoingQuantity = isThisInstanceGoing 
-      ? Math.max(0, goingQuantity - 1)  // Remove one from going
-      : Math.min(quantity, goingQuantity + 1);  // Add one to going
-    
     try {
-      // Call the API to update the inventory item with goingQuantity
-      const response = await fetch(`/api/projects/${projectId || inventoryItem.projectId}/inventory/${inventoryItem._id}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          goingQuantity: newGoingQuantity,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to update item');
-      }
-
-      // Show success toast with quantity info
-      const newStatus = isThisInstanceGoing ? 'not going' : 'going';
-      const itemDesc = quantity > 1 ? `${inventoryItem.name} (${newGoingQuantity}/${quantity} going)` : inventoryItem.name;
-      toast.success(
-        `${itemDesc} marked as ${newStatus}`,
-        {
-          icon: isThisInstanceGoing ? '🔴' : '✅',
-          duration: 2000,
-        }
-      );
-
-      // Immediately update inventory items in parent for stat calculations
-      if (onInventoryUpdate) {
-        onInventoryUpdate(inventoryItem._id, newGoingQuantity);
-      }
-      
-    } catch (error) {
-      console.error('Error updating inventory item:', error);
-      toast.error('Failed to update item status');
+      // Compute the new goingQuantity from the WRITER's quantity, not from
+      // the prop. This is the production-bug fix: reading from writer.state
+      // means the quantity reflects the user's most recent count edit even
+      // if the parent's refetch hasn't propagated back into props.
+      writer.set((prev) => {
+        const q = Math.max(1, prev.quantity || 1);
+        const currentGq = (prev.goingQuantity != null)
+          ? Math.max(0, Math.min(q, prev.goingQuantity))
+          : (prev.going === 'not going' ? 0
+              : prev.going === 'partial' ? Math.floor(q / 2)
+              : q);
+        const isInstanceGoing = quantityIndex < currentGq;
+        const nextGq = isInstanceGoing
+          ? Math.max(0, currentGq - 1)
+          : Math.min(q, currentGq + 1);
+        if (nextGq === currentGq) return null;
+        return { goingQuantity: nextGq };
+      }, { immediate: true });
     } finally {
-      setIsUpdating(false);
+      // Clear the local spinner on the next paint — the writer's queue
+      // will finish in the background. We don't await it because the
+      // optimistic state already shows the change.
+      setTimeout(() => setIsUpdating(false), 100);
     }
   };
 
   return (
-    <Badge 
+    <Badge
       onClick={handleToggle}
-      variant="default" 
+      variant="default"
       className={`text-xs cursor-pointer transition-all duration-200 hover:scale-105 ${
-        isThisInstanceGoing 
-          ? 'bg-white border border-gray-200 text-gray-900 hover:bg-gray-50' 
+        isThisInstanceGoing
+          ? 'bg-white border border-gray-200 text-gray-900 hover:bg-gray-50'
           : 'bg-gray-100 border border-gray-300 text-gray-700 hover:bg-gray-200'
       } ${isUpdating ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}
       style={{ userSelect: 'none' }}
@@ -105,7 +116,7 @@ export function ToggleGoingBadge({
       ) : (
         <>
           <span className="mr-1">{isThisInstanceGoing ? '✅' : '🔴'}</span>
-          {showItemName && inventoryItem.name}
+          {showItemName && item.name}
           {!showItemName && (isThisInstanceGoing ? 'Going' : 'Not Going')}
           {quantity > 1 && showItemName && (
             <span className="ml-1 text-xs opacity-75">

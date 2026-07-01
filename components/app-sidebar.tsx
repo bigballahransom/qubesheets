@@ -14,7 +14,6 @@ import {
   Folder,
   Plus,
   ArrowRight,
-  Loader2,
   Users,
   User,
   UserX,
@@ -32,6 +31,7 @@ import {
 } from 'lucide-react';
 import { Sidebar } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -412,9 +412,17 @@ export function AppSidebar() {
                   </div>
                 )}
                 {loading ? (
-                  <div className="flex justify-center p-4">
-                    <Loader2 size={24} className="animate-spin text-gray-400" />
-                  </div>
+                  <ul className="space-y-1">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <li key={i} className="flex items-center w-full p-2">
+                        <Skeleton className="h-4 w-4 mr-2 rounded flex-shrink-0" />
+                        <div className="flex-1 space-y-1.5">
+                          <Skeleton className="h-3.5 w-3/4" />
+                          <Skeleton className="h-2.5 w-1/2" />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 ) : error ? (
                   <div className="text-red-500 p-4 text-center text-sm">
                     {error}

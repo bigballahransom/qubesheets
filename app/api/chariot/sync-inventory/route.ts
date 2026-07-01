@@ -10,6 +10,12 @@ import {
 } from '@/lib/chariot-inventory-sync';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 
+// Chariot's inventory endpoint is transactional (docs: "Transaction Safety")
+// and routinely takes 30-60s for 200+ item payloads. Override Vercel's 60s
+// default so large syncs complete. The sync lib aborts at 85s (5s earlier)
+// so we return a clean error string instead of a Vercel 504.
+export const maxDuration = 90;
+
 // Match the validate-job route. Chariot's docs show 4-5 digit IDs; 3-8 is a
 // permissive-but-sane bound.
 const JOB_ID_REGEX = /^\d{3,8}$/;

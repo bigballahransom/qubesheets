@@ -21,7 +21,8 @@ import {
   X,
   Copy,
   RotateCcw,
-  RotateCw
+  RotateCw,
+  Plus
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,20 +42,11 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { toast } from 'sonner';
 import VideoRecordingModal from './VideoRecordingModal';
-
-// Helper to group items by location/room
-const groupByRoom = (items) => {
-  return items.reduce((acc, item) => {
-    const room = item.location || 'Unassigned';
-    if (!acc[room]) acc[room] = [];
-    acc[room].push(item);
-    return acc;
-  }, {});
-};
+import VideoChapters from './video/VideoChapters';
+import { useVideoChapters } from '@/lib/hooks/useVideoChapters';
+import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
 
 // Helper functions - defined outside component to prevent recreation
 const formatDuration = (seconds) => {
@@ -358,7 +350,7 @@ const VideoCard = memo(({
 
 VideoCard.displayName = 'VideoCard';
 
-export default function VideoGallery({ projectId, projectName, onVideoSelect, refreshTrigger, onPlayingStateChange, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate }) {
+export default function VideoGallery({ projectId, projectName, onVideoSelect, refreshTrigger, onPlayingStateChange, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate, onAddStockItem = null }) {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -376,8 +368,36 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   const [isSelfServePolling, setIsSelfServePolling] = useState(false); // Track polling for self-serve recordings
   const [selectedRecording, setSelectedRecording] = useState(null); // For VideoRecordingModal (self-serve)
   const [isRecordingModalOpen, setIsRecordingModalOpen] = useState(false); // Track VideoRecordingModal state
+  // Stock-inventory picker, room-availability, org tags, project-only tags
+  // are all owned by `MediaInventoryModal` now (PR 4 of the modal
+  // consolidation) — the video-detail dialog delegates to the shell.
   const inventoryAbortControllerRef = useRef(null); // AbortController for inventory polling
   const modalVideoRef = useRef(null); // Detail modal video element ref
+  const [modalVideoTime, setModalVideoTime] = useState(0); // Detail modal playhead for chapter highlighting
+
+  const { chapters: modalChapters, activeChapter: modalActiveChapter } = useVideoChapters({
+    projectId,
+    videoId: selectedVideo?._id,
+    currentTime: modalVideoTime,
+    enabled: selectedVideo !== null,
+  });
+
+  // Fetch the video's stream URL when the modal opens (was inline on the
+  // old `<Dialog onOpenChange>` handler). MediaInventoryModal only invokes
+  // the close callback, so the "open" side-effect moves here.
+  useEffect(() => {
+    if (selectedVideo?.s3RawFile && !streamUrls[selectedVideo._id]?.url) {
+      getStreamUrl(selectedVideo._id, selectedVideo._type);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVideo]);
+
+  const seekModalVideoTo = (timeSec) => {
+    const v = modalVideoRef.current;
+    if (!v) return;
+    v.currentTime = timeSec;
+    setModalVideoTime(timeSec);
+  };
 
   const skipModalVideoBy = (deltaSeconds) => {
     const v = modalVideoRef.current;
@@ -1351,201 +1371,102 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
         </div>
       )}
 
-      {/* Video Detail Modal */}
-      <Dialog open={selectedVideo !== null} onOpenChange={async (open) => {
-        if (!open) {
-          setSelectedVideo(null);
-        } else if (selectedVideo?.s3RawFile && !streamUrls[selectedVideo._id]?.url) {
-          // Fetch streaming URL for modal video
-          await getStreamUrl(selectedVideo._id, selectedVideo._type);
+      {/* Video Detail Modal — migrated to MediaInventoryModal shell
+          (PR 4 of the modal consolidation). Room accordion, per-room and
+          bottom + Inventory buttons, stock-picker, tag/room derivations
+          all owned by the shell. This component supplies the video
+          player + skip controls (mediaSlot), the chapter timeline
+          (extrasSlot), and the analysis/description blocks
+          (analysisSlot). */}
+      <MediaInventoryModal
+        isOpen={selectedVideo !== null}
+        onClose={() => setSelectedVideo(null)}
+        projectId={projectId}
+        inventoryItems={inventoryItems}
+        onInventoryUpdate={onInventoryUpdate}
+        onAddStockItem={onAddStockItem}
+        media={{
+          kind: 'video',
+          id: selectedVideo?._id,
+          filter: (item) => {
+            const videoId = item.sourceVideoId?._id || item.sourceVideoId;
+            return !!selectedVideo?._id && videoId === selectedVideo._id;
+          },
+          sourceKey: 'sourceVideoId',
+          chapters: modalChapters,
+        }}
+        headerTitle={
+          <span className="flex items-center gap-2">
+            <VideoIcon size={20} className="text-purple-500" />
+            {selectedVideo?.originalName}
+          </span>
         }
-      }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <VideoIcon size={20} className="text-purple-500" />
-              {selectedVideo?.originalName}
-            </DialogTitle>
-            <DialogDescription>
-              Uploaded on {selectedVideo && formatDate(selectedVideo.createdAt)}
-            </DialogDescription>
-          </DialogHeader>
-          
-          {selectedVideo && (() => {
-            // Use S3 for video
+        headerSubtitle={
+          selectedVideo ? `Uploaded on ${formatDate(selectedVideo.createdAt)}` : undefined
+        }
+        mediaSlot={
+          selectedVideo ? (() => {
             const modalHasS3Video = selectedVideo.s3RawFile?.key;
             const modalVideoUrl = modalHasS3Video ? streamUrls[selectedVideo._id]?.url : null;
-
             return (
-              <div className="space-y-4">
-                {/* Video Player */}
-                <div className="relative bg-black rounded-lg overflow-hidden">
-                  {modalVideoUrl ? (
-                    <>
-                      <video
-                        ref={modalVideoRef}
-                        src={modalVideoUrl}
-                        controls
-                        preload="metadata"
-                        className="w-full h-auto bg-black block"
-                        style={{ maxHeight: '400px' }}
-                        onLoadedMetadata={(e) => {
-                          // Ensure video shows first frame
-                          e.target.currentTime = 0;
-                        }}
-                      />
-                      <div className="flex items-center justify-center gap-2 bg-black/80 py-2">
-                        <button
-                          type="button"
-                          onClick={() => skipModalVideoBy(-5)}
-                          className="relative flex items-center gap-1 px-3 py-1.5 text-white text-xs hover:bg-white/20 rounded transition-colors"
-                          title="Back 5 seconds"
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                          <span>5s</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => skipModalVideoBy(5)}
-                          className="relative flex items-center gap-1 px-3 py-1.5 text-white text-xs hover:bg-white/20 rounded transition-colors"
-                          title="Forward 5 seconds"
-                        >
-                          <span>5s</span>
-                          <RotateCw className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="w-full h-96 flex items-center justify-center">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+              <div className="relative bg-black rounded-lg overflow-hidden">
+                {modalVideoUrl ? (
+                  <>
+                    <video
+                      ref={modalVideoRef}
+                      src={modalVideoUrl}
+                      controls
+                      preload="metadata"
+                      className="w-full h-auto bg-black block"
+                      style={{ maxHeight: '400px' }}
+                      onLoadedMetadata={(e) => {
+                        e.target.currentTime = 0;
+                        setModalVideoTime(0);
+                      }}
+                      onTimeUpdate={(e) => setModalVideoTime(e.target.currentTime)}
+                    />
+                    <div className="flex items-center justify-center gap-2 bg-black/80 py-2">
+                      <button
+                        type="button"
+                        onClick={() => skipModalVideoBy(-5)}
+                        className="relative flex items-center gap-1 px-3 py-1.5 text-white text-xs hover:bg-white/20 rounded transition-colors"
+                        title="Back 5 seconds"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        <span>5s</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => skipModalVideoBy(5)}
+                        className="relative flex items-center gap-1 px-3 py-1.5 text-white text-xs hover:bg-white/20 rounded transition-colors"
+                        title="Forward 5 seconds"
+                      >
+                        <span>5s</span>
+                        <RotateCw className="w-4 h-4" />
+                      </button>
                     </div>
-                  )}
-                </div>
-              
-              {/* Items, Boxes, and Recommended Boxes from this video - Grouped by Room */}
-              {(() => {
-                const allItems = inventoryItems.filter(item => {
-                  const videoId = item.sourceVideoId?._id || item.sourceVideoId;
-                  return videoId === selectedVideo._id;
-                });
-
-                if (allItems.length === 0) return null;
-
-                // Group all items by room first
-                const roomGroups = groupByRoom(allItems);
-
-                return (
-                  <div className="mb-4">
-                    <Accordion type="multiple" className="w-full">
-                      {Object.entries(roomGroups).map(([room, roomItems]) => {
-                        // Separate items within this room by type
-                        const roomRegularItems = roomItems.filter(item =>
-                          item.itemType === 'furniture' ||
-                          item.itemType === 'regular_item' ||
-                          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                        );
-                        const roomExistingBoxes = roomItems.filter(item =>
-                          item.itemType === 'existing_box' ||
-                          item.itemType === 'packed_box'
-                        );
-                        const roomRecommendedBoxes = roomItems.filter(item =>
-                          item.itemType === 'boxes_needed'
-                        );
-
-                        const totalCount = roomItems.reduce((sum, i) => sum + (i.quantity || 1), 0);
-
-                        return (
-                          <AccordionItem key={room} value={room}>
-                            <AccordionTrigger className="py-2 text-sm font-medium">
-                              {room} ({totalCount})
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <div className="space-y-3">
-                                {/* Regular Items in this room */}
-                                {roomRegularItems.length > 0 && (
-                                  <div>
-                                    <h5 className="text-xs font-medium text-gray-600 mb-1">Items</h5>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomRegularItems.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Existing Boxes in this room */}
-                                {roomExistingBoxes.length > 0 && (
-                                  <div>
-                                    <div className="flex items-center gap-1 mb-1">
-                                      <h5 className="text-xs font-medium text-gray-600">Boxes</h5>
-                                      <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                        B
-                                      </span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomExistingBoxes.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Recommended Boxes in this room */}
-                                {roomRecommendedBoxes.length > 0 && (
-                                  <div>
-                                    <div className="flex items-center gap-1 mb-1">
-                                      <h5 className="text-xs font-medium text-gray-600">Recommended Boxes</h5>
-                                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                        R
-                                      </span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomRecommendedBoxes.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        );
-                      })}
-                    </Accordion>
+                  </>
+                ) : (
+                  <div className="w-full h-96 flex items-center justify-center">
+                    <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
                   </div>
-                );
-              })()}
-
+                )}
+              </div>
+            );
+          })() : null
+        }
+        extrasSlot={
+          selectedVideo ? (
+            <VideoChapters
+              chapters={modalChapters}
+              activeChapter={modalActiveChapter}
+              onSeek={seekModalVideoTo}
+            />
+          ) : null
+        }
+        analysisSlot={
+          selectedVideo ? (
+            <>
               {selectedVideo.analysisResult && (
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
@@ -1555,23 +1476,18 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
                         const videoId = item.sourceVideoId?._id || item.sourceVideoId;
                         return videoId === selectedVideo._id;
                       });
-                      
-                      const regularItems = videoInventoryItems.filter(item => 
+                      const regularItems = videoInventoryItems.filter(item =>
                         item.itemType === 'regular_item' || item.itemType === 'furniture'
                       );
-                      
-                      const boxes = videoInventoryItems.filter(item => 
+                      const boxes = videoInventoryItems.filter(item =>
                         item.itemType === 'existing_box' || item.itemType === 'packed_box'
                       );
-                      
-                      const recommendedBoxes = videoInventoryItems.filter(item => 
+                      const recommendedBoxes = videoInventoryItems.filter(item =>
                         item.itemType === 'boxes_needed'
                       );
-                      
                       const regularItemsCount = regularItems.reduce((total, item) => total + (item.quantity || 1), 0);
                       const boxesCount = boxes.reduce((total, item) => total + (item.quantity || 1), 0);
                       const recommendedBoxesCount = recommendedBoxes.reduce((total, item) => total + (item.quantity || 1), 0);
-                      
                       return (
                         <>
                           {regularItemsCount > 0 && (
@@ -1621,43 +1537,16 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
                   </div>
                 </div>
               )}
-
-              {/* Description */}
               {selectedVideo.description && (
                 <div>
                   <h4 className="font-medium text-gray-900 mb-2">Description</h4>
                   <p className="text-sm text-gray-600">{selectedVideo.description}</p>
                 </div>
               )}
-              
-              {/* <div className="flex gap-2 pt-4">
-                <Button onClick={() => handleDownload(selectedVideo)}>
-                  <Download size={16} className="mr-2" />
-                  Download
-                </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={() => handleEditDescription(selectedVideo)}
-                >
-                  <Eye size={16} className="mr-2" />
-                  Edit Description
-                </Button>
-                <Button 
-                  variant="destructive" 
-                  onClick={() => {
-                    handleDelete(selectedVideo);
-                    setSelectedVideo(null);
-                  }}
-                >
-                  <Trash2 size={16} className="mr-2" />
-                  Delete
-                </Button>
-              </div> */}
-            </div>
-          );
-          })()}
-        </DialogContent>
-      </Dialog>
+            </>
+          ) : null
+        }
+      />
 
       {/* Edit Description Modal */}
       <Dialog open={editingVideo !== null} onOpenChange={(open) => {
@@ -1729,8 +1618,17 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           }}
           inventoryItems={inventoryItems}
           onInventoryUpdate={onInventoryUpdate}
+          onAddStockItem={onAddStockItem}
         />
       )}
+
+      {/* Stock-inventory picker is owned internally by MediaInventoryModal
+          now (see the video-detail dialog above). It attaches the right
+          `{ sourceVideoId }` from `media.sourceKey` + `media.id`
+          automatically. `handleAddStockItems` in InventoryManager also
+          calls `reloadInventoryItems()` itself, so the belt-and-suspenders
+          `refreshSpreadsheet()` call that used to live here isn't needed
+          either. */}
 
     </div>
   );

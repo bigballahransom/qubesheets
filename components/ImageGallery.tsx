@@ -17,7 +17,8 @@ import {
   Loader2,
   Video,
   Play,
-  Copy
+  Copy,
+  Plus
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -42,9 +43,8 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ToggleGoingBadge } from '@/components/ui/ToggleGoingBadge';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Input } from '@/components/ui/input';
+import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
 
 // Helper to group items by location/room
 const groupByRoom = (items: any[]) => {
@@ -107,6 +107,7 @@ interface ImageGalleryProps {
   refreshSpreadsheet?: () => Promise<void>;
   inventoryItems?: any[];
   onInventoryUpdate?: (inventoryItemId: string, newGoingQuantity: number) => Promise<void>;
+  onAddStockItem?: ((items: any[]) => Promise<void> | void) | null;
 }
 
 type MediaItem = ImageData | VideoData;
@@ -115,7 +116,7 @@ const isVideo = (item: MediaItem): item is VideoData => {
   return item.mimeType.startsWith('video/') || 'duration' in item;
 };
 
-export default function ImageGallery({ projectId, projectName, onUploadClick, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate }: ImageGalleryProps) {
+export default function ImageGallery({ projectId, projectName, onUploadClick, refreshSpreadsheet, inventoryItems = [], onInventoryUpdate, onAddStockItem = null }: ImageGalleryProps) {
   const [images, setImages] = useState<ImageData[]>([]);
   const [videos, setVideos] = useState<VideoData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,7 +125,10 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
   const [editDescription, setEditDescription] = useState('');
   const [updating, setUpdating] = useState(false);
   const [streamingVideo, setStreamingVideo] = useState<string | null>(null);
-  
+  // Stock-inventory picker, room-availability, org tags, project-only tags
+  // are all owned by `MediaInventoryModal` now (PR 3 of the modal
+  // consolidation) — the image-detail dialog delegates to the shell.
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState({
@@ -911,192 +915,81 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
       )}
 
       {/* Media Detail Dialog */}
-      <Dialog open={!!selectedItem && !isVideo(selectedItem)} onOpenChange={(open) => {
-        if (!open) {
-          // Small delay to ensure modal state is fully reset
+      {/* Image-detail Dialog — migrated to the shared MediaInventoryModal
+          shell (PR 3 of the modal consolidation). Only images open this
+          modal (`!isVideo(selectedItem)`); the video path lives elsewhere. */}
+      <MediaInventoryModal
+        isOpen={!!selectedItem && !isVideo(selectedItem)}
+        onClose={() => {
           setTimeout(() => setSelectedItem(null), 10);
+        }}
+        projectId={projectId}
+        inventoryItems={inventoryItems}
+        onInventoryUpdate={onInventoryUpdate as any}
+        onAddStockItem={onAddStockItem}
+        desktopLayout="panels"
+        media={{
+          kind: 'image',
+          id: selectedItem?._id,
+          filter: (item: any) => {
+            const imageId = item.sourceImageId?._id || item.sourceImageId;
+            return !!selectedItem?._id && imageId === selectedItem._id;
+          },
+          sourceKey: 'sourceImageId',
+        }}
+        headerTitle={
+          <span className="flex items-center gap-2">
+            <FileImage size={20} className="text-blue-500" />
+            {selectedItem?.originalName}
+          </span>
         }
-      }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileImage size={20} className="text-blue-500" />
-              {selectedItem?.originalName}
-            </DialogTitle>
-            <DialogDescription>
-              Uploaded on {selectedItem && formatDate(selectedItem.createdAt)}
-            </DialogDescription>
-          </DialogHeader>
-          
-          {selectedItem && (
-            <div className="space-y-4">
-              <div className="relative bg-gray-100 rounded-lg overflow-hidden">
-                {selectedItem && !isVideo(selectedItem) && selectedItem.dataUrl ? (
-                  <img
-                    src={selectedItem.dataUrl}
-                    alt={selectedItem.originalName}
-                    className="w-full h-auto max-h-96 object-contain"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-8 text-gray-500">
-                    <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    <span className="text-center">No image data available</span>
-                  </div>
-                )}
-              </div>
-              
-              {/* Items, Boxes, and Recommended Boxes from this image - Grouped by Room */}
-              {(() => {
-                const allItems = inventoryItems.filter(item => {
-                  const imageId = item.sourceImageId?._id || item.sourceImageId;
-                  return imageId === selectedItem._id;
-                });
-
-                if (allItems.length === 0) return null;
-
-                // Group all items by room first
-                const roomGroups = groupByRoom(allItems);
-
-                return (
-                  <div className="mb-4">
-                    <Accordion type="multiple" className="w-full">
-                      {Object.entries(roomGroups).map(([room, roomItems]) => {
-                        // Separate items within this room by type
-                        const roomRegularItems = (roomItems as any[]).filter(item =>
-                          item.itemType === 'furniture' ||
-                          item.itemType === 'regular_item' ||
-                          (!item.itemType && item.itemType !== 'existing_box' && item.itemType !== 'packed_box' && item.itemType !== 'boxes_needed')
-                        );
-                        const roomExistingBoxes = (roomItems as any[]).filter(item =>
-                          item.itemType === 'existing_box' ||
-                          item.itemType === 'packed_box'
-                        );
-                        const roomRecommendedBoxes = (roomItems as any[]).filter(item =>
-                          item.itemType === 'boxes_needed'
-                        );
-
-                        const totalCount = (roomItems as any[]).reduce((sum, i) => sum + (i.quantity || 1), 0);
-
-                        return (
-                          <AccordionItem key={room} value={room}>
-                            <AccordionTrigger className="py-2 text-sm font-medium">
-                              {room} ({totalCount})
-                            </AccordionTrigger>
-                            <AccordionContent>
-                              <div className="space-y-3">
-                                {/* Regular Items in this room */}
-                                {roomRegularItems.length > 0 && (
-                                  <div>
-                                    <h5 className="text-xs font-medium text-gray-600 mb-1">Items</h5>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomRegularItems.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Existing Boxes in this room */}
-                                {roomExistingBoxes.length > 0 && (
-                                  <div>
-                                    <div className="flex items-center gap-1 mb-1">
-                                      <h5 className="text-xs font-medium text-gray-600">Boxes</h5>
-                                      <span className="text-[10px] font-bold text-orange-700 bg-orange-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                        B
-                                      </span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomExistingBoxes.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Recommended Boxes in this room */}
-                                {roomRecommendedBoxes.length > 0 && (
-                                  <div>
-                                    <div className="flex items-center gap-1 mb-1">
-                                      <h5 className="text-xs font-medium text-gray-600">Recommended Boxes</h5>
-                                      <span className="text-[10px] font-bold text-purple-700 bg-purple-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0">
-                                        R
-                                      </span>
-                                    </div>
-                                    <div className="flex flex-wrap gap-1">
-                                      {roomRecommendedBoxes.map((invItem) => {
-                                        const quantity = invItem.quantity || 1;
-                                        return Array.from({ length: quantity }, (_, index) => (
-                                          <ToggleGoingBadge
-                                            key={`${invItem._id}-${index}`}
-                                            inventoryItem={invItem}
-                                            quantityIndex={index}
-                                            projectId={projectId}
-                                            onInventoryUpdate={onInventoryUpdate}
-                                            showItemName={true}
-                                          />
-                                        ));
-                                      }).flat()}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        );
-                      })}
-                    </Accordion>
-                  </div>
-                );
-              })()}
-
+        headerSubtitle={
+          selectedItem ? `Uploaded on ${formatDate(selectedItem.createdAt)}` : undefined
+        }
+        mediaSlot={
+          selectedItem ? (
+            <div className="relative bg-gray-100 rounded-lg overflow-hidden">
+              {!isVideo(selectedItem) && selectedItem.dataUrl ? (
+                <img
+                  src={selectedItem.dataUrl}
+                  alt={selectedItem.originalName}
+                  className="w-full h-auto max-h-96 object-contain"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center p-8 text-gray-500">
+                  <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <span className="text-center">No image data available</span>
+                </div>
+              )}
+            </div>
+          ) : null
+        }
+        analysisSlot={
+          selectedItem ? (
+            <>
               {selectedItem.analysisResult && (
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-900 mb-2">Analysis Results</h4>
                   <div className="space-y-2 text-sm">
                     {(() => {
-                      const imageInventoryItems = inventoryItems.filter(invItem => {
+                      const imageInventoryItems = inventoryItems.filter((invItem: any) => {
                         const imageId = invItem.sourceImageId?._id || invItem.sourceImageId;
                         return imageId === selectedItem._id;
                       });
-                      
-                      const regularItems = imageInventoryItems.filter(invItem => 
+                      const regularItems = imageInventoryItems.filter((invItem: any) =>
                         invItem.itemType === 'regular_item' || invItem.itemType === 'furniture'
                       );
-                      
-                      const boxes = imageInventoryItems.filter(invItem => 
+                      const boxes = imageInventoryItems.filter((invItem: any) =>
                         invItem.itemType === 'existing_box' || invItem.itemType === 'packed_box'
                       );
-                      
-                      const recommendedBoxes = imageInventoryItems.filter(invItem => 
+                      const recommendedBoxes = imageInventoryItems.filter((invItem: any) =>
                         invItem.itemType === 'boxes_needed'
                       );
-                      
-                      const regularItemsCount = regularItems.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
-                      const boxesCount = boxes.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
-                      const recommendedBoxesCount = recommendedBoxes.reduce((total, invItem) => total + (invItem.quantity || 1), 0);
-                      
+                      const regularItemsCount = regularItems.reduce((total: number, invItem: any) => total + (invItem.quantity || 1), 0);
+                      const boxesCount = boxes.reduce((total: number, invItem: any) => total + (invItem.quantity || 1), 0);
+                      const recommendedBoxesCount = recommendedBoxes.reduce((total: number, invItem: any) => total + (invItem.quantity || 1), 0);
                       return (
                         <>
                           {regularItemsCount > 0 && (
@@ -1127,7 +1020,6 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
                       );
                     })()}
                   </div>
-                  
                   {selectedItem.analysisResult.summary && (
                     <div className="mt-3">
                       <h5 className="font-medium text-gray-900 mb-1">Summary</h5>
@@ -1138,45 +1030,16 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
                   )}
                 </div>
               )}
-              
               {selectedItem.description && (
                 <div>
                   <h4 className="font-medium text-gray-900 mb-2">Description</h4>
                   <p className="text-sm text-gray-600">{selectedItem.description}</p>
                 </div>
               )}
-              
-              {/* <div className="flex gap-2 pt-4">
-                <Button onClick={() => handleDownloadItem(selectedItem)}>
-                  <Download size={16} className="mr-2" />
-                  Download
-                </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={() => {
-                    setEditingItemId(selectedItem._id);
-                    setEditDescription(selectedItem.description || '');
-                    setSelectedItem(null);
-                  }}
-                >
-                  <Edit3 size={16} className="mr-2" />
-                  Edit Description
-                </Button>
-                <Button 
-                  variant="destructive" 
-                  onClick={() => {
-                    handleDeleteItem(selectedItem);
-                    setSelectedItem(null);
-                  }}
-                >
-                  <Trash2 size={16} className="mr-2" />
-                  Delete
-                </Button>
-              </div> */}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            </>
+          ) : null
+        }
+      />
 
       {/* Custom confirm dialog. Replaces window.confirm() so taps from the
           per-card dropdown menu actually surface a prompt on iOS Safari. */}
@@ -1220,6 +1083,14 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Stock-inventory picker is owned internally by MediaInventoryModal
+          now (see the image-detail dialog above). It attaches the right
+          `mediaSource` from `media.sourceKey` + `media.id` automatically,
+          so this outer mount was redundant. `handleAddStockItems` in
+          InventoryManager also calls `reloadInventoryItems()` itself, so
+          the belt-and-suspenders `refreshSpreadsheet()` call that used to
+          live here isn't needed either. */}
 
     </div>
   );
