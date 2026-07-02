@@ -98,11 +98,8 @@ interface MediaSection {
 interface Stats {
   totalItems: number;
   totalBoxes: number;
-  totalBoxesWithRec: number;
   totalCuft: number;
-  totalCuftWithRec: number;
   totalWeight: number;
-  totalWeightWithRec: number;
   totalRooms: number;
   totalBedrooms: number;
 }
@@ -515,13 +512,7 @@ export default function CrewReviewPage() {
               <p className="text-sm font-medium text-slate-600">Boxes</p>
             </div>
             <p className="text-2xl font-bold text-slate-800">{stats.totalBoxes.toLocaleString()}</p>
-            {stats.totalBoxesWithRec > stats.totalBoxes ? (
-              <p className="text-xs text-amber-600 mt-1">
-                {stats.totalBoxesWithRec.toLocaleString()} with rec
-              </p>
-            ) : (
-              <p className="text-xs text-slate-500 mt-1">total</p>
-            )}
+            <p className="text-xs text-slate-500 mt-1">total</p>
           </div>
 
           <div className="bg-white rounded-xl shadow-md border border-slate-200 p-4">
@@ -532,13 +523,7 @@ export default function CrewReviewPage() {
               <p className="text-sm font-medium text-slate-600">Volume</p>
             </div>
             <p className="text-2xl font-bold text-slate-800">{stats.totalCuft.toLocaleString()}</p>
-            {stats.totalCuftWithRec > stats.totalCuft ? (
-              <p className="text-xs text-green-600">
-                {stats.totalCuftWithRec.toLocaleString()} cuft with rec
-              </p>
-            ) : (
-              <p className="text-xs text-slate-500">cuft</p>
-            )}
+            <p className="text-xs text-slate-500">cuft</p>
           </div>
 
           <div className="bg-white rounded-xl shadow-md border border-slate-200 p-4">
@@ -549,13 +534,7 @@ export default function CrewReviewPage() {
               <p className="text-sm font-medium text-slate-600">Weight</p>
             </div>
             <p className="text-2xl font-bold text-slate-800">{stats.totalWeight.toLocaleString()}</p>
-            {stats.totalWeightWithRec > stats.totalWeight ? (
-              <p className="text-xs text-purple-600">
-                {stats.totalWeightWithRec.toLocaleString()} lbs with rec
-              </p>
-            ) : (
-              <p className="text-xs text-slate-500">lbs</p>
-            )}
+            <p className="text-xs text-slate-500">lbs</p>
           </div>
         </div>
 

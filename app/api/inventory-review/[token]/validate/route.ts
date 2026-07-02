@@ -118,15 +118,14 @@ function calculateStats(items: any[], weightConfig: WeightConfig) {
     const goingRatio = quantity > 0 ? goingQty / quantity : 0;
 
     if (item.itemType === 'boxes_needed') {
-      // Skip recommended boxes for customer view
-      continue;
+      totalBoxes += goingQty;
+      totalCuft += cuft * goingRatio;
+      totalWeight += weight * goingRatio;
     } else if (item.itemType === 'existing_box' || item.itemType === 'packed_box') {
-      // Existing boxes
       totalBoxes += goingQty;
       totalCuft += cuft * goingRatio;
       totalWeight += weight * goingRatio;
     } else {
-      // Regular items
       totalItems += goingQty;
       totalCuft += cuft * goingRatio;
       totalWeight += weight * goingRatio;

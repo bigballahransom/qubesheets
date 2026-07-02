@@ -97,11 +97,8 @@ function groupItemsByRoom(items: any[]): GroupedItems {
 function calculateStats(items: any[], weightConfig: WeightConfig) {
   let totalItems = 0;
   let totalBoxes = 0;
-  let totalBoxesWithRec = 0;
   let totalCuft = 0;
-  let totalCuftWithRec = 0;
   let totalWeight = 0;
-  let totalWeightWithRec = 0;
   const rooms = new Set<string>();
   const bedrooms = new Set<string>();
 
@@ -131,36 +128,25 @@ function calculateStats(items: any[], weightConfig: WeightConfig) {
     const goingRatio = quantity > 0 ? goingQty / quantity : 0;
 
     if (item.itemType === 'boxes_needed') {
-      // Recommended boxes - add to "with rec" totals
-      totalBoxesWithRec += quantity;
-      totalCuftWithRec += cuft;
-      totalWeightWithRec += weight;
-    } else if (item.itemType === 'existing_box' || item.itemType === 'packed_box') {
-      // Existing boxes
       totalBoxes += goingQty;
-      totalBoxesWithRec += goingQty;
       totalCuft += cuft * goingRatio;
-      totalCuftWithRec += cuft * goingRatio;
       totalWeight += weight * goingRatio;
-      totalWeightWithRec += weight * goingRatio;
+    } else if (item.itemType === 'existing_box' || item.itemType === 'packed_box') {
+      totalBoxes += goingQty;
+      totalCuft += cuft * goingRatio;
+      totalWeight += weight * goingRatio;
     } else {
-      // Regular items
       totalItems += goingQty;
       totalCuft += cuft * goingRatio;
-      totalCuftWithRec += cuft * goingRatio;
       totalWeight += weight * goingRatio;
-      totalWeightWithRec += weight * goingRatio;
     }
   }
 
   return {
     totalItems: Math.round(totalItems),
     totalBoxes: Math.round(totalBoxes),
-    totalBoxesWithRec: Math.round(totalBoxes + totalBoxesWithRec - totalBoxes), // Include recommended
     totalCuft: Math.round(totalCuft),
-    totalCuftWithRec: Math.round(totalCuftWithRec),
     totalWeight: Math.round(totalWeight),
-    totalWeightWithRec: Math.round(totalWeightWithRec),
     totalRooms: rooms.size,
     totalBedrooms: bedrooms.size,
   };
