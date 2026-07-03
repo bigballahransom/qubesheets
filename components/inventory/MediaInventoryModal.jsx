@@ -238,12 +238,14 @@ export default function MediaInventoryModal({
     ? 'w-[95vw] sm:max-w-5xl md:max-w-6xl lg:max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1800px] h-[95vh] flex flex-col overflow-hidden'
     : 'w-[95vw] sm:max-w-5xl md:max-w-6xl lg:max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1800px] max-h-[95vh] overflow-y-auto overflow-x-hidden';
 
-  const outsideHandlers = preventClose
-    ? {
-        onPointerDownOutside: (e) => e.preventDefault(),
-        onInteractOutside: (e) => e.preventDefault(),
-      }
-    : {};
+  const outsideHandlers = {
+    onPointerDownOutside: (e) => {
+      if (preventClose || isResizingRef.current) e.preventDefault();
+    },
+    onInteractOutside: (e) => {
+      if (preventClose || isResizingRef.current) e.preventDefault();
+    },
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose?.(); }}>
