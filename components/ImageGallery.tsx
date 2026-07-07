@@ -967,7 +967,7 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
           ) : null
         }
         analysisSlot={
-          selectedItem ? (
+          selectedItem && (selectedItem.analysisResult || selectedItem.description) ? (
             <>
               {selectedItem.analysisResult && (
                 <div className="mb-4">

@@ -44,7 +44,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import VideoRecordingModal from './VideoRecordingModal';
-import VideoChapters from './video/VideoChapters';
+import VideoChapters, { hasVideoChapters } from './video/VideoChapters';
 import { useVideoChapters } from '@/lib/hooks/useVideoChapters';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
 
@@ -1385,6 +1385,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
         inventoryItems={inventoryItems}
         onInventoryUpdate={onInventoryUpdate}
         onAddStockItem={onAddStockItem}
+        desktopLayout="side-by-side"
         media={{
           kind: 'video',
           id: selectedVideo?._id,
@@ -1456,7 +1457,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           })() : null
         }
         extrasSlot={
-          selectedVideo ? (
+          selectedVideo && hasVideoChapters(modalChapters) ? (
             <VideoChapters
               chapters={modalChapters}
               activeChapter={modalActiveChapter}
@@ -1465,7 +1466,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           ) : null
         }
         analysisSlot={
-          selectedVideo ? (
+          selectedVideo && (selectedVideo.analysisResult || selectedVideo.description) ? (
             <>
               {selectedVideo.analysisResult && (
                 <div className="mb-4">

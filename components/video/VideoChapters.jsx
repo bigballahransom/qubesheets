@@ -14,12 +14,20 @@ function formatTime(seconds) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
+// Single source of truth for "would VideoChapters render anything?" — a
+// one-chapter list is useless as a navigation aid, so we treat < 2 as
+// nothing to show. Callers use this to decide whether to bother passing
+// the extras slot at all (empty slot → empty panel).
+export function hasVideoChapters(chapters) {
+  return Array.isArray(chapters) && chapters.length >= 2;
+}
+
 export default function VideoChapters({ chapters, activeChapter, onSeek, className = '' }) {
   // Default closed — chapter strip is a navigation aid the user opens when
   // they want it, not something that takes up vertical real estate by default.
   const [open, setOpen] = useState(false);
 
-  if (!chapters || chapters.length < 2) return null;
+  if (!hasVideoChapters(chapters)) return null;
 
   return (
     <div className={className}>

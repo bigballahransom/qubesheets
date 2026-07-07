@@ -23,7 +23,7 @@ import {
   RotateCw,
   Plus
 } from 'lucide-react';
-import VideoChapters from './video/VideoChapters';
+import VideoChapters, { hasVideoChapters } from './video/VideoChapters';
 import { useVideoChapters, computeOffsetSeconds } from '@/lib/hooks/useVideoChapters';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -391,9 +391,11 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     return false;
   };
 
-  const playerCol = (
-                <div className="space-y-4">
-            {/* Video Player with YouTube-style Overlay Controls */}
+  // The player, chapters, and AI analysis blocks each fill a different
+  // slot on MediaInventoryModal so the top-bottom desktop layout can put
+  // the video on the top-left and chapters + AI summary on the top-right.
+  // Side-by-side / stack layouts still stack all three in the same column.
+  const mediaCol = (
             <div
               ref={containerRef}
               className="relative bg-black rounded-lg overflow-hidden aspect-video group"
@@ -572,18 +574,17 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                 </div>
               )}
             </div>
+  );
 
-            <VideoChapters
-              chapters={chapters}
-              activeChapter={activeChapter}
-              onSeek={seekTo}
-            />
+  const chaptersCol = hasVideoChapters(chapters) ? (
+    <VideoChapters
+      chapters={chapters}
+      activeChapter={activeChapter}
+      onSeek={seekTo}
+    />
+  ) : null;
 
-            {/* AI Analysis blocks (Summary / Packing Notes / Customer
-                Statements) live alongside the player + chapters so they
-                read top-to-bottom as "watch + analysis" while the items
-                accordion gets its own panel on the right. */}
-            {analysisData && analysisData.totalSegments > 0 && (
+  const analysisCol = analysisData && analysisData.totalSegments > 0 ? (
               <div className="space-y-3">
                 {/* Room Summaries */}
                 {analysisData.segments?.some(seg => seg.summary) && (
@@ -656,9 +657,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                   </div>
                 )}
               </div>
-            )}
-                </div>
-              );
+  ) : null;
 
   return (
     <MediaInventoryModal
@@ -690,7 +689,9 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
           : `Video Room ID: Room ${recording.roomId.split('-').pop()}`
       }
       availableRoomsOverride={availableRooms}
-      mediaSlot={playerCol}
+      mediaSlot={mediaCol}
+      extrasSlot={chaptersCol}
+      analysisSlot={analysisCol}
       notesSlot={
         <div className="h-full rounded-lg border bg-white overflow-hidden">
           <VideoCallNotes

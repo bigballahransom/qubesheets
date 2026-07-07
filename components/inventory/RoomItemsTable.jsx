@@ -128,7 +128,7 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
   // single-flight PATCH queue, prop-reconciliation (adopt-only-when-clean),
   // error revert, and dirty-signal plumbing. Cell editors all call
   // `writer.set(...)`; render values come from `writer.state`.
-  const { markDirty, markClean, mergeUpdatedItem } = useInventoryWrites();
+  const { markDirty, markClean, mergeUpdatedItem, removeItem, weightConfig } = useInventoryWrites();
   const writer = useInventoryItemWriter({
     item: itemProp,
     projectId,
@@ -148,11 +148,32 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
   });
 
   const item = writer.state;
-  const patchNow = (changes) => writer.set(changes, { immediate: true });
 
+  // Optimistically echo a change into the parent's canonical inventoryItems
+  // (header stats, spreadsheet, sibling surfaces update on THIS render tick,
+  // like the spreadsheet's own count handlers do) and queue the PATCH.
+  // The writer's dirty flag protects the row from poll-echo clobbering; the
+  // onCommitted merge above later overwrites with the server's copy.
+  const applyChanges = (changes, { immediate = false } = {}) => {
+    writer.set(changes, { immediate });
+    if (mergeUpdatedItem) mergeUpdatedItem({ _id: itemId, ...changes });
+  };
+  const patchNow = (changes) => applyChanges(changes, { immediate: true });
+
+  // ── Cuft / weight semantics ─────────────────────────────────────────
+  // The DB stores PER-UNIT cuft and PER-UNIT (AI) weight; totals are always
+  // derived as per-unit × quantity (see InventoryManager#convertItemsToRows
+  // and the railway analyzer prompt: "cuft and weight should be PER-ITEM
+  // values"). Display weight follows the project's weightConfig exactly like
+  // the spreadsheet's col5: custom mode → per-unit cuft × multiplier,
+  // actual mode → the item's AI weight.
   const quantity = Math.max(1, item.quantity || 1);
-  const totalCuft = Number(item.cuft) || 0;
-  const totalWeight = Number(item.weight) || 0;
+  const perUnitCuft = Number(item.cuft) || 0;
+  const perUnitWeight = weightConfig?.weightMode === 'custom'
+    ? perUnitCuft * (Number(weightConfig.customWeightMultiplier) || 0)
+    : (Number(item.weight) || 0);
+  const totalCuft = perUnitCuft * quantity;
+  const totalWeight = perUnitWeight * quantity;
   const goingQuantity = deriveGoingQuantity(item);
   const packedBy = item.packed_by || 'N/A';
   const tags = Array.isArray(item.tags) ? item.tags : [];
@@ -162,42 +183,28 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
   // PER-UNIT cuft and chooses how weight reacts.
   const [editCuftOpen, setEditCuftOpen] = useState(false);
 
-  // Quantity inc/dec — functional `set` reads the writer's latest stateRef,
-  // so rapid `+` clicks compute the next value off the fresh optimistic
-  // state, not a stale render-time closure. Going-quantity rule matches the
-  // spreadsheet exactly: any qty change → all going.
+  // Quantity inc/dec — reads the writer's latest synchronous state, so rapid
+  // `+` clicks compute the next value off the fresh optimistic state, not a
+  // stale render-time closure. Going-quantity rule matches the spreadsheet
+  // exactly: any qty change → all going.
   // (Spreadsheet.jsx#calculateNewGoingQuantity)
-  const adjustQty = (delta) => {
-    writer.set((prev) => {
-      const prevQty = Math.max(1, prev.quantity || 1);
-      const nextQty = Math.max(1, Math.min(50000, prevQty + delta));
-      if (nextQty === prevQty) return null;
-      const perUnitCuft = (Number(prev.cuft) || 0) / prevQty;
-      const perUnitWeight = (Number(prev.weight) || 0) / prevQty;
-      return {
-        quantity: nextQty,
-        cuft: round2(perUnitCuft * nextQty),
-        weight: round2(perUnitWeight * nextQty),
-        goingQuantity: nextQty,
-      };
-    });
+  //
+  // IMPORTANT: quantity changes PATCH ONLY {quantity, goingQuantity} — same
+  // payload as the spreadsheet's count handlers. Cuft/weight live in the DB
+  // as PER-UNIT values; totals are derived at render. The old code here
+  // treated item.cuft as a total, divided by the old qty and re-wrote it,
+  // which re-scaled the stored per-unit value on every click and drifted
+  // the sheet/stats/CRM numbers further with each edit.
+  const changeQty = (computeNext, { immediate = false } = {}) => {
+    const prev = writer.getState();
+    const prevQty = Math.max(1, prev.quantity || 1);
+    const nextQty = Math.max(1, Math.min(50000, computeNext(prevQty)));
+    if (nextQty === prevQty) return;
+    applyChanges({ quantity: nextQty, goingQuantity: nextQty }, { immediate });
   };
 
-  const setQtyValue = (next) => {
-    writer.set((prev) => {
-      const prevQty = Math.max(1, prev.quantity || 1);
-      const nextQty = Math.max(1, Math.min(50000, Math.floor(next)));
-      if (nextQty === prevQty) return null;
-      const perUnitCuft = (Number(prev.cuft) || 0) / prevQty;
-      const perUnitWeight = (Number(prev.weight) || 0) / prevQty;
-      return {
-        quantity: nextQty,
-        cuft: round2(perUnitCuft * nextQty),
-        weight: round2(perUnitWeight * nextQty),
-        goingQuantity: nextQty,
-      };
-    }, { immediate: true });
-  };
+  const adjustQty = (delta) => changeQty((prevQty) => prevQty + delta);
+  const setQtyValue = (next) => changeQty(() => Math.floor(next), { immediate: true });
 
   // Item-type classification — mirrors Spreadsheet.jsx#isExistingBox /
   // #isRecommendedBoxes (database field first, name-pattern fallback for
@@ -452,7 +459,16 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
               const res = await fetch(apiBase, { method: 'DELETE' });
               if (!res.ok) throw new Error('Delete failed');
               toast.success(`Deleted "${item.name}"`, { duration: 1500 });
-              if (onInventoryUpdate) onInventoryUpdate(itemId);
+              if (removeItem) {
+                // Canonical path: drop the item from InventoryManager's
+                // inventoryItems so the sheet, header stats, and every
+                // other surface lose the row on this render tick.
+                removeItem(itemId);
+              } else if (onInventoryUpdate) {
+                // Legacy fallback for hosts outside the provider (e.g.
+                // standalone VideoRecordingsTab): a refetch-style callback.
+                onInventoryUpdate(itemId);
+              }
             } catch (err) {
               console.error('Failed to delete item:', err);
               toast.error('Failed to delete item');
@@ -470,6 +486,7 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
       open={editCuftOpen}
       onClose={() => setEditCuftOpen(false)}
       item={item}
+      weightConfig={weightConfig}
       onSave={(changes) => patchNow(changes)}
     />
     </>
@@ -479,13 +496,27 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
 // ── Edit Cuft Dialog ───────────────────────────────────────────────────
 
 // Mirrors the inventory spreadsheet's cuftModal (Spreadsheet.jsx:3886-4081).
-// User edits PER-UNIT cuft and chooses whether weight follows proportionally
-// or stays. Preview shows totals before commit. On Save we PATCH `cuft` and
-// (conditionally) `weight` as totals — same shape as the spreadsheet writes.
-function EditCuftDialog({ open, onClose, item, onSave }) {
+// User edits PER-UNIT cuft; in actual-weight mode they choose whether the
+// AI weight follows proportionally or stays. Preview shows totals before
+// commit.
+//
+// On Save we PATCH `cuft` (and conditionally `weight`) as PER-UNIT values —
+// the DB convention (convertItemsToRows derives totals as per-unit × qty,
+// and the sheet's own cuft modal passes per-unit to onCuftWeightUpdate).
+// A previous version PATCHed totals here, which inflated the stored
+// per-unit value by quantity× every time this dialog saved.
+//
+// In custom weight mode the weight is ALWAYS derived (cuft × multiplier),
+// so the weight-adjustment choice is hidden and never PATCHed — same as
+// the spreadsheet's custom-mode branch.
+function EditCuftDialog({ open, onClose, item, weightConfig, onSave }) {
   const quantity = Math.max(1, item.quantity || 1);
-  const currentPerUnitCuft = (Number(item.cuft) || 0) / quantity;
-  const currentPerUnitWeight = (Number(item.weight) || 0) / quantity;
+  const isCustomWeightMode = weightConfig?.weightMode === 'custom';
+  const customMultiplier = Number(weightConfig?.customWeightMultiplier) || 0;
+  const currentPerUnitCuft = Number(item.cuft) || 0;
+  const currentPerUnitWeight = isCustomWeightMode
+    ? currentPerUnitCuft * customMultiplier
+    : (Number(item.weight) || 0);
 
   const [cuftDraft, setCuftDraft] = useState(round2(currentPerUnitCuft).toString());
   const [adjustWeight, setAdjustWeight] = useState(true);
@@ -499,16 +530,21 @@ function EditCuftDialog({ open, onClose, item, onSave }) {
   }, [open, currentPerUnitCuft]);
 
   const newPerUnitCuft = parseFloat(cuftDraft) || 0;
-  const newPerUnitWeight = adjustWeight && currentPerUnitCuft > 0
+  const newPerUnitWeight = isCustomWeightMode
+    ? newPerUnitCuft * customMultiplier
+    : adjustWeight && currentPerUnitCuft > 0
     ? (newPerUnitCuft * currentPerUnitWeight) / currentPerUnitCuft
     : currentPerUnitWeight;
   const newTotalCuft = newPerUnitCuft * quantity;
   const newTotalWeight = newPerUnitWeight * quantity;
 
   const handleSave = () => {
-    const changes = { cuft: round2(newTotalCuft) };
-    if (adjustWeight) {
-      changes.weight = round2(newTotalWeight);
+    const changes = { cuft: round2(newPerUnitCuft) };
+    // Only PATCH weight in actual mode when the user chose proportional
+    // adjustment — in custom mode weight is derived, and "keep current"
+    // means don't touch it.
+    if (!isCustomWeightMode && adjustWeight) {
+      changes.weight = round2(newPerUnitWeight);
     }
     onSave(changes);
     onClose();
@@ -546,7 +582,10 @@ function EditCuftDialog({ open, onClose, item, onSave }) {
             />
           </div>
 
-          {/* Weight adjustment */}
+          {/* Weight adjustment — actual mode only. In custom mode weight is
+              always cuft × multiplier, so there's no choice to offer; the
+              preview below shows the derived value. */}
+          {!isCustomWeightMode && (
           <div>
             <Label className="text-sm font-medium block mb-2">Weight adjustment</Label>
             <RadioGroup
@@ -578,6 +617,7 @@ function EditCuftDialog({ open, onClose, item, onSave }) {
               </div>
             </RadioGroup>
           </div>
+          )}
 
           {/* Preview totals */}
           <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">

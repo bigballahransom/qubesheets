@@ -9,6 +9,11 @@
 //   - Empty cells show a faint "+ Add tags" placeholder.
 //
 // Editor (popover):
+//   - Built on Radix Popover so it composes correctly inside our Radix
+//     Dialog modals (MediaInventoryModal et al). A hand-rolled
+//     createPortal(document.body) version used to break there: Radix modal
+//     dialogs set `pointer-events: none` on <body>, so clicks fell through
+//     the popover to the content underneath and instantly closed it.
 //   - Header chips: currently applied tags, each removable via the × button.
 //   - Search input: filters the org's saved Smart Tags by name.
 //   - Org tag list: click to toggle (checkmark when applied). Hover reveals
@@ -25,8 +30,14 @@
 //   - Org tag CRUD uses the atomic /add and /[tagId] endpoints so multiple
 //     cells editing simultaneously don't clobber each other.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject
+} from 'react';
 import {
   Check,
   Folder,
@@ -39,6 +50,11 @@ import {
   X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent
+} from '@/components/ui/popover';
 import {
   parseTagsCell,
   stringifyTags,
@@ -66,9 +82,6 @@ type TagsCellProps = {
   readOnly?: boolean;
 };
 
-const POPOVER_WIDTH = 340;
-const POPOVER_MAX_HEIGHT = 460;
-
 export default function TagsCell({
   value,
   rowId,
@@ -84,60 +97,64 @@ export default function TagsCell({
   const triggerRef = useRef<HTMLDivElement>(null);
 
   return (
-    <>
-      <div
-        ref={triggerRef}
-        role="button"
-        tabIndex={readOnly ? -1 : 0}
-        onClick={(e) => {
-          if (readOnly) return;
-          e.stopPropagation();
-          setIsOpen(true);
-        }}
-        onKeyDown={(e) => {
-          if (readOnly) return;
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
+    // `modal` matters: inside our Radix Dialog modals the popover's own
+    // scroll-lock/layer must take over, otherwise the dialog's lock blocks
+    // wheel-scrolling the tag list.
+    <Popover open={isOpen} onOpenChange={setIsOpen} modal>
+      <PopoverAnchor asChild>
+        <div
+          ref={triggerRef}
+          role="button"
+          tabIndex={readOnly ? -1 : 0}
+          onClick={(e) => {
+            if (readOnly) return;
+            e.stopPropagation();
             setIsOpen(true);
-          }
-        }}
-        className={cn(
-          // Single-row chips with overflow clipped to keep the row at the
-          // shared 40px height. The popover on click is the canonical way to
-          // see/edit the full list; hovering shows the full list as a native
-          // tooltip via the `title` attribute below.
-          'group flex items-center gap-1 flex-nowrap h-[36px] px-1.5 py-1 -mx-2 -my-2 rounded transition-colors overflow-hidden',
-          !readOnly && 'cursor-pointer hover:bg-blue-50/40'
-        )}
-        title={appliedTags.length > 0 ? appliedTags.join(', ') : undefined}
-      >
-        {appliedTags.length === 0 ? (
-          <span className="text-xs text-gray-400 group-hover:text-gray-600 transition-colors">
-            + Add tags
-          </span>
-        ) : (
-          appliedTags.map((t) => (
-            <span key={t} className="shrink-0">
-              <TagChip name={t} />
+          }}
+          onKeyDown={(e) => {
+            if (readOnly) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setIsOpen(true);
+            }
+          }}
+          className={cn(
+            // Single-row chips with overflow clipped to keep the row at the
+            // shared 40px height. The popover on click is the canonical way to
+            // see/edit the full list; hovering shows the full list as a native
+            // tooltip via the `title` attribute below.
+            'group flex items-center gap-1 flex-nowrap h-[36px] px-1.5 py-1 -mx-2 -my-2 rounded transition-colors overflow-hidden',
+            !readOnly && 'cursor-pointer hover:bg-blue-50/40'
+          )}
+          title={appliedTags.length > 0 ? appliedTags.join(', ') : undefined}
+        >
+          {appliedTags.length === 0 ? (
+            <span className="text-xs text-gray-400 group-hover:text-gray-600 transition-colors">
+              + Add tags
             </span>
-          ))
-        )}
-      </div>
+          ) : (
+            appliedTags.map((t) => (
+              <span key={t} className="shrink-0">
+                <TagChip name={t} />
+              </span>
+            ))
+          )}
+        </div>
+      </PopoverAnchor>
 
       {isOpen && (
         <TagsPopover
-          anchor={triggerRef.current}
+          triggerRef={triggerRef}
           appliedTags={appliedTags}
           projectTags={projectTags}
           initialOrgTags={orgTags}
-          onClose={() => setIsOpen(false)}
           onAppliedTagsChange={(next) => {
             onTagsChange?.(rowId, next);
             persistItemTags(projectId, inventoryItemId, next);
           }}
         />
       )}
-    </>
+    </Popover>
   );
 }
 
@@ -183,33 +200,23 @@ function TagChip({
 }
 
 function TagsPopover({
-  anchor,
+  triggerRef,
   appliedTags,
   projectTags,
   initialOrgTags,
-  onClose,
   onAppliedTagsChange
 }: {
-  anchor: HTMLElement | null;
+  // The trigger cell. Pointer-downs inside it are exempted from Radix's
+  // outside-click dismissal so clicking the cell while the popover is open
+  // doesn't close-and-instantly-reopen it.
+  triggerRef: RefObject<HTMLDivElement | null>;
   appliedTags: string[];
   projectTags: string[];
   // Pre-loaded org tag list from the parent. When provided, skip the
   // /api/settings/smart-tags fetch entirely and seed state with it.
   initialOrgTags?: OrgTag[] | null;
-  onClose: () => void;
   onAppliedTagsChange: (next: string[]) => void;
 }) {
-  // When placing below the trigger we pin `top`. When placing above we pin
-  // `bottom` so the popover always sits flush against the trigger regardless
-  // of how tall its actual content is — pinning `top` with a height
-  // assumption left a big visual gap when the popover rendered shorter than
-  // POPOVER_MAX_HEIGHT.
-  const [position, setPosition] = useState<
-    | { placement: 'below'; top: number; left: number }
-    | { placement: 'above'; bottom: number; left: number }
-    | null
-  >(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [orgTags, setOrgTags] = useState<OrgTag[]>(
@@ -229,51 +236,7 @@ function TagsPopover({
     [applied]
   );
 
-  // Position the popover next to the trigger, flipping vertically if there's
-  // no room below. When flipping above we pin the popover's bottom edge to
-  // just above the trigger so it grows upward — pinning `top` instead would
-  // assume the popover renders at its max height and leave a visible gap
-  // when it doesn't.
-  useEffect(() => {
-    if (!anchor) return;
-    const rect = anchor.getBoundingClientRect();
-    const viewportH = window.innerHeight;
-    const viewportW = window.innerWidth;
-    const spaceBelow = viewportH - rect.bottom;
-    const placeBelow = spaceBelow >= POPOVER_MAX_HEIGHT + 16 || spaceBelow >= rect.top;
-
-    let left = rect.left;
-    if (left + POPOVER_WIDTH > viewportW - 8) {
-      left = Math.max(8, viewportW - POPOVER_WIDTH - 8);
-    }
-
-    if (placeBelow) {
-      setPosition({ placement: 'below', top: rect.bottom + 6, left });
-    } else {
-      setPosition({ placement: 'above', bottom: viewportH - rect.top + 6, left });
-    }
-  }, [anchor]);
-
-  // Close on outside click / ESC.
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (!popoverRef.current) return;
-      if (popoverRef.current.contains(e.target as Node)) return;
-      if (anchor && anchor.contains(e.target as Node)) return;
-      onClose();
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [anchor, onClose]);
-
-  // Load org tags + autofocus search.
+  // Load org tags.
   // Skip the fetch when the parent passed `initialOrgTags` — the inventory
   // modals do this via `useOrgSmartTags()` so the same list is reused for
   // every TagsCell on the page instead of N parallel GETs.
@@ -298,12 +261,6 @@ function TagsPopover({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (position) {
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [position]);
 
   const filteredOrgTags = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -503,21 +460,28 @@ function TagsPopover({
     }
   };
 
-  if (!position) return null;
-
-  return createPortal(
-    <div
-      ref={popoverRef}
-      className="fixed z-[60] rounded-xl border border-gray-200 bg-white shadow-xl overflow-hidden flex flex-col"
-      style={{
-        ...(position.placement === 'below'
-          ? { top: position.top }
-          : { bottom: position.bottom }),
-        left: position.left,
-        width: POPOVER_WIDTH,
-        maxHeight: POPOVER_MAX_HEIGHT
+  return (
+    <PopoverContent
+      align="start"
+      sideOffset={6}
+      collisionPadding={8}
+      onOpenAutoFocus={(e) => {
+        // Radix would focus the first focusable element (the "Clear all"
+        // button when tags are applied) — we always want the search box.
+        e.preventDefault();
+        inputRef.current?.focus();
+      }}
+      onPointerDownOutside={(e) => {
+        // Keep the popover open when the trigger cell itself is clicked —
+        // otherwise Radix dismisses on pointer-down and the cell's click
+        // handler immediately reopens it (visible close/reopen flicker).
+        const target = e.target as Node | null;
+        if (target && triggerRef.current?.contains(target)) {
+          e.preventDefault();
+        }
       }}
       onClick={(e) => e.stopPropagation()}
+      className="w-[340px] max-h-[min(460px,var(--radix-popover-content-available-height))] p-0 rounded-xl border-gray-200 bg-white shadow-xl overflow-hidden flex flex-col"
     >
       {/* Applied tags */}
       <div className="px-3 pt-3 pb-2 border-b border-gray-100">
@@ -699,8 +663,7 @@ function TagsPopover({
           Manage all tags
         </a>
       </div>
-    </div>,
-    document.body
+    </PopoverContent>
   );
 }
 

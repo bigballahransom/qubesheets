@@ -10,6 +10,7 @@ import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
 import { resolveWeightConfig, resolveItemWeight, WeightConfig } from '@/lib/weight-config';
+import { computeInventoryStats, deriveGoingQuantity } from '@/lib/inventory-stats';
 
 interface GroupedItems {
   [room: string]: any[];
@@ -39,8 +40,9 @@ function groupItemsByRoom(items: any[]): GroupedItems {
     const existingItem = grouped[room].find((i: any) => i.name === itemName);
 
     const itemQty = item.quantity || 1;
-    const itemGoingQty = item.going === 'not going' ? 0 :
-                        item.going === 'partial' ? (item.goingQuantity ?? 0) : itemQty;
+    // goingQuantity-first (clamped) — same derivation as the project page,
+    // so per-room going counts here match the spreadsheet.
+    const itemGoingQty = deriveGoingQuantity(item);
     const itemCuft = item.cuft || 0;
     const itemWeight = item.weight || 0;
 
@@ -93,64 +95,6 @@ function groupItemsByRoom(items: any[]): GroupedItems {
   return grouped;
 }
 
-// Calculate stats from inventory items
-function calculateStats(items: any[], weightConfig: WeightConfig) {
-  let totalItems = 0;
-  let totalBoxes = 0;
-  let totalCuft = 0;
-  let totalWeight = 0;
-  const rooms = new Set<string>();
-  const bedrooms = new Set<string>();
-
-  for (const item of items) {
-    const quantity = item.quantity || 1;
-    const cuft = (item.cuft || 0) * quantity;
-    const weight = resolveItemWeight(item, weightConfig) * quantity;
-    const location = item.location || '';
-
-    // Track unique rooms (excluding Unassigned)
-    if (location && location !== 'Unassigned') {
-      rooms.add(location);
-      // Check if it's a bedroom
-      if (location.toLowerCase().includes('bedroom') || location.toLowerCase().includes('bed room')) {
-        bedrooms.add(location);
-      }
-    }
-
-    // Calculate going quantity
-    let goingQty = quantity;
-    if (item.going === 'not going') {
-      goingQty = 0;
-    } else if (item.going === 'partial') {
-      goingQty = item.goingQuantity ?? 0;
-    }
-
-    const goingRatio = quantity > 0 ? goingQty / quantity : 0;
-
-    if (item.itemType === 'boxes_needed') {
-      totalBoxes += goingQty;
-      totalCuft += cuft * goingRatio;
-      totalWeight += weight * goingRatio;
-    } else if (item.itemType === 'existing_box' || item.itemType === 'packed_box') {
-      totalBoxes += goingQty;
-      totalCuft += cuft * goingRatio;
-      totalWeight += weight * goingRatio;
-    } else {
-      totalItems += goingQty;
-      totalCuft += cuft * goingRatio;
-      totalWeight += weight * goingRatio;
-    }
-  }
-
-  return {
-    totalItems: Math.round(totalItems),
-    totalBoxes: Math.round(totalBoxes),
-    totalCuft: Math.round(totalCuft),
-    totalWeight: Math.round(totalWeight),
-    totalRooms: rooms.size,
-    totalBedrooms: bedrooms.size,
-  };
-}
 
 export async function GET(
   request: NextRequest,
@@ -327,7 +271,7 @@ export async function GET(
     }
 
     // Calculate stats (uses raw items + resolved weight config so the multiplier is honored)
-    const stats = calculateStats(allItems, weightConfig);
+    const stats = computeInventoryStats(allItems, weightConfig);
 
     // Get project notes
     const projectNotes = await InventoryNote.find({

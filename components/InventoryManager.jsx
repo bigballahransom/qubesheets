@@ -147,6 +147,19 @@ export default function InventoryManager({ initialProject = null, onProjectRefre
     dirtyItemIdsRef.current.delete(String(itemId));
   }, []);
 
+  // Prefer the local copy over a server refetch copy when the local one is
+  // strictly newer. This closes the stale-GET race the dirty set can't see:
+  // a refetch that started BEFORE a PATCH committed can deliver pre-PATCH
+  // values AFTER the writer already marked the row clean — adopting them
+  // would visibly revert the user's saved edit. Writers always merge the
+  // server's authoritative doc on commit (fresh updatedAt), so a stale GET
+  // loses this comparison.
+  const localCopyIsNewer = (local, server) => {
+    const l = local?.updatedAt ? Date.parse(local.updatedAt) : 0;
+    const s = server?.updatedAt ? Date.parse(server.updatedAt) : 0;
+    return l > s;
+  };
+
   const mergeItemsFromServer = useCallback((serverItems) => {
     if (!Array.isArray(serverItems)) return;
     setInventoryItems((prev) => {
@@ -157,6 +170,11 @@ export default function InventoryManager({ initialProject = null, onProjectRefre
         if (dirty.has(id)) {
           // User is editing this row — keep their optimistic copy.
           return prevById.get(id) ?? s;
+        }
+        const local = prevById.get(id);
+        if (local && localCopyIsNewer(local, s)) {
+          // Refetch raced a just-committed PATCH — keep the newer local doc.
+          return local;
         }
         return s;
       });
@@ -186,11 +204,16 @@ export default function InventoryManager({ initialProject = null, onProjectRefre
     });
   }, []);
 
-  // Stable context value for descendants (writer hook + cell editors).
-  const inventoryWritesValue = useMemo(
-    () => ({ markDirty, markClean, mergeUpdatedItem }),
-    [markDirty, markClean, mergeUpdatedItem],
-  );
+  // Drop one item from canonical state after a confirmed server-side DELETE.
+  // This is the modal/row delete path: without it, legacy callers routed
+  // deletes through handleInventoryUpdate(itemId) — a going-quantity handler
+  // that mutated the dead item to `going: 'partial'` and re-PATCHed it.
+  const removeItem = useCallback((itemId) => {
+    if (!itemId) return;
+    const id = String(itemId);
+    dirtyItemIdsRef.current.delete(id);
+    setInventoryItems((prev) => (prev || []).filter((p) => String(p._id) !== id));
+  }, []);
 
   const [isUploaderOpen, setIsUploaderOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -243,6 +266,17 @@ const [weightConfig, setWeightConfig] = useState({
   source: 'default' // 'default', 'organization', 'project'
 });
 const [weightConfigLoaded, setWeightConfigLoaded] = useState(false);
+
+// Stable context value for descendants (writer hook + cell editors).
+// `weightConfig` rides along so modal editors (RoomItemsTable) derive
+// display weight exactly like convertItemsToRows does — custom mode shows
+// cuft × multiplier, not the raw AI weight. (Declared after the weightConfig
+// state above — referencing it earlier is a TDZ error.)
+const inventoryWritesValue = useMemo(
+  () => ({ markDirty, markClean, mergeUpdatedItem, removeItem, weightConfig }),
+  [markDirty, markClean, mergeUpdatedItem, removeItem, weightConfig],
+);
+
 const pollIntervalRef = useRef(null);
 const sseRef = useRef(null);
 const prevProcessingCountRef = useRef(0); // Track previous processing count for change detection
@@ -596,7 +630,11 @@ const inventoryDataChanged = (oldItems, newItems) => {
   //  - Items deleted server-side cause their saved row to drop out.
   const overlayItemsOntoRows = useCallback((savedRows, items) => {
     if (!Array.isArray(items) || items.length === 0) {
-      return Array.isArray(savedRows) ? savedRows : [];
+      // No items server-side: item-bound rows must drop (their items were
+      // deleted); manual rows (no inventoryItemId) survive.
+      return Array.isArray(savedRows)
+        ? savedRows.filter((r) => !r?.inventoryItemId)
+        : [];
     }
     if (!Array.isArray(savedRows) || savedRows.length === 0) {
       return convertItemsToRows(items);
@@ -813,7 +851,13 @@ const inventoryDataChanged = (oldItems, newItems) => {
                   const dirty = dirtyItemIdsRef.current;
                   const merged = newItems.map(s => {
                     const id = String(s._id);
-                    return dirty.has(id) ? (prevById.get(id) ?? s) : s;
+                    if (dirty.has(id)) return prevById.get(id) ?? s;
+                    const local = prevById.get(id);
+                    // Stale-GET race guard: this refetch may have started
+                    // before a just-committed PATCH — keep the newer local
+                    // doc instead of reverting the user's saved edit.
+                    if (local && localCopyIsNewer(local, s)) return local;
+                    return s;
                   });
                   // Preserve any locally-dirty rows the server hasn't seen yet.
                   for (const [id, local] of prevById) {
@@ -823,11 +867,14 @@ const inventoryDataChanged = (oldItems, newItems) => {
                   }
 
                   // Only cascade UI side-effects if the merged result really differs.
+                  // Spreadsheet rows are NOT rebuilt here: the inventoryItems
+                  // effect (overlayItemsOntoRows) recomputes them from the
+                  // dirty-aware merged state. The old convertItemsToRows call
+                  // here rebuilt rows from scratch — dropping manual rows and
+                  // custom col9+ cells, and reverting any typed edit that
+                  // hadn't reached inventoryItems.
                   if (inventoryDataChanged(prevItems, merged)) {
                     console.log('📦 Inventory data changed, updating state');
-                    const updatedRows = convertItemsToRows(merged);
-                    setSpreadsheetRows(updatedRows);
-                    saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
                     setImageGalleryKey(prev => prev + 1);
                     return merged;
                   }
@@ -1592,26 +1639,31 @@ useEffect(() => {
       }
       
       console.log('✅ Inventory item deleted successfully');
-      
-      // Refresh inventory items to update the UI and stats.
-      // Goes through the dirty-aware merge so unrelated rows mid-edit aren't
-      // clobbered by the post-delete refetch.
+
+      // Drop the item from canonical state immediately (also clears its
+      // dirty flag). Was previously `String(itemId)` — an undefined
+      // identifier whose ReferenceError was swallowed by the catch below,
+      // so the refetch-merge never ran and the deleted item lingered in
+      // inventoryItems until the next poll (where any interim edit would
+      // resurrect its row via the overlay).
+      removeItem(inventoryItemId);
+
+      // Then refresh from the server for cascades (e.g. linked recommended
+      // boxes). Goes through the dirty-aware merge so unrelated rows
+      // mid-edit aren't clobbered by the post-delete refetch.
       const itemsResponse = await fetch(`/api/projects/${currentProject._id}/inventory`);
       if (itemsResponse.ok) {
         const updatedItems = await itemsResponse.json();
-        console.log(`📊 Refreshing inventory stats: ${inventoryItems.length} -> ${updatedItems.length} items`);
-        // The just-deleted item also drops out of dirtyItemIdsRef.
-        dirtyItemIdsRef.current.delete(String(itemId));
         mergeItemsFromServer(updatedItems);
       } else {
         console.error('❌ Failed to refresh inventory items after deletion');
       }
-      
+
     } catch (error) {
       console.error('❌ Error deleting inventory item:', error);
       // Don't show error to user, just log it - the row will still be removed from spreadsheet
     }
-  }, [currentProject]);
+  }, [currentProject, removeItem, mergeItemsFromServer]);
 
   // Handle quantity changes from spreadsheet - update the inventory item in the database
   const handleQuantityChange = useCallback(async (inventoryItemId, newQuantity) => {
@@ -1671,21 +1723,18 @@ useEffect(() => {
       }
       
       const items = await itemsResponse.json();
+      // Dirty-aware + staleness-guarded merge; spreadsheet rows recompute
+      // via the inventoryItems effect (overlayItemsOntoRows). The old code
+      // here rebuilt rows straight from the RAW server list — not dirty-
+      // aware — which reverted any row the user was mid-edit on, and
+      // dropped manual rows / custom col9+ cells.
       mergeItemsFromServer(items);
 
-      // Generate new spreadsheet rows from fresh inventory
-      const updatedRows = convertItemsToRows(items);
-      setSpreadsheetRows(updatedRows);
-      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
-      
-      // Save updated rows
-      await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
-      
       console.log('✅ Inventory items reloaded successfully');
     } catch (error) {
       console.error('Error reloading inventory items:', error);
     }
-  }, [currentProject, convertItemsToRows, spreadsheetColumns]);
+  }, [currentProject, mergeItemsFromServer]);
 
   // Function to refresh only spreadsheet rows (inventory items already updated immediately)
   const refreshSpreadsheetRows = useCallback(async () => {
@@ -1693,20 +1742,16 @@ useEffect(() => {
     
     try {
       console.log('🔄 Refreshing spreadsheet rows after inventory update...');
-      
-      // Use current inventory items (already updated immediately) to regenerate rows
-      const updatedRows = convertItemsToRows(inventoryItems);
-      setSpreadsheetRows(updatedRows);
-      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
-      
-      // Save the updated spreadsheet data to ensure persistence
-      await saveSpreadsheetData(currentProject._id, spreadsheetColumns, updatedRows);
-      
+
+      // Overlay (NOT convertItemsToRows): a from-scratch rebuild dropped
+      // manual rows and custom col9+ cells every time this ran.
+      setSpreadsheetRows((prev) => overlayItemsOntoRows(prev, inventoryItems));
+
       console.log('✅ Spreadsheet rows refreshed successfully');
     } catch (error) {
       console.error('Error refreshing spreadsheet rows:', error);
     }
-  }, [currentProject, convertItemsToRows, spreadsheetColumns, inventoryItems]);
+  }, [currentProject, overlayItemsOntoRows, inventoryItems]);
 
   // Handler for weight config changes from Spreadsheet component
   const handleWeightConfigChange = useCallback(async (newWeightMode, newMultiplier) => {
@@ -1742,11 +1787,16 @@ useEffect(() => {
   // inventoryItems changes (e.g. a writer's onCommitted merge, a poll
   // refetch, a delete). Use the overlay so we don't blow away saved row
   // order or custom col9+ columns.
+  //
+  // The `inventoryLoaded` clause lets the empty array through AFTER the
+  // initial load — deleting the last item must clear its row. Before the
+  // first load the array is empty simply because nothing has been fetched
+  // yet, and wiping saved rows then would blank the sheet on every mount.
   useEffect(() => {
-    if (inventoryItems.length > 0 && currentProject && weightConfigLoaded) {
+    if (currentProject && weightConfigLoaded && (inventoryItems.length > 0 || inventoryLoaded)) {
       setSpreadsheetRows((prev) => overlayItemsOntoRows(prev, inventoryItems));
     }
-  }, [weightConfig.weightMode, weightConfig.customWeightMultiplier, inventoryItems, overlayItemsOntoRows, currentProject, weightConfigLoaded]);
+  }, [weightConfig.weightMode, weightConfig.customWeightMultiplier, inventoryItems, overlayItemsOntoRows, currentProject, weightConfigLoaded, inventoryLoaded]);
 
   // Function to immediately update inventory item status for real-time stat updates
   // When newQuantity is provided, it updates both quantity and goingQuantity together
@@ -1758,6 +1808,13 @@ useEffect(() => {
     // correct refresh path is `reloadInventoryItems`, not this handler.
     if (!inventoryItemId) {
       console.warn('handleInventoryUpdate called without inventoryItemId — ignoring');
+      return;
+    }
+    // Same class of misuse: RoomItemsTable's delete button used to call this
+    // with a single arg. Corrupting goingQuantity to `undefined` (and going
+    // to 'partial') on a just-deleted item is never what anyone wants.
+    if (typeof newGoingQuantity !== 'number') {
+      console.warn('handleInventoryUpdate called without a numeric goingQuantity — ignoring');
       return;
     }
     console.log(`🔄 Immediately updating inventory item ${inventoryItemId} goingQuantity to ${newGoingQuantity}${newQuantity ? `, quantity to ${newQuantity}` : ''}`);
@@ -1781,11 +1838,9 @@ useEffect(() => {
         return item;
       });
 
-      // Immediately update spreadsheet rows with the new data
-      const updatedRows = convertItemsToRows(updated);
-      setSpreadsheetRows(updatedRows);
-      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
-
+      // Rows recompute via the inventoryItems effect (overlayItemsOntoRows).
+      // The old convertItemsToRows call here rebuilt from scratch, dropping
+      // manual rows and custom col9+ cells on every going-status change.
       return updated;
     });
 
@@ -1835,7 +1890,7 @@ useEffect(() => {
     } finally {
       markClean(inventoryItemId);
     }
-  }, [convertItemsToRows, currentProject, markDirty, markClean, mergeUpdatedItem]);
+  }, [currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle cuft/weight updates from Spreadsheet
   // newWeight is optional - if null, only cuft is updated (used in custom mode or when keeping current weight)
@@ -1855,11 +1910,9 @@ useEffect(() => {
         return item;
       });
 
-      // Immediately update spreadsheet rows with the new data
-      const updatedRows = convertItemsToRows(updated);
-      setSpreadsheetRows(updatedRows);
-      previousRowsRef.current = JSON.parse(JSON.stringify(updatedRows));
-
+      // Rows recompute via the inventoryItems effect (overlayItemsOntoRows).
+      // The old convertItemsToRows call here rebuilt from scratch, dropping
+      // manual rows and custom col9+ cells on every cuft edit.
       return updated;
     });
 
@@ -1899,7 +1952,7 @@ useEffect(() => {
     } finally {
       markClean(inventoryItemId);
     }
-  }, [convertItemsToRows, currentProject, markDirty, markClean, mergeUpdatedItem]);
+  }, [currentProject, markDirty, markClean, mergeUpdatedItem]);
 
   // Handle Smart Tag updates from Spreadsheet's TagsCell popover. The
   // TagsCell already optimistically updated the spreadsheet row's col8
@@ -3142,8 +3195,11 @@ useEffect(() => {
           effectiveRows = convertItemsToRows(freshItems);
           // Push to state so the UI catches up too — but read from the local
           // vars in this closure; setState won't be visible here synchronously.
+          // State goes through the overlay (raw convertItemsToRows would drop
+          // manual rows / custom cells); the local effectiveRows stays raw
+          // since the PDF only renders item-backed columns.
           mergeItemsFromServer(freshItems);
-          setSpreadsheetRows(effectiveRows);
+          setSpreadsheetRows((prev) => overlayItemsOntoRows(prev, freshItems));
         }
       } catch (e) {
         console.warn('Failed to refresh inventory before PDF generation:', e);
@@ -5062,6 +5118,12 @@ const ProcessingNotification = () => {
                       refreshTrigger={videoRecordingsKey}
                       refreshSpreadsheet={reloadInventoryItems}
                       onAddStockItem={handleAddStockItems}
+                      // Live canonical items: the tab (and the recording
+                      // modal it opens) render from the same array as the
+                      // sheet + header stats, so edits made anywhere show
+                      // up here in real time instead of after its own
+                      // refetch. Without this the tab kept a private copy.
+                      inventoryItems={inventoryItems}
                     />
                   ) : (
                     <div>No current project loaded</div>

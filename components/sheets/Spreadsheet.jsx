@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, memo } from 'react';
 import { ArrowUpDown, Plus, X, ChevronDown, Search, Filter, Menu, Camera, Video, Eye, Loader2, Package, Phone, Info, Pencil, Check, Tags } from 'lucide-react';
 import VideoRecordingModal from '../VideoRecordingModal';
-import VideoChapters from '../video/VideoChapters';
+import VideoChapters, { hasVideoChapters } from '../video/VideoChapters';
 import { useVideoChapters } from '@/lib/hooks/useVideoChapters';
 import {
   Dialog,
@@ -651,6 +651,16 @@ export default function Spreadsheet({
             if ((oldRow.cells?.col4 || '') !== (newRow.cells?.col4 || '')) return true;
             if ((oldRow.cells?.col5 || '') !== (newRow.cells?.col5 || '')) return true;
             if ((oldRow.cells?.col8 || '') !== (newRow.cells?.col8 || '')) return true;
+            // Location / count / going / packed-by — without these, edits
+            // made in the media modals (RoomItemsTable → mergeUpdatedItem →
+            // parent rows) never reach the RENDERED sheet: a going-only or
+            // PBO-only change doesn't touch any of the columns above, so
+            // the sync was silently skipped and the sheet showed stale
+            // values until an unrelated structural change forced adoption.
+            if ((oldRow.cells?.col1 || '') !== (newRow.cells?.col1 || '')) return true;
+            if ((oldRow.cells?.col3 || '') !== (newRow.cells?.col3 || '')) return true;
+            if ((oldRow.cells?.col6 || '') !== (newRow.cells?.col6 || '')) return true;
+            if ((oldRow.cells?.col7 || '') !== (newRow.cells?.col7 || '')) return true;
             return false;
           });
 
@@ -960,6 +970,7 @@ export default function Spreadsheet({
       }
 
       const { rowId, colId } = activeCell;
+      const editedRow = rows.find(r => r.id === rowId);
       const updatedRows = rows.map(row => {
         if (row.id === rowId) {
           const newCells = {
@@ -973,9 +984,16 @@ export default function Spreadsheet({
             newCells.col4 = (row.perUnitCuft * newQuantity).toString();
             newCells.col5 = (row.perUnitWeight * newQuantity).toString();
 
-            // Update the inventory item in the database
-            if (onQuantityChange && row.inventoryItemId) {
-              onQuantityChange(row.inventoryItemId, newQuantity);
+            // Persist through the guarded per-item queue (markDirty →
+            // debounced single-flight PATCH → merge server doc on commit),
+            // and echo into the parent's inventoryItems immediately. The
+            // old path (onQuantityChange) fire-and-forgot a PATCH with no
+            // dirty marking and no merge — a poll racing it reverted the
+            // typed count.
+            if (row.inventoryItemId) {
+              writesCtx?.markDirty?.(row.inventoryItemId);
+              writesCtx?.mergeUpdatedItem?.({ _id: row.inventoryItemId, quantity: newQuantity });
+              schedulePatch(row.inventoryItemId, { quantity: newQuantity });
             }
           }
 
@@ -987,12 +1005,31 @@ export default function Spreadsheet({
         return row;
       });
 
+      // Persist item-backed text edits: col1 → location, col2 → name.
+      // These used to live only in the display rows — the InventoryItem was
+      // never PATCHed and inventoryItems never updated, so the next rows
+      // rebuild from inventoryItems (poll refetch, modal edit, reload, or a
+      // page refresh) REVERTED the typed value to the item's original. This
+      // is the "my changes reverted back" bug.
+      if (editedRow?.inventoryItemId && (colId === 'col1' || colId === 'col2')) {
+        const field = colId === 'col1' ? 'location' : 'name';
+        const value = editingCellContent;
+        // Don't persist an empty name — the display keeps it (and will be
+        // re-synced from the item), but blanking `name` server-side would
+        // leave an unlabeled item everywhere (crew links, CRM syncs).
+        if (field === 'location' || value.trim()) {
+          writesCtx?.markDirty?.(editedRow.inventoryItemId);
+          writesCtx?.mergeUpdatedItem?.({ _id: editedRow.inventoryItemId, [field]: value });
+          schedulePatch(editedRow.inventoryItemId, { [field]: value });
+        }
+      }
+
       setRows(updatedRows);  // Immediate local update
       onRowsChange(updatedRows);  // Sync with parent
       setActiveCell(null);
       setSaveStatus('saving');
     }
-  }, [activeCell, editingCellContent, rows, onQuantityChange, onRowsChange]);
+  }, [activeCell, editingCellContent, rows, onQuantityChange, onRowsChange, writesCtx, schedulePatch]);
 
   // Helper: Parse goingQuantity from col6 display value
   const parseGoingQuantity = useCallback((col6Value, quantity) => {
@@ -2111,6 +2148,22 @@ export default function Spreadsheet({
                 <TooltipContent className="max-w-xs">
                   <p className="font-medium text-xs mb-1">Special Handling:</p>
                   <p className="text-xs">{row.special_handling}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {/* Stock-library badge. This media-attached branch previously
+              omitted it, so stock items added from a media modal (which
+              attach to that media via `mediaSource`) never showed their S
+              even though the plain-row branch and RoomItemsTable both do. */}
+          {row.stockItemId && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-[10px] font-bold text-green-700 bg-green-100 w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">S</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Stock Library Item</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -3516,7 +3569,7 @@ export default function Spreadsheet({
           )
         }
         extrasSlot={
-          isPreviewVideo && selectedMedia && !loadingMedia && !selectedMedia.error ? (
+          isPreviewVideo && selectedMedia && !loadingMedia && !selectedMedia.error && hasVideoChapters(previewChapters) ? (
             <VideoChapters
               chapters={previewChapters}
               activeChapter={previewActiveChapter}
@@ -3525,7 +3578,7 @@ export default function Spreadsheet({
           ) : null
         }
         analysisSlot={
-          selectedMedia && !loadingMedia && !selectedMedia.error ? (
+          selectedMedia && !loadingMedia && !selectedMedia.error && (selectedMedia.analysisResult || selectedMedia.description) ? (
             <>
               {selectedMedia.analysisResult && (
                 <div className="mb-4">

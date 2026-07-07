@@ -41,9 +41,22 @@ import VideoRecordingModal from './VideoRecordingModal';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refreshSpreadsheet, onAddStockItem = null }) => {
+const VideoRecordingsTab = ({
+  projectId,
+  projectName,
+  refreshTrigger = 0,
+  refreshSpreadsheet,
+  onAddStockItem = null,
+  // Live canonical inventory from InventoryManager. When provided, the tab
+  // (badge counts, per-recording groupings, the recording modal's items
+  // column) renders from the SAME array as the spreadsheet and header
+  // stats — edits made anywhere reflect here instantly and vice versa.
+  // When omitted (standalone usage), the tab falls back to its own fetch.
+  inventoryItems: liveInventoryItems = null,
+}) => {
   const [recordings, setRecordings] = useState([]);
-  const [inventoryItems, setInventoryItems] = useState([]);
+  const [localInventoryItems, setLocalInventoryItems] = useState([]);
+  const inventoryItems = liveInventoryItems ?? localInventoryItems;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedRecording, setSelectedRecording] = useState(null);
@@ -84,18 +97,23 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
     return map;
   }, [inventoryItems]);
 
-  // Fetch inventory items for this project
+  // Fetch inventory items for this project — fallback path only. When the
+  // parent supplies live `inventoryItems`, the canonical store is already
+  // kept fresh by InventoryManager (writers, polls, SSE), so a private
+  // refetch would just be a redundant copy that can go stale.
+  const hasLiveItems = liveInventoryItems != null;
   const fetchInventoryItems = useCallback(async () => {
+    if (hasLiveItems) return;
     try {
       const response = await fetch(`/api/projects/${projectId}/inventory`);
       if (response.ok) {
         const items = await response.json();
-        setInventoryItems(items);
+        setLocalInventoryItems(items);
       }
     } catch (err) {
       console.error('Error fetching inventory items:', err);
     }
-  }, [projectId]);
+  }, [projectId, hasLiveItems]);
 
   // Calculate statistics
   const recordingStats = useMemo(() => {
@@ -994,11 +1012,11 @@ const VideoRecordingsTab = ({ projectId, projectName, refreshTrigger = 0, refres
           onInventoryUpdate={fetchInventoryItems}
           onAddStockItem={async (items, mediaSource) => {
             // VideoRecordingsTab keeps its own local `inventoryItems`
-            // (fetchInventoryItems above) rather than sharing
-            // InventoryManager's prop directly. The canonical add
+            // (fetchInventoryItems above) when no live `inventoryItems`
+            // prop is supplied. With the live prop, the canonical add
             // (InventoryManager.handleAddStockItems) refreshes upstream
-            // state but not this tab's local copy — so after the await,
-            // refetch here so the modal sees the new items right away.
+            // state which IS this tab's data — fetchInventoryItems is a
+            // no-op then. The refetch below only matters in fallback mode.
             // `mediaSource` is the modal's attach-to-this-media context
             // (`{ sourceVideoRecordingId }`); forward it untouched.
             if (typeof onAddStockItem === 'function') {
