@@ -1,7 +1,7 @@
 // components/BoxesManager.jsx - Box Management and Planning Interface
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Box,
   Package,
@@ -48,6 +48,127 @@ function MoreListPopover({ count, label, title, items, accent }) {
         </ul>
       </PopoverContent>
     </Popover>
+  );
+}
+
+// Editable group quantity — mirrors the spreadsheet's count cell (− input +).
+// A Boxes-tab row aggregates one or more inventory items of the same box
+// type, so edits distribute across the group: increments grow the first
+// item, decrements walk the group without dropping any item below 1 (delete
+// rows from the spreadsheet instead — min for the cell is one per item).
+// Commits are debounced so rapid +/- clicks produce one write per item, and
+// any quantity change marks the item fully going — the same rule as the
+// spreadsheet's count column.
+function GroupQtyCell({ box, onInventoryUpdate }) {
+  const items = box.originalItems || [];
+  const minTotal = Math.max(1, items.length);
+  const fullTotal = box.fullQuantity;
+
+  const [draft, setDraft] = useState(String(fullTotal));
+  const [focused, setFocused] = useState(false);
+  const timerRef = useRef(null);
+  const pendingRef = useRef(null); // target total awaiting the debounced commit
+
+  // Adopt upstream changes (sheet edits, poll refresh) when idle.
+  useEffect(() => {
+    if (!focused && pendingRef.current === null) setDraft(String(fullTotal));
+  }, [fullTotal, focused]);
+
+  const applyTarget = (target) => {
+    const clamped = Math.max(minTotal, Math.min(50000 * items.length, target));
+    const current = items.map(it => Math.max(1, it.quantity || 1));
+    let delta = clamped - current.reduce((a, b) => a + b, 0);
+    if (delta === 0) return;
+    const next = [...current];
+    if (delta > 0) {
+      next[0] = Math.min(50000, next[0] + delta);
+    } else {
+      for (let i = 0; i < next.length && delta < 0; i++) {
+        const take = Math.min(next[i] - 1, -delta);
+        next[i] -= take;
+        delta += take;
+      }
+    }
+    items.forEach((it, i) => {
+      if (next[i] !== current[i] && onInventoryUpdate) {
+        onInventoryUpdate(it._id, next[i], next[i]);
+      }
+    });
+  };
+
+  const commitNow = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    const target = pendingRef.current;
+    pendingRef.current = null;
+    if (typeof target === 'number') applyTarget(target);
+  };
+
+  // Flush a still-pending edit if the row unmounts (view/tab switch) so
+  // rapid clicks right before switching away aren't silently dropped.
+  const commitNowRef = useRef(commitNow);
+  commitNowRef.current = commitNow;
+  useEffect(() => () => commitNowRef.current(), []);
+
+  const scheduleTarget = (target) => {
+    const clamped = Math.max(minTotal, target);
+    pendingRef.current = clamped;
+    setDraft(String(clamped));
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(commitNow, 400);
+  };
+
+  const currentDraftNumber = () =>
+    pendingRef.current ?? (parseInt(draft, 10) || fullTotal);
+
+  return (
+    <div className="flex items-center justify-between w-full px-1">
+      <button
+        type="button"
+        onClick={() => scheduleTarget(currentDraftNumber() - 1)}
+        disabled={currentDraftNumber() <= minTotal}
+        className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
+          currentDraftNumber() <= minTotal
+            ? 'text-gray-200 cursor-not-allowed'
+            : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+        }`}
+        aria-label={`Decrease ${box.boxType} quantity`}
+      >
+        <span className="text-sm font-medium">−</span>
+      </button>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={draft}
+        onClick={(e) => e.stopPropagation()}
+        onFocus={() => setFocused(true)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          setFocused(false);
+          const n = Math.max(minTotal, parseInt(draft, 10) || fullTotal);
+          setDraft(String(n));
+          if (n !== fullTotal) {
+            pendingRef.current = n;
+            commitNow();
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+        }}
+        className="flex-1 w-10 mx-1 text-center bg-gray-50 border border-gray-200 rounded px-1 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white"
+        aria-label={`${box.boxType} quantity`}
+      />
+      <button
+        type="button"
+        onClick={() => scheduleTarget(currentDraftNumber() + 1)}
+        className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+        aria-label={`Increase ${box.boxType} quantity`}
+      >
+        <span className="text-sm font-medium">+</span>
+      </button>
+    </div>
   );
 }
 
@@ -313,7 +434,7 @@ export default function BoxesManager({
               <div className="w-60 min-w-[240px] bg-white border-r border-b flex items-center p-3">
                 <span className="text-sm font-medium">Box Type</span>
               </div>
-              <div className="w-20 min-w-[80px] bg-white border-r border-b flex items-center p-3">
+              <div className="w-32 min-w-[128px] bg-white border-r border-b flex items-center p-3">
                 <span className="text-sm font-medium">Qty</span>
               </div>
               <div className="w-24 min-w-[96px] bg-white border-r border-b flex items-center p-3">
@@ -371,14 +492,15 @@ export default function BoxesManager({
                       </div>
                     </div>
                     
-                    {/* Quantity */}
-                    <div className="w-20 min-w-[80px] border-r flex items-center p-3">
-                      <div className="text-sm text-gray-900">
-                        <span className="font-semibold">{quantity}</span>
-                        {box.fullQuantity !== quantity && (
-                          <div className="text-xs text-gray-500">of {box.fullQuantity}</div>
-                        )}
-                      </div>
+                    {/* Quantity — editable like the spreadsheet's count
+                        column. The input holds the FULL quantity; the hint
+                        below shows how many are going when they differ
+                        (edits mark items fully going, so it clears itself). */}
+                    <div className="w-32 min-w-[128px] border-r flex flex-col justify-center p-2">
+                      <GroupQtyCell box={box} onInventoryUpdate={onInventoryUpdate} />
+                      {box.fullQuantity !== quantity && (
+                        <div className="text-xs text-gray-500 text-center mt-0.5">{quantity} going</div>
+                      )}
                     </div>
                     
                     {/* Capacity */}
