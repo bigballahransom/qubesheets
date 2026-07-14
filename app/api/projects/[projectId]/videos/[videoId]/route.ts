@@ -50,10 +50,15 @@ export async function GET(
       
       try {
         // Get counts for pagination (Video + self-serve VideoRecording)
+        // Include any recording with a playable file so media stays accessible
+        // even while analysis is running or after it fails. waiting/starting/
+        // recording have no complete file yet; empty s3Key rows are legacy
+        // auto-egress pollution (see scripts/cleanup-orphan-self-serve-recordings.js).
         const selfServeFilter = {
           projectId: projectId,
           source: 'self_serve',
-          status: 'completed',
+          status: { $in: ['processing', 'completed', 'failed', 'partial'] },
+          s3Key: { $exists: true, $nin: [null, ''] },
           ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
         };
 
@@ -76,7 +81,7 @@ export async function GET(
           ]),
           Promise.race([
             VideoRecording.find(selfServeFilter)
-              .select('roomId fileSize duration analysisResult source selfServeSessionId participants s3Key s3Url createdAt updatedAt')
+              .select('roomId status fileSize duration analysisResult source selfServeSessionId participants s3Key s3Url createdAt updatedAt')
               .sort({ createdAt: -1 })
               .maxTimeMS(10000),
             new Promise<any>((_, reject) =>
@@ -118,6 +123,8 @@ export async function GET(
             size: rec.fileSize || 0,
             duration: rec.duration || 0,
             source: 'self_serve',
+            status: rec.status,
+            s3Key: s3Key,
             s3RawFile: {
               key: s3Key,
               bucket: process.env.AWS_S3_BUCKET_NAME,

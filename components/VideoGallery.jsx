@@ -22,6 +22,7 @@ import {
   Copy,
   RotateCcw,
   RotateCw,
+  RefreshCw,
   Plus
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -87,6 +88,7 @@ const VideoCard = memo(({
   onSelectVideo,
   onDownload,
   onDelete,
+  onReprocess,
   onLoadStreamUrl,
   onStopPlaying
 }) => {
@@ -97,6 +99,13 @@ const VideoCard = memo(({
   const isSelfServe = video._type === 'self_serve_recording';
   const hasS3Video = isSelfServe ? (video.s3Key || video.customerVideoS3Key) : video.s3RawFile?.key;
   const videoTitle = isSelfServe ? 'Self-Serve Recording' : video.originalName;
+
+  // Analysis stuck in 'processing' with no update for 45+ min means the worker
+  // died mid-job (there is no retry/sweeper on the pipeline) — offer a rerun.
+  const isStalledProcessing =
+    video.analysisResult?.status === 'processing' &&
+    Date.now() - new Date(video.updatedAt || video.createdAt).getTime() > 45 * 60 * 1000;
+  const canReprocess = isSelfServe && (video.analysisResult?.status === 'failed' || isStalledProcessing);
 
   // Load video thumbnail on mount
   useEffect(() => {
@@ -137,6 +146,12 @@ const VideoCard = memo(({
               <Download size={16} className="mr-2" />
               Download
             </DropdownMenuItem>
+            {canReprocess && (
+              <DropdownMenuItem onClick={() => onReprocess(video)}>
+                <RefreshCw size={16} className="mr-2" />
+                Rerun Analysis
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               onClick={() => onDelete(video)}
               className="text-red-600 focus:text-red-600"
@@ -332,6 +347,8 @@ const VideoCard = memo(({
   if (prevProps.video.originalName !== nextProps.video.originalName) return false;
   if (prevProps.video.s3RawFile?.key !== nextProps.video.s3RawFile?.key) return false;
   if (prevProps.video.analysisResult?.status !== nextProps.video.analysisResult?.status) return false;
+  if (prevProps.video.status !== nextProps.video.status) return false;
+  if (prevProps.video.updatedAt !== nextProps.video.updatedAt) return false;
   if (prevProps.isPlaying !== nextProps.isPlaying) return false;
   if (prevProps.streamUrl !== nextProps.streamUrl) return false;
 
@@ -862,7 +879,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
         source: 'self_serve',
         selfServeSessionId: video.selfServeSessionId,
         s3Key: video.s3RawFile?.key,
-        status: 'completed',
+        status: video.status || 'completed',
         analysisResult: video.analysisResult,
         participants: video.participants || [],
         createdAt: video.createdAt,
@@ -961,6 +978,26 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
     } finally {
       // Remove operation state when download completes or fails
       removeOperation('isDownloading', video._id);
+    }
+  };
+
+  const handleReprocess = async (video) => {
+    try {
+      toast('Starting analysis rerun...');
+      const response = await fetch(`/api/projects/${projectId}/video-recordings/${video._id}/reprocess`, {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to start reprocessing');
+      }
+
+      toast.success('Analysis rerun started');
+      fetchVideos(currentPage);
+    } catch (error) {
+      console.error('🎬 Error reprocessing video:', error);
+      toast.error(error.message || 'Failed to start analysis rerun');
     }
   };
 
@@ -1336,6 +1373,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
             onSelectVideo={handleVideoSelect}
             onDownload={handleDownload}
             onDelete={handleDelete}
+            onReprocess={handleReprocess}
             onLoadStreamUrl={getStreamUrl}
             onStopPlaying={() => setPlayingVideoId(null)}
           />

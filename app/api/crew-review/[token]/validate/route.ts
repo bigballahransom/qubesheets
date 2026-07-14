@@ -181,6 +181,8 @@ export async function GET(
       box_details: item.box_details || null,
       box_recommendation: item.box_recommendation || null,
       special_handling: item.special_handling || '',
+      stockItemId: item.stockItemId?.toString() || null,
+      addedFromStock: item.addedFromStock || false,
     });
 
     // Filter out box recommendations from regular items
@@ -301,6 +303,10 @@ export async function GET(
         _id: item._id.toString(),
         name: item.name,
         quantity: item.quantity || 1,
+        // Recommended boxes count at going quantity everywhere (KPIs, Boxes
+        // tab, PDF) — send the derived value so the page's section total
+        // agrees with the topline stats.
+        goingQuantity: deriveGoingQuantity(item),
         location: item.location,
         box_details: item.box_details || null,
         box_recommendation: item.box_recommendation || null,

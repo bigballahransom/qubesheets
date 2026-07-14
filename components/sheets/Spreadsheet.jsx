@@ -2156,7 +2156,7 @@ export default function Spreadsheet({
               omitted it, so stock items added from a media modal (which
               attach to that media via `mediaSource`) never showed their S
               even though the plain-row branch and RoomItemsTable both do. */}
-          {row.stockItemId && (
+          {(row.stockItemId || row.addedFromStock) && (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -2321,7 +2321,7 @@ export default function Spreadsheet({
                 </Tooltip>
               </TooltipProvider>
             )}
-            {row?.stockItemId && (
+            {(row?.stockItemId || row?.addedFromStock) && (
               <TooltipProvider delayDuration={200}>
                 <Tooltip>
                   <TooltipTrigger asChild>

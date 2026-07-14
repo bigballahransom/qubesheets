@@ -452,7 +452,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
               )}
 
               {/* Bottom Controls Overlay */}
-              {!error && recording.status === 'completed' && streamUrl && (
+              {!error && streamUrl && (
                 <div
                   className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-8 transition-opacity duration-300 z-30 ${
                     showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'

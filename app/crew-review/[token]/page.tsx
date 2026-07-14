@@ -97,7 +97,10 @@ interface MediaSection {
 
 interface Stats {
   totalItems: number;
+  // Includes recommended boxes at going quantity ("Total w/ rec").
   totalBoxes: number;
+  // Headline Boxes figure — excludes recommended (matches the project page card).
+  totalBoxesWithoutRecommended: number;
   totalCuft: number;
   totalWeight: number;
   totalRooms: number;
@@ -108,6 +111,9 @@ interface BoxRecommendation {
   _id: string;
   name: string;
   quantity: number;
+  // Derived server-side (goingQuantity clamped to [0, quantity] with the
+  // `going`-string fallback) — how many are actually going.
+  goingQuantity?: number;
   location?: string;
   box_details?: {
     box_type?: string;
@@ -511,8 +517,8 @@ export default function CrewReviewPage() {
               </div>
               <p className="text-sm font-medium text-slate-600">Boxes</p>
             </div>
-            <p className="text-2xl font-bold text-slate-800">{stats.totalBoxes.toLocaleString()}</p>
-            <p className="text-xs text-slate-500 mt-1">total</p>
+            <p className="text-2xl font-bold text-slate-800">{(stats.totalBoxesWithoutRecommended ?? stats.totalBoxes).toLocaleString()}</p>
+            <p className="text-xs text-slate-500 mt-1">Total w/ rec: {stats.totalBoxes.toLocaleString()}</p>
           </div>
 
           <div className="bg-white rounded-xl shadow-md border border-slate-200 p-4">
@@ -730,7 +736,7 @@ export default function CrewReviewPage() {
                             )}
                           </div>
                           <div className="ml-4 text-slate-900 font-semibold">
-                            {box.box_recommendation?.box_quantity || box.quantity}
+                            {box.goingQuantity ?? (box.box_recommendation?.box_quantity || box.quantity)}
                           </div>
                         </div>
                       ))}
@@ -742,7 +748,10 @@ export default function CrewReviewPage() {
               <div className="mt-4 pt-4 border-t border-slate-200 flex justify-between items-center">
                 <span className="font-semibold text-slate-700">Total Boxes</span>
                 <span className="text-slate-900 font-bold text-lg">
-                  {Object.values(boxRecommendationsByRoom).flat().reduce((sum, box) => sum + (box.box_recommendation?.box_quantity || box.quantity), 0)}
+                  {/* Going quantity, matching the topline stats — "not going"
+                      boxes contribute nothing. Older cached responses without
+                      goingQuantity fall back to the previous full-qty figure. */}
+                  {Object.values(boxRecommendationsByRoom).flat().reduce((sum, box) => sum + (box.goingQuantity ?? (box.box_recommendation?.box_quantity || box.quantity)), 0)}
                 </span>
               </div>
             </div>

@@ -2,24 +2,85 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { 
-  Box, 
-  Package, 
-  CheckCircle, 
+import {
+  Box,
+  Package,
+  CheckCircle,
   Target,
   TrendingUp,
   ShoppingBag,
   Scale,
   Ruler,
   MapPin,
-  PackageOpen
+  PackageOpen,
+  ChevronDown
 } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 
-export default function BoxesManager({ 
+// Clickable "+N more" chip that opens a popover listing the full set
+function MoreListPopover({ count, label, title, items, accent }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          className={`mt-0.5 inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-xs font-medium cursor-pointer transition-colors ${
+            accent === 'purple'
+              ? 'text-purple-700 bg-purple-100 hover:bg-purple-200'
+              : 'text-orange-700 bg-orange-100 hover:bg-orange-200'
+          }`}
+        >
+          +{count} {label}
+          <ChevronDown className="w-3 h-3" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-0">
+        <div className="px-3 py-2 border-b border-slate-100 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+          {title}
+        </div>
+        <ul className="max-h-64 overflow-y-auto py-1">
+          {items.map((item, i) => (
+            <li key={i} className="px-3 py-1.5 text-sm text-slate-700 border-b border-slate-50 last:border-b-0">
+              {item}
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// Normalized going quantity, mirroring convertItemsToRows in InventoryManager:
+// missing goingQuantity falls back to the `going` label, clamped to [0, quantity].
+function getGoingQuantity(item) {
+  const quantity = item.quantity || 1;
+  let going = item.goingQuantity;
+  if (going === undefined || going === null) {
+    if (item.going === 'not going') going = 0;
+    else if (item.going === 'partial') going = Math.floor(quantity / 2);
+    else going = quantity;
+  }
+  return Math.max(0, Math.min(quantity, going));
+}
+
+export default function BoxesManager({
   inventoryItems = [],
-  onInventoryUpdate 
+  onInventoryUpdate,
+  weightConfig = { weightMode: 'actual', customWeightMultiplier: 7 }
 }) {
   const [activeView, setActiveView] = useState('all'); // 'all', 'recommended', 'packed'
+
+  // Per-unit cuft/weight derived exactly like the spreadsheet's rows
+  // (convertItemsToRows): item.cuft is the editable source of truth, with the
+  // analysis-time box capacity only as a fallback; weight honors the project
+  // weight mode. Totals are per-unit × quantity per the data convention.
+  const getPerUnitCuft = (item) =>
+    item.cuft || item.box_details?.capacity_cuft || 0;
+  const getPerUnitWeight = (item) =>
+    weightConfig.weightMode === 'custom'
+      ? getPerUnitCuft(item) * weightConfig.customWeightMultiplier
+      : (item.weight || 0);
 
   // Filter and categorize box items
   const boxData = useMemo(() => {
@@ -38,13 +99,16 @@ export default function BoxesManager({
     };
   }, [inventoryItems]);
 
-  // Calculate box statistics
+  // Calculate box statistics. Every box — recommended or packed — counts
+  // its going quantity; a box marked "not going" in the sheet drops out of
+  // every number here. Same semantics as the header KPIs, share links, and
+  // the PDF export, so this tab always agrees with the spreadsheet.
   const boxStats = useMemo(() => {
-    const totalRecommended = boxData.recommended.reduce((sum, box) => sum + (box.quantity || 1), 0);
-    const totalPacked = boxData.packed.reduce((sum, box) => sum + (box.quantity || 1), 0);
-    const totalCapacity = boxData.recommended.reduce((sum, box) => 
-      sum + ((box.box_details?.capacity_cuft || 0) * (box.quantity || 1)), 0
-    );
+    const totalRecommended = boxData.recommended.reduce((sum, box) => sum + getGoingQuantity(box), 0);
+    const totalPacked = boxData.packed.reduce((sum, box) => sum + getGoingQuantity(box), 0);
+    const totalCapacity =
+      boxData.recommended.reduce((sum, box) => sum + getPerUnitCuft(box) * getGoingQuantity(box), 0) +
+      boxData.packed.reduce((sum, box) => sum + getPerUnitCuft(box) * getGoingQuantity(box), 0);
 
     return {
       totalRecommended,
@@ -52,7 +116,7 @@ export default function BoxesManager({
       totalBoxes: totalRecommended + totalPacked,
       totalCapacity: Math.round(totalCapacity * 10) / 10
     };
-  }, [boxData]);
+  }, [boxData, weightConfig.weightMode, weightConfig.customWeightMultiplier]);
 
   // Aggregate boxes by type
   const aggregatedBoxes = useMemo(() => {
@@ -61,17 +125,18 @@ export default function BoxesManager({
       
       boxes.forEach(box => {
         const boxType = box.box_details?.box_type || box.packed_box_details?.size || box.name;
-        const capacity = box.box_details?.capacity_cuft || 0;
+        const capacity = getPerUnitCuft(box);
         const isRecommended = box.itemType === 'boxes_needed';
-        
+
         // Create a key for grouping (box type + status)
         const key = `${boxType}_${isRecommended ? 'recommended' : 'packed'}`;
-        
+
         if (!grouped[key]) {
           grouped[key] = {
             boxType,
             isRecommended,
             totalQuantity: 0,
+            fullQuantity: 0,
             totalWeight: 0,
             totalCapacity: 0,
             unitCapacity: capacity,
@@ -80,11 +145,15 @@ export default function BoxesManager({
             items: []
           };
         }
-        
+
         const quantity = box.quantity || 1;
-        grouped[key].totalQuantity += quantity;
-        grouped[key].totalWeight += (box.weight || 0);
-        grouped[key].totalCapacity += (capacity * quantity);
+        // Every box counts what's actually going (matches the sheet's going
+        // column and the header KPIs); "not going" boxes contribute nothing.
+        const countedQty = getGoingQuantity(box);
+        grouped[key].totalQuantity += countedQty;
+        grouped[key].fullQuantity += quantity;
+        grouped[key].totalWeight += getPerUnitWeight(box) * countedQty;
+        grouped[key].totalCapacity += (capacity * countedQty);
         
         // Collect locations
         const location = box.location || box.box_details?.room;
@@ -108,6 +177,7 @@ export default function BoxesManager({
         boxType: group.boxType,
         isRecommended: group.isRecommended,
         quantity: group.totalQuantity,
+        fullQuantity: group.fullQuantity,
         weight: Math.round(group.totalWeight * 10) / 10,
         totalCapacity: Math.round(group.totalCapacity * 10) / 10,
         unitCapacity: group.unitCapacity,
@@ -131,7 +201,7 @@ export default function BoxesManager({
       default:
         return allAggregated;
     }
-  }, [activeView, boxData]);
+  }, [activeView, boxData, weightConfig.weightMode, weightConfig.customWeightMultiplier]);
 
   return (
     <div className="space-y-6">
@@ -303,7 +373,12 @@ export default function BoxesManager({
                     
                     {/* Quantity */}
                     <div className="w-20 min-w-[80px] border-r flex items-center p-3">
-                      <span className="text-sm text-gray-900 font-semibold">{quantity}</span>
+                      <div className="text-sm text-gray-900">
+                        <span className="font-semibold">{quantity}</span>
+                        {box.fullQuantity !== quantity && (
+                          <div className="text-xs text-gray-500">of {box.fullQuantity}</div>
+                        )}
+                      </div>
                     </div>
                     
                     {/* Capacity */}
@@ -333,7 +408,13 @@ export default function BoxesManager({
                           <div>
                             <div className="font-medium">{locations[0]}</div>
                             {locations.length > 1 && (
-                              <div className="text-xs text-gray-500">+{locations.length - 1} more</div>
+                              <MoreListPopover
+                                count={locations.length - 1}
+                                label="more"
+                                title={`Locations (${locations.length})`}
+                                items={locations}
+                                accent={isRecommended ? 'purple' : 'orange'}
+                              />
                             )}
                           </div>
                         ) : (
@@ -360,7 +441,13 @@ export default function BoxesManager({
                           <div>
                             <div>{box.details[0]}</div>
                             {box.details.length > 1 && (
-                              <div className="text-xs text-gray-500">+{box.details.length - 1} more items</div>
+                              <MoreListPopover
+                                count={box.details.length - 1}
+                                label="more items"
+                                title={`Details (${box.details.length})`}
+                                items={box.details}
+                                accent={isRecommended ? 'purple' : 'orange'}
+                              />
                             )}
                           </div>
                         ) : (

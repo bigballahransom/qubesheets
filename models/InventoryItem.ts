@@ -61,6 +61,11 @@ export interface IInventoryItem extends Document {
   videoTimestamps?: string[]; // All timestamps where this item was seen
   consolidatedFromCount?: number; // How many raw detections merged into this
   stockItemId?: mongoose.Types.ObjectId | string; // Reference to stock inventory item
+  // True for anything added via the stock picker — library items, custom
+  // items, and org-settings box types. Drives the green "S" badge in the
+  // spreadsheet; stockItemId alone can't, since custom/org-box items have
+  // no library ObjectId to reference.
+  addedFromStock?: boolean;
   // Smart Tags applied to this item — names match entries in
   // OrganizationSettings.smartTags. Each org tag has its own mode ("ai" or
   // "manual"); "ai"-mode tags can be applied automatically by the worker,
@@ -198,6 +203,10 @@ const InventoryItemSchema: Schema = new Schema(
       ref: 'StockInventory',
       required: false,
       index: true
+    },
+    addedFromStock: {
+      type: Boolean,
+      required: false
     },
     tags: {
       type: [String],

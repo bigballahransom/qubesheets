@@ -45,6 +45,19 @@ interface SelectedItem {
   location?: string; // Room/location for new items
 }
 
+// Box types configured in organization settings (Settings → Box Types).
+// Surfaced in the picker as the "Organization Boxes" group; they only define
+// a capacity, so weight defaults to the 7 lbs/cuft industry rule.
+interface OrgBoxType {
+  id: string;
+  name: string;
+  capacityCuft: number;
+  description?: string;
+}
+
+const ORG_BOXES_CATEGORY = 'Organization Boxes';
+const ORG_BOX_LBS_PER_CUFT = 7;
+
 interface ExistingInventoryItem {
   _id: string;
   name: string;
@@ -109,6 +122,7 @@ export default function StockInventoryPickerModal({
 }: StockInventoryPickerModalProps) {
   const [items, setItems] = useState<StockInventoryItem[]>([]);
   const [aiItems, setAiItems] = useState<ExistingInventoryItem[]>([]); // AI-generated items from existing inventory
+  const [orgBoxTypes, setOrgBoxTypes] = useState<OrgBoxType[]>([]); // Org settings box types ("Organization Boxes" group)
   const [parentClasses, setParentClasses] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -181,6 +195,18 @@ export default function StockInventoryPickerModal({
     return filtered;
   }, [aiItems, selectedRoom, search]);
 
+  // Org box types shown in the grid — respect the search box and the
+  // category dropdown (visible under "All Categories" or their own entry).
+  const filteredOrgBoxes = useMemo(() => {
+    if (selectedCategory !== 'all' && selectedCategory !== ORG_BOXES_CATEGORY) return [];
+    if (!search.trim()) return orgBoxTypes;
+    const searchLower = search.toLowerCase().trim();
+    return orgBoxTypes.filter(box =>
+      box.name.toLowerCase().includes(searchLower) ||
+      (box.description || '').toLowerCase().includes(searchLower)
+    );
+  }, [orgBoxTypes, selectedCategory, search]);
+
   // Quantity helper functions
   const getQuantity = useCallback((itemId: string) => selectedQuantities[itemId] || 0, [selectedQuantities]);
 
@@ -249,13 +275,21 @@ export default function StockInventoryPickerModal({
       if (current !== initial) changesCount++;
     });
 
+    // Check org box types for changes
+    orgBoxTypes.forEach(box => {
+      const key = `orgbox_${box.id}`;
+      const current = getQuantity(key);
+      const initial = initialQuantities[key] || 0;
+      if (current !== initial) changesCount++;
+    });
+
     return {
       totalItems,
       totalWeight,
       totalCuft,
       changesCount,
     };
-  }, [selectedRoom, items, filteredAiItems, getQuantity, initialQuantities]); // Removed existingInventory
+  }, [selectedRoom, items, filteredAiItems, orgBoxTypes, getQuantity, initialQuantities]); // Removed existingInventory
 
   // Handle save - only send items that have changed
   const handleSave = useCallback(() => {
@@ -302,11 +336,40 @@ export default function StockInventoryPickerModal({
       }
     });
 
+    // Check org box types for changes. These become pseudo stock items:
+    // per-unit cuft is the configured capacity and per-unit weight defaults
+    // to 7 lbs/cuft (box types in settings don't define a weight). The
+    // `orgbox_` id prefix tells handleAddStockItems this isn't a real stock
+    // ObjectId and must be typed as a recommended box (boxes_needed).
+    orgBoxTypes.forEach(box => {
+      const key = `orgbox_${box.id}`;
+      const current = getQuantity(key);
+      const initial = initialQuantities[key] || 0;
+      if (current !== initial) {
+        const item: StockInventoryItem = {
+          _id: key,
+          name: box.name,
+          parent_class: ORG_BOXES_CATEGORY,
+          weight: (box.capacityCuft || 0) * ORG_BOX_LBS_PER_CUFT,
+          cubic_feet: box.capacityCuft || 0,
+          tags: '[]',
+          image: '',
+        };
+        changedItems.push({
+          item,
+          quantity: current,
+          previousQuantity: initial,
+          isAiItem: false,
+          location: selectedRoom || undefined,
+        });
+      }
+    });
+
     if (changedItems.length > 0) {
       onAddItems(changedItems);
     }
     onClose();
-  }, [items, aiItems, getQuantity, initialQuantities, selectedRoom, onAddItems, onClose]);
+  }, [items, aiItems, orgBoxTypes, getQuantity, initialQuantities, selectedRoom, onAddItems, onClose]);
 
   // Handle adding a custom item
   const handleAddCustomItem = useCallback(async () => {
@@ -479,6 +542,16 @@ export default function StockInventoryPickerModal({
       // Fetch stock items
       fetchItems(true);
 
+      // Fetch the org's configured box types for the "Organization Boxes"
+      // group. 403s for personal accounts — the section just stays hidden.
+      fetch('/api/settings/box-types')
+        .then(async (res) => {
+          if (!res.ok) return;
+          const data = await res.json();
+          setOrgBoxTypes(Array.isArray(data.boxTypes) ? data.boxTypes : []);
+        })
+        .catch(() => {});
+
       // Set default room and calculate initial quantities. When the parent
       // passed a `defaultRoom` prop (e.g., a per-room "+ Inventory" button
       // inside a modal accordion), use that so the user lands on the room
@@ -550,6 +623,7 @@ export default function StockInventoryPickerModal({
       setCustomRooms([]);
       setItems([]);
       setAiItems([]);
+      setOrgBoxTypes([]);
       setSnapshotRooms([]);
       setSelectedQuantities({});
       setInitialQuantities({});
@@ -604,6 +678,9 @@ export default function StockInventoryPickerModal({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
+                {orgBoxTypes.length > 0 && (
+                  <SelectItem value={ORG_BOXES_CATEGORY}>{ORG_BOXES_CATEGORY}</SelectItem>
+                )}
                 {parentClasses.map((pc) => (
                   <SelectItem key={pc} value={pc}>
                     {pc}
@@ -910,13 +987,104 @@ export default function StockInventoryPickerModal({
             <div className="flex items-center justify-center h-64">
               <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
             </div>
-          ) : items.length === 0 && filteredAiItems.length === 0 ? (
+          ) : items.length === 0 && filteredAiItems.length === 0 && filteredOrgBoxes.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-500">
               <p className="text-lg">No items found</p>
               <p className="text-sm">Try adjusting your search or filter</p>
             </div>
           ) : (
             <>
+              {/* Organization Boxes Section — box types from org settings.
+                  These are added as recommended boxes (boxes_needed). */}
+              {filteredOrgBoxes.length > 0 && (
+                <div className="mb-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Package className="w-5 h-5 text-purple-500" />
+                    <h3 className="text-sm font-medium text-slate-600">{ORG_BOXES_CATEGORY}</h3>
+                    <span className="text-xs text-slate-400">
+                      (added as recommended boxes)
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {filteredOrgBoxes.map((box) => {
+                      const key = `orgbox_${box.id}`;
+                      const qty = getQuantity(key);
+                      const isSelected = qty > 0;
+
+                      return (
+                        <div
+                          key={key}
+                          className={cn(
+                            "relative border rounded-lg p-3 transition-all bg-white",
+                            isSelected
+                              ? "border-purple-500 bg-purple-50 shadow-md"
+                              : "border-slate-200 hover:border-slate-300"
+                          )}
+                        >
+                          <div className="aspect-square mb-2 bg-slate-50 rounded-md flex items-center justify-center overflow-hidden relative">
+                            <Package className="w-10 h-10 text-purple-300" strokeWidth={1.5} />
+                          </div>
+
+                          <p className="font-medium text-sm text-slate-800 truncate" title={box.description ? `${box.name} — ${box.description}` : box.name}>
+                            {box.name}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {(box.capacityCuft || 0) * ORG_BOX_LBS_PER_CUFT}lbs &bull; {box.capacityCuft || 0} cuft
+                          </p>
+                          <Badge variant="outline" className="mt-1.5 text-xs bg-purple-50 border-purple-200 text-purple-700">
+                            Recommended
+                          </Badge>
+
+                          {/* Quantity Controls */}
+                          <div className="flex items-center justify-center gap-2 mt-3">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                decrement(key);
+                              }}
+                              disabled={qty === 0}
+                              className={cn(
+                                "w-11 h-11 flex items-center justify-center rounded-lg transition-colors",
+                                qty === 0
+                                  ? "text-slate-300 cursor-not-allowed"
+                                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-800 active:bg-slate-200"
+                              )}
+                            >
+                              <Minus size={20} />
+                            </button>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={qty}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                setQuantity(key, val);
+                              }}
+                              className={cn(
+                                "w-14 h-11 text-center text-base font-medium rounded-lg border focus:outline-none focus:ring-2 focus:ring-purple-500",
+                                isSelected
+                                  ? "border-purple-300 bg-white"
+                                  : "border-slate-200 bg-slate-50"
+                              )}
+                            />
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                increment(key);
+                              }}
+                              className="w-11 h-11 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-800 active:bg-slate-200 transition-colors"
+                            >
+                              <Plus size={20} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Stock Library Items Section */}
               {items.length > 0 && (
                 <div className="mb-6">

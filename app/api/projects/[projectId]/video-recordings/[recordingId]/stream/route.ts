@@ -42,8 +42,11 @@ export async function GET(
         selfServeSessionId: liveKitRecording.selfServeSessionId
       });
 
-      // Only allow streaming for completed recordings
-      if (liveKitRecording.status !== 'completed' && liveKitRecording.status !== 'recording') {
+      // Block only states where no complete file can exist yet. Recordings in
+      // processing/failed/partial states have a finished MP4 in S3 and must
+      // stay streamable so media is accessible even when analysis has issues;
+      // the s3Key resolution below 400s if no file actually exists.
+      if (liveKitRecording.status === 'waiting' || liveKitRecording.status === 'starting') {
         console.log('📹 Recording not ready - status:', liveKitRecording.status);
         return NextResponse.json({
           error: 'Recording not ready for streaming',

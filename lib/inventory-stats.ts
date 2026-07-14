@@ -14,16 +14,18 @@
 //    trust the `going` string first, which diverged whenever the two
 //    fields were out of sync, e.g. goingQuantity=3 with a stale
 //    going='going'.)
-//  - Box classification uses itemType AND the legacy name fallback
-//    (name contains "box"), same as the project page. itemType-only
-//    checks counted legacy box items as regular items.
+//  - Box classification is by itemType ONLY (existing_box / packed_box /
+//    boxes_needed), same as the project page and the Boxes tab. The old
+//    name-contains-"box" fallback misclassified regular items ("Queen Box
+//    Spring", "Storage Boxes/Baskets") as boxes, so the topline box count
+//    disagreed with the Boxes tab everywhere.
 //  - Volume and weight INCLUDE recommended boxes (boxes_needed), matching
 //    the project page's headline Volume/Weight cards. *WithoutRecommended
 //    variants are returned for subtext use.
-//  - totalBoxes counts recommended boxes at FULL quantity and existing
-//    boxes at going quantity — identical to the project page's
-//    "Total w/ rec" figure. totalBoxesWithoutRecommended matches the
-//    headline Boxes card.
+//  - totalBoxes counts EVERY box (recommended and existing) at going
+//    quantity — a box marked "not going" contributes nothing, identical to
+//    the project page's "Total w/ rec" figure and the Boxes tab.
+//    totalBoxesWithoutRecommended matches the headline Boxes card.
 //  - Weight follows the resolved weight config (custom mode: per-unit
 //    cuft × multiplier; actual mode: the item's AI weight) via
 //    resolveItemWeight — same as the sheet's col5.
@@ -47,7 +49,7 @@ export interface InventoryStatsItem {
 
 export interface InventoryStats {
   totalItems: number;
-  // Includes recommended boxes at full quantity (project page "Total w/ rec").
+  // Includes recommended boxes at going quantity (project page "Total w/ rec").
   totalBoxes: number;
   totalBoxesWithoutRecommended: number;
   // Include recommended boxes (project page headline Volume/Weight cards).
@@ -72,13 +74,13 @@ export function deriveGoingQuantity(item: InventoryStatsItem): number {
   return Math.max(0, Math.min(quantity, goingQty));
 }
 
-// Box classification — itemType first, legacy name fallback second.
-// Mirrors the project page's totalItems/totalBoxes reducers.
+// Box classification — typed box items only. Mirrors the project page's
+// totalItems/totalBoxes reducers and the Boxes tab (BoxesManager).
 export function isBoxItem(item: InventoryStatsItem): boolean {
   return (
     item.itemType === 'existing_box' ||
-    item.itemType === 'boxes_needed' ||
-    (item.name || '').toLowerCase().includes('box')
+    item.itemType === 'packed_box' ||
+    item.itemType === 'boxes_needed'
   );
 }
 
@@ -97,7 +99,6 @@ export function computeInventoryStats(
   const bedrooms = new Set<string>();
 
   for (const item of items) {
-    const quantity = Math.max(1, item.quantity || 1);
     const goingQty = deriveGoingQuantity(item);
     const perUnitCuft = item.cuft || 0;
     const perUnitWeight = resolveItemWeight(item, weightConfig);
@@ -113,10 +114,10 @@ export function computeInventoryStats(
       }
     }
 
-    // Items vs boxes.
+    // Items vs boxes. Every box counts its going quantity — recommended or
+    // existing — so "not going" boxes drop out of every surface alike.
     if (isBoxItem(item)) {
-      // Recommended boxes count at full quantity; existing boxes at going.
-      totalBoxes += isRecommended ? quantity : goingQty;
+      totalBoxes += goingQty;
       if (!isRecommended) totalBoxesWithoutRecommended += goingQty;
     } else {
       totalItems += goingQty;

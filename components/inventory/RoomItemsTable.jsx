@@ -347,7 +347,7 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
                 </TooltipContent>
               </Tooltip>
             )}
-            {item.stockItemId && (
+            {(item.stockItemId || item.addedFromStock) && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span className="text-[10px] font-bold text-green-700 bg-green-100 w-4 h-4 rounded-full inline-flex items-center justify-center shrink-0 cursor-help">S</span>

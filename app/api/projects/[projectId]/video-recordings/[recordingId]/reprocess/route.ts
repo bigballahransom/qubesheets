@@ -4,6 +4,8 @@ import connectMongoDB from '@/lib/mongodb';
 import VideoRecording from '@/models/VideoRecording';
 import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import InventoryItem from '@/models/InventoryItem';
+import Project from '@/models/Project';
+import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import AWS from 'aws-sdk';
 
 export async function POST(
@@ -13,7 +15,18 @@ export async function POST(
   const { projectId, recordingId } = await params;
 
   try {
+    const authContext = await getAuthContext();
+    if (authContext instanceof NextResponse) {
+      return authContext;
+    }
+
     await connectMongoDB();
+
+    // Check if project exists and belongs to the organization
+    const project = await Project.findOne(getOrgFilter(authContext, { _id: projectId }));
+    if (!project) {
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+    }
 
     // Fetch the recording
     const recording = await VideoRecording.findOne({

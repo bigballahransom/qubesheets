@@ -549,6 +549,7 @@ const inventoryDataChanged = (oldItems, newItems) => {
         sourceType: derivedSourceType, // Drives icon + tooltip in Spreadsheet.jsx
         videoTimestamp: item.videoTimestamp, // "MM:SS" for video-call/self-serve items
         stockItemId: item.stockItemId, // Reference to stock inventory item
+        addedFromStock: item.addedFromStock, // Green "S" badge for picker-added items without a stockItemId (custom, org boxes)
         quantity: quantity, // Add quantity at the top level for spreadsheet logic
         itemType: getItemType(item), // Preserve item type for highlighting (backward compatible)
         ai_generated: item.ai_generated, // Preserve AI generated flag
@@ -2229,10 +2230,23 @@ useEffect(() => {
       if (creates.length > 0) {
         const newItems = creates.map(({ item, quantity, location }) => {
           const isCustomItem = item._id && item._id.startsWith('custom_');
+          // Org-settings box types from the picker's "Organization Boxes"
+          // group. Synthetic id, not a stock library ObjectId.
+          const isOrgBox = item._id && item._id.startsWith('orgbox_');
           // For custom items, user enters total weight/cuft, so divide by quantity to get per-unit
-          // For stock items, weight/cuft are already per-unit values
+          // For stock items (and org boxes), weight/cuft are already per-unit values
           const perUnitWeight = isCustomItem ? (item.weight || 0) / quantity : (item.weight || 0);
           const perUnitCuft = isCustomItem ? (item.cubic_feet || 0) / quantity : (item.cubic_feet || 0);
+
+          // Stock boxes must be typed as boxes or they land as regular_item
+          // (the model default) and never show on the Boxes tab or count in
+          // the Boxes KPIs. Boxes added from the stock picker are always
+          // recommendations for packing (boxes_needed), not boxes already
+          // packed in the home. parent_class is the stock library's own
+          // classification, so "Tool Box" / "Box Spring" style names stay
+          // regular items.
+          const isStockBox = isOrgBox || (!isCustomItem &&
+            (item.parent_class === 'Boxes' || item.parent_class === 'Moving_Boxes'));
 
           const newItem = {
             name: item.name,
@@ -2244,14 +2258,20 @@ useEffect(() => {
             goingQuantity: quantity,
             packed_by: 'N/A',
             location: location || '', // Set location/room if specified
+            // Everything created through the stock picker — library items,
+            // custom items, org box types — gets the green "S" badge.
+            addedFromStock: true,
+            ...(isStockBox && { itemType: 'boxes_needed' }),
             // Attach to the media (image / video / video recording) the
             // user is viewing in the modal, when the caller passed one.
             // No-op for the spreadsheet's bottom + Inventory button which
             // adds globally.
             ...mediaSource,
           };
-          // Only include stockItemId if it's a valid ObjectId (not a custom_ prefix)
-          if (!isCustomItem) {
+          // Only include stockItemId if it's a valid ObjectId (not a custom_
+          // or orgbox_ prefix — those are synthetic picker ids and would fail
+          // the ObjectId cast)
+          if (!isCustomItem && !isOrgBox) {
             newItem.stockItemId = item._id;
           }
           return newItem;
@@ -2663,11 +2683,15 @@ useEffect(() => {
       // Skip analyzing rows and get item type info
       if (row.isAnalyzing) return total;
       
-      // Exclude all box-related items from item count using itemType field or name fallback
-      const isBox = row.itemType === 'existing_box' || 
-                   row.itemType === 'boxes_needed' || 
-                   (row.cells?.col2 || '').toLowerCase().includes('box');
-      
+      // Exclude typed box items from the item count. Must mirror the
+      // totalBoxes definition exactly — when this used the name-contains-
+      // "box" fallback, items like "Queen Box Spring" were excluded here
+      // yet not counted by the (typed-only) Boxes tab, so they vanished
+      // from every KPI.
+      const isBox = row.itemType === 'existing_box' ||
+                   row.itemType === 'packed_box' ||
+                   row.itemType === 'boxes_needed';
+
       if (isBox) return total;
       
       // Parse going status from spreadsheet
@@ -2721,21 +2745,20 @@ useEffect(() => {
       // Skip analyzing rows
       if (row.isAnalyzing) return total;
       
-      // Check if this row represents a box using itemType field or name fallback
-      const isBox = row.itemType === 'existing_box' || 
-                   row.itemType === 'boxes_needed' || 
-                   (row.cells?.col2 || '').toLowerCase().includes('box');
+      // Typed box items only. The old name-contains-"box" fallback counted
+      // regular furniture ("Queen Box Spring", "Storage Boxes/Baskets") as
+      // boxes, so this KPI disagreed with the Boxes tab, which has always
+      // keyed off itemType.
+      const isBox = row.itemType === 'existing_box' ||
+                   row.itemType === 'packed_box' ||
+                   row.itemType === 'boxes_needed';
       
       if (!isBox) return total;
       
       const quantity = parseInt(row.cells?.col3) || 1;
-      
-      // For boxes_needed (recommended), always count full quantity
-      if (row.itemType === 'boxes_needed') {
-        return total + quantity;
-      }
-      
-      // For existing/packed boxes, count going quantity
+
+      // Every box — recommended or existing — counts its going quantity;
+      // "not going" boxes drop out (matches the Boxes tab and room totals).
       const goingValue = row.cells?.col6 || 'going';
       let goingQuantity = 0;
       
@@ -2759,10 +2782,11 @@ useEffect(() => {
     return spreadsheetRows.reduce((total, row) => {
       if (row.isAnalyzing) return total;
       
-      // Only count existing boxes, not recommended boxes
-      const isExistingBox = row.itemType === 'existing_box' || 
-                           ((row.cells?.col2 || '').toLowerCase().includes('box') && 
-                            row.itemType !== 'boxes_needed');
+      // Only count existing/packed boxes, not recommended boxes. Typed items
+      // only — the name-contains-"box" fallback misclassified regular items
+      // (see totalBoxes above).
+      const isExistingBox = row.itemType === 'existing_box' ||
+                           row.itemType === 'packed_box';
       
       if (!isExistingBox) return total;
       
@@ -3058,10 +3082,10 @@ useEffect(() => {
       manualCuft += goingCuft;
       manualWeight += goingWeight;
       
-      // Count items (exclude boxes)
-      const isBox = row.itemType === 'existing_box' || 
-                   row.itemType === 'boxes_needed' || 
-                   (row.cells?.col2 || '').toLowerCase().includes('box');
+      // Count items (exclude typed boxes — mirrors the totalItems KPI)
+      const isBox = row.itemType === 'existing_box' ||
+                   row.itemType === 'packed_box' ||
+                   row.itemType === 'boxes_needed';
       if (!isBox) {
         manualItems += goingQuantity;
       }
@@ -3220,18 +3244,21 @@ useEffect(() => {
       } else g = quantity;
       return Math.max(0, Math.min(quantity, g));
     };
+    // Typed box items only, mirroring the totalBoxes KPI — the old
+    // name-contains-"box" fallback pulled regular items into the box count.
     const rowIsBox = (row) => row.itemType === 'existing_box' ||
-                              row.itemType === 'boxes_needed' ||
-                              (row.cells?.col2 || '').toLowerCase().includes('box');
+                              row.itemType === 'packed_box' ||
+                              row.itemType === 'boxes_needed';
     const computeKpis = (rows) => {
-      let items = 0, boxes = 0, cuft = 0, weight = 0;
+      let items = 0, boxes = 0, boxesWithoutRec = 0, cuft = 0, weight = 0;
       for (const row of rows) {
         if (row.isAnalyzing) continue;
         const quantity = parseInt(row.cells?.col3) || 1;
         const goingQty = parseGoingQty(row.cells, quantity);
         const isBox = rowIsBox(row);
         if (isBox) {
-          boxes += row.itemType === 'boxes_needed' ? quantity : goingQty;
+          boxes += goingQty;
+          if (row.itemType !== 'boxes_needed') boxesWithoutRec += goingQty;
         } else {
           items += goingQty;
         }
@@ -3241,11 +3268,11 @@ useEffect(() => {
         cuft += displayCuft * factor;
         weight += displayWeight * factor;
       }
-      return { totalItems: items, totalBoxes: boxes, totalCubicFeet: cuft.toFixed(0), totalWeight: weight.toFixed(0) };
+      return { totalItems: items, totalBoxes: boxes, totalBoxesWithoutRecommended: boxesWithoutRec, totalCubicFeet: cuft.toFixed(0), totalWeight: weight.toFixed(0) };
     };
     const effectiveTotals = opts.refreshFromServer
       ? computeKpis(effectiveRows)
-      : { totalItems, totalBoxes, totalCubicFeet, totalWeight };
+      : { totalItems, totalBoxes, totalBoxesWithoutRecommended, totalCubicFeet, totalWeight };
 
     // Create the PDF document
     const doc = new jsPDF();
@@ -3476,9 +3503,12 @@ useEffect(() => {
     doc.text('SUMMARY', marginX + 5, currentY + 16);
 
     // KPI strip on right — label (small grey) above value (bold)
+    // BOXES matches the on-screen headline card (excludes recommended);
+    // W/ REC is the "Total w/ rec" figure so both numbers travel with the PDF.
     const kpis = [
       { label: 'ITEMS',  value: effectiveTotals.totalItems.toString() },
-      { label: 'BOXES',  value: effectiveTotals.totalBoxes.toString() },
+      { label: 'BOXES',  value: effectiveTotals.totalBoxesWithoutRecommended.toString() },
+      { label: 'W/ REC', value: effectiveTotals.totalBoxes.toString() },
       { label: 'CU.FT.', value: effectiveTotals.totalCubicFeet.toString() },
       { label: 'WEIGHT', value: `${effectiveTotals.totalWeight} lbs` },
     ];
@@ -3977,30 +4007,39 @@ useEffect(() => {
     const renderBoxSummaryTable = (items, sectionTitle, getBoxTypeFn, tintColor) => {
       if (items.length === 0) return;
 
-      // Aggregate boxes by type (using same logic as BoxesManager)
+      // Aggregate boxes by type (same semantics as BoxesManager): every box
+      // counts its going quantity, per-unit cuft prefers the editable
+      // item.cuft over the analysis-time capacity, and weight honors the
+      // project weight mode (custom: per-unit cuft × multiplier).
       const boxSummary = {};
       items.forEach(item => {
         const boxType = getBoxTypeFn(item);
         const quantity = item.quantity || 1;
-        const capacity = item.box_details?.capacity_cuft || item.cuft || 0;
-        const weight = item.weight || 0;
+        const perUnitCuft = item.cuft || item.box_details?.capacity_cuft || 0;
+        const perUnitWeight = weightConfig.weightMode === 'custom'
+          ? perUnitCuft * weightConfig.customWeightMultiplier
+          : (item.weight || 0);
         const packedBy = item.packed_by || 'N/A';
 
-        // Calculate going quantity
-        let goingQty = quantity;
-        if (item.going === 'not going') {
-          goingQty = 0;
-        } else if (item.goingQuantity !== undefined) {
-          goingQty = item.goingQuantity;
+        // Going quantity, mirroring deriveGoingQuantity: stored value clamped
+        // to [0, quantity], with the `going` label as fallback.
+        let goingQty = item.goingQuantity;
+        if (goingQty === undefined || goingQty === null) {
+          if (item.going === 'not going') goingQty = 0;
+          else if (item.going === 'partial') goingQty = Math.floor(quantity / 2);
+          else goingQty = quantity;
         }
+        goingQty = Math.max(0, Math.min(quantity, goingQty));
 
         if (!boxSummary[boxType]) {
           boxSummary[boxType] = { count: 0, cuft: 0, weight: 0, goingQty: 0, totalQty: 0, packedByValues: {} };
         }
 
-        boxSummary[boxType].count += quantity;
-        boxSummary[boxType].cuft += (capacity * quantity);
-        boxSummary[boxType].weight += weight;
+        // Count/Cu.Ft/Weight columns all reflect what's actually going — the
+        // Going column's "going (n/m)" string keeps the full total visible.
+        boxSummary[boxType].count += goingQty;
+        boxSummary[boxType].cuft += (perUnitCuft * goingQty);
+        boxSummary[boxType].weight += (perUnitWeight * goingQty);
         boxSummary[boxType].goingQty += goingQty;
         boxSummary[boxType].totalQty += quantity;
         boxSummary[boxType].packedByValues[packedBy] = (boxSummary[boxType].packedByValues[packedBy] || 0) + quantity;
@@ -5073,9 +5112,10 @@ const ProcessingNotification = () => {
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6">
                   {currentProject && (
-                    <BoxesManager 
+                    <BoxesManager
                       inventoryItems={inventoryItems}
                       onInventoryUpdate={handleInventoryUpdate}
+                      weightConfig={weightConfig}
                     />
                   )}
                 </div>
