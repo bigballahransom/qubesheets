@@ -183,6 +183,11 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
   // PER-UNIT cuft and chooses how weight reacts.
   const [editCuftOpen, setEditCuftOpen] = useState(false);
 
+  // Edit-item dialog (name + special handling): opened from the ℹ badge when
+  // instructions exist, or the hover-visible pencil when they don't. Also the
+  // modals' rename path — the name cell itself is not click-to-edit.
+  const [editItemOpen, setEditItemOpen] = useState(false);
+
   // Quantity inc/dec — reads the writer's latest synchronous state, so rapid
   // `+` clicks compute the next value off the fresh optimistic state, not a
   // stale render-time closure. Going-quantity rule matches the spreadsheet
@@ -257,7 +262,7 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
     {/* Border is owned by the cells (each <td> has `border-b border-gray-200`),
         matching the spreadsheet's per-cell border style. Putting a second
         border-b on the <tr> doubled the row separator visually. */}
-    <tr className={rowTint}>
+    <tr className={`group/shrow ${rowTint}`}>
       {/* Item: seek + name (clickable → seek) + type/heavy/hazardous/fragile/
           special-handling/stock badges. Mirrors Spreadsheet.jsx item cell. */}
       <td className="p-2 border-r border-b border-gray-200 h-10 overflow-hidden">
@@ -294,6 +299,44 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
 
           {/* Badges, in the same order as the spreadsheet renders them. */}
           <TooltipProvider delayDuration={200}>
+            {/* Edit-item entry point always renders first, ahead of the other
+                badges, so it sits in a consistent spot on every row: blue ℹ
+                (with instructions preview) when special handling exists, a
+                hover-revealed gray ℹ otherwise. Both open the same dialog
+                (name + special handling). */}
+            {item.special_handling ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setEditItemOpen(true)}
+                    className="w-4 h-4 rounded-full inline-flex items-center justify-center shrink-0 cursor-pointer hover:bg-blue-50"
+                    aria-label={`Edit ${item.name}`}
+                  >
+                    <Info size={14} className="text-blue-500" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-medium text-xs mb-1">Special Handling:</p>
+                  <p className="text-xs">{item.special_handling}</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Click to edit</p>
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setEditItemOpen(true)}
+                    className="w-4 h-4 rounded-full inline-flex items-center justify-center shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/shrow:opacity-100 focus:opacity-100 transition-opacity"
+                    aria-label={`Edit ${item.name}`}
+                  >
+                    <Info size={14} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent><p>Edit item</p></TooltipContent>
+              </Tooltip>
+            )}
             {isRecommendedBoxes && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -332,19 +375,6 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
                   <span className="text-xs w-4 h-4 rounded-full inline-flex items-center justify-center shrink-0 cursor-help">⚠️</span>
                 </TooltipTrigger>
                 <TooltipContent><p>Fragile Item</p></TooltipContent>
-              </Tooltip>
-            )}
-            {item.special_handling && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="w-4 h-4 rounded-full inline-flex items-center justify-center shrink-0 cursor-help">
-                    <Info size={14} className="text-blue-500" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  <p className="font-medium text-xs mb-1">Special Handling:</p>
-                  <p className="text-xs">{item.special_handling}</p>
-                </TooltipContent>
               </Tooltip>
             )}
             {(item.stockItemId || item.addedFromStock) && (
@@ -489,7 +519,97 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
       weightConfig={weightConfig}
       onSave={(changes) => patchNow(changes)}
     />
+    <EditItemDialog
+      open={editItemOpen}
+      onClose={() => setEditItemOpen(false)}
+      item={item}
+      onSave={(changes) => patchNow(changes)}
+    />
     </>
+  );
+}
+
+// ── Edit Item Dialog ───────────────────────────────────────────────────
+
+// Edit an item's name and special handling instructions. `onSave` receives
+// only the changed fields; a cleared instructions draft saves as '' (removes
+// them — the ℹ badge only renders when non-empty). A blanked-out name is
+// ignored — items must keep a name.
+function EditItemDialog({ open, onClose, item, onSave }) {
+  const currentName = item.name || '';
+  const currentSh = item.special_handling || '';
+  const [nameDraft, setNameDraft] = useState(currentName);
+  const [shDraft, setShDraft] = useState(currentSh);
+
+  // Reset the drafts each time the dialog opens against the latest values.
+  useEffect(() => {
+    if (open) {
+      setNameDraft(item.name || '');
+      setShDraft(item.special_handling || '');
+    }
+  }, [open, item.name, item.special_handling]);
+
+  const handleSave = () => {
+    const changes = {};
+    const nextName = nameDraft.trim();
+    const nextSh = shDraft.trim();
+    if (nextName && nextName !== currentName) changes.name = nextName;
+    if (nextSh !== currentSh) changes.special_handling = nextSh;
+    if (Object.keys(changes).length > 0) onSave(changes);
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        className="sm:max-w-md"
+        // Keep clicks/keys inside the dialog from bubbling to the parent
+        // modal's resizable or its own outside handlers (same as the cuft
+        // dialog above).
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle className="truncate">{item.name || 'Item'}</DialogTitle>
+          <DialogDescription>
+            Edit the item name and special handling instructions
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor={`edit-item-name-${item._id}`} className="text-sm font-medium">
+              Item name
+            </Label>
+            <Input
+              id={`edit-item-name-${item._id}`}
+              type="text"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`edit-item-sh-${item._id}`} className="text-sm font-medium">
+              Special handling instructions
+            </Label>
+            <textarea
+              id={`edit-item-sh-${item._id}`}
+              value={shDraft}
+              onChange={(e) => setShDraft(e.target.value)}
+              rows={4}
+              placeholder="e.g., Disassemble before moving, needs extra padding, two-person lift…"
+              className="w-full border border-gray-200 rounded-md p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            <Button onClick={handleSave}>Save</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

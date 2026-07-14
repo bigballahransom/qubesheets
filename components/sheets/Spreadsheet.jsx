@@ -180,6 +180,74 @@ const CountInput = memo(({ value, rowId, onValueChange, perUnitCuft, perUnitWeig
   );
 });
 
+// Body of the edit-item dialog (name + special handling). Owns its own
+// drafts so typing doesn't re-render the whole sheet; the parent remounts it
+// (via key) on each open. `onSave` receives only the changed fields; a
+// cleared special-handling draft saves as '' (removes the instructions).
+// A blanked-out name is ignored — items must keep a name.
+function EditItemForm({ initialName, initialValue, onSave, onCancel }) {
+  const currentName = initialName || '';
+  const currentSh = initialValue || '';
+  const [nameDraft, setNameDraft] = useState(currentName);
+  const [shDraft, setShDraft] = useState(currentSh);
+
+  const handleSave = () => {
+    const changes = {};
+    const nextName = nameDraft.trim();
+    const nextSh = shDraft.trim();
+    if (nextName && nextName !== currentName) changes.name = nextName;
+    if (nextSh !== currentSh) changes.special_handling = nextSh;
+    if (Object.keys(changes).length > 0) onSave(changes);
+    else onCancel();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <label htmlFor="edit-item-name" className="text-sm font-medium text-gray-700">
+          Item name
+        </label>
+        <input
+          id="edit-item-name"
+          type="text"
+          value={nameDraft}
+          onChange={(e) => setNameDraft(e.target.value)}
+          autoFocus
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
+          className="w-full border border-gray-200 rounded-md p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor="edit-item-sh" className="text-sm font-medium text-gray-700">
+          Special handling instructions
+        </label>
+        <textarea
+          id="edit-item-sh"
+          value={shDraft}
+          onChange={(e) => setShDraft(e.target.value)}
+          rows={4}
+          placeholder="e.g., Disassemble before moving, needs extra padding, two-person lift…"
+          className="w-full border border-gray-200 rounded-md p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+        />
+      </div>
+      <div className="flex justify-end space-x-3">
+        <button
+          onClick={onCancel}
+          className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Spreadsheet({
   initialRows = [],
   initialColumns = [],
@@ -353,6 +421,54 @@ export default function Spreadsheet({
   const [weightMode, setWeightMode] = useState('total'); // 'total' or 'perUnit' for Weight display
   const [pboDropdownOpen, setPboDropdownOpen] = useState(false); // For bulk PBO/CP dropdown
   const [cuftModal, setCuftModal] = useState({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
+
+  // Edit-item dialog (name + special handling) — opened from the ℹ badge on
+  // a row with instructions, or the hover-visible pencil when it has none.
+  // Name is NOT click-to-edit on the cell itself (accidental renames), so
+  // this dialog is the sheet's rename path too.
+  const [editItemModal, setEditItemModal] = useState({
+    isOpen: false, rowId: null, inventoryItemId: null, itemName: '', value: ''
+  });
+
+  const openEditItemModal = (row, itemName) => {
+    if (!row?.inventoryItemId) return;
+    setEditItemModal({
+      isOpen: true,
+      rowId: row.id,
+      inventoryItemId: row.inventoryItemId,
+      itemName: itemName || row.cells?.col2 || 'Item',
+      value: row.special_handling || '',
+    });
+  };
+
+  const closeEditItemModal = () =>
+    setEditItemModal({ isOpen: false, rowId: null, inventoryItemId: null, itemName: '', value: '' });
+
+  // `changes` carries only what the user actually changed: { name?,
+  // special_handling? }. A cleared textarea arrives as special_handling: ''
+  // (removes the instructions).
+  const saveEditItem = (changes) => {
+    const { rowId, inventoryItemId } = editItemModal;
+    if (!changes || Object.keys(changes).length === 0) {
+      closeEditItemModal();
+      return;
+    }
+    // Optimistic row update so the name cell and ℹ badge reflect it immediately.
+    setRows(prevRows => prevRows.map(r => {
+      if (r.id !== rowId) return r;
+      const next = { ...r };
+      if (changes.name !== undefined) next.cells = { ...r.cells, col2: changes.name };
+      if (changes.special_handling !== undefined) next.special_handling = changes.special_handling;
+      return next;
+    }));
+    if (inventoryItemId && projectId) {
+      // Same guarded queue as count edits: markDirty → schedulePatch →
+      // mergeUpdatedItem on commit, so polls can't clobber the edit.
+      writesCtx?.markDirty?.(inventoryItemId);
+      schedulePatch(inventoryItemId, changes);
+    }
+    closeEditItemModal();
+  };
 
   // Location update dialog state. `isSaving` keeps the dialog open with a
   // spinner while we await the location PATCHes; the dialog only closes once
@@ -939,6 +1055,12 @@ export default function Spreadsheet({
 
   // Handle cell editing
   const handleCellClick = useCallback((rowId, colId, currentValue) => {
+    // Item name (col2) is not click-to-edit — clicking a name used to drop
+    // the cell into an inline text input, which made accidental renames far
+    // too easy. Media-attached rows already rendered a link here instead.
+    if (colId === 'col2') {
+      return;
+    }
     // Prevent editing cuft (col4) and weight (col5) columns
     if (colId === 'col4' || colId === 'col5') {
       return;
@@ -2049,7 +2171,7 @@ export default function Spreadsheet({
         ? (row.sourceType === 'self_serve' ? 'Click to play recording' : 'Click to view video call')
         : 'Click to view source media';
       return (
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="group/sh flex items-center gap-2 min-w-0">
           <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
           <TooltipProvider delayDuration={200}>
             <Tooltip>
@@ -2077,6 +2199,45 @@ export default function Spreadsheet({
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
+          {/* Special-handling ℹ always renders first, ahead of the other
+              badges, so it sits in a consistent spot on every row. */}
+          {row.special_handling ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openEditItemModal(row, value); }}
+                    className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-blue-50"
+                    aria-label={`Edit special handling for ${value}`}
+                  >
+                    <Info size={14} className="text-blue-500" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-medium text-xs mb-1">Special Handling:</p>
+                  <p className="text-xs">{row.special_handling}</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Click to edit</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : row.inventoryItemId ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); openEditItemModal(row, value); }}
+                    className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/sh:opacity-100 focus:opacity-100 transition-opacity"
+                    aria-label={`Edit ${value}`}
+                  >
+                    <Info size={14} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent><p>Edit item</p></TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
           {isRecommendedBoxes && (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -2133,21 +2294,6 @@ export default function Spreadsheet({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Fragile Item</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {row.special_handling && (
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">
-                    <Info size={14} className="text-blue-500" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  <p className="font-medium text-xs mb-1">Special Handling:</p>
-                  <p className="text-xs">{row.special_handling}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -2234,7 +2380,7 @@ export default function Spreadsheet({
         );
         
         return (
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="group/sh flex items-center gap-2 min-w-0">
             <span className="text-lg flex-shrink-0">{getCompanyIcon(value)}</span>
             <TooltipProvider delayDuration={200}>
               <Tooltip>
@@ -2246,6 +2392,47 @@ export default function Spreadsheet({
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            {/* Special-handling ℹ always renders first, ahead of the other
+                badges, so it sits in a consistent spot on every row. It lives
+                on the item-name column only — this text branch also renders
+                col1 (Location), where a second ℹ would be noise. */}
+            {column && column.id === 'col2' && row?.special_handling ? (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openEditItemModal(row, value); }}
+                      className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-pointer hover:bg-blue-50"
+                      aria-label={`Edit special handling for ${value}`}
+                    >
+                      <Info size={14} className="text-blue-500" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="font-medium text-xs mb-1">Special Handling:</p>
+                    <p className="text-xs">{row.special_handling}</p>
+                    <p className="text-[10px] text-gray-400 mt-1">Click to edit</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : column && column.id === 'col2' && row?.inventoryItemId ? (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openEditItemModal(row, value); }}
+                      className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/sh:opacity-100 focus:opacity-100 transition-opacity"
+                      aria-label={`Edit ${value}`}
+                    >
+                      <Info size={14} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent><p>Edit item</p></TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
             {isRecommendedBox && (
               <TooltipProvider delayDuration={200}>
                 <Tooltip>
@@ -2302,21 +2489,6 @@ export default function Spreadsheet({
                   </TooltipTrigger>
                   <TooltipContent>
                     <p>Fragile Item</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-            {row?.special_handling && (
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 cursor-help">
-                      <Info size={14} className="text-blue-500" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p className="font-medium text-xs mb-1">Special Handling:</p>
-                    <p className="text-xs">{row.special_handling}</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -4059,6 +4231,28 @@ export default function Spreadsheet({
               </button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit item dialog — name + special handling */}
+      <Dialog
+        open={editItemModal.isOpen}
+        onOpenChange={(open) => { if (!open) closeEditItemModal(); }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="truncate">{editItemModal.itemName}</DialogTitle>
+            <DialogDescription>
+              Edit the item name and special handling instructions
+            </DialogDescription>
+          </DialogHeader>
+          <EditItemForm
+            key={`${editItemModal.rowId}-${editItemModal.isOpen}`}
+            initialName={editItemModal.itemName}
+            initialValue={editItemModal.value}
+            onSave={saveEditItem}
+            onCancel={closeEditItemModal}
+          />
         </DialogContent>
       </Dialog>
 

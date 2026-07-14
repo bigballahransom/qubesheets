@@ -7,7 +7,7 @@ import {
   OrganizationSwitcher,
   useOrganization
 } from '@clerk/nextjs'
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import {
@@ -73,15 +73,45 @@ interface Project {
   };
 }
 
+// ── Sidebar persistence ────────────────────────────────────────────────
+// The sidebar is mounted PER PAGE (every page.tsx renders its own
+// <AppSidebar />), so client-side navigation unmounts and remounts it.
+// Without these, every project click reset the filter to "My Projects",
+// snapped the list back to the top, and flashed the loading skeleton while
+// projects refetched. Filter choice is durable (localStorage); scroll is
+// per-tab (sessionStorage); the project list is cached at module scope and
+// revalidated in the background on each mount.
+const FILTER_STORAGE_KEY = 'qs-sidebar-project-filter';
+const SCROLL_STORAGE_KEY = 'qs-sidebar-scroll';
+
+type ProjectFilter = 'mine' | 'all' | 'unassigned';
+
+let projectsCache: Project[] | null = null;
+
+function readStoredFilter(): ProjectFilter {
+  if (typeof window === 'undefined') return 'mine';
+  try {
+    const stored = window.localStorage.getItem(FILTER_STORAGE_KEY);
+    if (stored === 'mine' || stored === 'all' || stored === 'unassigned') return stored;
+  } catch {}
+  return 'mine';
+}
+
 export function AppSidebar() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [projects, setProjects] = useState<Project[]>(() => projectsCache ?? []);
+  const [loading, setLoading] = useState(() => projectsCache === null);
   const [error, setError] = useState<string | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [dispatchExpanded, setDispatchExpanded] = useState(false);
   const [automationsExpanded, setAutomationsExpanded] = useState(false);
-  const [projectFilter, setProjectFilter] = useState<'mine' | 'all' | 'unassigned'>('mine'); // Default to My Projects
-  
+  // Safe to read storage in the initializer: nothing filter-dependent is in
+  // the server-rendered output (the dropdown only appears once projects have
+  // loaded client-side), so there's no hydration mismatch to cause.
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter>(readStoredFilter);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollRestoredRef = useRef(false);
+
   const router = useRouter();
   const pathname = usePathname();
   const { isLoaded, userId } = useAuth();
@@ -101,6 +131,10 @@ export function AppSidebar() {
   useEffect(() => {
     const handleDataRefresh = () => {
       console.log('Refreshing projects data due to organization change');
+      // Drop the cache — a silent revalidate would keep showing the OLD
+      // org's projects until the fetch lands. A skeleton is honest here.
+      projectsCache = null;
+      setProjects([]);
       fetchProjects();
     };
     
@@ -124,30 +158,61 @@ export function AppSidebar() {
   }, [pathname, activeProjectId]);
   
   const fetchProjects = async () => {
-    setLoading(true);
+    // With a warm cache this is a silent background revalidate — the list
+    // renders immediately from cache and updates in place when fresh data
+    // lands, instead of flashing the skeleton on every navigation.
+    if (projectsCache === null) setLoading(true);
     setError(null);
-    
+
     try {
       const response = await fetch('/api/projects');
-      
+
       if (!response.ok) {
         throw new Error('Failed to fetch projects');
       }
-      
+
       const data = await response.json();
+      projectsCache = data;
       setProjects(data);
     } catch (err) {
       console.error('Error fetching projects:', err);
-      setError('Failed to load projects. Please try again.');
+      // Only surface the error when there's nothing usable to show — a
+      // failed background refresh shouldn't blank out a working list.
+      if (projectsCache === null) setError('Failed to load projects. Please try again.');
     } finally {
       setLoading(false);
     }
   };
-  
+
   const handleProjectCreated = (project: Project) => {
     // Add the new project to the list
-    setProjects([project, ...projects]);
+    const next = [project, ...projects];
+    projectsCache = next;
+    setProjects(next);
   };
+
+  const changeProjectFilter = (filter: ProjectFilter) => {
+    setProjectFilter(filter);
+    try { window.localStorage.setItem(FILTER_STORAGE_KEY, filter); } catch {}
+    // A different filter shows a different list — a stale scroll offset from
+    // the previous list has no meaning for it.
+    try { window.sessionStorage.setItem(SCROLL_STORAGE_KEY, '0'); } catch {}
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  };
+
+  // Restore the sidebar scroll position once the (cached or fetched) list
+  // has rendered; save it on every scroll so the next per-page remount can
+  // put the user right back where they were.
+  useEffect(() => {
+    if (loading || scrollRestoredRef.current) return;
+    scrollRestoredRef.current = true;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    try {
+      const saved = parseInt(window.sessionStorage.getItem(SCROLL_STORAGE_KEY) || '0', 10);
+      if (saved > 0) el.scrollTop = saved;
+    } catch {}
+  }, [loading]);
   
   const handleProjectClick = (projectId: string) => {
     router.push(`/projects/${projectId}`);
@@ -206,7 +271,13 @@ export function AppSidebar() {
         </div>
         
         {/* Navigation area - scrollable */}
-        <div className="flex-1 overflow-y-auto min-h-0">
+        <div
+          ref={scrollContainerRef}
+          onScroll={(e) => {
+            try { window.sessionStorage.setItem(SCROLL_STORAGE_KEY, String(e.currentTarget.scrollTop)); } catch {}
+          }}
+          className="flex-1 overflow-y-auto min-h-0"
+        >
           <div className="p-2">
             {hasCrmAddOn ? (
               /* CRM Navigation */
@@ -365,9 +436,14 @@ export function AppSidebar() {
             ) : (
               /* Non-CRM: Project List */
               <>
-                {/* Project Filter Dropdown - only show for organizations */}
+                {/* Project Filter Dropdown - only show for organizations.
+                    Sticky within the sidebar's scroll container so the
+                    filter stays reachable while scrolling a long project
+                    list. Negative margins + matching padding extend its
+                    white background over the wrapper's p-2 gutters so rows
+                    don't peek around it as they scroll underneath. */}
                 {organization && !loading && projects.length > 0 && (
-                  <div className="mb-2">
+                  <div className="sticky top-0 z-10 -mx-2 -mt-2 px-2 pt-2 pb-2 bg-white">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button className="flex items-center justify-between w-full px-2 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors cursor-pointer">
@@ -384,7 +460,7 @@ export function AppSidebar() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-[180px]">
                         <DropdownMenuItem
-                          onClick={() => setProjectFilter('mine')}
+                          onClick={() => changeProjectFilter('mine')}
                           className="cursor-pointer"
                         >
                           <User size={14} className="mr-2" />
@@ -392,7 +468,7 @@ export function AppSidebar() {
                           {projectFilter === 'mine' && <span className="ml-auto text-xs text-gray-400">✓</span>}
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => setProjectFilter('all')}
+                          onClick={() => changeProjectFilter('all')}
                           className="cursor-pointer"
                         >
                           <Users size={14} className="mr-2" />
@@ -400,7 +476,7 @@ export function AppSidebar() {
                           {projectFilter === 'all' && <span className="ml-auto text-xs text-gray-400">✓</span>}
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => setProjectFilter('unassigned')}
+                          onClick={() => changeProjectFilter('unassigned')}
                           className="cursor-pointer"
                         >
                           <UserX size={14} className="mr-2" />
