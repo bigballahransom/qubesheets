@@ -70,6 +70,10 @@ interface Project {
       synced: boolean;
       syncedAt: string;
     };
+    moverbaseSync?: {
+      synced: boolean;
+      syncedAt: string;
+    };
   };
 }
 
@@ -516,6 +520,7 @@ export function AppSidebar() {
                       const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
                       const isSyncedToSupermove = !!project.metadata?.supermoveSync?.synced;
                       const isSyncedToChariot = !!project.metadata?.chariotSync?.synced;
+                      const isSyncedToMoverbase = !!project.metadata?.moverbaseSync?.synced;
 
                       return (
                         <li key={project._id}>
@@ -556,6 +561,17 @@ export function AppSidebar() {
                                     <Image
                                       src="/chariottiny.png"
                                       alt="Synced to Chariot"
+                                      width={14}
+                                      height={14}
+                                      className="flex-shrink-0"
+                                    />
+                                  </span>
+                                )}
+                                {isSyncedToMoverbase && (
+                                  <span title="Synced with Moverbase">
+                                    <Image
+                                      src="/moverbasetiny.png"
+                                      alt="Synced to Moverbase"
                                       width={14}
                                       height={14}
                                       className="flex-shrink-0"

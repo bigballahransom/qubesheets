@@ -184,6 +184,20 @@ function validateCrmRouting(v: unknown): string | null {
       }
     }
   }
+
+  if (v.moverbase !== undefined) {
+    const mb = v.moverbase;
+    if (!isObject(mb)) return 'crmRouting.moverbase must be an object';
+    if (mb.referralId !== undefined) {
+      if (!isString(mb.referralId)) return 'crmRouting.moverbase.referralId must be a string';
+      if ((mb.referralId as string).length > CONFIG_LIMITS.CRM_FIELD_MAX) {
+        return `crmRouting.moverbase.referralId exceeds ${CONFIG_LIMITS.CRM_FIELD_MAX} characters`;
+      }
+      if (mb.referralId && !/^\d+$/.test(mb.referralId as string)) {
+        return 'crmRouting.moverbase.referralId must be a numeric Moverbase referral id';
+      }
+    }
+  }
   return null;
 }
 

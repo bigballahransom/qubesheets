@@ -31,6 +31,12 @@ export default function IntegrationsPage() {
   const [chariotAccountId, setChariotAccountId] = useState('');
   const [hasChariotIntegration, setHasChariotIntegration] = useState(false);
 
+  // Moverbase integration state
+  const [moverbaseEnabled, setMoverbaseEnabled] = useState(false);
+  const [moverbaseApiKey, setMoverbaseApiKey] = useState('');
+  const [hasMoverbaseIntegration, setHasMoverbaseIntegration] = useState(false);
+  const [moverbaseCompanyName, setMoverbaseCompanyName] = useState('');
+
   useEffect(() => {
     loadIntegrations();
   }, [user, organization]);
@@ -65,6 +71,20 @@ export default function IntegrationsPage() {
           setChariotAccountId(cdata.integration.accountId || '');
           if (cdata.integration.hasAuthToken) {
             setChariotAuthToken('••••••••••••••••');
+          }
+        }
+      }
+
+      // Load existing Moverbase integration
+      const moverbaseRes = await fetch('/api/integrations/moverbase');
+      if (moverbaseRes.ok) {
+        const mdata = await moverbaseRes.json();
+        if (mdata.exists) {
+          setHasMoverbaseIntegration(true);
+          setMoverbaseEnabled(mdata.integration.enabled !== false);
+          setMoverbaseCompanyName(mdata.integration.testConnection?.companyName || '');
+          if (mdata.integration.hasApiKey) {
+            setMoverbaseApiKey('••••••••••••••••');
           }
         }
       }
@@ -200,6 +220,56 @@ export default function IntegrationsPage() {
         setChariotAccountId('');
       } else if (chariotEnabled && (!chariotSubdomain || !chariotAuthToken)) {
         toast.error('Please provide both Chariot subdomain and auth token');
+        return;
+      }
+
+      // Moverbase save logic (parallel to Chariot above)
+      if (moverbaseEnabled && moverbaseApiKey && !moverbaseApiKey.includes('•')) {
+        const response = await fetch('/api/integrations/moverbase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apiKey: moverbaseApiKey,
+            enabled: true,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to save Moverbase integration');
+        }
+        if (data.connectionOk) {
+          toast.success(data.message || 'Moverbase integration saved successfully!');
+        } else {
+          toast.warning(data.message || 'Moverbase saved, but the connection test failed');
+        }
+        setHasMoverbaseIntegration(true);
+        setMoverbaseCompanyName(data.integration?.testConnection?.companyName || '');
+        setMoverbaseApiKey('••••••••••••••••');
+      } else if (moverbaseEnabled && hasMoverbaseIntegration && moverbaseApiKey.includes('•')) {
+        // Key unchanged — make sure the enabled flag is on
+        const response = await fetch('/api/integrations/moverbase', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true }),
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update Moverbase settings');
+        }
+      } else if (!moverbaseEnabled && hasMoverbaseIntegration) {
+        const response = await fetch('/api/integrations/moverbase', {
+          method: 'DELETE',
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to delete Moverbase integration');
+        }
+        toast.success('Moverbase integration removed');
+        setHasMoverbaseIntegration(false);
+        setMoverbaseApiKey('');
+        setMoverbaseCompanyName('');
+      } else if (moverbaseEnabled && !moverbaseApiKey) {
+        toast.error('Please provide your Moverbase API key');
         return;
       }
     } catch (error) {
@@ -609,6 +679,62 @@ export default function IntegrationsPage() {
                           Required by some Chariot endpoints (e.g. validate_job). Leave blank if Chariot didn't issue you one.
                         </p>
                       </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Moverbase Integration */}
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <img src="/moverbase.png" alt="Moverbase" className="h-16 w-auto mb-4" />
+                <h2 className="text-lg font-medium mb-2">Moverbase Integration</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Connect Moverbase to push AI-generated inventories into Moverbase jobs
+                  and route new leads into your Moverbase account.
+                </p>
+
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="moverbase-enabled"
+                      checked={moverbaseEnabled}
+                      onChange={(e) => setMoverbaseEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="moverbase-enabled" className="text-sm">
+                      Enable Moverbase integration
+                    </label>
+                  </div>
+
+                  {moverbaseEnabled && (
+                    <div className="space-y-4 pt-4 border-t">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          <Key className="inline h-4 w-4 mr-1" />
+                          API Key
+                        </label>
+                        <input
+                          type="password"
+                          value={moverbaseApiKey}
+                          onChange={(e) => setMoverbaseApiKey(e.target.value)}
+                          onFocus={() => {
+                            if (moverbaseApiKey.includes('•')) setMoverbaseApiKey('');
+                          }}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder={hasMoverbaseIntegration ? 'Enter new API key to update' : 'Your Moverbase API key'}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Find this in Moverbase under SETUP → INTEGRATIONS → MOVERBASE API.
+                          The key grants full access to your account — keep it secret.
+                        </p>
+                      </div>
+
+                      {moverbaseCompanyName && (
+                        <p className="text-xs text-green-700">
+                          ✓ Connected to {moverbaseCompanyName}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

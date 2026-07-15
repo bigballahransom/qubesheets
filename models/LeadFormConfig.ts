@@ -31,6 +31,10 @@ export interface ILeadFormConfigCrmRouting {
     referralSource?: string;
     salespersonEmail?: string;
   };
+  moverbase?: {
+    // Numeric Moverbase referral id (GET /v1/referrals); stored as a string
+    referralId?: string;
+  };
 }
 
 export interface PostSubmitBusinessHours {

@@ -328,7 +328,7 @@ function ItemRow({ item: itemProp, projectId, onInventoryUpdate, availableRooms,
                   <button
                     type="button"
                     onClick={() => setEditItemOpen(true)}
-                    className="w-4 h-4 rounded-full inline-flex items-center justify-center shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/shrow:opacity-100 focus:opacity-100 transition-opacity"
+                    className="w-4 h-4 rounded-full inline-flex items-center justify-center shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/shrow:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
                     aria-label={`Edit ${item.name}`}
                   >
                     <Info size={14} />

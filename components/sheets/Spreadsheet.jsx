@@ -2188,7 +2188,7 @@ export default function Spreadsheet({
                       handleMediaPreview('video', row.sourceVideoId, value);
                     }
                   }}
-                  className="text-blue-600 hover:text-blue-800 underline text-left truncate flex-1 min-w-0"
+                  className="text-blue-600 hover:text-blue-800 underline text-left truncate flex-1 min-w-0 cursor-pointer"
                 >
                   {value}
                 </button>
@@ -2228,7 +2228,7 @@ export default function Spreadsheet({
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); openEditItemModal(row, value); }}
-                    className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/sh:opacity-100 focus:opacity-100 transition-opacity"
+                    className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/sh:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
                     aria-label={`Edit ${value}`}
                   >
                     <Info size={14} />
@@ -2423,7 +2423,7 @@ export default function Spreadsheet({
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); openEditItemModal(row, value); }}
-                      className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/sh:opacity-100 focus:opacity-100 transition-opacity"
+                      className="w-4 h-4 rounded-full inline-flex items-center justify-center flex-shrink-0 text-gray-300 hover:text-blue-500 opacity-0 group-hover/sh:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
                       aria-label={`Edit ${value}`}
                     >
                       <Info size={14} />

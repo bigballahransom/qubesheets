@@ -32,6 +32,7 @@ import BoxesManager from './BoxesManager';
 import SupermoveSyncModal from './modals/SupermoveSyncModal';
 import SmartMovingSyncModal from './modals/SmartMovingSyncModal';
 import ChariotSyncModal from './modals/ChariotSyncModal';
+import MoverbaseSyncModal from './modals/MoverbaseSyncModal';
 import EditProjectDetailsModal from './modals/EditProjectDetailsModal';
 import InventoryNotes from './InventoryNotes';
 import VideoRecordingsTab from './VideoRecordingsTab';
@@ -256,6 +257,10 @@ const [chariotEnabled, setChariotEnabled] = useState(false);
 const [chariotSyncStatus, setChariotSyncStatus] = useState(null);
 const [chariotLoading, setChariotLoading] = useState(false);
 const [chariotSyncModalOpen, setChariotSyncModalOpen] = useState(false);
+const [moverbaseEnabled, setMoverbaseEnabled] = useState(false);
+const [moverbaseSyncStatus, setMoverbaseSyncStatus] = useState(null);
+const [moverbaseLoading, setMoverbaseLoading] = useState(false);
+const [moverbaseSyncModalOpen, setMoverbaseSyncModalOpen] = useState(false);
 const [editProjectModalOpen, setEditProjectModalOpen] = useState(false);
 const [refreshTrigger, setRefreshTrigger] = useState(0); // For cross-device inventory refresh
 const [notesCount, setNotesCount] = useState(0);
@@ -2656,6 +2661,100 @@ useEffect(() => {
     }
   }, [chariotEnabled, fetchChariotSyncStatus]);
 
+  // Moverbase Integration Functions
+  const checkMoverbaseIntegration = useCallback(async () => {
+    if (!currentProject?.organizationId) return;
+    try {
+      const response = await fetch(`/api/organizations/${currentProject.organizationId}/moverbase`);
+      if (response.ok) {
+        const data = await response.json();
+        setMoverbaseEnabled(!!(data.enabled && data.configured));
+      }
+    } catch (error) {
+      console.error('Error checking Moverbase integration:', error);
+      setMoverbaseEnabled(false);
+    }
+  }, [currentProject?.organizationId]);
+
+  const fetchMoverbaseSyncStatus = useCallback(async () => {
+    if (!currentProject?._id || !moverbaseEnabled) return;
+    try {
+      const response = await fetch(`/api/moverbase/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setMoverbaseSyncStatus(data);
+      }
+    } catch (error) {
+      console.error('Error fetching Moverbase sync status:', error);
+    }
+  }, [currentProject?._id, moverbaseEnabled]);
+
+  const handleMoverbaseSync = useCallback(async () => {
+    if (!currentProject?._id) return;
+    // Refresh status so the modal opens with current stats + jobId.
+    try {
+      const response = await fetch(`/api/moverbase/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setMoverbaseSyncStatus(data);
+        if (!data.inventoryStats?.goingItems) {
+          toast.error('No items marked as going to sync to Moverbase');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Error pre-fetching Moverbase status:', error);
+    }
+    setMoverbaseSyncModalOpen(true);
+  }, [currentProject?._id]);
+
+  const handleMoverbaseSyncConfirm = useCallback(
+    async (jobId, syncOptions) => {
+      if (!currentProject?._id) return;
+      setMoverbaseLoading(true);
+      try {
+        const response = await fetch('/api/moverbase/sync-inventory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: currentProject._id,
+            jobId,
+            syncOptions,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || data.error || 'Moverbase sync failed');
+        }
+        toast.success(
+          `Successfully synced ${data.syncDetails?.itemsSynced ?? ''} items to Moverbase!`
+        );
+        setMoverbaseSyncModalOpen(false);
+        await fetchMoverbaseSyncStatus();
+      } catch (error) {
+        console.error('Moverbase sync error:', error);
+        toast.error(error.message || 'Failed to sync to Moverbase');
+      } finally {
+        setMoverbaseLoading(false);
+      }
+    },
+    [currentProject?._id, fetchMoverbaseSyncStatus]
+  );
+
+  // Check Moverbase integration when project loads
+  useEffect(() => {
+    if (currentProject) {
+      checkMoverbaseIntegration();
+    }
+  }, [currentProject, checkMoverbaseIntegration]);
+
+  // Fetch Moverbase sync status when enabled
+  useEffect(() => {
+    if (moverbaseEnabled) {
+      fetchMoverbaseSyncStatus();
+    }
+  }, [moverbaseEnabled, fetchMoverbaseSyncStatus]);
+
   // Memoize filtered inventory for galleries to prevent re-renders when parent state changes
   const imageInventoryItems = useMemo(() => {
     return inventoryItems.filter(item => item.sourceImageId);
@@ -4604,21 +4703,26 @@ const ProcessingNotification = () => {
             onNameChange={updateProjectName}
           />
           {currentProject.metadata?.smartMovingQuoteNumber && (
-            <span title="SmartMoving Quote Number" className="ml-2 px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded-full">
+            <span title="SmartMoving Quote Number" className="ml-2 px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded-full cursor-help">
               #{currentProject.metadata.smartMovingQuoteNumber}
             </span>
           )}
           {(currentProject.metadata?.chariotSync?.jobId || chariotSyncStatus?.jobId) && (
-            <span title="Chariot Job ID" className="ml-2 px-2 py-0.5 text-xs font-medium text-red-700 bg-red-100 rounded-full">
+            <span title="Chariot Job ID" className="ml-2 px-2 py-0.5 text-xs font-medium text-red-700 bg-red-100 rounded-full cursor-help">
               Chariot #{currentProject.metadata?.chariotSync?.jobId || chariotSyncStatus?.jobId}
             </span>
           )}
           {(currentProject.metadata?.supermoveProjectUuid || supermoveSyncStatus?.supermoveProjectUuid) && (
             <span
               title={`Supermove Project UUID: ${currentProject.metadata?.supermoveProjectUuid || supermoveSyncStatus?.supermoveProjectUuid}`}
-              className="ml-2 px-2 py-0.5 text-xs font-medium text-white bg-gray-900 rounded-full"
+              className="ml-2 px-2 py-0.5 text-xs font-medium text-white bg-gray-900 rounded-full cursor-help"
             >
               Supermove {(currentProject.metadata?.supermoveProjectUuid || supermoveSyncStatus?.supermoveProjectUuid).slice(0, 8)}…
+            </span>
+          )}
+          {(currentProject.metadata?.moverbaseSync?.jobId || moverbaseSyncStatus?.jobId) && (
+            <span title="Moverbase Job ID" className="ml-2 px-2 py-0.5 text-xs font-medium text-orange-700 bg-orange-100 rounded-full cursor-help">
+              Moverbase #{currentProject.metadata?.moverbaseSync?.jobId || moverbaseSyncStatus?.jobId}
             </span>
           )}
           <TooltipProvider>
@@ -4807,6 +4911,32 @@ const ProcessingNotification = () => {
                     <>
                       <ExternalLink size={16} className="mr-1" />
                       Sync to Chariot
+                    </>
+                  )}
+                </MenubarItem>
+              </>
+            )}
+            {moverbaseEnabled && (
+              <>
+                <MenubarSeparator />
+                <MenubarItem
+                  onClick={handleMoverbaseSync}
+                  disabled={moverbaseLoading}
+                >
+                  {moverbaseLoading ? (
+                    <>
+                      <Loader2 size={16} className="mr-1 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : moverbaseSyncStatus?.isSynced ? (
+                    <>
+                      <RefreshCw size={16} className="mr-1" />
+                      Re-sync to Moverbase
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink size={16} className="mr-1" />
+                      Sync to Moverbase
                     </>
                   )}
                 </MenubarItem>
@@ -5307,6 +5437,18 @@ const ProcessingNotification = () => {
     chariotSyncStatus?.syncDetails?.chariotInventoryId !== undefined &&
     chariotSyncStatus?.syncDetails?.chariotInventoryId !== null
   }
+/>
+
+{/* Moverbase Sync Modal */}
+<MoverbaseSyncModal
+  open={moverbaseSyncModalOpen}
+  onOpenChange={setMoverbaseSyncModalOpen}
+  onSync={handleMoverbaseSyncConfirm}
+  loading={moverbaseLoading}
+  inventoryStats={moverbaseSyncStatus?.inventoryStats || computedInventoryStats}
+  initialJobId={moverbaseSyncStatus?.jobId || ''}
+  isResync={!!moverbaseSyncStatus?.isSynced}
+  previousSyncedAt={moverbaseSyncStatus?.syncDetails?.syncedAt}
 />
 
 {/* Edit Project Details Modal */}

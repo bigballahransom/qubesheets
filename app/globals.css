@@ -125,6 +125,19 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* Tailwind v4's reset gives buttons the default arrow cursor (v3 used the
+     pointer hand). Restore the hand for all enabled interactive controls so
+     every button/modal/menu in the app signals clickability. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="submit"]:not(:disabled),
+  input[type="button"]:not(:disabled),
+  select:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
   html {
     height: 100%;
   }

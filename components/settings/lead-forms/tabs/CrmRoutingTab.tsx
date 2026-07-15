@@ -2,9 +2,9 @@
 
 // components/settings/lead-forms/tabs/CrmRoutingTab.tsx
 //
-// Three routing sections (SmartMoving / Supermove / Chariot). Each section is
-// gated behind the org actually having that integration configured. We fetch
-// configuration status from existing endpoints on mount.
+// Four routing sections (SmartMoving / Supermove / Chariot / Moverbase). Each
+// section is gated behind the org actually having that integration configured.
+// We fetch configuration status from existing endpoints on mount.
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -24,6 +24,7 @@ interface IntegrationStatus {
   smartmoving: boolean;
   supermove: boolean;
   chariot: boolean;
+  moverbase: boolean;
   loading: boolean;
 }
 
@@ -33,6 +34,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
     smartmoving: false,
     supermove: false,
     chariot: false,
+    moverbase: false,
     loading: true,
   });
 
@@ -58,13 +60,21 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
             .catch(() => false)
         : Promise.resolve(false);
 
-      const [smartmoving, supermove, chariot] = await Promise.all([
+      const moverbasePromise = organization?.id
+        ? fetch(`/api/organizations/${organization.id}/moverbase`)
+            .then((r) => (r.ok ? r.json() : { configured: false }))
+            .then((d) => !!d?.configured)
+            .catch(() => false)
+        : Promise.resolve(false);
+
+      const [smartmoving, supermove, chariot, moverbase] = await Promise.all([
         smartmovingPromise,
         supermovePromise,
         chariotPromise,
+        moverbasePromise,
       ]);
       if (cancelled) return;
-      setStatus({ smartmoving, supermove, chariot, loading: false });
+      setStatus({ smartmoving, supermove, chariot, moverbase, loading: false });
     };
     load();
     return () => {
@@ -75,6 +85,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
   const smartmovingEnabled = !!routing.smartmoving;
   const supermoveEnabled = !!routing.supermove;
   const chariotEnabled = !!routing.chariot;
+  const moverbaseEnabled = !!routing.moverbase;
 
   const toggleSmartmoving = (next: boolean) => {
     if (next) {
@@ -155,6 +166,32 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
       ...routing,
       chariot: {
         ...(routing.chariot ?? {}),
+        ...patch,
+      },
+    });
+  };
+
+  const toggleMoverbase = (next: boolean) => {
+    if (next) {
+      onChange({
+        ...routing,
+        moverbase: routing.moverbase ?? {
+          referralId: '',
+        },
+      });
+    } else {
+      const { moverbase: _drop, ...rest } = routing;
+      onChange(rest);
+    }
+  };
+
+  const updateMoverbase = (
+    patch: Partial<NonNullable<ILeadFormConfigCrmRouting['moverbase']>>
+  ) => {
+    onChange({
+      ...routing,
+      moverbase: {
+        ...(routing.moverbase ?? {}),
         ...patch,
       },
     });
@@ -389,6 +426,58 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
                   }
                   placeholder="Optional"
                 />
+              </div>
+            </div>
+          )
+        )}
+      </section>
+
+      {/* Moverbase */}
+      <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-start justify-between gap-4 px-6 py-5">
+          <div>
+            <h2 className="text-base font-medium text-gray-900">Moverbase</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Send leads to Moverbase as new lead records.
+            </p>
+          </div>
+          <Switch
+            checked={moverbaseEnabled}
+            disabled={!status.moverbase}
+            onCheckedChange={toggleMoverbase}
+          />
+        </div>
+
+        {!status.moverbase ? (
+          <div className="border-t border-gray-100 px-6 py-4 bg-gray-50/60 text-sm text-gray-600">
+            Connect Moverbase first.{' '}
+            <Link
+              href="/settings/integrations"
+              className="text-blue-600 hover:underline"
+            >
+              Go to Settings → Integrations
+            </Link>
+            .
+          </div>
+        ) : (
+          moverbaseEnabled && (
+            <div className="border-t border-gray-100 px-6 py-5 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="mb-referral">Referral ID</Label>
+                <Input
+                  id="mb-referral"
+                  type="text"
+                  inputMode="numeric"
+                  value={routing.moverbase?.referralId ?? ''}
+                  onChange={(e) =>
+                    updateMoverbase({ referralId: e.target.value.replace(/\D/g, '') })
+                  }
+                  placeholder="Optional — numeric referral id from Moverbase"
+                />
+                <p className="text-xs text-gray-500">
+                  The numeric id of a referral source in your Moverbase account
+                  (Setup → Referrals). Optional.
+                </p>
               </div>
             </div>
           )

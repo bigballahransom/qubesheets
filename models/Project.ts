@@ -85,6 +85,13 @@ export interface IProject extends Document {
       // the existing record instead of creating duplicates.
       chariotInventoryId?: string | number;
     };
+    moverbaseSync?: {
+      synced: boolean;
+      jobId: string;
+      syncedAt: Date;
+      itemCount: number;
+      syncedItemsHash: string;
+    };
     [key: string]: any;
   };
   // Weight configuration (per-project override)
