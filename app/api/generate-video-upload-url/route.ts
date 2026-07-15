@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
     console.log('🎬 Video upload URL generation request received');
     const body = await request.json();
     console.log('📝 Request body:', { fileName: body.fileName, fileSize: body.fileSize, mimeType: body.mimeType, projectId: body.projectId, isCustomerUpload: body.isCustomerUpload });
-    const { fileName, fileSize, mimeType, projectId: requestProjectId, isCustomerUpload = false, customerToken, manualRoomEntry } = body;
+    const { fileName, fileSize, mimeType, projectId: requestProjectId, isCustomerUpload = false, customerToken, manualRoomEntry, durationSeconds } = body;
     let projectId = requestProjectId;
 
     // Validate required fields
@@ -20,14 +20,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // No file size limits for videos - duration should be under 1 minute
     // Large videos use pre-signed URLs to bypass serverless function limits
-    
+
     // Validate reasonable file size (1GB max as sanity check)
     const MAX_VIDEO_SIZE = 1024 * 1024 * 1024; // 1GB
     if (fileSize > MAX_VIDEO_SIZE) {
       return NextResponse.json(
-        { error: `Video file too large (${(fileSize / (1024 * 1024)).toFixed(0)}MB). Maximum size is 1GB. For videos under 1 minute, this should be more than sufficient.` },
+        { error: `Video file too large (${(fileSize / (1024 * 1024)).toFixed(0)}MB). Maximum size is 1GB.` },
         { status: 400 }
       );
     }
@@ -128,7 +127,8 @@ export async function POST(request: NextRequest) {
         fileSize,
         isCustomerUpload,
         customerToken,
-        manualRoomEntry: manualRoomEntry || undefined
+        manualRoomEntry: manualRoomEntry || undefined,
+        durationSeconds: durationSeconds || undefined
       }
     });
 

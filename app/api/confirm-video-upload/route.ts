@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
+import VideoRecording from '@/models/VideoRecording';
 import Project from '@/models/Project';
 import CustomerUpload from '@/models/CustomerUpload';
 // VideoRecordingSession removed - now using LiveKit Egress (server-side) recording only
@@ -13,6 +15,12 @@ const s3 = new AWS.S3({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION
+});
+
+const sqs = new AWS.SQS({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION || 'us-east-1'
 });
 
 export async function POST(request: NextRequest) {
@@ -149,11 +157,130 @@ export async function POST(request: NextRequest) {
       normalizedMimeType = 'video/mov';
     }
 
-    // ===== REGULAR VIDEO UPLOAD: Create Video document and send to Gemini =====
+    // ===== ADMIN UPLOAD: Create VideoRecording and process via call pipeline =====
+    // Admin "Upload Inventory" videos are processed by railway-call-service
+    // (same full-video chunked analysis as walkthrough/self-serve recordings)
+    // and surface in the Videos tab through the same self-serve read paths.
+    if (!isCustomerUpload) {
+      // Attribute the recording to the signed-in admin when possible. This
+      // route is also used by unauthenticated customer flows, so auth() may
+      // legitimately be unavailable; the call service backfills userId from
+      // the Project if we leave it unset.
+      let adminUserId: string | null = null;
+      let adminOrgId: string | null = null;
+      try {
+        const authResult = await auth();
+        adminUserId = authResult.userId;
+        adminOrgId = authResult.orgId || null;
+      } catch {
+        // No Clerk context - fall through to project-based attribution
+      }
+
+      const now = new Date();
+      const durationSeconds = Number(metadata.durationSeconds) || 0;
+      const displayName = (originalFileName || 'Admin Upload').replace(/\.[^.]+$/, '');
+
+      const recording = await VideoRecording.create({
+        projectId: project._id.toString(),
+        userId: adminUserId || project.userId || undefined,
+        organizationId: adminOrgId || organizationId || project.organizationId || undefined,
+        roomId: `admin-upload-${Date.now()}`,
+        // 'completed' means the media file is final (mirrors walkthroughs,
+        // where egress completion sets this before analysis finishes).
+        // Analysis progress is tracked separately in analysisResult.status.
+        status: 'completed',
+        startedAt: durationSeconds ? new Date(now.getTime() - durationSeconds * 1000) : now,
+        endedAt: now,
+        duration: durationSeconds,
+        s3Key,
+        s3Url: signedUrl,
+        fileSize: actualFileSize || fileSize,
+        // The Videos tab, stream, delete, and reprocess endpoints all key
+        // self-serve recordings off source: 'self_serve'.
+        source: 'self_serve',
+        // The Videos tab card title comes from the customer participant name.
+        participants: [{
+          identity: 'admin-upload',
+          name: displayName,
+          joinedAt: now,
+          type: 'customer'
+        }],
+        analysisResult: {
+          status: 'pending',
+          totalSegments: 0,
+          processedSegments: 0,
+          itemsCount: 0,
+          totalBoxes: 0,
+          summary: 'Analysis pending...'
+        },
+        metadata: {
+          uploadSource: 'admin-upload',
+          originalFileName,
+          originalMimeType: mimeType,
+          manualRoomEntry: manualRoomEntry || undefined
+        }
+      });
+
+      const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+      if (!queueUrl) {
+        console.error('❌ AWS_SQS_CALL_QUEUE_URL not configured');
+        await VideoRecording.findByIdAndUpdate(recording._id, {
+          'analysisResult.status': 'failed',
+          'analysisResult.error': 'Processing queue not configured'
+        });
+        return NextResponse.json(
+          { error: 'Processing queue not configured' },
+          { status: 500 }
+        );
+      }
+
+      try {
+        const sqsResult = await sqs.sendMessage({
+          QueueUrl: queueUrl,
+          MessageBody: JSON.stringify({
+            type: 'customer-video',
+            videoRecordingId: recording._id.toString(),
+            projectId: project._id.toString(),
+            s3Key,
+            s3Bucket: bucketName,
+            roomName: recording.roomId,
+            customerIdentity: 'admin-upload',
+            duration: durationSeconds
+          })
+        }).promise();
+
+        await VideoRecording.findByIdAndUpdate(recording._id, {
+          'analysisResult.status': 'processing'
+        });
+
+        console.log(`✅ Admin video queued for call-service processing: ${recording._id}`);
+
+        return NextResponse.json({
+          success: true,
+          videoId: recording._id.toString(),
+          projectId: project._id.toString(),
+          videoUrl: signedUrl,
+          sqsMessageId: sqsResult.MessageId,
+          message: 'Video uploaded successfully and queued for processing'
+        });
+      } catch (sqsError) {
+        console.error('❌ Failed to queue admin video for processing:', sqsError);
+        await VideoRecording.findByIdAndUpdate(recording._id, {
+          'analysisResult.status': 'failed',
+          'analysisResult.error': 'Failed to queue for analysis - SQS error'
+        });
+        return NextResponse.json(
+          { error: 'Video uploaded but failed to start processing. Use Reprocess on the video to retry.' },
+          { status: 500 }
+        );
+      }
+    }
+
+    // ===== CUSTOMER VIDEO UPLOAD: Create Video document and send to Gemini =====
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const videoName = `video_${timestamp}`;
 
-    const videoSource = isCustomerUpload ? 'customer_upload' : 'admin_upload';
+    const videoSource = 'customer_upload';
 
     // Create Video document in MongoDB
     const videoDoc = new Video({

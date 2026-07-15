@@ -31,7 +31,11 @@ function isVideoFile(file: File): boolean {
   return hasVideoExtension || hasVideoMimeType;
 }
 
-// Check video duration (max 1 minute)
+// Max video length for admin uploads. These are processed by the call
+// pipeline (railway-call-service), which handles long videos by chunking.
+const MAX_VIDEO_DURATION_SECONDS = 20 * 60;
+
+// Check video duration
 async function getVideoDuration(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
@@ -362,15 +366,17 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         }
       }
       
-      // Video duration validation (1 minute max)
+      // Video duration validation (20 minutes max)
+      let videoDurationSeconds: number | undefined;
       if (isVideo) {
         try {
           const duration = await getVideoDuration(file);
-          if (duration > 60) { // 60 seconds = 1 minute
-            setError(`This video is too long. Please select a video shorter than 1 minute for optimal processing. Pro tip: Take 1 short video for each room!`);
+          if (duration > MAX_VIDEO_DURATION_SECONDS) {
+            setError(`This video is too long. Please select a video shorter than 20 minutes for optimal processing.`);
             setHasValidationErrors(true);
             throw new Error('Video duration exceeds limit');
           }
+          videoDurationSeconds = Math.round(duration);
         } catch (error) {
           // If it's our validation error, re-throw it
           if (error instanceof Error && error.message === 'Video duration exceeds limit') {
@@ -436,7 +442,8 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
           const result = await uploadVideoFile(finalFile, {
             projectId: projectId,
             isCustomerUpload: false,
-            manualRoomEntry: manualRoomEntry.trim() || undefined
+            manualRoomEntry: manualRoomEntry.trim() || undefined,
+            durationSeconds: videoDurationSeconds
           });
 
           if (result.success) {
@@ -648,7 +655,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
             disabled={uploading || isConverting || isProcessingQueue}
           />
           <p className="text-xs text-gray-500 mt-1">
-            If specified, this will override our AI room detection for uploaded files
+            If specified, this will override our AI room detection for uploaded photos. Does not apply to videos — rooms are detected automatically from the video.
           </p>
         </div>
 
@@ -715,7 +722,7 @@ export default function AdminPhotoUploader({ onUpload, uploading, onClose, proje
         </div>
 
         <p className="text-xs text-gray-500 text-center">
-          Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 1 minute)
+          Images: JPG, PNG, GIF, HEIC, HEIF (max 15MB) • Videos: MP4, MOV, AVI, WebM (max 20 minutes)
         </p>
     </div>
   );

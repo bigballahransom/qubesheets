@@ -25,6 +25,7 @@ export async function uploadVideoFile(
     userId?: string;
     organizationId?: string;
     manualRoomEntry?: string;
+    durationSeconds?: number;
   }
 ): Promise<VideoUploadResult> {
   const { projectId, isCustomerUpload = false, customerToken } = options;
@@ -59,6 +60,7 @@ async function uploadLargeVideo(
     userId?: string;
     organizationId?: string;
     manualRoomEntry?: string;
+    durationSeconds?: number;
   }
 ): Promise<VideoUploadResult> {
   const { projectId, isCustomerUpload, customerToken } = options;
@@ -77,7 +79,8 @@ async function uploadLargeVideo(
       projectId,
       isCustomerUpload,
       customerToken,
-      manualRoomEntry: options.manualRoomEntry
+      manualRoomEntry: options.manualRoomEntry,
+      durationSeconds: options.durationSeconds
     })
   });
   console.log('📡 API response status:', urlResponse.status);
