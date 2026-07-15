@@ -2348,16 +2348,6 @@ useEffect(() => {
         const freshSyncStatus = await response.json();
         setSupermoveSyncStatus(freshSyncStatus);
         
-        if (freshSyncStatus.isSynced) {
-          toast.info('Project already synced to Supermove. Supermove only allows one survey per project.');
-          return;
-        }
-
-        if (!freshSyncStatus.hasCustomerEmail) {
-          toast.error('Customer email is required for Supermove sync. Please add customer email to project.');
-          return;
-        }
-
         if (freshSyncStatus.inventoryStats.goingItems === 0) {
           toast.error('No items marked as going to sync to Supermove');
           return;
@@ -2372,7 +2362,7 @@ useEffect(() => {
     }
   }, [currentProject]);
 
-  const handleSupermoveSyncWithOptions = useCallback(async (syncOptions) => {
+  const handleSupermoveSyncWithOptions = useCallback(async (syncOptions, supermoveProjectUuid, customerEmail) => {
     if (!currentProject?._id) return;
 
     setSupermoveLoading(true);
@@ -2386,7 +2376,9 @@ useEffect(() => {
         },
         body: JSON.stringify({
           projectId: currentProject._id,
-          syncOptions: syncOptions
+          syncOptions: syncOptions,
+          supermoveProjectUuid: supermoveProjectUuid,
+          customerEmail: customerEmail
         }),
       });
 
@@ -4612,8 +4604,21 @@ const ProcessingNotification = () => {
             onNameChange={updateProjectName}
           />
           {currentProject.metadata?.smartMovingQuoteNumber && (
-            <span className="ml-2 px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-full">
+            <span title="SmartMoving Quote Number" className="ml-2 px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded-full">
               #{currentProject.metadata.smartMovingQuoteNumber}
+            </span>
+          )}
+          {(currentProject.metadata?.chariotSync?.jobId || chariotSyncStatus?.jobId) && (
+            <span title="Chariot Job ID" className="ml-2 px-2 py-0.5 text-xs font-medium text-red-700 bg-red-100 rounded-full">
+              Chariot #{currentProject.metadata?.chariotSync?.jobId || chariotSyncStatus?.jobId}
+            </span>
+          )}
+          {(currentProject.metadata?.supermoveProjectUuid || supermoveSyncStatus?.supermoveProjectUuid) && (
+            <span
+              title={`Supermove Project UUID: ${currentProject.metadata?.supermoveProjectUuid || supermoveSyncStatus?.supermoveProjectUuid}`}
+              className="ml-2 px-2 py-0.5 text-xs font-medium text-white bg-gray-900 rounded-full"
+            >
+              Supermove {(currentProject.metadata?.supermoveProjectUuid || supermoveSyncStatus?.supermoveProjectUuid).slice(0, 8)}…
             </span>
           )}
           <TooltipProvider>
@@ -4732,9 +4737,9 @@ const ProcessingNotification = () => {
             {supermoveEnabled && (
               <>
                 <MenubarSeparator />
-                <MenubarItem 
+                <MenubarItem
                   onClick={handleSupermoveSync}
-                  disabled={supermoveLoading || supermoveSyncStatus?.isSynced}
+                  disabled={supermoveLoading}
                 >
                   {supermoveLoading ? (
                     <>
@@ -4744,7 +4749,7 @@ const ProcessingNotification = () => {
                   ) : supermoveSyncStatus?.isSynced ? (
                     <>
                       <ExternalLink size={16} className="mr-1" />
-                      Already Synced
+                      Re-sync with Supermove
                     </>
                   ) : (
                     <>
@@ -5268,6 +5273,9 @@ const ProcessingNotification = () => {
   onSync={handleSupermoveSyncWithOptions}
   loading={supermoveLoading}
   inventoryStats={supermoveSyncStatus?.inventoryStats || {}}
+  syncDetails={supermoveSyncStatus?.isSynced ? supermoveSyncStatus.syncDetails : null}
+  initialProjectUuid={supermoveSyncStatus?.supermoveProjectUuid || ''}
+  initialCustomerEmail={supermoveSyncStatus?.customerEmail || currentProject?.customerEmail || ''}
 />
 
 {/* SmartMoving Sync Modal */}

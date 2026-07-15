@@ -26,6 +26,9 @@ interface SupermoveCollection {
 }
 
 interface SupermoveSurveyPayload {
+  // When both are present, Supermove targets by project_uuid; email alone
+  // attaches to the customer's most recent project.
+  project_uuid?: string;
   customer_email: string;
   survey: SupermoveCollection[];
 }
@@ -118,16 +121,14 @@ export async function syncInventoryToSupermove(
 
     console.log(`⚖️ [SUPERMOVE-SYNC] Weight config: ${weightConfig.weightMode === 'custom' ? `×${weightConfig.customWeightMultiplier}` : 'actual'}`);
 
-    // 3. Check if project is already synced
-    if (project.metadata?.supermoveSync?.synced) {
-      console.log(`⚠️ [SUPERMOVE-SYNC] Project ${projectId} already synced to Supermove`);
-      return { 
-        success: false, 
-        syncedCount: 0, 
-        error: 'Project already synced. Supermove only allows one survey per project.' 
-      };
+    // 3. Note prior sync state (re-syncing is allowed — Supermove's Add Survey
+    // endpoint accepts multiple inventories per project and displays the most
+    // recent one; it does not support editing or deleting a previously sent survey).
+    const priorSync = project.metadata?.supermoveSync;
+    if (priorSync?.synced) {
+      console.log(`🔁 [SUPERMOVE-SYNC] Project ${projectId} previously synced at ${priorSync.syncedAt} — sending updated inventory`);
     }
-    
+
     // 4. Filter and map inventory items for Supermove.
     // Sync option controls which item categories are sent; the CP/PBO/Crated labels
     // are display prefixes only and must not affect filtering.
@@ -185,12 +186,15 @@ export async function syncInventoryToSupermove(
       survey.map(room => `${room.name} (${room.items.length} items)`));
     
     // 7. Create Supermove payload
+    const supermoveProjectUuid = project.metadata?.supermoveProjectUuid;
     const payload: SupermoveSurveyPayload = {
+      ...(supermoveProjectUuid ? { project_uuid: supermoveProjectUuid } : {}),
       customer_email: customerEmail,
       survey
     };
-    
+
     console.log(`📤 [SUPERMOVE-SYNC] Sending payload to Supermove:`, {
+      project_uuid: supermoveProjectUuid || '(none — targeting most recent project by email)',
       customer_email: customerEmail,
       survey_rooms: survey.length,
       total_items: survey.reduce((sum, room) => sum + room.items.length, 0)
@@ -269,14 +273,16 @@ export async function syncInventoryToSupermove(
     
     console.log(`✅ [SUPERMOVE-SYNC] Successfully sent to Supermove API`);
     
-    // 9. Mark project as synced
+    // 9. Record the sync (keeps a running count; firstSyncedAt is preserved across re-syncs)
     const syncedAt = new Date();
     const itemsHash = generateItemsHash(itemsToSync);
-    
+
     await Project.findByIdAndUpdate(projectId, {
       'metadata.supermoveSync': {
         synced: true,
         syncedAt,
+        firstSyncedAt: priorSync?.firstSyncedAt || priorSync?.syncedAt || syncedAt,
+        syncCount: (priorSync?.syncCount || (priorSync?.synced ? 1 : 0)) + 1,
         itemCount: itemsToSync.length,
         syncedItemsHash: itemsHash
       }

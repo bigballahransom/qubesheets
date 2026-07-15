@@ -17,13 +17,23 @@ export async function POST(request: NextRequest) {
     
     await connectMongoDB();
     
-    const { projectId, syncOptions = 'items_only' } = await request.json();
-    
+    const { projectId, syncOptions = 'items_only', supermoveProjectUuid, customerEmail } = await request.json();
+
     if (!projectId) {
       return NextResponse.json(
         { error: 'Project ID is required' },
         { status: 400 }
       );
+    }
+
+    if (supermoveProjectUuid !== undefined && supermoveProjectUuid !== null && supermoveProjectUuid !== '') {
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (typeof supermoveProjectUuid !== 'string' || !uuidPattern.test(supermoveProjectUuid.trim())) {
+        return NextResponse.json(
+          { error: 'Supermove Project UUID must be a valid UUID (e.g. cf67aa77-fc75-4735-b691-3d0efe26b435)' },
+          { status: 400 }
+        );
+      }
     }
     
     console.log(`🔄 [SUPERMOVE-SYNC-API] Starting sync for project ${projectId}`);
@@ -42,32 +52,53 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // Persist a customer email supplied from the sync modal (added or changed there)
+    if (typeof customerEmail === 'string' && customerEmail.trim()) {
+      const trimmedEmail = customerEmail.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        return NextResponse.json(
+          { error: 'Customer email is not a valid email address' },
+          { status: 400 }
+        );
+      }
+      if (trimmedEmail !== project.customerEmail) {
+        await Project.findByIdAndUpdate(projectId, { customerEmail: trimmedEmail });
+        project.customerEmail = trimmedEmail;
+      }
+    }
+
     // Check if customer email is provided
     if (!project.customerEmail) {
       console.log(`❌ [SUPERMOVE-SYNC-API] Project ${projectId} missing customer email`);
       return NextResponse.json(
-        { 
-          error: 'Customer email is required for Supermove sync. Please add customer email to project.' 
+        {
+          error: 'Customer email is required for Supermove sync. Please add customer email to project.'
         },
         { status: 400 }
       );
     }
     
-    // Check if already synced
+    // Re-syncing is allowed: Supermove's Add Survey endpoint accepts multiple
+    // inventories per project and displays the most recent one.
     if (project.metadata?.supermoveSync?.synced) {
-      console.log(`⚠️ [SUPERMOVE-SYNC-API] Project ${projectId} already synced`);
-      return NextResponse.json(
-        { 
-          error: 'Project already synced to Supermove. Supermove only allows one survey per project.',
-          syncDetails: {
-            syncedAt: project.metadata.supermoveSync.syncedAt,
-            itemCount: project.metadata.supermoveSync.itemCount
-          }
-        },
-        { status: 409 }
-      );
+      console.log(`🔁 [SUPERMOVE-SYNC-API] Project ${projectId} previously synced — re-syncing`);
     }
-    
+
+    // Persist the Supermove project UUID before syncing so the sync targets the
+    // exact project instead of the customer's most recent one. Empty string clears it.
+    if (supermoveProjectUuid !== undefined && supermoveProjectUuid !== null) {
+      const trimmedUuid = typeof supermoveProjectUuid === 'string' ? supermoveProjectUuid.trim() : '';
+      if (trimmedUuid) {
+        await Project.findByIdAndUpdate(projectId, {
+          'metadata.supermoveProjectUuid': trimmedUuid.toLowerCase()
+        });
+      } else if (project.metadata?.supermoveProjectUuid) {
+        await Project.findByIdAndUpdate(projectId, {
+          $unset: { 'metadata.supermoveProjectUuid': 1 }
+        });
+      }
+    }
+
     // Get inventory items for this project
     console.log(`📦 [SUPERMOVE-SYNC-API] Fetching inventory items for project ${projectId}`);
     const inventoryItems = await InventoryItem.find({ 
@@ -208,6 +239,7 @@ export async function GET(request: NextRequest) {
       projectId,
       hasCustomerEmail,
       customerEmail: project.customerEmail,
+      supermoveProjectUuid: project.metadata?.supermoveProjectUuid || null,
       isSynced: !!supermoveSync?.synced,
       syncDetails: supermoveSync || null,
       inventoryStats: {
@@ -216,7 +248,7 @@ export async function GET(request: NextRequest) {
         itemsCount: itemsOnlyCount,
         existingBoxesCount: existingBoxesCount,
         recommendedBoxesCount: recommendedBoxesCount,
-        canSync: hasCustomerEmail && goingItems > 0 && !supermoveSync?.synced
+        canSync: hasCustomerEmail && goingItems > 0
       }
     });
     

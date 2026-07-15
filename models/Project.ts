@@ -58,9 +58,17 @@ export interface IProject extends Document {
     smartMovingCustomerId?: string;
     smartMovingQuoteNumber?: number;
     source?: string;
+    // Supermove project UUID. When set, syncs target this exact project;
+    // otherwise Supermove attaches the survey to the customer's MOST RECENT
+    // project by email, which can mis-target customers with multiple projects.
+    supermoveProjectUuid?: string;
     supermoveSync?: {
       synced: boolean;
       syncedAt: Date;
+      // Re-syncs are allowed (Supermove displays the most recent inventory);
+      // firstSyncedAt/syncCount track the history across re-syncs.
+      firstSyncedAt?: Date;
+      syncCount?: number;
       itemCount: number;
       syncedItemsHash: string;
     };

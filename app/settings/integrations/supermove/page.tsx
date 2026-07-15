@@ -382,7 +382,7 @@ export default function SupermoveSettingsPage() {
                   <div className="flex items-start gap-2">
                     <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />
                     <div className="text-sm text-amber-700">
-                      <strong>Important:</strong> Supermove only allows one survey per project. Once synced, you cannot sync again. Future changes must be made directly in Supermove.
+                      <strong>Important:</strong> You can sync a project multiple times — Supermove displays the most recently synced inventory. Previously synced surveys cannot be edited or deleted from QubeSheets.
                     </div>
                   </div>
                 </div>
