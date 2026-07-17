@@ -27,6 +27,9 @@ export const SUBMISSION_LIMITS = {
   REFERRER_MAX: 1000,
   UTM_VALUE_MAX: 200,
   HONEYPOT_MAX: 500,           // generous — we accept anything here
+  CUSTOM_KEYS_MAX: 50,          // entries under body.custom
+  CUSTOM_KEY_MAX: 100,          // a custom field's id
+  CUSTOM_VALUE_MAX: 2000,       // a single custom-field answer
   // Overall payload cap (keys we don't recognize get dropped, but the JSON
   // still has to fit in memory). Computed against the parsed-object key count
   // — a quick guard against an attacker dumping 10MB of unknown keys.
@@ -133,6 +136,28 @@ export function validateLeadSubmission(body: unknown): string | null {
     }
     if (body._hp_company.length > SUBMISSION_LIMITS.HONEYPOT_MAX) {
       return '_hp_company exceeds limit';
+    }
+  }
+
+  // Custom fields — arrive as an object keyed by the config's custom-field
+  // ids. normalize() drops keys the config doesn't know; here we only cap
+  // sizes so rawPayload stays bounded.
+  if (body.custom !== undefined && body.custom !== null) {
+    if (!isObject(body.custom)) return 'custom must be an object';
+    const customKeys = Object.keys(body.custom);
+    if (customKeys.length > SUBMISSION_LIMITS.CUSTOM_KEYS_MAX) {
+      return `custom has too many fields (max ${SUBMISSION_LIMITS.CUSTOM_KEYS_MAX})`;
+    }
+    for (const key of customKeys) {
+      if (key.length > SUBMISSION_LIMITS.CUSTOM_KEY_MAX) {
+        return 'custom field key exceeds limit';
+      }
+      const value = body.custom[key];
+      if (value === undefined || value === null) continue;
+      if (!isString(value)) return `custom.${key} must be a string`;
+      if (value.length > SUBMISSION_LIMITS.CUSTOM_VALUE_MAX) {
+        return `custom.${key} exceeds ${SUBMISSION_LIMITS.CUSTOM_VALUE_MAX} characters`;
+      }
     }
   }
 

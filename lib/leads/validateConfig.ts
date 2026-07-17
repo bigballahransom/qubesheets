@@ -26,6 +26,11 @@ export const CONFIG_LIMITS = {
   RATE_PER_HOUR_MAX: 1000,
   FIELDS_MAX: 50,
   FIELD_LABEL_MAX: 80,
+  CUSTOM_FIELDS_MAX: 20,
+  CUSTOM_FIELD_ID_MAX: 60,
+  CUSTOM_FIELD_LABEL_MAX: 120,
+  CUSTOM_FIELD_OPTIONS_MAX: 50,
+  CUSTOM_FIELD_OPTION_MAX: 200,
   MOVE_SIZE_OPTIONS_MAX: 50,
   MOVE_SIZE_OPTION_MAX: 100,
   MOVE_SIZE_ROUTING_MAX: 50,
@@ -136,6 +141,71 @@ function validateFields(v: unknown): string | null {
       if (f.label.length > CONFIG_LIMITS.FIELD_LABEL_MAX) {
         return `fields[${i}].label exceeds ${CONFIG_LIMITS.FIELD_LABEL_MAX} characters`;
       }
+    }
+  }
+  return null;
+}
+
+const VALID_CUSTOM_FIELD_TYPES = new Set(['text', 'textarea', 'select']);
+
+function validateCustomFields(v: unknown): string | null {
+  if (v === null) return null;
+  if (!Array.isArray(v)) return 'customFields must be an array';
+  if (v.length > CONFIG_LIMITS.CUSTOM_FIELDS_MAX) {
+    return `customFields exceeds ${CONFIG_LIMITS.CUSTOM_FIELDS_MAX} entries`;
+  }
+  const seenIds = new Set<string>();
+  for (let i = 0; i < v.length; i++) {
+    const f = v[i];
+    if (!isObject(f)) return `customFields[${i}] must be an object`;
+    if (!isString(f.id) || !f.id.trim()) {
+      return `customFields[${i}].id must be a non-empty string`;
+    }
+    if (f.id.length > CONFIG_LIMITS.CUSTOM_FIELD_ID_MAX) {
+      return `customFields[${i}].id exceeds ${CONFIG_LIMITS.CUSTOM_FIELD_ID_MAX} characters`;
+    }
+    // Ids become object keys in submission payloads — keep them plain so they
+    // can't collide with Mongo operators or dotted paths.
+    if (!/^[A-Za-z0-9_-]+$/.test(f.id)) {
+      return `customFields[${i}].id may only contain letters, numbers, "_" and "-"`;
+    }
+    if (seenIds.has(f.id)) {
+      return `customFields[${i}].id "${f.id}" is duplicated`;
+    }
+    seenIds.add(f.id);
+    if (!isString(f.label) || !f.label.trim()) {
+      return `customFields[${i}].label must be a non-empty string`;
+    }
+    if (f.label.length > CONFIG_LIMITS.CUSTOM_FIELD_LABEL_MAX) {
+      return `customFields[${i}].label exceeds ${CONFIG_LIMITS.CUSTOM_FIELD_LABEL_MAX} characters`;
+    }
+    if (!isString(f.type) || !VALID_CUSTOM_FIELD_TYPES.has(f.type)) {
+      return `customFields[${i}].type must be one of: ${Array.from(VALID_CUSTOM_FIELD_TYPES).join(', ')}`;
+    }
+    if (!isBoolean(f.required)) {
+      return `customFields[${i}].required must be a boolean`;
+    }
+    if (f.type === 'select') {
+      if (!Array.isArray(f.options)) {
+        return `customFields[${i}].options must be an array for select fields`;
+      }
+      const nonEmpty = f.options.filter(
+        (o: unknown) => isString(o) && o.trim(),
+      );
+      if (nonEmpty.length === 0) {
+        return `customFields[${i}] (select) needs at least one option`;
+      }
+      if (f.options.length > CONFIG_LIMITS.CUSTOM_FIELD_OPTIONS_MAX) {
+        return `customFields[${i}].options exceeds ${CONFIG_LIMITS.CUSTOM_FIELD_OPTIONS_MAX} entries`;
+      }
+      for (const o of f.options) {
+        if (!isString(o)) return `customFields[${i}].options entries must be strings`;
+        if (o.length > CONFIG_LIMITS.CUSTOM_FIELD_OPTION_MAX) {
+          return `customFields[${i}].options entry exceeds ${CONFIG_LIMITS.CUSTOM_FIELD_OPTION_MAX} characters`;
+        }
+      }
+    } else if (f.options !== undefined) {
+      return `customFields[${i}].options is only valid for select fields`;
     }
   }
   return null;
@@ -424,6 +494,10 @@ export function validateConfigPatch(body: Record<string, unknown>): string | nul
   }
   if (body.fields !== undefined) {
     const err = validateFields(body.fields);
+    if (err) return err;
+  }
+  if (body.customFields !== undefined) {
+    const err = validateCustomFields(body.customFields);
     if (err) return err;
   }
   if (body.postSubmit !== undefined) {

@@ -15,6 +15,7 @@ const PATCH_ALLOWED_FIELDS = [
   'isActive',
   'crmRouting',
   'fields',
+  'customFields',
   'postSubmit',
   'theme',
   'abuse',

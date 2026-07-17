@@ -19,6 +19,24 @@ export interface ILeadFormConfigField {
   label?: string;
 }
 
+export type LeadFormCustomFieldType = 'text' | 'textarea' | 'select';
+
+/**
+ * Admin-defined extra input. Custom fields render at the end of the form
+ * (last step when multi-step), are captured into the submission's
+ * normalizedLead as { id, label, value } snapshots, and surface on the
+ * editor's Submissions tab. They are Qube Sheets-only — never sent to CRMs.
+ * `id` is a stable random key minted by the editor; renaming the label
+ * doesn't change it, so old submissions stay attributable.
+ */
+export interface ILeadFormCustomField {
+  id: string;
+  label: string;
+  type: LeadFormCustomFieldType;
+  required: boolean;
+  options?: string[]; // select only; the dropdown choices in display order
+}
+
 export interface ILeadFormConfigCrmRouting {
   smartmoving?: {
     branchId?: string;
@@ -133,6 +151,7 @@ export interface ILeadFormConfig extends Document {
   isActive: boolean;
   crmRouting: ILeadFormConfigCrmRouting;
   fields: ILeadFormConfigField[];
+  customFields?: ILeadFormCustomField[];
   postSubmit: LeadFormPostSubmit;
   theme: ILeadFormConfigTheme;
   abuse?: ILeadFormConfigAbuse;
@@ -169,6 +188,21 @@ const LeadFormConfigFieldSchema = new Schema<ILeadFormConfigField>(
   { _id: false }
 );
 
+const LeadFormCustomFieldSchema = new Schema<ILeadFormCustomField>(
+  {
+    id: { type: String, required: true },
+    label: { type: String, required: true },
+    type: {
+      type: String,
+      enum: ['text', 'textarea', 'select'],
+      required: true,
+    },
+    required: { type: Boolean, required: true },
+    options: { type: [String], required: false },
+  },
+  { _id: false }
+);
+
 const LeadFormConfigThemeSchema = new Schema<ILeadFormConfigTheme>(
   {
     title: { type: String, required: true },
@@ -187,6 +221,7 @@ const LeadFormConfigSchema: Schema = new Schema(
     isActive: { type: Boolean, default: true },
     crmRouting: { type: Schema.Types.Mixed, required: false, default: {} },
     fields: { type: [LeadFormConfigFieldSchema], default: [] },
+    customFields: { type: [LeadFormCustomFieldSchema], required: false },
     postSubmit: { type: Schema.Types.Mixed, required: true },
     theme: { type: LeadFormConfigThemeSchema, required: true },
     abuse: { type: Schema.Types.Mixed, required: false },

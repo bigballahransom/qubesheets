@@ -21,6 +21,8 @@ import {
 import type {
   FieldKey,
   ILeadFormConfigField,
+  ILeadFormCustomField,
+  LeadFormCustomFieldType,
   LeadFormStep,
 } from '@/models/LeadFormConfig';
 
@@ -37,6 +39,8 @@ const DEFAULT_MOVE_SIZE_OPTIONS = [
 interface FieldsTabProps {
   fields: ILeadFormConfigField[];
   onChange: (next: ILeadFormConfigField[]) => void;
+  customFields?: ILeadFormCustomField[];
+  onCustomFieldsChange?: (next: ILeadFormCustomField[] | undefined) => void;
   moveSizeOptions?: string[];
   onMoveSizeOptionsChange?: (next: string[] | undefined) => void;
   steps?: LeadFormStep[];
@@ -93,6 +97,8 @@ const FIELD_ORDER: FieldKey[] = [
 export function FieldsTab({
   fields,
   onChange,
+  customFields,
+  onCustomFieldsChange,
   moveSizeOptions,
   onMoveSizeOptionsChange,
   steps,
@@ -309,6 +315,12 @@ export function FieldsTab({
           </div>
         );
       })}
+      {onCustomFieldsChange && (
+        <CustomFieldsSection
+          customFields={customFields}
+          onChange={onCustomFieldsChange}
+        />
+      )}
       {onStepsChange && (
         <FormLayoutSection
           fields={fields}
@@ -316,6 +328,220 @@ export function FieldsTab({
           onStepsChange={onStepsChange}
         />
       )}
+    </div>
+  );
+}
+
+// --- Custom fields ---------------------------------------------------------
+//
+// Admin-defined extra inputs. Each gets a stable random id minted here; the
+// id is the capture key on submissions, so editing the label later never
+// orphans old answers. Custom fields always render at the end of the form
+// (after the built-ins; on the last step when multi-step) and are captured
+// by Qube Sheets only — they are not sent to CRMs.
+
+const CUSTOM_FIELD_TYPE_OPTIONS: Array<{
+  value: LeadFormCustomFieldType;
+  label: string;
+}> = [
+  { value: 'text', label: 'Short answer' },
+  { value: 'textarea', label: 'Paragraph' },
+  { value: 'select', label: 'Dropdown' },
+];
+
+function mintCustomFieldId(): string {
+  return `cf_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+interface CustomFieldsSectionProps {
+  customFields: ILeadFormCustomField[] | undefined;
+  onChange: (next: ILeadFormCustomField[] | undefined) => void;
+}
+
+function CustomFieldsSection({ customFields, onChange }: CustomFieldsSectionProps) {
+  const list = customFields ?? [];
+
+  const update = (next: ILeadFormCustomField[]) => {
+    onChange(next.length > 0 ? next : undefined);
+  };
+
+  const updateAt = (idx: number, patch: Partial<ILeadFormCustomField>) => {
+    update(
+      list.map((cf, i) => {
+        if (i !== idx) return cf;
+        const merged = { ...cf, ...patch };
+        // Options only make sense on dropdowns; drop them on type change so
+        // the server validator doesn't reject the config.
+        if (merged.type !== 'select') delete merged.options;
+        if (merged.type === 'select' && !merged.options) merged.options = [''];
+        return merged;
+      }),
+    );
+  };
+
+  const removeAt = (idx: number) => {
+    update(list.filter((_, i) => i !== idx));
+  };
+
+  const addField = () => {
+    update([
+      ...list,
+      { id: mintCustomFieldId(), label: '', type: 'text', required: false },
+    ]);
+  };
+
+  return (
+    <div className="px-6 py-5 bg-gray-50/40">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-medium text-gray-900">Custom fields</h3>
+          <p className="text-sm text-gray-500 mt-1">
+            Extra questions shown at the end of the form. Answers are captured
+            in Qube Sheets and shown on the Submissions tab — they are not
+            sent to CRMs.
+          </p>
+        </div>
+      </div>
+
+      {list.length > 0 && (
+        <div className="mt-4 space-y-3">
+          {list.map((cf, idx) => (
+            <div
+              key={cf.id}
+              className="rounded-lg border border-gray-200 bg-white p-4 space-y-3"
+            >
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-[12rem] space-y-1.5">
+                  <label
+                    htmlFor={`cf-label-${cf.id}`}
+                    className="text-xs font-medium text-gray-500"
+                  >
+                    Question / label
+                  </label>
+                  <Input
+                    id={`cf-label-${cf.id}`}
+                    value={cf.label}
+                    onChange={(e) => updateAt(idx, { label: e.target.value })}
+                    placeholder="e.g., How did you hear about us?"
+                    maxLength={120}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor={`cf-type-${cf.id}`}
+                    className="text-xs font-medium text-gray-500"
+                  >
+                    Type
+                  </label>
+                  <select
+                    id={`cf-type-${cf.id}`}
+                    value={cf.type}
+                    onChange={(e) =>
+                      updateAt(idx, {
+                        type: e.target.value as LeadFormCustomFieldType,
+                      })
+                    }
+                    className="h-9 rounded-md border border-gray-200 bg-white px-2 text-sm"
+                  >
+                    {CUSTOM_FIELD_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2 h-9">
+                  <Switch
+                    checked={cf.required}
+                    onCheckedChange={(checked) =>
+                      updateAt(idx, { required: checked })
+                    }
+                  />
+                  <span className="text-xs text-gray-600">Required</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => removeAt(idx)}
+                  title="Remove custom field"
+                  className="text-gray-400 hover:text-red-600 shrink-0"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {cf.type === 'select' && (
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-gray-500">
+                    Dropdown options
+                  </div>
+                  <ul className="space-y-2">
+                    {(cf.options ?? []).map((opt, optIdx) => (
+                      <li key={optIdx} className="flex items-center gap-2">
+                        <GripVertical
+                          className="h-4 w-4 text-gray-300 shrink-0"
+                          aria-hidden
+                        />
+                        <Input
+                          value={opt}
+                          onChange={(e) => {
+                            const options = [...(cf.options ?? [])];
+                            options[optIdx] = e.target.value;
+                            updateAt(idx, { options });
+                          }}
+                          placeholder="Option"
+                          className="flex-1"
+                          maxLength={200}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const options = (cf.options ?? []).filter(
+                              (_, i) => i !== optIdx,
+                            );
+                            updateAt(idx, { options });
+                          }}
+                          className="text-gray-400 hover:text-red-600 shrink-0"
+                          title="Remove option"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      updateAt(idx, { options: [...(cf.options ?? []), ''] })
+                    }
+                    className="text-xs"
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1" />
+                    Add option
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={addField}
+        disabled={list.length >= 20}
+        className="mt-4"
+      >
+        <Plus className="h-3.5 w-3.5 mr-1" />
+        Add custom field
+      </Button>
     </div>
   );
 }

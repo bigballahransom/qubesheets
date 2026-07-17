@@ -5,8 +5,16 @@
 // only shapes the data into a NormalizedLead and silently drops unrecognized
 // or disabled fields.
 
-import type { NormalizedAddress, NormalizedLead } from './types';
+import type {
+  NormalizedAddress,
+  NormalizedCustomFieldValue,
+  NormalizedLead,
+} from './types';
 import type { FieldKey, ILeadFormConfig } from '@/models/LeadFormConfig';
+
+// Hard cap on a single custom-field answer; validateSubmission enforces the
+// same limit at the API boundary.
+const CUSTOM_VALUE_MAX = 2000;
 
 /**
  * Normalize a raw form payload into a NormalizedLead.
@@ -130,6 +138,43 @@ export function normalize(
     const company = asTrimmedString(raw.companyName);
     if (company) {
       out.companyName = company;
+    }
+  }
+
+  // Custom fields: values arrive under raw.custom keyed by the field's stable
+  // id. Only ids present in the config are kept (unknown keys dropped), select
+  // answers must match a configured option, and each kept value snapshots the
+  // field's label at submit time.
+  const customFields = Array.isArray(config.customFields)
+    ? config.customFields
+    : [];
+  if (
+    customFields.length > 0 &&
+    raw.custom &&
+    typeof raw.custom === 'object' &&
+    !Array.isArray(raw.custom)
+  ) {
+    const rawCustom = raw.custom as Record<string, unknown>;
+    const custom: NormalizedCustomFieldValue[] = [];
+    for (const cf of customFields) {
+      const value = asTrimmedString(rawCustom[cf.id]);
+      if (!value) continue;
+      if (
+        cf.type === 'select' &&
+        Array.isArray(cf.options) &&
+        cf.options.length > 0 &&
+        !cf.options.includes(value)
+      ) {
+        continue;
+      }
+      custom.push({
+        id: cf.id,
+        label: cf.label,
+        value: value.slice(0, CUSTOM_VALUE_MAX),
+      });
+    }
+    if (custom.length > 0) {
+      out.custom = custom;
     }
   }
 

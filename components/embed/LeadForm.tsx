@@ -115,6 +115,16 @@ interface ConfigStep {
   fields: string[];
 }
 
+// Admin-defined extra inputs. Rendered at the end of the form (last step
+// when multi-step) and submitted under payload.custom keyed by id.
+interface CustomFieldConfig {
+  id: string;
+  label: string;
+  type: 'text' | 'textarea' | 'select';
+  required: boolean;
+  options?: string[];
+}
+
 interface LeadFormProps {
   config: {
     id: string;
@@ -130,6 +140,7 @@ interface LeadFormProps {
     postSubmit: { kind: 'inline-message' | 'redirect-chooser'; message?: string };
     moveSizeOptions?: string[];
     steps?: ConfigStep[];
+    customFields?: CustomFieldConfig[];
   };
   configId: string;
   previewMode?: boolean;
@@ -574,6 +585,16 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
   const [destinationText, setDestinationText] = useState('');
   const [destinationPlace, setDestinationPlace] = useState<NormalizedAddress | null>(null);
 
+  // Admin-defined custom fields, keyed by their stable id.
+  const customFields = useMemo(
+    () => config.customFields ?? [],
+    [config.customFields],
+  );
+  const [customValues, setCustomValues] = useState<Record<string, string>>({});
+  const setCustomValue = useCallback((id: string, value: string) => {
+    setCustomValues((prev) => ({ ...prev, [id]: value }));
+  }, []);
+
   // Honeypot — real users never touch this. Not persisted to localStorage.
   const [honeypot, setHoneypot] = useState('');
 
@@ -737,6 +758,19 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     }
   }
 
+  // Custom-field validation. Touched keys are namespaced `cf:<id>` so they
+  // can't collide with built-in FieldKeys.
+  function rawCustomErrorFor(cf: CustomFieldConfig): string | null {
+    if (cf.required && !(customValues[cf.id] ?? '').trim()) {
+      return `${cf.label} is required`;
+    }
+    return null;
+  }
+  function customErrorFor(cf: CustomFieldConfig): string | null {
+    if (!touched.has(`cf:${cf.id}`)) return null;
+    return rawCustomErrorFor(cf);
+  }
+
   // Mark all of the current step's fields as touched before submit/continue
   // so any field-level errors render. Then return the first error so the
   // step-level message can echo it (useful for screen readers).
@@ -746,6 +780,14 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     for (const id of ids) {
       const err = rawErrorFor(id);
       if (err) return err;
+    }
+    // Custom fields live on the last step.
+    if (isLastStep) {
+      for (const cf of customFields) markTouched(`cf:${cf.id}`);
+      for (const cf of customFields) {
+        const err = rawCustomErrorFor(cf);
+        if (err) return err;
+      }
     }
     return null;
   }
@@ -800,6 +842,13 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     if (originPayload) payload.origin = originPayload;
     if (destinationPayload) payload.destination = destinationPayload;
     if (fieldEnabled('companyName') && companyName) payload.companyName = companyName;
+
+    const customPayload: Record<string, string> = {};
+    for (const cf of customFields) {
+      const value = (customValues[cf.id] ?? '').trim();
+      if (value) customPayload[cf.id] = value;
+    }
+    if (Object.keys(customPayload).length > 0) payload.custom = customPayload;
 
     try {
       const endpoint = previewMode
@@ -1124,6 +1173,30 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
                 companyName={companyName}
                 setCompanyName={setCompanyName}
               />
+
+              {/* Admin-defined custom fields — always the tail of the form
+                  (last step in a wizard). Values live in customValues keyed
+                  by the field's stable id. */}
+              {isLastStep && customFields.length > 0 && (
+                <div className="space-y-4 mt-4">
+                  {customFields.map((cf) => (
+                    <CustomFieldInput
+                      key={cf.id}
+                      field={cf}
+                      value={customValues[cf.id] ?? ''}
+                      onChange={(v) => setCustomValue(cf.id, v)}
+                      focused={focusedField === `cf:${cf.id}`}
+                      error={customErrorFor(cf)}
+                      accentColor={accentColor}
+                      onFocus={() => setFocusedField(`cf:${cf.id}`)}
+                      onBlur={() => {
+                        setFocusedField((f) => (f === `cf:${cf.id}` ? null : f));
+                        markTouched(`cf:${cf.id}`);
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
             </motion.div>
           </AnimatePresence>
 
@@ -1684,6 +1757,112 @@ function StepContent(props: StepContentProps) {
         </Field>
       )}
     </div>
+  );
+}
+
+// --- Custom field input ----------------------------------------------------
+//
+// Renders one admin-defined custom field with the same floating-label
+// treatment as the built-ins. Textareas keep the label floated permanently —
+// a vertically-centered label on a multi-line box reads wrong.
+
+function CustomFieldInput({
+  field,
+  value,
+  onChange,
+  focused,
+  error,
+  accentColor,
+  onFocus,
+  onBlur,
+}: {
+  field: CustomFieldConfig;
+  value: string;
+  onChange: (v: string) => void;
+  focused: boolean;
+  error: string | null;
+  accentColor: string;
+  onFocus: () => void;
+  onBlur: () => void;
+}) {
+  const id = `cf-${field.id}`;
+
+  const applyFocus = (
+    e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+  ) => {
+    e.currentTarget.style.borderColor = accentColor;
+    e.currentTarget.style.boxShadow = `0 0 0 3px ${accentColor}33`;
+    onFocus();
+  };
+  const clearFocus = (
+    e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+  ) => {
+    e.currentTarget.style.borderColor = '';
+    e.currentTarget.style.boxShadow = '';
+    onBlur();
+  };
+
+  const showCheck =
+    field.required && !error && !!value.trim() && !focused;
+
+  return (
+    <Field
+      id={id}
+      label={field.label}
+      required={field.required}
+      filled={!!value || field.type === 'textarea'}
+      focused={focused}
+      error={error}
+      showCheck={showCheck}
+      accentColor={accentColor}
+    >
+      {field.type === 'textarea' ? (
+        <textarea
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={applyFocus}
+          onBlur={clearFocus}
+          placeholder=" "
+          required={field.required}
+          rows={3}
+          className={cn(floatingInputClass, 'resize-none', error && errorInputClass)}
+        />
+      ) : field.type === 'select' ? (
+        <select
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={applyFocus}
+          onBlur={clearFocus}
+          required={field.required}
+          className={cn(
+            floatingInputClass,
+            'appearance-none pr-10',
+            error && errorInputClass,
+          )}
+        >
+          <option value=""></option>
+          {(field.options ?? []).map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          id={id}
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={applyFocus}
+          onBlur={clearFocus}
+          placeholder=" "
+          required={field.required}
+          className={cn(floatingInputClass, error && errorInputClass)}
+        />
+      )}
+    </Field>
   );
 }
 

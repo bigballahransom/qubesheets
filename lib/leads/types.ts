@@ -9,6 +9,14 @@ export interface NormalizedAddress {
   lng?: number;
 }
 
+// Snapshot of a custom-field answer. The label is captured at submit time so
+// renaming or deleting the custom field later doesn't orphan old submissions.
+export interface NormalizedCustomFieldValue {
+  id: string;
+  label: string;
+  value: string;
+}
+
 export interface NormalizedLead {
   fullName?: string;
   firstName?: string;
@@ -21,6 +29,9 @@ export interface NormalizedLead {
   origin?: NormalizedAddress;
   destination?: NormalizedAddress;
   companyName?: string;
+  // Admin-defined custom fields, in the form's configured order. Captured by
+  // Qube Sheets only — the CRM adapters ignore this.
+  custom?: NormalizedCustomFieldValue[];
   utm?: Record<string, string>;
   referrer?: string;
   notes?: string;

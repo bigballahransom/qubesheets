@@ -34,6 +34,13 @@ interface PublicFormConfig {
   postSubmit: { kind: 'inline-message' | 'redirect-chooser'; message?: string };
   moveSizeOptions?: string[];
   steps?: Array<{ heading?: string; fields: string[] }>;
+  customFields?: Array<{
+    id: string;
+    label: string;
+    type: 'text' | 'textarea' | 'select';
+    required: boolean;
+    options?: string[];
+  }>;
 }
 
 // Same outer-shell dimensions as the real form so the skeleton occupies the

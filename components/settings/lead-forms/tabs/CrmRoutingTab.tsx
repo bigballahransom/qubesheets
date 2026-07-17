@@ -4,20 +4,42 @@
 //
 // Four routing sections (SmartMoving / Supermove / Chariot / Moverbase). Each
 // section is gated behind the org actually having that integration configured.
-// We fetch configuration status from existing endpoints on mount.
+// We fetch configuration status from existing endpoints on mount. Enabled
+// sections also render a field-mapping table (driven by mappingDoc.ts) so
+// admins can see exactly where each form field lands in the CRM payload —
+// especially important now that field labels are renameable.
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useOrganization } from '@clerk/nextjs';
-import type { ILeadFormConfigCrmRouting } from '@/models/LeadFormConfig';
+import {
+  CRM_DISPLAY_NAME,
+  CRM_FIELD_MAPPINGS,
+  CRM_REQUIREMENTS,
+  MAPPING_DISPLAY_ORDER,
+  MAPPING_FIELD_NAMES,
+  type CrmKey,
+  type CrmRequirement,
+} from '@/lib/leads/crm/mappingDoc';
+import type {
+  FieldKey,
+  ILeadFormConfigCrmRouting,
+  ILeadFormConfigField,
+} from '@/models/LeadFormConfig';
 
 interface CrmRoutingTabProps {
   routing: ILeadFormConfigCrmRouting;
   onChange: (next: ILeadFormConfigCrmRouting) => void;
+  // The form's field config, used to render the per-CRM mapping table with
+  // the admin's custom labels and to warn about unsatisfiable requirements.
+  fields: ILeadFormConfigField[];
+  // How many admin-defined custom fields the form has — they're captured in
+  // Qube Sheets only, and the mapping section says so when any exist.
+  customFieldCount?: number;
 }
 
 interface IntegrationStatus {
@@ -28,7 +50,12 @@ interface IntegrationStatus {
   loading: boolean;
 }
 
-export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
+export function CrmRoutingTab({
+  routing,
+  onChange,
+  fields,
+  customFieldCount = 0,
+}: CrmRoutingTabProps) {
   const { organization } = useOrganization();
   const [status, setStatus] = useState<IntegrationStatus>({
     smartmoving: false,
@@ -244,6 +271,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
           </div>
         ) : (
           smartmovingEnabled && (
+            <>
             <div className="border-t border-gray-100 px-6 py-5 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="sm-branch">Branch ID</Label>
@@ -282,6 +310,8 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
                 />
               </div>
             </div>
+            <FieldMappingSection crm="smartmoving" fields={fields} customFieldCount={customFieldCount} />
+            </>
           )
         )}
       </section>
@@ -315,6 +345,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
           </div>
         ) : (
           supermoveEnabled && (
+            <>
             <div className="border-t border-gray-100 px-6 py-5 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="sv-project">
@@ -369,6 +400,8 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
                 />
               </div>
             </div>
+            <FieldMappingSection crm="supermove" fields={fields} customFieldCount={customFieldCount} />
+            </>
           )
         )}
       </section>
@@ -402,6 +435,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
           </div>
         ) : (
           chariotEnabled && (
+            <>
             <div className="border-t border-gray-100 px-6 py-5 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="ch-referral">Referral source</Label>
@@ -428,6 +462,8 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
                 />
               </div>
             </div>
+            <FieldMappingSection crm="chariot" fields={fields} customFieldCount={customFieldCount} />
+            </>
           )
         )}
       </section>
@@ -461,6 +497,7 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
           </div>
         ) : (
           moverbaseEnabled && (
+            <>
             <div className="border-t border-gray-100 px-6 py-5 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="mb-referral">Referral ID</Label>
@@ -480,9 +517,182 @@ export function CrmRoutingTab({ routing, onChange }: CrmRoutingTabProps) {
                 </p>
               </div>
             </div>
+            <FieldMappingSection crm="moverbase" fields={fields} customFieldCount={customFieldCount} />
+            </>
           )
         )}
       </section>
+    </div>
+  );
+}
+
+// --- Field mapping ---------------------------------------------------------
+//
+// Read-only view of where each enabled form field lands in the CRM payload,
+// driven by lib/leads/crm/mappingDoc.ts (kept in sync with the adapters).
+// Shows the admin's custom label with the underlying field name beneath it,
+// so a renamed field is never ambiguous. Also surfaces two kinds of
+// requirement problems, mirroring the adapter's validate():
+//   - missing: the form doesn't even collect a required input → every lead
+//     from this form is skipped for this CRM
+//   - optional: the input is collected but not required → only submissions
+//     that include it are sent
+
+type RequirementStatus = 'ok' | 'optional' | 'missing';
+
+function requirementStatus(
+  req: CrmRequirement,
+  enabled: Set<FieldKey>,
+  required: Set<FieldKey>,
+): RequirementStatus {
+  let best: RequirementStatus = 'missing';
+  for (const group of req.anyOf) {
+    if (!group.every((f) => enabled.has(f))) continue;
+    if (group.every((f) => required.has(f))) return 'ok';
+    best = 'optional';
+  }
+  return best;
+}
+
+function FieldMappingSection({
+  crm,
+  fields,
+  customFieldCount = 0,
+}: {
+  crm: CrmKey;
+  fields: ILeadFormConfigField[];
+  customFieldCount?: number;
+}) {
+  const crmName = CRM_DISPLAY_NAME[crm];
+  const mapping = CRM_FIELD_MAPPINGS[crm];
+
+  const enabledSet = new Set<FieldKey>(
+    fields.filter((f) => f.enabled).map((f) => f.id),
+  );
+  const requiredSet = new Set<FieldKey>(
+    fields.filter((f) => f.enabled && f.required).map((f) => f.id),
+  );
+
+  const customLabel = (id: FieldKey): string | undefined =>
+    fields.find((f) => f.id === id)?.label?.trim() || undefined;
+
+  const enabledOrdered = MAPPING_DISPLAY_ORDER.filter((id) =>
+    enabledSet.has(id),
+  );
+  const sent = enabledOrdered.filter((id) => mapping[id]);
+  const notSent = enabledOrdered.filter((id) => !mapping[id]);
+
+  const warnings = CRM_REQUIREMENTS[crm]
+    .map((req) => ({ req, status: requirementStatus(req, enabledSet, requiredSet) }))
+    .filter((w) => w.status !== 'ok');
+
+  return (
+    <div className="border-t border-gray-100 px-6 py-5 bg-gray-50/40">
+      <h3 className="text-sm font-medium text-gray-900">Field mapping</h3>
+      <p className="text-xs text-gray-500 mt-1">
+        Where each form field lands in {crmName}. Renaming a field&apos;s label
+        on the Fields tab doesn&apos;t change this — data maps by field, not by
+        label.
+      </p>
+
+      {sent.length > 0 && (
+        <dl className="mt-3 rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
+          {sent.map((id) => {
+            const custom = customLabel(id);
+            const entry = mapping[id]!;
+            return (
+              <div
+                key={id}
+                className="flex items-center gap-3 px-3 py-2 text-sm"
+              >
+                <dt className="w-40 shrink-0 min-w-0">
+                  {custom ? (
+                    <>
+                      <div className="text-[11px] text-gray-400">
+                        {MAPPING_FIELD_NAMES[id]}
+                      </div>
+                      <div className="text-gray-900 truncate">{custom}</div>
+                    </>
+                  ) : (
+                    <div className="text-gray-900 truncate">
+                      {MAPPING_FIELD_NAMES[id]}
+                    </div>
+                  )}
+                </dt>
+                <ArrowRight className="h-3.5 w-3.5 text-gray-300 shrink-0" />
+                <dd className="flex-1 min-w-0">
+                  <code className="text-xs font-mono text-gray-800 bg-gray-100 rounded px-1.5 py-0.5">
+                    {entry.target}
+                  </code>
+                  {entry.note && (
+                    <span className="text-xs text-gray-500 ml-2">
+                      {entry.note}
+                    </span>
+                  )}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      )}
+
+      {notSent.length > 0 && (
+        <p className="text-xs text-gray-500 mt-2">
+          Not sent to {crmName}:{' '}
+          {notSent
+            .map((id) => customLabel(id) ?? MAPPING_FIELD_NAMES[id])
+            .join(', ')}
+          .
+        </p>
+      )}
+
+      {customFieldCount > 0 && (
+        <p className="text-xs text-gray-500 mt-2">
+          Your {customFieldCount} custom field
+          {customFieldCount === 1 ? '' : 's'} {customFieldCount === 1 ? 'is' : 'are'}{' '}
+          captured in Qube Sheets only (see the Submissions tab) and not sent
+          to {crmName}.
+        </p>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {warnings.map(({ req, status }) => (
+            <div
+              key={req.description}
+              className={
+                'rounded-lg border p-3 flex items-start gap-2 text-xs ' +
+                (status === 'missing'
+                  ? 'border-red-200 bg-red-50 text-red-900'
+                  : 'border-amber-200 bg-amber-50 text-amber-900')
+              }
+            >
+              <AlertTriangle
+                className={
+                  'h-4 w-4 shrink-0 mt-0.5 ' +
+                  (status === 'missing' ? 'text-red-600' : 'text-amber-600')
+                }
+              />
+              <span>
+                {crmName} requires {req.description}.{' '}
+                {status === 'missing' ? (
+                  <>
+                    This form doesn&apos;t collect it, so{' '}
+                    <strong>no leads from this form will be sent to {crmName}</strong>.
+                    Enable the field on the Fields tab.
+                  </>
+                ) : (
+                  <>
+                    It&apos;s optional on this form, so submissions that leave
+                    it blank won&apos;t be sent to {crmName}. Mark it required
+                    to guarantee delivery.
+                  </>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

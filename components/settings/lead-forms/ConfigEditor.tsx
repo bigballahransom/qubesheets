@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FieldsTab } from './tabs/FieldsTab';
+import { SubmissionsTab } from './tabs/SubmissionsTab';
 import { CrmRoutingTab } from './tabs/CrmRoutingTab';
 import { EmbedCodeTab } from './tabs/EmbedCodeTab';
 import { PostSubmitTab } from './tabs/PostSubmitTab';
@@ -39,6 +40,7 @@ import type {
   ILeadFormConfig,
   ILeadFormConfigCrmRouting,
   ILeadFormConfigField,
+  ILeadFormCustomField,
   LeadFormPostSubmit,
   LeadFormStep,
   MoveSizeRoutingRule,
@@ -53,6 +55,7 @@ export interface LeadFormConfigDTO {
   name: string;
   isActive: boolean;
   fields: ILeadFormConfigField[];
+  customFields?: ILeadFormCustomField[];
   crmRouting: ILeadFormConfigCrmRouting;
   postSubmit: ILeadFormConfig['postSubmit'];
   theme: ILeadFormConfig['theme'];
@@ -67,6 +70,7 @@ export interface LeadFormConfigDTO {
 interface EditableState {
   name: string;
   fields: ILeadFormConfigField[];
+  customFields?: ILeadFormCustomField[];
   crmRouting: ILeadFormConfigCrmRouting;
   postSubmit: LeadFormPostSubmit;
   theme: ILeadFormConfig['theme'];
@@ -80,6 +84,12 @@ function toEditable(config: LeadFormConfigDTO): EditableState {
   return {
     name: config.name,
     fields: config.fields.map((f) => ({ ...f })),
+    customFields: Array.isArray(config.customFields)
+      ? config.customFields.map((cf) => ({
+          ...cf,
+          options: cf.options ? [...cf.options] : undefined,
+        }))
+      : undefined,
     crmRouting: JSON.parse(JSON.stringify(config.crmRouting || {})),
     postSubmit: JSON.parse(
       JSON.stringify(config.postSubmit ?? { kind: 'redirect-chooser' })
@@ -157,9 +167,22 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
   // buttonText renders a blank submit button on the embed.
   const themeTextInvalid =
     !draft.theme.title?.trim() || !draft.theme.buttonText?.trim();
+  // Custom fields need a label, and dropdowns need at least one real option —
+  // the server validator rejects both, so block save up front.
+  const customFieldsInvalid = (draft.customFields ?? []).some(
+    (cf) =>
+      !cf.label.trim() ||
+      (cf.type === 'select' &&
+        (cf.options ?? []).filter((o) => o.trim()).length === 0),
+  );
 
   const saveDisabled =
-    !hasUnsavedChanges || saving || supermoveInvalid || nameInvalid || themeTextInvalid;
+    !hasUnsavedChanges ||
+    saving ||
+    supermoveInvalid ||
+    nameInvalid ||
+    themeTextInvalid ||
+    customFieldsInvalid;
 
   const save = async () => {
     if (saveDisabled) return;
@@ -171,6 +194,15 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
         body: JSON.stringify({
           name: draft.name.trim(),
           fields: draft.fields,
+          customFields:
+            draft.customFields?.map((cf) => ({
+              ...cf,
+              label: cf.label.trim(),
+              options:
+                cf.type === 'select'
+                  ? (cf.options ?? []).map((o) => o.trim()).filter(Boolean)
+                  : undefined,
+            })) ?? null,
           crmRouting: draft.crmRouting,
           postSubmit: draft.postSubmit,
           theme: draft.theme,
@@ -368,19 +400,24 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
       <FormStatsStrip configId={config._id} />
 
       {/* Tabs */}
-      <Tabs defaultValue="fields" className="w-full">
+      <Tabs defaultValue="appearance" className="w-full">
         <TabsList>
+          <TabsTrigger value="appearance">Appearance</TabsTrigger>
           <TabsTrigger value="fields">Fields</TabsTrigger>
           <TabsTrigger value="post-submit">After Submit</TabsTrigger>
-          <TabsTrigger value="appearance">Appearance</TabsTrigger>
           <TabsTrigger value="crm-routing">CRM Routing</TabsTrigger>
           <TabsTrigger value="embed-code">Embed Code</TabsTrigger>
           <TabsTrigger value="js-plugin">JavaScript Plugin</TabsTrigger>
+          <TabsTrigger value="submissions">Submissions</TabsTrigger>
         </TabsList>
         <TabsContent value="fields" className="pt-4">
           <FieldsTab
             fields={draft.fields}
             onChange={(fields) => setDraft((d) => ({ ...d, fields }))}
+            customFields={draft.customFields}
+            onCustomFieldsChange={(customFields) =>
+              setDraft((d) => ({ ...d, customFields }))
+            }
             moveSizeOptions={draft.moveSizeOptions}
             onMoveSizeOptionsChange={(opts) =>
               setDraft((d) => ({ ...d, moveSizeOptions: opts }))
@@ -423,6 +460,8 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
             onChange={(crmRouting) =>
               setDraft((d) => ({ ...d, crmRouting }))
             }
+            fields={draft.fields}
+            customFieldCount={draft.customFields?.length ?? 0}
           />
         </TabsContent>
         <TabsContent value="embed-code" className="pt-4">
@@ -430,6 +469,9 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
         </TabsContent>
         <TabsContent value="js-plugin" className="pt-4">
           <JavaScriptPluginTab configId={config._id} />
+        </TabsContent>
+        <TabsContent value="submissions" className="pt-4">
+          <SubmissionsTab configId={config._id} />
         </TabsContent>
       </Tabs>
 

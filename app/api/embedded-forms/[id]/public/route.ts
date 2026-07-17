@@ -52,6 +52,9 @@ export async function GET(
       name: config.name,
       isActive: config.isActive,
       fields: config.fields,
+      customFields: Array.isArray(config.customFields)
+        ? config.customFields
+        : undefined,
       theme: config.theme,
       postSubmit,
       moveSizeOptions: Array.isArray(config.moveSizeOptions)
