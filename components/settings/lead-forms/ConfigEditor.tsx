@@ -153,9 +153,13 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
     !!supermove &&
     (!supermove.projectType?.trim() || !supermove.jobType?.trim());
   const nameInvalid = !draft.name.trim();
+  // Server-side validation rejects an empty theme.title, and an empty
+  // buttonText renders a blank submit button on the embed.
+  const themeTextInvalid =
+    !draft.theme.title?.trim() || !draft.theme.buttonText?.trim();
 
   const saveDisabled =
-    !hasUnsavedChanges || saving || supermoveInvalid || nameInvalid;
+    !hasUnsavedChanges || saving || supermoveInvalid || nameInvalid || themeTextInvalid;
 
   const save = async () => {
     if (saveDisabled) return;

@@ -106,6 +106,8 @@ interface FieldConfig {
   id: string;
   enabled: boolean;
   required: boolean;
+  // Admin-configured display name. Falls back to FIELD_LABEL when unset.
+  label?: string;
 }
 
 interface ConfigStep {
@@ -147,7 +149,8 @@ const FIELD_DISPLAY_ORDER: FieldKey[] = [
   'companyName',
 ];
 
-// User-facing labels for floating-label rendering + validation errors.
+// Default user-facing labels for floating-label rendering + validation
+// errors. A per-field `label` on the config overrides these at render time.
 const FIELD_LABEL: Record<FieldKey, string> = {
   firstName: 'First name',
   lastName: 'Last name',
@@ -601,6 +604,13 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
       config.fields.some((f) => f.id === id && f.enabled && f.required),
     [config.fields],
   );
+  const labelFor = useCallback(
+    (id: FieldKey): string => {
+      const custom = config.fields.find((f) => f.id === id)?.label?.trim();
+      return custom || FIELD_LABEL[id];
+    },
+    [config.fields],
+  );
 
   // Resolve the actual step list. Default: one step containing every
   // enabled field. Admin-configured `steps` overrides.
@@ -650,16 +660,16 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     const required = fieldRequired(id);
     switch (id) {
       case 'firstName':
-        if (required && !firstName.trim()) return `${FIELD_LABEL[id]} is required`;
+        if (required && !firstName.trim()) return `${labelFor(id)} is required`;
         return null;
       case 'lastName':
-        if (required && !lastName.trim()) return `${FIELD_LABEL[id]} is required`;
+        if (required && !lastName.trim()) return `${labelFor(id)} is required`;
         return null;
       case 'fullName':
-        if (required && !fullName.trim()) return `${FIELD_LABEL[id]} is required`;
+        if (required && !fullName.trim()) return `${labelFor(id)} is required`;
         return null;
       case 'email': {
-        if (required && !email.trim()) return `${FIELD_LABEL[id]} is required`;
+        if (required && !email.trim()) return `${labelFor(id)} is required`;
         if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
           return 'Please enter a valid email address';
         }
@@ -667,28 +677,29 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
       }
       case 'phone': {
         // Phone is locked to required at the editor level (10DLC).
-        const err = validatePhone(phone) ?? (!phone ? 'Phone number is required' : null);
+        const err =
+          validatePhone(phone) ?? (!phone ? `${labelFor('phone')} is required` : null);
         return err;
       }
       case 'phoneType':
-        if (required && !phoneType) return `${FIELD_LABEL[id]} is required`;
+        if (required && !phoneType) return `${labelFor(id)} is required`;
         return null;
       case 'moveDate':
-        if (required && !moveDate) return `${FIELD_LABEL[id]} is required`;
+        if (required && !moveDate) return `${labelFor(id)} is required`;
         return null;
       case 'moveSize':
-        if (required && !moveSize) return `${FIELD_LABEL[id]} is required`;
+        if (required && !moveSize) return `${labelFor(id)} is required`;
         return null;
       case 'origin':
         if (required && !(originText.trim() || originPlace))
-          return `${FIELD_LABEL[id]} is required`;
+          return `${labelFor(id)} is required`;
         return null;
       case 'destination':
         if (required && !(destinationText.trim() || destinationPlace))
-          return `${FIELD_LABEL[id]} is required`;
+          return `${labelFor(id)} is required`;
         return null;
       case 'companyName':
-        if (required && !companyName.trim()) return `${FIELD_LABEL[id]} is required`;
+        if (required && !companyName.trim()) return `${labelFor(id)} is required`;
         return null;
     }
   }
@@ -1072,6 +1083,7 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
               <StepContent
                 stepFields={currentStep.fields}
                 required={fieldRequired}
+                labelFor={labelFor}
                 accentColor={accentColor}
                 errorFor={errorFor}
                 showCheckFor={showCheckFor}
@@ -1178,6 +1190,7 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
 interface StepContentProps {
   stepFields: Set<FieldKey>;
   required: (id: FieldKey) => boolean;
+  labelFor: (id: FieldKey) => string;
   accentColor: string;
   errorFor: (id: FieldKey) => string | null;
   showCheckFor: (id: FieldKey) => boolean;
@@ -1217,6 +1230,7 @@ function StepContent(props: StepContentProps) {
   const enabledFields = props.stepFields;
   const {
     required,
+    labelFor,
     accentColor,
     errorFor,
     showCheckFor,
@@ -1262,7 +1276,7 @@ function StepContent(props: StepContentProps) {
       {enabledFields.has('moveDate') && (
         <Field
           id="moveDate"
-          label="Move date"
+          label={labelFor('moveDate')}
           required={required('moveDate')}
           filled={!!props.moveDate}
           focused={focusedField === 'moveDate'}
@@ -1323,7 +1337,7 @@ function StepContent(props: StepContentProps) {
       {enabledFields.has('moveSize') && (
         <Field
           id="moveSize"
-          label="Move size"
+          label={labelFor('moveSize')}
           required={required('moveSize')}
           filled={!!props.moveSize}
           focused={focusedField === 'moveSize'}
@@ -1371,7 +1385,7 @@ function StepContent(props: StepContentProps) {
           {enabledFields.has('firstName') && (
             <Field
               id="firstName"
-              label="First name"
+              label={labelFor('firstName')}
               required={required('firstName')}
               filled={!!props.firstName}
               focused={focusedField === 'firstName'}
@@ -1405,7 +1419,7 @@ function StepContent(props: StepContentProps) {
           {enabledFields.has('lastName') && (
             <Field
               id="lastName"
-              label="Last name"
+              label={labelFor('lastName')}
               required={required('lastName')}
               filled={!!props.lastName}
               focused={focusedField === 'lastName'}
@@ -1442,7 +1456,7 @@ function StepContent(props: StepContentProps) {
       {showFullNameStandalone && (
         <Field
           id="fullName"
-          label="Full name"
+          label={labelFor('fullName')}
           required={required('fullName')}
           filled={!!props.fullName}
           focused={focusedField === 'fullName'}
@@ -1477,7 +1491,7 @@ function StepContent(props: StepContentProps) {
       {enabledFields.has('email') && (
         <Field
           id="email"
-          label="Email"
+          label={labelFor('email')}
           required={required('email')}
           filled={!!props.email}
           focused={focusedField === 'email'}
@@ -1522,7 +1536,7 @@ function StepContent(props: StepContentProps) {
           {enabledFields.has('phone') && (
             <Field
               id="phone"
-              label="Phone number"
+              label={labelFor('phone')}
               required
               filled={!!props.phone}
               focused={focusedField === 'phone'}
@@ -1559,7 +1573,7 @@ function StepContent(props: StepContentProps) {
           {enabledFields.has('phoneType') && (
             <Field
               id="phoneType"
-              label="Phone type"
+              label={labelFor('phoneType')}
               required={required('phoneType')}
               filled={!!props.phoneType}
               focused={focusedField === 'phoneType'}
@@ -1603,7 +1617,7 @@ function StepContent(props: StepContentProps) {
       {enabledFields.has('origin') && (
         <AddressInput
           id="origin"
-          label="Origin address"
+          label={labelFor('origin')}
           required={required('origin')}
           accentColor={accentColor}
           value={props.originText}
@@ -1621,7 +1635,7 @@ function StepContent(props: StepContentProps) {
       {enabledFields.has('destination') && (
         <AddressInput
           id="destination"
-          label="Destination address"
+          label={labelFor('destination')}
           required={required('destination')}
           accentColor={accentColor}
           value={props.destinationText}
@@ -1639,7 +1653,7 @@ function StepContent(props: StepContentProps) {
       {enabledFields.has('companyName') && (
         <Field
           id="companyName"
-          label="Company name"
+          label={labelFor('companyName')}
           required={required('companyName')}
           filled={!!props.companyName}
           focused={focusedField === 'companyName'}

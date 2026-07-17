@@ -2,12 +2,14 @@
 
 // components/settings/lead-forms/tabs/FieldsTab.tsx
 //
-// Enabled / Required switches per FieldKey. Phone is locked to required.
-// Move Size also gets a per-form editable list of dropdown options
-// below the field grid (only when Move Size is enabled).
+// Enabled / Required switches per FieldKey, plus an optional per-field
+// display-name override (the customer-facing label). Renaming never changes
+// the underlying FieldKey, so CRM mapping and normalization are unaffected.
+// Phone is locked to required. Move Size also gets a per-form editable list
+// of dropdown options below the field grid (only when Move Size is enabled).
 
 import { useMemo, useState } from 'react';
-import { ChevronDown, GripVertical, Lock, Plus, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, GripVertical, Lock, Pencil, Plus, RotateCcw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
@@ -55,6 +57,23 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   companyName: 'Company name',
 };
 
+// What the customer actually sees on the embed when no override is set.
+// Keep in sync with FIELD_LABEL in components/embed/LeadForm.tsx — used as
+// the rename input's placeholder and the reset target.
+const CUSTOMER_DEFAULT_LABELS: Record<FieldKey, string> = {
+  firstName: 'First name',
+  lastName: 'Last name',
+  fullName: 'Full name',
+  email: 'Email',
+  phone: 'Phone number',
+  phoneType: 'Phone type',
+  moveDate: 'Move date',
+  moveSize: 'Move size',
+  origin: 'Origin address',
+  destination: 'Destination address',
+  companyName: 'Company name',
+};
+
 // `fullName` is intentionally omitted from the editor order. It remains a
 // FieldKey for back-compat with the API ingest path, but new configs use
 // firstName + lastName so CRM destinations get the split values.
@@ -81,6 +100,7 @@ export function FieldsTab({
 }: FieldsTabProps) {
   const byId = new Map(fields.map((f) => [f.id, f]));
   const [moveSizeOpen, setMoveSizeOpen] = useState(false);
+  const [editingLabel, setEditingLabel] = useState<FieldKey | null>(null);
   const moveSizeEnabled = !!byId.get('moveSize')?.enabled;
 
   const sorted = FIELD_ORDER.map((id) => {
@@ -91,7 +111,7 @@ export function FieldsTab({
 
   const updateField = (
     id: FieldKey,
-    patch: Partial<Pick<ILeadFormConfigField, 'enabled' | 'required'>>
+    patch: Partial<Pick<ILeadFormConfigField, 'enabled' | 'required' | 'label'>>
   ) => {
     const next = sorted.map((f) => {
       if (f.id !== id) return f;
@@ -107,6 +127,18 @@ export function FieldsTab({
       return merged;
     });
     onChange(next);
+  };
+
+  // Blank or default-equal overrides are normalized back to "no override" so
+  // the stored config only carries labels that actually differ.
+  const finishLabelEdit = (id: FieldKey) => {
+    setEditingLabel(null);
+    const trimmed = byId.get(id)?.label?.trim();
+    if (!trimmed || trimmed === CUSTOMER_DEFAULT_LABELS[id]) {
+      updateField(id, { label: undefined });
+    } else {
+      updateField(id, { label: trimmed });
+    }
   };
 
   return (
@@ -131,32 +163,105 @@ export function FieldsTab({
         const hasExpansion =
           isMoveSize && moveSizeEnabled && !!onMoveSizeOptionsChange;
         const expanded = isMoveSize && moveSizeOpen && hasExpansion;
+        const customLabel = field.label?.trim();
+        const displayName = customLabel || FIELD_LABELS[field.id];
+        const isEditingLabel = editingLabel === field.id;
         return (
           <div key={field.id}>
             <div className="px-6 py-4 grid grid-cols-12 gap-4 items-center">
-              <div className="col-span-6 text-sm font-medium text-gray-900 flex items-center gap-2">
-                {hasExpansion ? (
-                  <button
-                    type="button"
-                    onClick={() => setMoveSizeOpen((v) => !v)}
-                    className="group inline-flex items-center gap-1.5 text-left hover:text-gray-700 transition-colors"
-                    aria-expanded={expanded}
-                    aria-controls="move-size-options-panel"
-                  >
-                    <ChevronDown
-                      className={
-                        'h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-transform ' +
-                        (expanded ? 'rotate-0' : '-rotate-90')
-                      }
-                    />
-                    {FIELD_LABELS[field.id]}
-                    <span className="text-xs font-normal text-gray-400 ml-1">
-                      ({(moveSizeOptions ?? []).length || 'default'}{' '}
-                      {(moveSizeOptions ?? []).length === 1 ? 'option' : 'options'})
+              <div className="col-span-6 text-sm font-medium text-gray-900 flex items-center gap-2 min-w-0">
+                {isEditingLabel ? (
+                  <div className="flex flex-col gap-0.5 min-w-0 flex-1 max-w-xs">
+                    <span className="text-[11px] font-normal text-gray-400">
+                      {FIELD_LABELS[field.id]}
                     </span>
-                  </button>
+                    <Input
+                      value={field.label ?? ''}
+                      onChange={(e) =>
+                        updateField(field.id, { label: e.target.value })
+                      }
+                      onBlur={() => finishLabelEdit(field.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === 'Escape') {
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      placeholder={CUSTOMER_DEFAULT_LABELS[field.id]}
+                      maxLength={80}
+                      autoFocus
+                      className="h-8"
+                    />
+                  </div>
                 ) : (
-                  FIELD_LABELS[field.id]
+                  <>
+                    <div className="flex flex-col min-w-0">
+                      {/* When renamed, keep the built-in field name visible so
+                          it's always clear what the field maps to. */}
+                      {customLabel && (
+                        <span className="text-[11px] font-normal text-gray-400">
+                          {FIELD_LABELS[field.id]}
+                        </span>
+                      )}
+                      {hasExpansion ? (
+                        <button
+                          type="button"
+                          onClick={() => setMoveSizeOpen((v) => !v)}
+                          className="group inline-flex items-center gap-1.5 text-left hover:text-gray-700 transition-colors"
+                          aria-expanded={expanded}
+                          aria-controls="move-size-options-panel"
+                        >
+                          <ChevronDown
+                            className={
+                              'h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-transform ' +
+                              (expanded ? 'rotate-0' : '-rotate-90')
+                            }
+                          />
+                          {displayName}
+                          <span className="text-xs font-normal text-gray-400 ml-1">
+                            ({(moveSizeOptions ?? []).length || 'default'}{' '}
+                            {(moveSizeOptions ?? []).length === 1 ? 'option' : 'options'})
+                          </span>
+                        </button>
+                      ) : (
+                        <span className="truncate">{displayName}</span>
+                      )}
+                    </div>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => setEditingLabel(field.id)}
+                          aria-label={`Rename ${displayName}`}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded text-gray-300 hover:text-gray-600 hover:bg-gray-100 shrink-0"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Rename the label customers see. Data still maps to{' '}
+                        {FIELD_LABELS[field.id]} everywhere else.
+                      </TooltipContent>
+                    </Tooltip>
+                    {customLabel && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateField(field.id, { label: undefined })
+                            }
+                            aria-label={`Reset ${displayName} to default label`}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded text-gray-300 hover:text-gray-600 hover:bg-gray-100 shrink-0"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Reset to &ldquo;{CUSTOMER_DEFAULT_LABELS[field.id]}&rdquo;
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                  </>
                 )}
               </div>
               <div className="col-span-3">
@@ -319,7 +424,8 @@ function FormLayoutSection({
   };
 
   const fieldLabel = (id: string): string =>
-    FIELD_LABELS[id as FieldKey] ?? id;
+    fields.find((f) => f.id === id)?.label?.trim() ||
+    (FIELD_LABELS[id as FieldKey] ?? id);
 
   return (
     <div className="px-6 py-5 border-t border-gray-100 bg-gray-50/40">

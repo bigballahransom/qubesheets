@@ -3,11 +3,14 @@
 // Pushes a project's inventory to a Moverbase job.
 //
 // Moverbase (https://developers.moverbase.com/) exposes inventory as a
-// sub-resource of a job: PUT /v1/jobs/:id with `items.lines` — an array of
-// `{group, name, qty, size}`. `group` is the room label, `size` is the line's
+// sub-resource of a job: PUT /v1/jobs/:id/items/ with `lines` — an array of
+// `{group, name, qty, size}`. (PUTting `{items: {lines}}` to the job itself
+// returns a bare 400/apiErrorCode 40001 — items are only writable via the
+// sub-resource.) `group` is the room label, `size` is the line's PER-UNIT
 // volume in the ACCOUNT's units (CUBIC FEET or CUBIC METER — we convert for
-// metric accounts). Moverbase items have NO weight field, so the org/project
-// weight config does not apply here.
+// metric accounts); Moverbase computes line total = size × qty server-side.
+// Moverbase items have NO weight field, so the org/project weight config does
+// not apply here.
 //
 // The PUT replaces the job's items list wholesale, so re-syncs are naturally
 // idempotent — no stored inventory-record id needed (unlike Chariot).
@@ -226,12 +229,11 @@ export async function syncInventoryToMoverbase(
     const unitsSystem = await resolveUnitsSystem(integration);
     const lines = itemsToSync.map((item) => transformItemToMoverbaseLine(item, unitsSystem));
 
-    // PUT with only `items` — Moverbase treats absent fields as unchanged
-    // (their docs' update example sends a subset of fields), so this replaces
-    // the inventory list without touching the rest of the job.
-    const payload = { items: { lines } };
+    // PUT to the items sub-resource replaces the job's inventory list
+    // wholesale without touching the rest of the job.
+    const payload = { lines };
 
-    const url = `${MOVERBASE_API_BASE}/jobs/${encodeURIComponent(jobId)}`;
+    const url = `${MOVERBASE_API_BASE}/jobs/${encodeURIComponent(jobId)}/items/`;
     console.log(
       `📤 [MOVERBASE-SYNC] PUT ${url} with ${lines.length} items (units: ${unitsSystem})`
     );
@@ -377,10 +379,8 @@ function transformItemToMoverbaseLine(
 ): MoverbaseItemLine {
   const qty = item.goingQuantity || item.quantity || 1;
 
-  // Database stores per-unit cuft. Moverbase's items.total is computed
-  // server-side from the lines.
-  // TODO(moverbase): confirm whether items.total multiplies size × qty or
-  // just sums size — adjust to line totals if it's the latter.
+  // Database stores per-unit cuft; Moverbase's `size` is also per-unit
+  // (verified: line total = size × qty, computed server-side).
   let unitSize = item.cuft || 0;
   if (unitsSystem === 'METRIC') {
     unitSize = unitSize * CUFT_TO_CUBIC_METERS;

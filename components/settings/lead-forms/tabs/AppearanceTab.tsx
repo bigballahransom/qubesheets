@@ -2,11 +2,11 @@
 
 // components/settings/lead-forms/tabs/AppearanceTab.tsx
 //
-// Brand color editor for the embed form. The form card itself is always
-// white; this color drives every brand-tinted accent inside it: primary
-// buttons (Continue / Submit), the wizard progress dots, the focus ring on
-// every input, and the success badge that surrounds the post-submit
-// checkmark.
+// Form text (title, optional subtitle, button label) + brand color editor
+// for the embed form. The form card itself is always white; the color
+// drives every brand-tinted accent inside it: primary buttons (Continue /
+// Submit), the wizard progress dots, the focus ring on every input, and the
+// success badge that surrounds the post-submit checkmark.
 //
 // Validation feedback (green check on valid fields, red error border + text)
 // is deliberately NOT brand-tinted — those colors carry universal meaning
@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import type { ILeadFormConfigTheme } from '@/models/LeadFormConfig';
 
 interface AppearanceTabProps {
@@ -64,6 +65,65 @@ export function AppearanceTab({ theme, onChange }: AppearanceTabProps) {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="px-6 py-5 border-b border-gray-100">
+          <h2 className="text-base font-medium text-gray-900">Form text</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            The heading customers see at the top of the form, an optional note
+            beneath it, and the submit button label.
+          </p>
+        </div>
+        <div className="px-6 py-5 space-y-5">
+          <div className="space-y-1.5">
+            <Label htmlFor="form-text-title" className="text-xs text-gray-700">
+              Title
+            </Label>
+            <Input
+              id="form-text-title"
+              type="text"
+              value={theme.title}
+              onChange={(e) => onChange({ ...theme, title: e.target.value })}
+              placeholder="Get a Quote"
+              maxLength={200}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="form-text-subtitle" className="text-xs text-gray-700">
+              Subtitle <span className="text-gray-400 font-normal">(optional)</span>
+            </Label>
+            <Textarea
+              id="form-text-subtitle"
+              value={theme.subtitle ?? ''}
+              onChange={(e) =>
+                onChange({ ...theme, subtitle: e.target.value || undefined })
+              }
+              placeholder="e.g., Tell us about your move and we'll get right back to you."
+              maxLength={500}
+              rows={2}
+            />
+            <p className="text-xs text-gray-500">
+              Smaller note shown under the title. Leave blank to hide it.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="form-text-button" className="text-xs text-gray-700">
+              Button text
+            </Label>
+            <Input
+              id="form-text-button"
+              type="text"
+              value={theme.buttonText}
+              onChange={(e) => onChange({ ...theme, buttonText: e.target.value })}
+              placeholder="Get a Quote"
+              maxLength={80}
+              className="max-w-xs"
+            />
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div className="px-6 py-5 border-b border-gray-100">
           <h2 className="text-base font-medium text-gray-900">Brand color</h2>
@@ -162,6 +222,17 @@ export function AppearanceTab({ theme, onChange }: AppearanceTabProps) {
             Live preview
           </div>
           <div className="rounded-xl bg-white border border-gray-200 p-5 space-y-4">
+            {/* Title + subtitle, mirroring the embed's header block */}
+            <div>
+              <h2 className="text-center text-lg font-semibold text-gray-900">
+                {theme.title || 'Get a Quote'}
+              </h2>
+              {theme.subtitle?.trim() && (
+                <p className="text-center text-gray-500 text-sm mt-1">
+                  {theme.subtitle}
+                </p>
+              )}
+            </div>
             {/* Progress dots */}
             <div className="flex items-center justify-center gap-1.5">
               <div

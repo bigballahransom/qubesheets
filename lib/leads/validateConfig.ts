@@ -25,6 +25,7 @@ export const CONFIG_LIMITS = {
   RATE_PER_HOUR_MIN: 1,
   RATE_PER_HOUR_MAX: 1000,
   FIELDS_MAX: 50,
+  FIELD_LABEL_MAX: 80,
   MOVE_SIZE_OPTIONS_MAX: 50,
   MOVE_SIZE_OPTION_MAX: 100,
   MOVE_SIZE_ROUTING_MAX: 50,
@@ -130,6 +131,12 @@ function validateFields(v: unknown): string | null {
     }
     if (!isBoolean(f.enabled)) return `fields[${i}].enabled must be a boolean`;
     if (!isBoolean(f.required)) return `fields[${i}].required must be a boolean`;
+    if (f.label !== undefined) {
+      if (!isString(f.label)) return `fields[${i}].label must be a string`;
+      if (f.label.length > CONFIG_LIMITS.FIELD_LABEL_MAX) {
+        return `fields[${i}].label exceeds ${CONFIG_LIMITS.FIELD_LABEL_MAX} characters`;
+      }
+    }
   }
   return null;
 }

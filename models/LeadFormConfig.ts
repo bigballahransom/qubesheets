@@ -13,6 +13,10 @@ export interface ILeadFormConfigField {
   id: FieldKey;
   enabled: boolean;
   required: boolean;
+  // Optional display-name override shown to the customer (floating label +
+  // validation messages). The `id` stays the mapping key everywhere else —
+  // normalization, CRM fan-out, and submission payloads never see this.
+  label?: string;
 }
 
 export interface ILeadFormConfigCrmRouting {
@@ -160,6 +164,7 @@ const LeadFormConfigFieldSchema = new Schema<ILeadFormConfigField>(
     id: { type: String, required: true },
     enabled: { type: Boolean, required: true },
     required: { type: Boolean, required: true },
+    label: { type: String, required: false },
   },
   { _id: false }
 );

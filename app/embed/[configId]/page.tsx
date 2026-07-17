@@ -23,7 +23,7 @@ interface PublicFormConfig {
   id: string;
   name: string;
   isActive: boolean;
-  fields: Array<{ id: string; enabled: boolean; required: boolean }>;
+  fields: Array<{ id: string; enabled: boolean; required: boolean; label?: string }>;
   theme: {
     title: string;
     subtitle?: string;
