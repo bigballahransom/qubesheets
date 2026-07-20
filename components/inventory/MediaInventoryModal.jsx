@@ -521,8 +521,8 @@ export default function MediaInventoryModal({
   // dialog's outer edges (half outside the modal — the dialog only has a
   // ~2.5vw gutter on lg screens, so fully-outside arrows would fall off
   // the viewport) plus an "n of N" pill. The stack layout (mobile
-  // fallback and plain-stack callers) has NO arrows: navigation is by
-  // horizontal swipe, with just a slim counter under the header.
+  // fallback and plain-stack callers) renders NO navigation chrome at
+  // all — flipping is purely by horizontal swipe.
   const navArrowClass =
     'flex items-center justify-center h-11 w-11 rounded-full border bg-background/95 shadow-lg ' +
     'text-foreground transition-all hover:bg-background hover:shadow-xl ' +
@@ -558,13 +558,6 @@ export default function MediaInventoryModal({
       </div>
     </>
   ) : null;
-  const stackCounter = navigation && !useResizableLayout ? (
-    <div className="flex items-center justify-center shrink-0">
-      <span className="rounded-full border bg-muted/40 px-3 py-0.5 text-xs font-medium text-muted-foreground">
-        {navigation.index + 1} of {navigation.total}
-      </span>
-    </div>
-  ) : null;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose?.(); }}>
@@ -578,6 +571,10 @@ export default function MediaInventoryModal({
           <DialogHeader
             className={cn(
               isResizable && 'shrink-0',
+              // shadcn's DialogHeader centers text on mobile
+              // (text-center sm:text-left) — keep it left-aligned at
+              // every size so titles read cleanly next to the X button.
+              'text-left',
               // Leave clearance for the toggle (only when it lives in the
               // header) and always for the auto-injected X close button.
               showToggleInHeader ? 'pr-24 sm:pr-28' : 'pr-8 sm:pr-10'
@@ -596,7 +593,6 @@ export default function MediaInventoryModal({
         )}
 
         {sideNav}
-        {stackCounter}
 
         {notesSlot ? (
           <Tabs defaultValue="watch" className="w-full flex-1 flex flex-col min-h-0">
