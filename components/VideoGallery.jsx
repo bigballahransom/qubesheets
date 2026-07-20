@@ -48,6 +48,7 @@ import VideoRecordingModal from './VideoRecordingModal';
 import VideoChapters, { hasVideoChapters } from './video/VideoChapters';
 import { useVideoChapters } from '@/lib/hooks/useVideoChapters';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
+import { useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 
 // Helper functions - defined outside component to prevent recreation
 const formatDuration = (seconds) => {
@@ -398,6 +399,20 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
     currentTime: modalVideoTime,
     enabled: selectedVideo !== null,
   });
+
+  // Project-wide prev/next flipping — one for the uploaded-video detail
+  // modal, one for the self-serve VideoRecordingModal.
+  const videoNavigation = useMediaNavigationFor(
+    selectedVideo?._id ?? null,
+    () => setSelectedVideo(null)
+  );
+  const recordingNavigation = useMediaNavigationFor(
+    isRecordingModalOpen && selectedRecording ? selectedRecording._id : null,
+    () => {
+      setIsRecordingModalOpen(false);
+      setSelectedRecording(null);
+    }
+  );
 
   // Fetch the video's stream URL when the modal opens (was inline on the
   // old `<Dialog onOpenChange>` handler). MediaInventoryModal only invokes
@@ -1419,6 +1434,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
       <MediaInventoryModal
         isOpen={selectedVideo !== null}
         onClose={() => setSelectedVideo(null)}
+        navigation={videoNavigation}
         projectId={projectId}
         inventoryItems={inventoryItems}
         onInventoryUpdate={onInventoryUpdate}
@@ -1658,6 +1674,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           inventoryItems={inventoryItems}
           onInventoryUpdate={onInventoryUpdate}
           onAddStockItem={onAddStockItem}
+          navigation={recordingNavigation}
         />
       )}
 

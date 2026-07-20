@@ -33,7 +33,7 @@ import VideoCallNotes from './VideoCallNotes';
 import { ToggleGoingBadge } from './ui/ToggleGoingBadge';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
 
-const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryItems = [], onInventoryUpdate, initialItem = null, onAddStockItem = null }) => {
+const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryItems = [], onInventoryUpdate, initialItem = null, onAddStockItem = null, navigation = null }) => {
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   // Resize-drag close prevention + desktop/mobile detection are owned by
@@ -669,6 +669,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
       onAddStockItem={onAddStockItem}
       desktopLayout="panels"
       preventClose
+      navigation={navigation}
       media={{
         id: recording?._id,
         sourceKey: 'sourceVideoRecordingId',

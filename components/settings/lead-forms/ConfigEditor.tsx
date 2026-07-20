@@ -399,17 +399,26 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
           Independent fetch, so it doesn't block the editor from rendering. */}
       <FormStatsStrip configId={config._id} />
 
-      {/* Tabs */}
+      {/* Tabs. The trigger row is wider than a phone viewport (7 tabs), so
+          it scrolls horizontally inside its own container — without this the
+          inline-flex TabsList stretches the page and mobile Safari zooms the
+          whole editor out to fit it (same pattern as InventoryManager's
+          tab bar). */}
       <Tabs defaultValue="appearance" className="w-full">
-        <TabsList>
-          <TabsTrigger value="appearance">Appearance</TabsTrigger>
-          <TabsTrigger value="fields">Fields</TabsTrigger>
-          <TabsTrigger value="post-submit">After Submit</TabsTrigger>
-          <TabsTrigger value="crm-routing">CRM Routing</TabsTrigger>
-          <TabsTrigger value="embed-code">Embed Code</TabsTrigger>
-          <TabsTrigger value="js-plugin">JavaScript Plugin</TabsTrigger>
-          <TabsTrigger value="submissions">Submissions</TabsTrigger>
-        </TabsList>
+        <div
+          className="-mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto scrollbar-hide"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
+          <TabsList className="flex w-max min-w-full">
+            <TabsTrigger value="appearance" className="whitespace-nowrap">Appearance</TabsTrigger>
+            <TabsTrigger value="fields" className="whitespace-nowrap">Fields</TabsTrigger>
+            <TabsTrigger value="post-submit" className="whitespace-nowrap">After Submit</TabsTrigger>
+            <TabsTrigger value="crm-routing" className="whitespace-nowrap">CRM Routing</TabsTrigger>
+            <TabsTrigger value="embed-code" className="whitespace-nowrap">Embed Code</TabsTrigger>
+            <TabsTrigger value="js-plugin" className="whitespace-nowrap">JavaScript Plugin</TabsTrigger>
+            <TabsTrigger value="submissions" className="whitespace-nowrap">Submissions</TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="fields" className="pt-4">
           <FieldsTab
             fields={draft.fields}

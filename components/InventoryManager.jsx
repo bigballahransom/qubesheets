@@ -34,6 +34,7 @@ import SmartMovingSyncModal from './modals/SmartMovingSyncModal';
 import ChariotSyncModal from './modals/ChariotSyncModal';
 import MoverbaseSyncModal from './modals/MoverbaseSyncModal';
 import EditProjectDetailsModal from './modals/EditProjectDetailsModal';
+import { MediaNavigationProvider } from './inventory/ProjectMediaNavigation';
 import InventoryNotes from './InventoryNotes';
 import VideoRecordingsTab from './VideoRecordingsTab';
 import { Badge } from './ui/badge';
@@ -4686,6 +4687,12 @@ const ProcessingNotification = () => {
   // Main content - show an empty editable spreadsheet if no items yet
   return (
     <InventoryWritesContext.Provider value={inventoryWritesValue}>
+    <MediaNavigationProvider
+      projectId={projectId}
+      inventoryItems={inventoryItems}
+      onInventoryUpdate={handleInventoryUpdate}
+      onAddStockItem={handleAddStockItems}
+    >
     <div className="min-h-screen bg-slate-50">
       {/* Main content wrapper */}
       <div className="pt-16 lg:pl-64 lg:pt-16"> {/* Add top padding for mobile header and left padding for sidebar on large screens */}
@@ -5511,6 +5518,7 @@ const ProcessingNotification = () => {
   </DialogContent>
 </Dialog>
     </div>
+    </MediaNavigationProvider>
     </InventoryWritesContext.Provider>
   );
 }

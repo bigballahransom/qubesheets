@@ -38,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 import VideoRecordingModal from './VideoRecordingModal';
+import { useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -143,6 +144,12 @@ const VideoRecordingsTab = ({
     // Small delay before clearing recording to allow modal animation to complete
     setTimeout(() => setSelectedRecording(null), 100);
   };
+
+  // Project-wide prev/next flipping in the playback modal.
+  const mediaNavigation = useMediaNavigationFor(
+    isModalOpen && selectedRecording ? selectedRecording._id : null,
+    handleCloseModal
+  );
 
   const fetchRecordings = useCallback(async (page = 1, silentUpdate = false) => {
     try {
@@ -1008,6 +1015,7 @@ const VideoRecordingsTab = ({
           projectId={projectId}
           isOpen={isModalOpen}
           onClose={handleCloseModal}
+          navigation={mediaNavigation}
           inventoryItems={inventoryItems}
           onInventoryUpdate={fetchInventoryItems}
           onAddStockItem={async (items, mediaSource) => {

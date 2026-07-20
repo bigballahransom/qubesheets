@@ -45,6 +45,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
+import { useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 
 // Helper to group items by location/room
 const groupByRoom = (items: any[]) => {
@@ -162,6 +163,12 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
     danger?: boolean;
   }): Promise<boolean> =>
     new Promise((resolve) => setConfirmState({ ...opts, resolve }));
+
+  // Project-wide prev/next flipping across all media in the detail modal.
+  const mediaNavigation = useMediaNavigationFor(
+    selectedItem && !isVideo(selectedItem) ? selectedItem._id : null,
+    () => setSelectedItem(null)
+  );
 
   // Fetch only images (videos are handled by VideoGallery in separate tab)
   const fetchMedia = async (page = 1) => {
@@ -923,6 +930,7 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
         onClose={() => {
           setTimeout(() => setSelectedItem(null), 10);
         }}
+        navigation={mediaNavigation}
         projectId={projectId}
         inventoryItems={inventoryItems}
         onInventoryUpdate={onInventoryUpdate as any}

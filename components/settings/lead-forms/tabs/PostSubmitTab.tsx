@@ -477,7 +477,7 @@ export function PostSubmitTab({
             <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider">
               Working hours
             </h4>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="sch-start" className="text-xs text-gray-700">
                   Start
@@ -554,7 +554,7 @@ export function PostSubmitTab({
             <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider">
               Slot rules
             </h4>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="sch-slot-mins" className="text-xs text-gray-700">
                   Slot length
@@ -593,7 +593,7 @@ export function PostSubmitTab({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="sch-lead-hours" className="text-xs text-gray-700">
                   Earliest bookable (hours from now)
@@ -757,7 +757,7 @@ export function PostSubmitTab({
               <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Business hours
               </h4>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="biz-start" className="text-xs text-gray-700">
                     Start

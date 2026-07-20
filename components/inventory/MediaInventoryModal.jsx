@@ -37,7 +37,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { PanelsLeftRight, PanelsTopBottom } from 'lucide-react';
+import { ChevronLeft, ChevronRight, PanelsLeftRight, PanelsTopBottom } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -167,6 +167,16 @@ function LayoutToggle({ value, onChange }) {
  *                                              provided, the watch content
  *                                              is wrapped in Tabs.
  *
+ * @param {object=} p.navigation            Project-wide media prev/next
+ *                                              navigation (from
+ *                                              useMediaNavigationFor):
+ *                                              { index, total, hasPrev,
+ *                                              hasNext, onPrev, onNext }.
+ *                                              Renders ‹ › arrows + an
+ *                                              "n of N" counter and wires
+ *                                              ArrowLeft/ArrowRight keys.
+ *                                              Omit to hide navigation.
+ *
  * @param {(room: string) => React.ReactNode=} p.renderRoomExtras
  *                                              Per-room render function
  *                                              passed through to
@@ -201,6 +211,8 @@ export default function MediaInventoryModal({
   analysisSlot,
   notesSlot,
 
+  navigation = null,
+
   renderRoomExtras = null,
   availableRoomsOverride = null,
 }) {
@@ -215,6 +227,47 @@ export default function MediaInventoryModal({
     mql.addEventListener('change', handler);
     return () => mql.removeEventListener('change', handler);
   }, []);
+
+  // ─── Prev/next media navigation (keyboard) ───────────────────────
+  // ArrowLeft/ArrowRight flip through the project's media. Skipped when the
+  // user is typing, interacting with a slider/select, or focused on the
+  // video element (native arrow-key seeking must keep working there).
+  const navigationRef = useRef(navigation);
+  navigationRef.current = navigation;
+  const hasNavigation = !!navigation;
+  const touchStartRef = useRef(null); // swipe-to-navigate origin (stack layout)
+  useEffect(() => {
+    if (!isOpen || !hasNavigation) return;
+    const handler = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const t = e.target;
+      if (t instanceof HTMLElement) {
+        const tag = t.tagName;
+        if (
+          tag === 'INPUT' ||
+          tag === 'TEXTAREA' ||
+          tag === 'SELECT' ||
+          tag === 'VIDEO' ||
+          t.isContentEditable ||
+          t.closest('[role="slider"], video')
+        ) {
+          return;
+        }
+      }
+      const nav = navigationRef.current;
+      if (!nav) return;
+      if (e.key === 'ArrowLeft' && nav.hasPrev) {
+        e.preventDefault();
+        nav.onPrev();
+      } else if (e.key === 'ArrowRight' && nav.hasNext) {
+        e.preventDefault();
+        nav.onNext();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isOpen, hasNavigation]);
 
   // Auto-seek only fires when the caller passes a video ref + streamUrl.
   useAutoSeekOnInitialItem({
@@ -271,6 +324,44 @@ export default function MediaInventoryModal({
   const useSideBySide = activeLayout === 'side-by-side';
   const useTopBottom = activeLayout === 'top-bottom';
   const useResizableLayout = useSideBySide || useTopBottom;
+
+  // ─── Prev/next media navigation (touch swipe) ────────────────────
+  // The stack layout (small screens) has no arrows — a horizontal swipe
+  // flips media instead. The gesture requires clear horizontal dominance
+  // (so vertical scrolling is untouched) and ignores touches that start
+  // on the video (native scrubber drags), sliders, or form fields.
+  const swipeEnabled = hasNavigation && !useResizableLayout;
+  const handleTouchStart = (e) => {
+    if (!swipeEnabled || e.touches.length !== 1) {
+      touchStartRef.current = null;
+      return;
+    }
+    const target = e.target;
+    if (
+      target instanceof HTMLElement &&
+      target.closest('video, input, textarea, select, [role="slider"]')
+    ) {
+      touchStartRef.current = null;
+      return;
+    }
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const handleTouchEnd = (e) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!swipeEnabled || !start) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // 60px minimum travel, and mostly-horizontal (1.5× the vertical drift).
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const nav = navigationRef.current;
+    if (!nav) return;
+    if (dx < 0 && nav.hasNext) nav.onNext();
+    else if (dx > 0 && nav.hasPrev) nav.onPrev();
+  };
 
   // ─── Watch content ───────────────────────────────────────────────
   // Resizable layouts (side-by-side / top-bottom) render on desktop and
@@ -396,8 +487,17 @@ export default function MediaInventoryModal({
   // Resizable layouts require a fixed height so ResizablePanelGroup has a
   // known container to distribute. Stack uses max-h + overflow-y-auto so
   // short content doesn't leave dead space.
+  //
+  // When the side nav arrows are shown (desktop resizable layouts only)
+  // the dialog switches to overflow-visible: the arrows straddle its outer
+  // edges and overflow-hidden would clip them. Every direct child manages
+  // its own clipping (the panel groups are rounded + overflow-hidden
+  // themselves), so nothing else escapes. The mobile stack fallback keeps
+  // overflow-hidden — it has no side arrows (swipe instead).
   const dialogContentClass = isResizable
-    ? 'w-[95vw] sm:max-w-5xl md:max-w-6xl lg:max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1800px] h-[95vh] flex flex-col overflow-hidden'
+    ? `w-[95vw] sm:max-w-5xl md:max-w-6xl lg:max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1800px] h-[95vh] flex flex-col ${
+        navigation && useResizableLayout ? 'overflow-visible' : 'overflow-hidden'
+      }`
     : 'w-[95vw] sm:max-w-5xl md:max-w-6xl lg:max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1800px] max-h-[95vh] overflow-y-auto overflow-x-hidden';
 
   const showLayoutToggle = isResizable && isDesktop;
@@ -416,9 +516,64 @@ export default function MediaInventoryModal({
     },
   };
 
+  // ─── Prev/next media navigation (UI) ─────────────────────────────
+  // Desktop resizable layouts get lightbox-style arrows straddling the
+  // dialog's outer edges (half outside the modal — the dialog only has a
+  // ~2.5vw gutter on lg screens, so fully-outside arrows would fall off
+  // the viewport) plus an "n of N" pill. The stack layout (mobile
+  // fallback and plain-stack callers) has NO arrows: navigation is by
+  // horizontal swipe, with just a slim counter under the header.
+  const navArrowClass =
+    'flex items-center justify-center h-11 w-11 rounded-full border bg-background/95 shadow-lg ' +
+    'text-foreground transition-all hover:bg-background hover:shadow-xl ' +
+    'disabled:opacity-30 disabled:pointer-events-none cursor-pointer ' +
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+  const sideNav = navigation && useResizableLayout ? (
+    <>
+      <button
+        type="button"
+        aria-label="Previous media"
+        title="Previous media (←)"
+        disabled={!navigation.hasPrev}
+        onClick={navigation.onPrev}
+        className={cn(navArrowClass, 'absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50')}
+      >
+        <ChevronLeft size={22} />
+      </button>
+      <button
+        type="button"
+        aria-label="Next media"
+        title="Next media (→)"
+        disabled={!navigation.hasNext}
+        onClick={navigation.onNext}
+        className={cn(navArrowClass, 'absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 z-50')}
+      >
+        <ChevronRight size={22} />
+      </button>
+      <div
+        className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none
+          rounded-full border bg-background/90 shadow-sm px-3 py-1 text-xs font-medium text-muted-foreground"
+      >
+        {navigation.index + 1} of {navigation.total}
+      </div>
+    </>
+  ) : null;
+  const stackCounter = navigation && !useResizableLayout ? (
+    <div className="flex items-center justify-center shrink-0">
+      <span className="rounded-full border bg-muted/40 px-3 py-0.5 text-xs font-medium text-muted-foreground">
+        {navigation.index + 1} of {navigation.total}
+      </span>
+    </div>
+  ) : null;
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose?.(); }}>
-      <DialogContent className={dialogContentClass} {...outsideHandlers}>
+      <DialogContent
+        className={dialogContentClass}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        {...outsideHandlers}
+      >
         {headerHasContent && (
           <DialogHeader
             className={cn(
@@ -439,6 +594,9 @@ export default function MediaInventoryModal({
             </div>
           </DialogHeader>
         )}
+
+        {sideNav}
+        {stackCounter}
 
         {notesSlot ? (
           <Tabs defaultValue="watch" className="w-full flex-1 flex flex-col min-h-0">

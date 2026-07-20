@@ -25,6 +25,7 @@ import { useInventoryWrites } from '@/lib/inventory/InventoryWritesContext';
 import { getRoomTotals } from '@/lib/inventory/aggregates';
 import RoomItemsTable from '@/components/inventory/RoomItemsTable';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
+import { useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
@@ -415,6 +416,24 @@ export default function Spreadsheet({
   const [videoCallModalOpen, setVideoCallModalOpen] = useState(false); // For video call recording modal
   const [selectedVideoRecording, setSelectedVideoRecording] = useState(null);
   const [loadingVideoCall, setLoadingVideoCall] = useState(false);
+
+  // Project-wide prev/next flipping — one for the media-preview modal, one
+  // for the video-call recording modal.
+  const previewNavigation = useMediaNavigationFor(
+    previewMedia?.id ?? null,
+    () => {
+      setPreviewMedia(null);
+      setSelectedMedia(null);
+    }
+  );
+  const recordingNavigation = useMediaNavigationFor(
+    videoCallModalOpen && selectedVideoRecording ? selectedVideoRecording._id : null,
+    () => {
+      setVideoCallModalOpen(false);
+      setSelectedVideoRecording(null);
+      setClickedInventoryItem(null);
+    }
+  );
   const [clickedInventoryItem, setClickedInventoryItem] = useState(null); // For auto-seek when opening video modal
   const [selectedRows, setSelectedRows] = useState([]);
   const [cuftMode, setCuftMode] = useState('total'); // 'total' or 'perUnit' for Cuft display
@@ -3630,6 +3649,7 @@ export default function Spreadsheet({
           setPreviewMedia(null);
           setSelectedMedia(null);
         }}
+        navigation={previewNavigation}
         projectId={projectId}
         inventoryItems={inventoryItems}
         onInventoryUpdate={onInventoryUpdate}
@@ -3842,6 +3862,7 @@ export default function Spreadsheet({
         recording={selectedVideoRecording}
         projectId={projectId}
         isOpen={videoCallModalOpen}
+        navigation={recordingNavigation}
         onClose={() => {
           setVideoCallModalOpen(false);
           setSelectedVideoRecording(null);
