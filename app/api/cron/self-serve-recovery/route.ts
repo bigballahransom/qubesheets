@@ -1,38 +1,30 @@
 // app/api/cron/self-serve-recovery/route.ts
 //
-// Recovery loop for failed self-serve recording attempts. Today ~46% of
+// Detection loop for failed self-serve recording attempts. Today ~46% of
 // customers whose recording silently failed never re-record — they believe
 // they submitted a walkthrough, the org believes the customer flaked, and
-// the lead is lost. This cron closes that loop:
+// the lead is lost. This cron makes the failure visible to the ORG so a
+// human can follow up:
 //
 //   failed self-serve recording, 30min–48h old, customer never completed a
 //   later recording on the project, not yet notified
-//     → SMS the customer their upload link to try again (once, ever)
-//     → notify the org's recipients that the attempt failed
+//     → notify the org's recipients that the attempt failed (once per attempt)
+//
+// Deliberately NO automated messaging to customers — the org decides whether
+// and how to reach out.
 //
 // Called by Vercel Cron (see vercel.json). One-shot per recording via
-// `recoveryNotifiedAt` — a customer is never texted twice for the same
-// failed attempt, and walkthrough (employee-recorded) sessions are skipped.
+// `recoveryNotifiedAt`; walkthrough (employee-recorded) sessions still count —
+// the org should know those failed too.
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import VideoRecording from '@/models/VideoRecording';
-import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
-import CustomerUpload from '@/models/CustomerUpload';
 import Project from '@/models/Project';
-import Branding from '@/models/Branding';
-import { sendSmsWithRetry } from '@/lib/twilio';
 import { sendInventoryUpdateNotification } from '@/lib/inventoryUpdateNotifications';
 
-// Up to 25 recordings × (Mongo lookups + Twilio SMS) sequentially — Vercel's
-// default function duration would cut the batch off partway.
+// Up to 25 recordings × Mongo lookups + org notifications sequentially —
+// Vercel's default function duration would cut the batch off partway.
 export const maxDuration = 300;
-
-const getBaseUrl = () => {
-  if (process.env.NODE_ENV === 'production') {
-    return process.env.NEXT_PUBLIC_APP_URL || 'https://app.qubesheets.com';
-  }
-  return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-};
 
 export async function GET(request: NextRequest) {
   // Verify the request is from Vercel Cron (same pattern as video-call-reminders)
@@ -60,7 +52,7 @@ export async function GET(request: NextRequest) {
       .limit(25) // small batches; cron runs frequently
       .lean();
 
-    const results = { checked: candidates.length, smsSent: 0, orgNotified: 0, skipped: 0 };
+    const results = { checked: candidates.length, orgNotified: 0, skipped: 0 };
 
     for (const rec of candidates as any[]) {
       try {
@@ -77,50 +69,18 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // Resolve the customer's upload link + phone via the session → CustomerUpload.
-        const session = rec.selfServeSessionId
-          ? await SelfServeRecordingSession.findOne({ sessionId: rec.selfServeSessionId }).lean()
-          : null;
-        const customerUpload = (session as any)?.customerUploadId
-          ? await CustomerUpload.findById((session as any).customerUploadId).lean()
-          : null;
+        const project = await Project.findById(rec.projectId).select('name').lean();
+        const projectName = (project as any)?.name || 'a project';
 
-        // Employee on-site walkthroughs would SMS the employee — skip.
-        const isWalkthrough =
-          !!(customerUpload as any)?.isWalkthrough ||
-          (customerUpload as any)?.customerName === 'On-site walkthrough';
-
-        const [project, branding] = await Promise.all([
-          Project.findById(rec.projectId).select('name').lean(),
-          rec.organizationId
-            ? Branding.findOne({ organizationId: rec.organizationId }).select('companyName').lean()
-            : null,
-        ]);
-        const companyName = (branding as any)?.companyName || 'your moving company';
-        const projectName = (project as any)?.name || 'your project';
-
-        let smsSent = false;
-        const customerPhone = (customerUpload as any)?.customerPhone;
-        const uploadToken = (customerUpload as any)?.uploadToken;
-        if (!isWalkthrough && customerPhone && uploadToken) {
-          const link = `${getBaseUrl()}/customer-upload/${uploadToken}`;
-          const smsResult = await sendSmsWithRetry(
-            `It looks like your video walkthrough for ${companyName} didn't record successfully. ` +
-              `No worries — you can try again here: ${link}`,
-            customerPhone
-          );
-          smsSent = smsResult.success;
-          if (smsSent) results.smsSent++;
-        }
-
-        // Tell the org too — a silently failed attempt looks like a customer
-        // who never tried; this makes it look like what it is.
+        // Tell the org — a silently failed attempt looks like a customer who
+        // never tried; this makes it look like what it is, and leaves the
+        // decision to reach out (and how) with a human.
         try {
           await sendInventoryUpdateNotification({
             projectId: String(rec.projectId),
             body:
-              `A customer's video walkthrough for ${projectName} failed to record (no video was captured).` +
-              (smsSent ? ' We texted them a link to try again.' : ''),
+              `A customer's video walkthrough for ${projectName} failed to record (no video was captured), ` +
+              `and they haven't successfully re-recorded. You may want to reach out and resend their upload link.`,
             source: 'self-serve-recovery',
           });
           results.orgNotified++;
@@ -128,8 +88,8 @@ export async function GET(request: NextRequest) {
           console.error(`self-serve-recovery: org notification failed for ${rec._id} (non-fatal):`, orgErr);
         }
 
-        // One-shot: mark handled even if SMS couldn't be sent (no phone on
-        // file, walkthrough, or Twilio failure) — never risk repeat texts.
+        // One-shot: mark handled so the org is never re-notified for the
+        // same failed attempt.
         await VideoRecording.findByIdAndUpdate(rec._id, { recoveryNotifiedAt: new Date() });
       } catch (recErr) {
         console.error(`self-serve-recovery: failed processing recording ${rec._id}:`, recErr);
