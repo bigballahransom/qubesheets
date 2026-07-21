@@ -19,7 +19,7 @@ import Project from '@/models/Project';
 import NotificationSettings from '@/models/NotificationSettings';
 import { sendSmsWithRetry } from '@/lib/twilio';
 
-export type InventoryUpdateSource = 'photo-session' | 'self-serve-recording' | 'self-serve-recovery';
+export type InventoryUpdateSource = 'photo-session' | 'self-serve-recording';
 
 export interface SendInventoryUpdateOptions {
   /** Mongo ObjectId (string) of the project that just received content. */
