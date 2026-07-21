@@ -23,6 +23,10 @@ import Branding from '@/models/Branding';
 import { sendSmsWithRetry } from '@/lib/twilio';
 import { sendInventoryUpdateNotification } from '@/lib/inventoryUpdateNotifications';
 
+// Up to 25 recordings × (Mongo lookups + Twilio SMS) sequentially — Vercel's
+// default function duration would cut the batch off partway.
+export const maxDuration = 300;
+
 const getBaseUrl = () => {
   if (process.env.NODE_ENV === 'production') {
     return process.env.NEXT_PUBLIC_APP_URL || 'https://app.qubesheets.com';

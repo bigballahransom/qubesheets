@@ -37,19 +37,28 @@ export async function POST(request: NextRequest) {
     const body = JSON.parse(text);
     reportTimestamps.push(now);
 
-    console.error(
-      '[client-error]',
-      JSON.stringify({
-        message: truncate(body.message, 500),
-        digest: truncate(body.digest, 100),
-        source: truncate(body.source, 100),
-        url: truncate(body.url, 500),
-        userAgent: truncate(body.userAgent, 300),
-        stack: truncate(body.stack, 4000),
-        componentStack: truncate(body.componentStack, 4000),
-        at: new Date().toISOString(),
-      })
-    );
+    const report = {
+      message: truncate(body.message, 500),
+      digest: truncate(body.digest, 100),
+      source: truncate(body.source, 100),
+      url: truncate(body.url, 500),
+      userAgent: truncate(body.userAgent, 300),
+      stack: truncate(body.stack, 4000),
+      componentStack: truncate(body.componentStack, 4000),
+    };
+
+    console.error('[client-error]', JSON.stringify({ ...report, at: new Date().toISOString() }));
+
+    // Durable copy: Vercel runtime logs expire within ~a day, so the console
+    // line alone would make older crashes unreadable. Non-fatal on failure.
+    try {
+      const { default: connectMongoDB } = await import('@/lib/mongodb');
+      const { default: ClientErrorReport } = await import('@/models/ClientErrorReport');
+      await connectMongoDB();
+      await ClientErrorReport.create(report);
+    } catch (persistErr) {
+      console.error('[client-error] persistence failed (non-fatal):', persistErr);
+    }
   } catch {
     // Malformed report — drop silently.
   }
