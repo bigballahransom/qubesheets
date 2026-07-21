@@ -64,6 +64,12 @@ export function SelfServeRecorderLiveKit({
 
   const [videoReady, setVideoReady] = useState(false);
 
+  // Stop-tap trap guard: recordings under this length are almost always a
+  // customer tapping the red button expecting it to START (recording begins
+  // automatically) — confirm before throwing away their session.
+  const MIN_STOP_SECONDS = 10;
+  const [confirmShortStop, setConfirmShortStop] = useState(false);
+
   // Tell the server "the recorder UI mounted on this device" so we can see
   // who's hitting the page even if they never tap Start (or if init crashes
   // somewhere we don't catch).
@@ -117,6 +123,7 @@ export function SelfServeRecorderLiveKit({
     sessionId,
     connectionState,
     facingMode,
+    cameraInterrupted,
     initialize,
     startRecording,
     stopRecording,
@@ -284,9 +291,20 @@ export function SelfServeRecorderLiveKit({
         <p className="text-gray-400 mb-6 text-center max-w-sm">
           {error?.message || 'Unable to access camera. Please check permissions and try again.'}
         </p>
-        <Button onClick={() => window.location.reload()} variant="outline">
-          Try Again
-        </Button>
+        <div className="w-full max-w-sm flex flex-col gap-3">
+          <Button onClick={() => window.location.reload()} variant="outline" className="w-full">
+            Try Again
+          </Button>
+          {onCancel && (
+            <Button
+              onClick={onCancel}
+              variant="outline"
+              className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+            >
+              Go back &amp; upload a video instead
+            </Button>
+          )}
+        </div>
       </div>
     );
   }
@@ -493,6 +511,54 @@ export function SelfServeRecorderLiveKit({
         </div>
       </div>
 
+      {/* Camera-interrupted warning — the server is receiving black video
+          (screen was locked, app backgrounded, or the OS took the camera).
+          The hook auto-stops after ~30s if this isn't resolved. */}
+      {cameraInterrupted && isRecording && (
+        <div className="absolute inset-0 z-30 bg-black/80 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-16 h-16 bg-yellow-500 rounded-full flex items-center justify-center mb-5">
+            <svg className="w-8 h-8 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-white text-xl font-semibold mb-2">We can&apos;t see your camera</h2>
+          <p className="text-gray-300 max-w-sm">
+            Keep this screen open while recording. If your phone locked or you
+            switched apps, come back here to continue — otherwise the recording
+            will stop automatically.
+          </p>
+        </div>
+      )}
+
+      {/* Short-stop confirmation — the customer tapped stop within seconds of
+          starting, which is almost always a mistaken "start" tap. */}
+      {confirmShortStop && (
+        <div className="absolute inset-0 z-30 bg-black/80 flex flex-col items-center justify-center p-6 text-center">
+          <h2 className="text-white text-xl font-semibold mb-2">Finished already?</h2>
+          <p className="text-gray-300 max-w-sm mb-6">
+            You&apos;ve only recorded {formatDuration(duration)} — walkthroughs
+            usually take a few minutes. Your recording is still going.
+          </p>
+          <div className="w-full max-w-xs flex flex-col gap-3">
+            <Button
+              onClick={() => setConfirmShortStop(false)}
+              size="lg"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Keep recording
+            </Button>
+            <Button
+              onClick={() => { setConfirmShortStop(false); stopRecording(); }}
+              variant="outline"
+              size="lg"
+              className="w-full bg-transparent border-gray-500 hover:bg-gray-800 text-white"
+            >
+              Stop and finish
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Duration Warning - centered, only when warning */}
       {durationWarning !== 'none' && durationWarning !== 'maxed' && (
         <div className="absolute top-20 left-0 right-0 z-10 flex justify-center">
@@ -521,7 +587,13 @@ export function SelfServeRecorderLiveKit({
         )}
         {isRecording && (
           <button
-            onClick={stopRecording}
+            onClick={() => {
+              if (duration < MIN_STOP_SECONDS) {
+                setConfirmShortStop(true);
+                return;
+              }
+              stopRecording();
+            }}
             disabled={!recordingStarted}
             className={cn(
               'w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-lg border-4 border-white/30',

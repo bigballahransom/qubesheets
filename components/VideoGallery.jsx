@@ -280,6 +280,11 @@ const VideoCard = memo(({
 
           {/* Analysis Status with badges */}
           <div className="flex flex-wrap gap-1">
+            {video.qualityFlags?.includes('mostly_black') && (
+              <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                Camera was covered for most of this video
+              </Badge>
+            )}
             {isRecordingFailed ? (
               <Badge variant="destructive" className="text-xs">
                 <X size={10} className="mr-1" />

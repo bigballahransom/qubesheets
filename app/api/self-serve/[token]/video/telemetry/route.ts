@@ -6,6 +6,8 @@
 //
 // Fire-and-forget from the recorder hook — never blocks the user.
 import { NextRequest, NextResponse } from 'next/server';
+import connectMongoDB from '@/lib/mongodb';
+import SelfServeTelemetryEvent from '@/models/SelfServeTelemetryEvent';
 
 export async function POST(
   request: NextRequest,
@@ -40,6 +42,33 @@ export async function POST(
       (userAgent ? `\n   userAgent: ${userAgent}` : '') +
       (url ? `\n   url: ${url}` : '')
     );
+
+    // Persist for funnel metrics (failure rate per stage/browser/day) —
+    // the log line above is for live debugging, this is for measurement.
+    // Non-fatal: telemetry must never affect the customer.
+    try {
+      await connectMongoDB();
+      // Anything beyond the known columns (durationAtStop, recordedDuration,
+      // etc.) is kept in `extra` so new client events don't need a schema change.
+      const knownKeys = new Set([
+        'event', 'step', 'browser', 'platform', 'inAppBrowser', 'errorName',
+        'errorMessage', 'userAgent', 'screenWidth', 'screenHeight', 'url'
+      ]);
+      const extra: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(body)) {
+        if (!knownKeys.has(k) && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')) {
+          extra[String(k).slice(0, 40)] = typeof v === 'string' ? v.slice(0, 200) : v;
+        }
+      }
+      await SelfServeTelemetryEvent.create({
+        token: token.slice(0, 100),
+        event, step, browser, platform, inAppBrowser,
+        errorName, errorMessage, userAgent, screenWidth, screenHeight, url,
+        extra: Object.keys(extra).length ? extra : undefined,
+      });
+    } catch (persistErr) {
+      console.error('telemetry persistence failed (non-fatal):', persistErr);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {

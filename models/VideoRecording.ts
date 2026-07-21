@@ -20,6 +20,8 @@ export interface IVideoRecording extends Document {
   s3Url?: string;
   fileSize?: number; // File size in bytes
   error?: string;
+  recoveryNotifiedAt?: Date; // one-shot marker: customer/org notified of failed attempt
+  qualityFlags?: string[]; // worker-stamped gates, e.g. 'mostly_black'
   participants: Array<{
     identity: string;
     name: string;
@@ -185,9 +187,20 @@ const VideoRecordingSchema: Schema = new Schema(
     fileSize: { 
       type: Number // File size in bytes
     },
-    error: { 
-      type: String 
+    error: {
+      type: String
     },
+    // When the abandoned-attempt recovery cron notified the customer/org
+    // about a failed recording (one-shot marker so we never re-text).
+    recoveryNotifiedAt: {
+      type: Date
+    },
+    // Post-analysis quality gates stamped by the worker, e.g.
+    // 'mostly_black' — video frames were black/covered for most of the
+    // recording (camera off/pocketed) even though the file is valid.
+    qualityFlags: [{
+      type: String
+    }],
     participants: [{
       identity: { type: String, required: true },
       name: { type: String, required: true },

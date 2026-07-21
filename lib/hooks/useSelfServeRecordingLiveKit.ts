@@ -37,6 +37,22 @@ function sendTelemetry(uploadToken: string, payload: Record<string, unknown>) {
   }
 }
 
+/**
+ * Reject if `promise` doesn't settle within `ms`. Used to cap every stage of
+ * initialization so the customer never stares at an infinite spinner — a
+ * hung WebSocket, a camera held by another app, or a stalled fetch all
+ * resolve to an actionable error screen instead.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
 export type RecordingStatus =
   | 'idle'
   | 'initializing'
@@ -71,6 +87,11 @@ export interface UseSelfServeRecordingLiveKitReturn {
   recordingStarted: boolean;
   error: Error | null;
   facingMode: 'environment' | 'user';
+  /** True while the camera track is muted/dead during a recording (screen
+   *  locked, app backgrounded, lens blocked by the OS). The UI should show a
+   *  prominent "we can't see your camera" warning; the hook auto-stops the
+   *  recording if this persists ~30s so we never save minutes of black video. */
+  cameraInterrupted: boolean;
 
   // LiveKit data
   room: Room | null;
@@ -127,6 +148,70 @@ export function useSelfServeRecordingLiveKit({
   // user can't kill a recording that hasn't fully begun on the server.
   const [recordingStarted, setRecordingStarted] = useState(false);
 
+  // ─── Camera watchdog + wake lock ─────────────────────────────────
+  // The #1 real-world failure: the phone locks or the app is backgrounded
+  // mid-walkthrough, the camera track mutes, and the egress records black
+  // video with live audio. The watchdog surfaces it to the customer
+  // immediately and auto-stops before minutes of black footage accumulate.
+  const [cameraInterrupted, setCameraInterrupted] = useState(false);
+  const wakeLockRef = useRef<any>(null);
+  const interruptWarnTimerRef = useRef<NodeJS.Timeout | null>(null); // debounce transient blips (camera flip)
+  const deadVideoStopTimerRef = useRef<NodeJS.Timeout | null>(null); // auto-stop after sustained dead video
+  const stopRecordingRef = useRef<() => Promise<void>>(async () => {}); // set below; lets watchdog call stop without dep cycles
+
+  const DEAD_VIDEO_AUTO_STOP_MS = 30_000;
+  const INTERRUPT_WARN_DELAY_MS = 1_500;
+
+  // Keep the screen awake while the camera is live. Without this, phones
+  // auto-lock mid-walkthrough (customer is holding the phone up, not
+  // touching it), which kills the camera track. Released in cleanup(); the
+  // OS auto-releases when the page is hidden, so we re-acquire on
+  // visibilitychange. Best-effort: unsupported browsers just keep today's
+  // behavior.
+  const acquireWakeLock = useCallback(async () => {
+    try {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+      }
+    } catch {
+      /* denied or unsupported — non-fatal */
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    try { wakeLockRef.current?.release(); } catch {}
+    wakeLockRef.current = null;
+  }, []);
+
+  const clearWatchdogTimers = useCallback(() => {
+    if (interruptWarnTimerRef.current) { clearTimeout(interruptWarnTimerRef.current); interruptWarnTimerRef.current = null; }
+    if (deadVideoStopTimerRef.current) { clearTimeout(deadVideoStopTimerRef.current); deadVideoStopTimerRef.current = null; }
+  }, []);
+
+  const onCameraDead = useCallback(() => {
+    if (statusRef.current !== 'recording') return;
+    if (interruptWarnTimerRef.current || deadVideoStopTimerRef.current) return; // already tracking
+    // Small delay so a camera flip's transient unpublish doesn't flash the warning.
+    interruptWarnTimerRef.current = setTimeout(() => {
+      interruptWarnTimerRef.current = null;
+      if (statusRef.current !== 'recording') return;
+      setCameraInterrupted(true);
+      sendTelemetry(uploadToken, { event: 'camera_interrupted', durationAtInterrupt: durationRef.current });
+      deadVideoStopTimerRef.current = setTimeout(() => {
+        deadVideoStopTimerRef.current = null;
+        if (statusRef.current !== 'recording') return;
+        console.warn('⚠️ Camera dead for 30s while recording — auto-stopping to avoid black video');
+        sendTelemetry(uploadToken, { event: 'auto_stopped_dead_video', durationAtStop: durationRef.current });
+        stopRecordingRef.current();
+      }, DEAD_VIDEO_AUTO_STOP_MS);
+    }, INTERRUPT_WARN_DELAY_MS);
+  }, [uploadToken]);
+
+  const onCameraAlive = useCallback(() => {
+    clearWatchdogTimers();
+    setCameraInterrupted(false);
+  }, [clearWatchdogTimers]);
+
   // Keep refs in sync with state
   useEffect(() => {
     statusRef.current = status;
@@ -152,6 +237,10 @@ export function useSelfServeRecordingLiveKit({
       clearInterval(durationIntervalRef.current);
       durationIntervalRef.current = null;
     }
+
+    clearWatchdogTimers();
+    setCameraInterrupted(false);
+    releaseWakeLock();
 
     // Stop any local participant tracks before disconnecting (LiveKit's
     // disconnect should do this, but on iOS Safari we've seen the camera
@@ -203,13 +292,42 @@ export function useSelfServeRecordingLiveKit({
     if (track && track.kind === Track.Kind.Video) {
       console.log('📹 Local video track published');
       setLocalVideoTrack(track);
+      // Camera (re)published — e.g. after a flip — means video is alive again.
+      onCameraAlive();
 
       // Attach to video element for preview
       if (videoRef.current) {
         track.attach(videoRef.current);
       }
     }
-  }, []);
+  }, [onCameraAlive]);
+
+  // Page visibility: backgrounding/locking the phone mutes the camera on
+  // mobile browsers. Mark the interruption immediately (don't wait for the
+  // LiveKit mute event, which can lag), and on return re-acquire the wake
+  // lock (the OS force-releases it when the page hides).
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (statusRef.current === 'recording') {
+          sendTelemetry(uploadToken, { event: 'page_hidden_while_recording', durationAtHide: durationRef.current });
+          onCameraDead();
+        }
+      } else {
+        if (statusRef.current === 'recording' || statusRef.current === 'ready') {
+          acquireWakeLock();
+        }
+        // If the camera track came back on its own, the TrackUnmuted event
+        // clears the warning; if it's still muted, leave the watchdog armed.
+        const camTrack = roomRef.current?.localParticipant.getTrackPublication(Track.Source.Camera);
+        if (camTrack && !camTrack.isMuted && camTrack.track) {
+          onCameraAlive();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [uploadToken, onCameraDead, onCameraAlive, acquireWakeLock]);
 
   // Initialize session and connect to LiveKit
   const initialize = useCallback(async () => {
@@ -262,11 +380,15 @@ export function useSelfServeRecordingLiveKit({
         screenHeight: window.screen.height
       };
 
-      const initResponse = await fetch(`/api/self-serve/${uploadToken}/video/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceInfo })
-      });
+      const initResponse = await withTimeout(
+        fetch(`/api/self-serve/${uploadToken}/video/init`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceInfo })
+        }),
+        20_000,
+        'Setting up took too long. Please check your connection and try again.'
+      );
 
       if (!initResponse.ok) {
         const errorData = await initResponse.json().catch(() => ({}));
@@ -318,6 +440,23 @@ export function useSelfServeRecordingLiveKit({
 
       room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
       room.on(RoomEvent.LocalTrackPublished, handleLocalTrackPublished);
+
+      // Camera watchdog: the local camera track muting mid-recording means
+      // the server is receiving black video (screen lock, backgrounding, OS
+      // taking the camera). Surface it and auto-stop if sustained.
+      room.on(RoomEvent.TrackMuted, (pub: any, participant: any) => {
+        if (participant === room!.localParticipant && pub.source === Track.Source.Camera) {
+          onCameraDead();
+        }
+      });
+      room.on(RoomEvent.TrackUnmuted, (pub: any, participant: any) => {
+        if (participant === room!.localParticipant && pub.source === Track.Source.Camera) {
+          onCameraAlive();
+        }
+      });
+      room.on(RoomEvent.LocalTrackUnpublished, (pub: any) => {
+        if (pub.source === Track.Source.Camera) onCameraDead();
+      });
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to construct LiveKit Room');
       console.error('❌ Init step failed (Room constructor):', error);
@@ -339,9 +478,13 @@ export function useSelfServeRecordingLiveKit({
     // "string did not match the expected pattern" when WebRTC is unsupported.
     try {
       console.log('🔄 Connecting to LiveKit room:', initData.roomName);
-      await room.connect(initData.wsUrl, initData.livekitToken, {
-        autoSubscribe: false
-      });
+      await withTimeout(
+        room.connect(initData.wsUrl, initData.livekitToken, {
+          autoSubscribe: false
+        }),
+        20_000,
+        "Couldn't reach the video service. Your network may be blocking video connections — try switching between Wi-Fi and cellular data."
+      );
       console.log('✅ Connected to LiveKit room, state:', room.state);
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to connect to recording service');
@@ -364,8 +507,16 @@ export function useSelfServeRecordingLiveKit({
     // STEP 4: Request camera + microphone permissions (this triggers the OS prompt).
     try {
       console.log('📹 Enabling camera and microphone...');
-      await room.localParticipant.enableCameraAndMicrophone();
+      // Generous timeout: the OS permission prompt legitimately sits open
+      // while the customer decides. This only catches true hangs (camera
+      // held by another app, getUserMedia that never resolves).
+      await withTimeout(
+        room.localParticipant.enableCameraAndMicrophone(),
+        45_000,
+        'Could not start your camera. Close any other app using the camera, then try again.'
+      );
       console.log('✅ Camera and microphone enabled');
+      sendTelemetry(uploadToken, { event: 'camera_granted' });
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to access camera/microphone');
       console.error('❌ Init step failed (enableCameraAndMicrophone):', error);
@@ -402,6 +553,12 @@ export function useSelfServeRecordingLiveKit({
         setLocalVideoTrack(videoTrack);
       }
 
+      // Keep the screen awake from the moment the camera is live — phones
+      // auto-lock while the customer holds the phone up without touching it,
+      // and the lock kills the camera track (the root cause of black-video
+      // recordings).
+      acquireWakeLock();
+
     } catch (err) {
       console.error('❌ Initialization failed:', err);
       const error = err instanceof Error ? err : new Error('Failed to initialize');
@@ -436,14 +593,18 @@ export function useSelfServeRecordingLiveKit({
       setStatus('recording');
 
       // Tell backend to start Egress recording
-      const startResponse = await fetch(`/api/self-serve/${uploadToken}/video/start-recording`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: sessionDataRef.current.sessionId,
-          roomName: sessionDataRef.current.roomName
-        })
-      });
+      const startResponse = await withTimeout(
+        fetch(`/api/self-serve/${uploadToken}/video/start-recording`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionDataRef.current.sessionId,
+            roomName: sessionDataRef.current.roomName
+          })
+        }),
+        20_000,
+        'Starting the recording took too long. Please check your connection and try again.'
+      );
 
       if (!startResponse.ok) {
         const errorData = await startResponse.json();
@@ -453,6 +614,7 @@ export function useSelfServeRecordingLiveKit({
       const startData = await startResponse.json();
       console.log('✅ Recording started, egress:', startData.egressId);
       setRecordingStarted(true);
+      sendTelemetry(uploadToken, { event: 'recording_started' });
 
       // Start duration timer
       const startTime = Date.now();
@@ -549,6 +711,7 @@ export function useSelfServeRecordingLiveKit({
 
       const stopData = await stopResponse.json();
       console.log('✅ Recording stopped:', stopData);
+      sendTelemetry(uploadToken, { event: 'recording_stopped', recordedDuration: durationRef.current });
 
       setStatus('processing');
 
@@ -570,6 +733,12 @@ export function useSelfServeRecordingLiveKit({
       onError?.(error);
     }
   }, [uploadToken, cleanup, onRecordingComplete, onError]);
+
+  // Keep the watchdog's handle on stopRecording fresh (it can't depend on
+  // stopRecording directly — the watchdog callbacks are defined earlier).
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording;
+  }, [stopRecording]);
 
   // Flip camera (toggle between front and back)
   const flipCamera = useCallback(async () => {
@@ -629,6 +798,7 @@ export function useSelfServeRecordingLiveKit({
     recordingStarted,
     error,
     facingMode,
+    cameraInterrupted,
     room: roomRef.current,
     localVideoTrack,
     videoRef,

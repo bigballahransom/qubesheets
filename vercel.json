@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/video-call-reminders",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/self-serve-recovery",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
