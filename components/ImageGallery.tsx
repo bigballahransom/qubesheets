@@ -45,7 +45,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
-import { useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
+import { useMediaNavigation, useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 
 // Helper to group items by location/room
 const groupByRoom = (items: any[]) => {
@@ -165,6 +165,8 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
     new Promise((resolve) => setConfirmState({ ...opts, resolve }));
 
   // Project-wide prev/next flipping across all media in the detail modal.
+  // Untyped JSX context — cast so refreshIndex is callable from TS.
+  const mediaNav = useMediaNavigation() as { refreshIndex: (force?: boolean) => void } | null;
   const mediaNavigation = useMediaNavigationFor(
     selectedItem && !isVideo(selectedItem) ? selectedItem._id : null,
     () => setSelectedItem(null)
@@ -245,7 +247,11 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
       } else {
         setImages(prev => prev.filter(img => img._id !== item._id));
       }
-      
+
+      // Keep the prev/next media index honest — otherwise navigation can
+      // serve the deleted entry for up to its 10s staleness window.
+      mediaNav?.refreshIndex(true);
+
       // Refresh the spreadsheet to reflect cascading inventory deletes
       if (refreshSpreadsheet) {
         try {
@@ -306,7 +312,9 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
       
       const result = await response.json();
       console.log('✅ Bulk delete successful:', result);
-      
+
+      mediaNav?.refreshIndex(true);
+
       // Clear local state
       setImages([]);
       setPagination({

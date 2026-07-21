@@ -48,7 +48,7 @@ import VideoRecordingModal from './VideoRecordingModal';
 import VideoChapters, { hasVideoChapters } from './video/VideoChapters';
 import { useVideoChapters } from '@/lib/hooks/useVideoChapters';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
-import { useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
+import { useMediaNavigation, useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 
 // Helper functions - defined outside component to prevent recreation
 const formatDuration = (seconds) => {
@@ -98,7 +98,11 @@ const VideoCard = memo(({
 
   // Check if this is a self-serve recording or regular uploaded video
   const isSelfServe = video._type === 'self_serve_recording';
-  const hasS3Video = isSelfServe ? (video.s3Key || video.customerVideoS3Key) : video.s3RawFile?.key;
+  // Recording-level failure means no video file ever made it to S3 (egress
+  // aborted before upload) — distinct from analysis failure, where the video
+  // exists and plays fine. Don't attempt to load/play a file that isn't there.
+  const isRecordingFailed = isSelfServe && video.status === 'failed';
+  const hasS3Video = !isRecordingFailed && (isSelfServe ? (video.s3Key || video.customerVideoS3Key) : video.s3RawFile?.key);
   const videoTitle = isSelfServe ? 'Self-Serve Recording' : video.originalName;
 
   // Analysis stuck in 'processing' with no update for 45+ min means the worker
@@ -106,7 +110,7 @@ const VideoCard = memo(({
   const isStalledProcessing =
     video.analysisResult?.status === 'processing' &&
     Date.now() - new Date(video.updatedAt || video.createdAt).getTime() > 45 * 60 * 1000;
-  const canReprocess = isSelfServe && (video.analysisResult?.status === 'failed' || isStalledProcessing);
+  const canReprocess = isSelfServe && !isRecordingFailed && (video.analysisResult?.status === 'failed' || isStalledProcessing);
 
   // Load video thumbnail on mount
   useEffect(() => {
@@ -134,19 +138,23 @@ const VideoCard = memo(({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="z-50">
-            <DropdownMenuItem onClick={async () => {
-              if (hasS3Video && !streamUrl) {
-                await onLoadStreamUrl(video._id, video._type);
-              }
-              onSelectVideo(video);
-            }}>
-              <Eye size={16} className="mr-2" />
-              View
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onDownload(video)}>
-              <Download size={16} className="mr-2" />
-              Download
-            </DropdownMenuItem>
+            {!isRecordingFailed && (
+              <>
+                <DropdownMenuItem onClick={async () => {
+                  if (hasS3Video && !streamUrl) {
+                    await onLoadStreamUrl(video._id, video._type);
+                  }
+                  onSelectVideo(video);
+                }}>
+                  <Eye size={16} className="mr-2" />
+                  View
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onDownload(video)}>
+                  <Download size={16} className="mr-2" />
+                  Download
+                </DropdownMenuItem>
+              </>
+            )}
             {canReprocess && (
               <DropdownMenuItem onClick={() => onReprocess(video)}>
                 <RefreshCw size={16} className="mr-2" />
@@ -166,7 +174,12 @@ const VideoCard = memo(({
 
       {/* Video Preview Area */}
       <div className="aspect-video bg-gray-100 flex items-center justify-center relative">
-        {isPlaying && streamUrl ? (
+        {isRecordingFailed ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+            <VideoIcon className="w-12 h-12 text-gray-300" />
+            <span className="text-xs text-gray-500">No video captured</span>
+          </div>
+        ) : isPlaying && streamUrl ? (
           <video
             src={streamUrl}
             autoPlay
@@ -210,6 +223,7 @@ const VideoCard = memo(({
         )}
 
         {/* Play/Pause overlay */}
+        {!isRecordingFailed && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <button
             onClick={() => onPlayToggle(video._id)}
@@ -225,6 +239,7 @@ const VideoCard = memo(({
             )}
           </button>
         </div>
+        )}
 
         {/* Duration badge */}
         {video.duration > 0 && (
@@ -265,7 +280,12 @@ const VideoCard = memo(({
 
           {/* Analysis Status with badges */}
           <div className="flex flex-wrap gap-1">
-            {video.analysisResult?.status === 'processing' ? (
+            {isRecordingFailed ? (
+              <Badge variant="destructive" className="text-xs">
+                <X size={10} className="mr-1" />
+                Recording failed — no video captured
+              </Badge>
+            ) : video.analysisResult?.status === 'processing' ? (
               <Badge variant="secondary" className="text-xs animate-pulse">
                 <Loader2 size={10} className="mr-1 animate-spin" />
                 Analyzing...
@@ -402,6 +422,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
 
   // Project-wide prev/next flipping — one for the uploaded-video detail
   // modal, one for the self-serve VideoRecordingModal.
+  const mediaNav = useMediaNavigation();
   const videoNavigation = useMediaNavigationFor(
     selectedVideo?._id ?? null,
     () => setSelectedVideo(null)
@@ -1048,7 +1069,11 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
 
       // Remove from local state
       setVideos(videos.filter(v => v._id !== video._id));
-      
+
+      // Keep the prev/next media index honest — otherwise navigation can
+      // serve the deleted entry for up to its 10s staleness window.
+      mediaNav?.refreshIndex(true);
+
       // Refresh inventory items and spreadsheet to reflect cascading deletes
       if (refreshSpreadsheet) {
         try {
@@ -1102,7 +1127,9 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
       
       const result = await response.json();
       console.log('✅ Bulk delete successful:', result);
-      
+
+      mediaNav?.refreshIndex(true);
+
       // Clear local state
       setVideos([]);
       setPagination({

@@ -51,6 +51,8 @@ import {
   ResizableHandle,
 } from '@/components/ui/resizable';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import MediaInventoryItemsColumn from '@/components/inventory/MediaInventoryItemsColumn';
 import { useAutoSeekOnInitialItem } from '@/lib/hooks/useAutoSeekOnInitialItem';
 import { useLocalStoragePreference } from '@/lib/hooks/useLocalStoragePreference';
@@ -594,27 +596,52 @@ export default function MediaInventoryModal({
 
         {sideNav}
 
-        {notesSlot ? (
-          <Tabs defaultValue="watch" className="w-full flex-1 flex flex-col min-h-0">
-            <div className="flex items-center gap-2 shrink-0">
-              <TabsList className="grid flex-1 grid-cols-2">
-                <TabsTrigger value="watch">Watch</TabsTrigger>
-                <TabsTrigger value="notes">Notes</TabsTrigger>
-              </TabsList>
-              {showToggleInTabsRow && (
-                <LayoutToggle value={activeLayout} onChange={setPreferredLayout} />
-              )}
+        {/* Boundary around the dialog body (below the header, so the X
+            close button stays usable): a crash rendering the media/items
+            shows an inline error panel instead of blanking the page. All
+            five host surfaces render through this shell, so this one wrap
+            protects them all. resetKey recovers when different media opens. */}
+        <ErrorBoundary
+          source="MediaInventoryModal"
+          resetKey={media?.id}
+          fallback={
+            <div className="flex-1 min-h-48 rounded-lg bg-gray-100 flex items-center justify-center">
+              <div className="text-center px-6 py-10">
+                <p className="text-lg font-medium text-gray-900">
+                  Unable to display this media
+                </p>
+                <p className="text-sm text-gray-500 mt-1 mb-4">
+                  Something went wrong while rendering this view.
+                </p>
+                <Button variant="outline" onClick={() => onClose?.()}>
+                  Close
+                </Button>
+              </div>
             </div>
-            <TabsContent value="watch" className="mt-4 flex-1 min-h-0">
-              {watchContent}
-            </TabsContent>
-            <TabsContent value="notes" className="mt-4 flex-1 min-h-0">
-              {notesSlot}
-            </TabsContent>
-          </Tabs>
-        ) : (
-          watchContent
-        )}
+          }
+        >
+          {notesSlot ? (
+            <Tabs defaultValue="watch" className="w-full flex-1 flex flex-col min-h-0">
+              <div className="flex items-center gap-2 shrink-0">
+                <TabsList className="grid flex-1 grid-cols-2">
+                  <TabsTrigger value="watch">Watch</TabsTrigger>
+                  <TabsTrigger value="notes">Notes</TabsTrigger>
+                </TabsList>
+                {showToggleInTabsRow && (
+                  <LayoutToggle value={activeLayout} onChange={setPreferredLayout} />
+                )}
+              </div>
+              <TabsContent value="watch" className="mt-4 flex-1 min-h-0">
+                {watchContent}
+              </TabsContent>
+              <TabsContent value="notes" className="mt-4 flex-1 min-h-0">
+                {notesSlot}
+              </TabsContent>
+            </Tabs>
+          ) : (
+            watchContent
+          )}
+        </ErrorBoundary>
       </DialogContent>
     </Dialog>
   );

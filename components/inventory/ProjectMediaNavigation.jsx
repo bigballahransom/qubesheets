@@ -32,7 +32,9 @@ import {
   useState,
 } from 'react';
 import { Camera, FileImage, Loader2, Video as VideoIcon } from 'lucide-react';
+import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
 import VideoRecordingModal from '@/components/VideoRecordingModal';
 import VideoChapters, { hasVideoChapters } from '@/components/video/VideoChapters';
@@ -108,10 +110,28 @@ export function MediaNavigationProvider({
   const indexRef = useRef(index);
   indexRef.current = index;
 
-  const openAt = useCallback((pos) => {
-    const entry = indexRef.current[pos];
-    if (entry) setViewerEntry(entry);
-  }, []);
+  // Resolve the target at CLICK time by id against the live index. The
+  // index refreshes every 10s (and media gets added/deleted mid-session), so
+  // a position captured at render time can be stale by the time the user
+  // clicks — flipping would land on the wrong entry. Resolving by id keeps
+  // "next/prev" relative to what's actually on screen; if the id vanished
+  // from the index (deleted), no-op and force a resync instead of jumping
+  // somewhere arbitrary.
+  const openRelative = useCallback(
+    (mediaId, delta, closeSelf) => {
+      const arr = indexRef.current;
+      const pos = arr.findIndex((e) => e.id === mediaId);
+      if (pos === -1) {
+        refreshIndex(true);
+        return;
+      }
+      const target = Math.min(Math.max(pos + delta, 0), arr.length - 1);
+      if (target === pos) return;
+      closeSelf?.();
+      setViewerEntry(arr[target]);
+    },
+    [refreshIndex]
+  );
 
   const buildNavigation = useCallback(
     (mediaId, closeSelf) => {
@@ -122,19 +142,11 @@ export function MediaNavigationProvider({
         total: index.length,
         hasPrev: pos > 0,
         hasNext: pos < index.length - 1,
-        onPrev: () => {
-          if (pos <= 0) return;
-          closeSelf?.();
-          openAt(pos - 1);
-        },
-        onNext: () => {
-          if (pos >= index.length - 1) return;
-          closeSelf?.();
-          openAt(pos + 1);
-        },
+        onPrev: () => openRelative(mediaId, -1, closeSelf),
+        onNext: () => openRelative(mediaId, 1, closeSelf),
       };
     },
-    [index, openAt]
+    [index, openRelative]
   );
 
   const ensureIndex = useCallback(() => {
@@ -149,15 +161,29 @@ export function MediaNavigationProvider({
   return (
     <MediaNavigationContext.Provider value={value}>
       {children}
-      <ProjectMediaViewer
-        projectId={projectId}
-        entry={viewerEntry}
-        onClose={() => setViewerEntry(null)}
-        buildNavigation={buildNavigation}
-        inventoryItems={inventoryItems}
-        onInventoryUpdate={onInventoryUpdate}
-        onAddStockItem={onAddStockItem}
-      />
+      {/* Boundary around the viewer ONLY (not {children}): a crash while
+          flipping media closes the viewer with a toast instead of blanking
+          the whole project page. resetKey clears the boundary when a
+          different media is opened. */}
+      <ErrorBoundary
+        source="ProjectMediaViewer"
+        resetKey={viewerEntry ? `${viewerEntry.kind}:${viewerEntry.id}` : null}
+        fallback={null}
+        onError={() => {
+          toast.error('Something went wrong displaying this media');
+          setViewerEntry(null);
+        }}
+      >
+        <ProjectMediaViewer
+          projectId={projectId}
+          entry={viewerEntry}
+          onClose={() => setViewerEntry(null)}
+          buildNavigation={buildNavigation}
+          inventoryItems={inventoryItems}
+          onInventoryUpdate={onInventoryUpdate}
+          onAddStockItem={onAddStockItem}
+        />
+      </ErrorBoundary>
     </MediaNavigationContext.Provider>
   );
 }

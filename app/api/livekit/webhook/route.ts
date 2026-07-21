@@ -973,8 +973,12 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
         console.error('inventory-update SMS (self-serve recording) failed (non-fatal):', smsErr);
       }
     }
-  } else if (session.s3Key) {
-    // No file result but we have stored S3 key from when egress started
+  } else if (session.s3Key && !(await isS3ObjectDefinitelyMissing(session.s3Key))) {
+    // No file result but we have stored S3 key from when egress started.
+    // That key is the *predicted* upload path stamped at egress start, not
+    // proof a file exists — so we HEAD-check it above. Only a definitive 404
+    // routes to the failure branch; any other HEAD outcome (including
+    // errors) proceeds here, so a healthy recording is never dropped.
     console.log(`⚠️ No file result in webhook but have stored S3 key: ${session.s3Key}`);
     session.status = 'analyzing';
     session.analysisStatus = 'processing';
@@ -1077,6 +1081,49 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
         console.error('inventory-update SMS (self-serve recording fallback) failed (non-fatal):', smsErr);
       }
     }
+  } else if (session.s3Key) {
+    // Stored key verified missing from S3: the egress ended without ever
+    // uploading a file (aborted/interrupted before any footage flowed).
+    // Create an explicitly-failed VideoRecording so the failure stays
+    // visible in the Videos tab — but never queue analysis (guaranteed
+    // NoSuchKey) and never send the "analysis in progress" SMS.
+    console.warn(`❌ Egress ${egressId} ended but ${session.s3Key} does not exist in S3 — no video was captured`);
+    session.status = 'failed';
+    session.analysisStatus = 'failed';
+    session.analysisError = 'No video captured — the recording ended before any footage was uploaded';
+    session.lastError = event.egressInfo!.error || 'Egress ended without uploading a video file';
+    session.errorCount = (session.errorCount || 0) + 1;
+
+    await VideoRecording.findOneAndUpdate(
+      { selfServeSessionId: session.sessionId },
+      {
+        $setOnInsert: {
+          projectId: session.projectId.toString(),
+          userId: session.userId,
+          organizationId: session.organizationId,
+          roomId: session.livekitRoomName || `self-serve-${session.sessionId}`,
+          egressId: egressId,
+          status: 'failed',
+          error: 'No video captured — the recording ended before any footage was uploaded',
+          source: 'self_serve',
+          selfServeSessionId: session.sessionId,
+          s3Key: session.s3Key,
+          startedAt: session.startedAt || new Date(),
+          endedAt: new Date(),
+          duration: 0,
+          customerIdentity: session.customerIdentity || 'customer',
+          customerVideoS3Key: session.s3Key,
+          analysisResult: {
+            status: 'failed',
+            error: 'No video captured',
+            totalSegments: 0,
+            processedSegments: 0
+          },
+          createdAt: new Date()
+        }
+      },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
   } else {
     // No file result and no stored S3 key - actual failure
     console.log(`❌ No file result and no stored S3 key - self-serve video not captured`);
@@ -1109,4 +1156,28 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
     s3Key: session.s3Key || 'none',
     duration: session.totalDuration
   });
+}
+
+/**
+ * Returns true ONLY on a definitive S3 404/NotFound for the key. Every other
+ * outcome — including HEAD errors — returns false ("fail open"): without
+ * s3:ListBucket a missing key surfaces as 403, and throttles/network blips
+ * must not cause a real recording to be marked failed. Failing open means the
+ * worst case is today's behavior (a recording that later fails analysis),
+ * never a silently dropped one.
+ */
+async function isS3ObjectDefinitelyMissing(s3Key: string): Promise<boolean> {
+  try {
+    const AWS = (await import('aws-sdk')).default;
+    const s3 = new AWS.S3({ region: process.env.AWS_REGION || 'us-east-1' });
+    const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+    await s3.headObject({ Bucket: bucket, Key: s3Key }).promise();
+    return false;
+  } catch (err: any) {
+    if (err?.code === 'NotFound' || err?.code === 'NoSuchKey' || err?.statusCode === 404) {
+      return true;
+    }
+    console.warn(`⚠️ S3 HEAD check for ${s3Key} errored (${err?.code || err?.message}) — failing open, assuming file exists`);
+    return false;
+  }
 }

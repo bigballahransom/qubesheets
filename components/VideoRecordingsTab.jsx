@@ -38,7 +38,7 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 import VideoRecordingModal from './VideoRecordingModal';
-import { useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
+import { useMediaNavigation, useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -146,6 +146,7 @@ const VideoRecordingsTab = ({
   };
 
   // Project-wide prev/next flipping in the playback modal.
+  const mediaNav = useMediaNavigation();
   const mediaNavigation = useMediaNavigationFor(
     isModalOpen && selectedRecording ? selectedRecording._id : null,
     handleCloseModal
@@ -396,6 +397,10 @@ const VideoRecordingsTab = ({
       setRecordings(recordings.filter(r => r._id !== recording._id));
       toast.success('Recording deleted successfully');
 
+      // Keep the prev/next media index honest — otherwise navigation can
+      // serve the deleted entry for up to its 10s staleness window.
+      mediaNav?.refreshIndex(true);
+
       // Refresh spreadsheet to update inventory items
       if (refreshSpreadsheet) {
         try {
@@ -437,6 +442,8 @@ const VideoRecordingsTab = ({
 
       const result = await response.json();
       console.log('✅ Bulk delete successful:', result);
+
+      mediaNav?.refreshIndex(true);
 
       // Clear local state
       setRecordings([]);

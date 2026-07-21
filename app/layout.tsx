@@ -10,6 +10,7 @@ import { SearchProvider } from '@/components/providers/SearchProvider'
 import { FeatureAnnouncementProvider } from '@/components/providers/FeatureAnnouncementProvider'
 import { Toaster } from 'sonner';
 import EmergencyCleanup from '@/components/EmergencyCleanup';
+import ClientErrorReporter from '@/components/ClientErrorReporter';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -37,6 +38,7 @@ export default function RootLayout({
       <html lang="en">
         <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
           <EmergencyCleanup />
+          <ClientErrorReporter />
           <OrganizationDataProvider>
             <FeatureAnnouncementProvider>
               <SearchProvider>

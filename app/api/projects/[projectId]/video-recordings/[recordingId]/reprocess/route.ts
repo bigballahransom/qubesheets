@@ -70,6 +70,33 @@ export async function POST(
       );
     }
 
+    // Verify the source file actually exists before wiping segments/items and
+    // queueing a run that is guaranteed to fail on NoSuchKey. Only a
+    // definitive 404 blocks reprocessing — any other HEAD error (403 without
+    // s3:ListBucket, throttle, network) fails open and proceeds as before.
+    const s3Bucket = process.env.AWS_S3_BUCKET_NAME || 'qubesheets';
+    try {
+      const s3 = new AWS.S3({ region: process.env.AWS_REGION || 'us-east-1' });
+      await s3.headObject({ Bucket: s3Bucket, Key: videoS3Key }).promise();
+    } catch (headErr: any) {
+      if (headErr?.code === 'NotFound' || headErr?.code === 'NoSuchKey' || headErr?.statusCode === 404) {
+        await VideoRecording.findByIdAndUpdate(recording._id, {
+          status: 'failed',
+          error: 'Source video file does not exist in S3 — no video was captured',
+          'analysisResult.status': 'failed',
+          'analysisResult.error': 'Source video file does not exist in S3',
+          'processingPipeline.status': 'failed',
+          'processingPipeline.error': 'Source video file does not exist in S3',
+          'processingPipeline.completedAt': new Date()
+        });
+        return NextResponse.json(
+          { error: 'The source video file no longer exists in storage, so this recording cannot be reprocessed.' },
+          { status: 400 }
+        );
+      }
+      console.warn(`⚠️ S3 HEAD check errored during reprocess (${headErr?.code || headErr?.message}) — failing open, proceeding`);
+    }
+
     console.log(`🔄 Reprocessing video recording ${recordingId}`);
 
     // Delete old CallAnalysisSegment records
