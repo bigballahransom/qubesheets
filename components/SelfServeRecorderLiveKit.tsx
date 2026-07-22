@@ -5,6 +5,8 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSelfServeRecordingLiveKit } from '@/lib/hooks/useSelfServeRecordingLiveKit';
+import { useSelfServeLocalRecording } from '@/lib/hooks/useSelfServeLocalRecording';
+import { SelfServeLocalRecorder } from '@/lib/selfServeLocalRecorder';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDetection';
@@ -48,6 +50,11 @@ interface SelfServeRecorderLiveKitProps {
    *  Replaces the "Recording Complete! / Upload more" CTA on the complete
    *  screen with a "Back to project" button that routes to this URL. */
   walkthroughReturnUrl?: string;
+  /** Opt into the local-first capture engine (records on-device, uploads
+   *  resumable multipart — immune to signal drops). Also enabled via
+   *  ?capture=local for testing. Falls back to LiveKit when the browser
+   *  lacks MediaRecorder/IndexedDB support. */
+  preferLocalCapture?: boolean;
 }
 
 export function SelfServeRecorderLiveKit({
@@ -57,10 +64,23 @@ export function SelfServeRecorderLiveKit({
   onComplete,
   onCancel,
   companyName,
-  walkthroughReturnUrl
+  walkthroughReturnUrl,
+  preferLocalCapture = false
 }: SelfServeRecorderLiveKitProps) {
   const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
+
+  // Engine selection, decided once on mount: local-first capture when opted
+  // in (prop or ?capture=local) AND the browser supports it; otherwise the
+  // LiveKit egress path. Both hooks are instantiated (hooks can't be
+  // conditional) but only the selected one is ever initialized.
+  const [useLocalEngine] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const requested =
+      preferLocalCapture ||
+      new URLSearchParams(window.location.search).get('capture') === 'local';
+    return requested && SelfServeLocalRecorder.isSupported();
+  });
 
   const [videoReady, setVideoReady] = useState(false);
 
@@ -112,6 +132,18 @@ export function SelfServeRecorderLiveKit({
     };
   }, []);
 
+  const engineOptions = {
+    uploadToken,
+    maxDuration,
+    onRecordingComplete: (sid?: string) => {
+      onComplete?.(sid);
+    },
+    onDurationWarning: (warning: any, remaining: number) => {
+      console.log(`Duration warning: ${warning}, ${remaining}s remaining`);
+    }
+  };
+  const livekitEngine = useSelfServeRecordingLiveKit(engineOptions);
+  const localEngine = useSelfServeLocalRecording(engineOptions);
   const {
     status,
     isRecording,
@@ -121,24 +153,13 @@ export function SelfServeRecorderLiveKit({
     remainingTime,
     videoRef,
     sessionId,
-    connectionState,
-    facingMode,
     cameraInterrupted,
     initialize,
     startRecording,
     stopRecording,
-    flipCamera,
     error
-  } = useSelfServeRecordingLiveKit({
-    uploadToken,
-    maxDuration,
-    onRecordingComplete: (sid) => {
-      onComplete?.(sid);
-    },
-    onDurationWarning: (warning, remaining) => {
-      console.log(`Duration warning: ${warning}, ${remaining}s remaining`);
-    }
-  });
+  } = useLocalEngine ? localEngine : livekitEngine;
+  const uploadProgress = useLocalEngine ? localEngine.uploadProgress : null;
 
   // Format duration as MM:SS
   const formatDuration = (seconds: number): string => {
@@ -418,10 +439,25 @@ export function SelfServeRecorderLiveKit({
         }}
       >
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Processing Recording</h2>
+        <h2 className="text-xl font-semibold mb-2">
+          {uploadProgress !== null && uploadProgress < 100 ? 'Saving Your Video' : 'Processing Recording'}
+        </h2>
         <p className="text-gray-400 text-center max-w-sm">
-          Please wait while we process your video...
+          {uploadProgress !== null && uploadProgress < 100
+            ? 'Uploading your recording — keep this page open. This works even on a slow connection.'
+            : 'Please wait while we process your video...'}
         </p>
+        {uploadProgress !== null && uploadProgress < 100 && (
+          <div className="mt-4 w-full max-w-xs">
+            <div className="h-2 rounded-full bg-gray-700 overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+            <p className="text-center text-sm text-gray-400 mt-2">{uploadProgress}%</p>
+          </div>
+        )}
         <div className="mt-4 bg-gray-800 rounded-lg p-4 text-center">
           <p className="text-sm text-gray-400">Recording duration</p>
           <p className="text-2xl font-mono">{formatDuration(duration)}</p>

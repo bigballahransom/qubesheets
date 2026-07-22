@@ -9,7 +9,7 @@ import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDe
  * Used to surface device/failure info from real customers' devices in the
  * server log without remote-debugging access. Never throws, never awaits.
  */
-function sendTelemetry(uploadToken: string, payload: Record<string, unknown>) {
+export function sendTelemetry(uploadToken: string, payload: Record<string, unknown>) {
   if (typeof window === 'undefined') return;
   try {
     const body = JSON.stringify({
