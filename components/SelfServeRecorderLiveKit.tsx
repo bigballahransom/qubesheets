@@ -50,10 +50,8 @@ interface SelfServeRecorderLiveKitProps {
    *  Replaces the "Recording Complete! / Upload more" CTA on the complete
    *  screen with a "Back to project" button that routes to this URL. */
   walkthroughReturnUrl?: string;
-  /** Opt into the local-first capture engine (records on-device, uploads
-   *  resumable multipart — immune to signal drops). Also enabled via
-   *  ?capture=local for testing. Falls back to LiveKit when the browser
-   *  lacks MediaRecorder/IndexedDB support. */
+  /** DEPRECATED (local capture is now the default engine) — kept so existing
+   *  call sites compile. Use ?capture=livekit to force the legacy engine. */
   preferLocalCapture?: boolean;
 }
 
@@ -70,16 +68,24 @@ export function SelfServeRecorderLiveKit({
   const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
 
-  // Engine selection, decided once on mount: local-first capture when opted
-  // in (prop or ?capture=local) AND the browser supports it; otherwise the
-  // LiveKit egress path. Both hooks are instantiated (hooks can't be
-  // conditional) but only the selected one is ever initialized.
-  const [useLocalEngine] = useState<boolean>(() => {
+  // Engine selection, decided once on mount. Local-first capture (on-device
+  // MediaRecorder → IndexedDB → resumable S3 multipart) is the DEFAULT: it
+  // records at full quality regardless of signal. The LiveKit egress engine
+  // remains only as a kill-switch (?capture=livekit) and for browsers
+  // without MediaRecorder/IndexedDB — and those are first offered the
+  // upload-a-video path instead, which preserves the same
+  // quality-independent-of-signal property via the native camera app.
+  // Both hooks are instantiated (hooks can't be conditional) but only the
+  // selected engine is ever initialized.
+  const [useLocalEngine, setUseLocalEngine] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    const requested =
-      preferLocalCapture ||
-      new URLSearchParams(window.location.search).get('capture') === 'local';
-    return requested && SelfServeLocalRecorder.isSupported();
+    if (new URLSearchParams(window.location.search).get('capture') === 'livekit') return false;
+    return SelfServeLocalRecorder.isSupported();
+  });
+  const [showUnsupportedNotice, setShowUnsupportedNotice] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    if (new URLSearchParams(window.location.search).get('capture') === 'livekit') return false;
+    return !SelfServeLocalRecorder.isSupported();
   });
 
   const [videoReady, setVideoReady] = useState(false);
@@ -96,10 +102,13 @@ export function SelfServeRecorderLiveKit({
   useEffect(() => {
     pingTelemetry(uploadToken, {
       event: 'recorder_mounted',
+      engine: useLocalEngine ? 'local' : 'livekit',
+      localCaptureSupported: SelfServeLocalRecorder.isSupported(),
       browser: getBrowser(),
       platform: isIOS() ? 'iOS' : isAndroid() ? 'Android' : 'Other',
       inAppBrowser: detectInAppBrowser()
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploadToken]);
 
   // Set body/html background color to match iOS Safari dark mode
@@ -202,6 +211,50 @@ export function SelfServeRecorderLiveKit({
       startRecording();
     }
   }, [status, showInstructions, startRecording]);
+
+  // Unsupported-browser notice: this device can't run on-device capture.
+  // Steer to the upload path first (native camera app → file upload keeps
+  // full quality regardless of signal); live LiveKit recording remains as
+  // the last-resort option.
+  if (showUnsupportedNotice && onCancel) {
+    return (
+      <div
+        className="fixed inset-0 flex flex-col bg-gray-900 text-white p-6 items-center justify-center"
+        style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
+      >
+        <div className="w-full max-w-sm flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mb-6">
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold mb-2">Record with your camera app</h2>
+          <p className="text-gray-400 mb-6">
+            This browser can&apos;t record in the page. For the best quality,
+            record your walkthrough with your phone&apos;s camera app, then
+            upload the video here.
+          </p>
+          <div className="w-full flex flex-col gap-3">
+            <Button
+              onClick={onCancel}
+              size="lg"
+              className="w-full bg-blue-600 hover:bg-blue-700"
+            >
+              Upload a video instead
+            </Button>
+            <Button
+              onClick={() => setShowUnsupportedNotice(false)}
+              variant="outline"
+              size="lg"
+              className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+            >
+              Try live recording
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Instructions screen
   if (showInstructions) {
