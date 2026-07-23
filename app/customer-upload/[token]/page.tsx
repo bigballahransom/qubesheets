@@ -35,6 +35,9 @@ interface UploadValidation {
   // redirects back to /projects/{projectId} instead of looping back to the
   // upload choice screen.
   isWalkthrough?: boolean;
+  // Org-allowlisted rollout: local-first capture engine + recorder
+  // hardening. False/absent → the pre-existing LiveKit flow, untouched.
+  newCaptureExperience?: boolean;
   // Org-level master switch. When false, the choice screen hides photo
   // capture and 'files'-only links short-circuit to a "photos disabled"
   // empty state.
@@ -194,7 +197,8 @@ export default function CustomerUploadPage() {
             recordingInstructions: data.recordingInstructions,
             maxRecordingDuration: data.maxRecordingDuration || 1200,
             isWalkthrough: !!data.isWalkthrough,
-            photosEnabled: data.photosEnabled !== false
+            photosEnabled: data.photosEnabled !== false,
+            newCaptureExperience: !!data.newCaptureExperience
           });
           
           // Set project ID for SSE connection
@@ -716,6 +720,7 @@ export default function CustomerUploadPage() {
         onComplete={handleRecordingComplete}
         onCancel={() => setViewMode('choice')}
         walkthroughReturnUrl={walkthroughReturnUrl}
+        newCaptureExperience={!!validation.newCaptureExperience}
       />
     );
   }

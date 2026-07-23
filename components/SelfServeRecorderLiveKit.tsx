@@ -50,9 +50,14 @@ interface SelfServeRecorderLiveKitProps {
    *  Replaces the "Recording Complete! / Upload more" CTA on the complete
    *  screen with a "Back to project" button that routes to this URL. */
   walkthroughReturnUrl?: string;
-  /** DEPRECATED (local capture is now the default engine) — kept so existing
-   *  call sites compile. Use ?capture=livekit to force the legacy engine. */
-  preferLocalCapture?: boolean;
+  /** Org-allowlisted rollout flag (from the upload link's validate API).
+   *  True → the new capture experience: local-first engine on capable
+   *  browsers, upload-steering on incapable ones, and recorder reliability
+   *  hardening (wake lock, camera watchdog, short-stop guard).
+   *  False → the pre-existing LiveKit flow, pixel-identical.
+   *  Overrides for testing: ?capture=local forces the new experience,
+   *  ?capture=livekit forces legacy. */
+  newCaptureExperience?: boolean;
 }
 
 export function SelfServeRecorderLiveKit({
@@ -63,30 +68,33 @@ export function SelfServeRecorderLiveKit({
   onCancel,
   companyName,
   walkthroughReturnUrl,
-  preferLocalCapture = false
+  newCaptureExperience = false
 }: SelfServeRecorderLiveKitProps) {
   const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
 
-  // Engine selection, decided once on mount. Local-first capture (on-device
-  // MediaRecorder → IndexedDB → resumable S3 multipart) is the DEFAULT: it
-  // records at full quality regardless of signal. The LiveKit egress engine
-  // remains only as a kill-switch (?capture=livekit) and for browsers
-  // without MediaRecorder/IndexedDB — and those are first offered the
-  // upload-a-video path instead, which preserves the same
-  // quality-independent-of-signal property via the native camera app.
+  // Engine selection, decided once on mount, gated by the org-allowlisted
+  // `newCaptureExperience` flag. Flagged orgs get local-first capture
+  // (on-device MediaRecorder → IndexedDB → resumable S3 multipart — full
+  // quality regardless of signal) on capable browsers, and upload-steering
+  // on incapable ones. Unflagged orgs keep the pre-existing LiveKit flow
+  // untouched. ?capture=local / ?capture=livekit override for testing.
   // Both hooks are instantiated (hooks can't be conditional) but only the
   // selected engine is ever initialized.
-  const [useLocalEngine, setUseLocalEngine] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    if (new URLSearchParams(window.location.search).get('capture') === 'livekit') return false;
-    return SelfServeLocalRecorder.isSupported();
+  const [{ newExperienceActive, useLocalEngine, unsupportedOnMount }] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { newExperienceActive: false, useLocalEngine: false, unsupportedOnMount: false };
+    }
+    const param = new URLSearchParams(window.location.search).get('capture');
+    const requested = param === 'livekit' ? false : (newCaptureExperience || param === 'local');
+    const supported = SelfServeLocalRecorder.isSupported();
+    return {
+      newExperienceActive: requested,
+      useLocalEngine: requested && supported,
+      unsupportedOnMount: requested && !supported
+    };
   });
-  const [showUnsupportedNotice, setShowUnsupportedNotice] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    if (new URLSearchParams(window.location.search).get('capture') === 'livekit') return false;
-    return !SelfServeLocalRecorder.isSupported();
-  });
+  const [showUnsupportedNotice, setShowUnsupportedNotice] = useState<boolean>(unsupportedOnMount);
 
   const [videoReady, setVideoReady] = useState(false);
 
@@ -151,7 +159,12 @@ export function SelfServeRecorderLiveKit({
       console.log(`Duration warning: ${warning}, ${remaining}s remaining`);
     }
   };
-  const livekitEngine = useSelfServeRecordingLiveKit(engineOptions);
+  const livekitEngine = useSelfServeRecordingLiveKit({
+    ...engineOptions,
+    // Wake lock + camera watchdog only for the new-experience rollout —
+    // legacy orgs keep the exact pre-existing LiveKit behavior.
+    enhancedReliability: newExperienceActive
+  });
   const localEngine = useSelfServeLocalRecording(engineOptions);
   const {
     status,
@@ -369,7 +382,7 @@ export function SelfServeRecorderLiveKit({
           <Button onClick={() => window.location.reload()} variant="outline" className="w-full">
             Try Again
           </Button>
-          {onCancel && (
+          {newExperienceActive && onCancel && (
             <Button
               onClick={onCancel}
               variant="outline"
@@ -677,7 +690,7 @@ export function SelfServeRecorderLiveKit({
         {isRecording && (
           <button
             onClick={() => {
-              if (duration < MIN_STOP_SECONDS) {
+              if (newExperienceActive && duration < MIN_STOP_SECONDS) {
                 setConfirmShortStop(true);
                 return;
               }

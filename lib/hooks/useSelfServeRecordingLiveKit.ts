@@ -70,6 +70,12 @@ export interface UseSelfServeRecordingLiveKitOptions {
   onRecordingComplete?: (sessionId?: string) => void;
   onError?: (error: Error) => void;
   onDurationWarning?: (warning: 'none' | '2min' | '1min' | '30sec', remaining: number) => void;
+  /** Org-rollout gate for the reliability hardening (screen wake lock +
+   *  camera-dead watchdog with auto-stop). False (default) preserves the
+   *  exact pre-rollout behavior. Stage timeouts and telemetry are NOT
+   *  gated — they only change outcomes that were already broken (infinite
+   *  hangs) and are invisible otherwise. */
+  enhancedReliability?: boolean;
 }
 
 export interface UseSelfServeRecordingLiveKitReturn {
@@ -113,7 +119,8 @@ export function useSelfServeRecordingLiveKit({
   maxDuration = 1200,
   onRecordingComplete,
   onError,
-  onDurationWarning
+  onDurationWarning,
+  enhancedReliability = false
 }: UseSelfServeRecordingLiveKitOptions): UseSelfServeRecordingLiveKitReturn {
   // State
   const [status, setStatus] = useState<RecordingStatus>('idle');
@@ -169,6 +176,7 @@ export function useSelfServeRecordingLiveKit({
   // visibilitychange. Best-effort: unsupported browsers just keep today's
   // behavior.
   const acquireWakeLock = useCallback(async () => {
+    if (!enhancedReliability) return; // rollout-gated
     try {
       if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
         wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
@@ -176,7 +184,7 @@ export function useSelfServeRecordingLiveKit({
     } catch {
       /* denied or unsupported — non-fatal */
     }
-  }, []);
+  }, [enhancedReliability]);
 
   const releaseWakeLock = useCallback(() => {
     try { wakeLockRef.current?.release(); } catch {}
@@ -189,6 +197,7 @@ export function useSelfServeRecordingLiveKit({
   }, []);
 
   const onCameraDead = useCallback(() => {
+    if (!enhancedReliability) return; // rollout-gated
     if (statusRef.current !== 'recording') return;
     if (interruptWarnTimerRef.current || deadVideoStopTimerRef.current) return; // already tracking
     // Small delay so a camera flip's transient unpublish doesn't flash the warning.
@@ -205,7 +214,7 @@ export function useSelfServeRecordingLiveKit({
         stopRecordingRef.current();
       }, DEAD_VIDEO_AUTO_STOP_MS);
     }, INTERRUPT_WARN_DELAY_MS);
-  }, [uploadToken]);
+  }, [uploadToken, enhancedReliability]);
 
   const onCameraAlive = useCallback(() => {
     clearWatchdogTimers();

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import { logUploadLinkVisited } from '@/lib/activity-logger';
+import { isNewCaptureExperienceEnabled } from '@/lib/featureFlags';
 
 // Import models in order to ensure proper registration - Project must be first
 import Project from '@/models/Project';
@@ -195,6 +196,11 @@ export async function GET(
       // Page uses this to swap "Upload more" → "Back to project" CTAs and
       // server-side SMS suppression is keyed on the same flag.
       isWalkthrough: !!customerUpload.isWalkthrough,
+
+      // Org-allowlisted rollout of the new capture experience (local-first
+      // recording engine + recorder hardening). Everyone else keeps the
+      // existing LiveKit flow exactly as-is. See lib/featureFlags.ts.
+      newCaptureExperience: isNewCaptureExperienceEnabled(customerUpload.organizationId),
 
       // Org-level photo master switch. Default true; client hides photo
       // capture entirely when this resolves to false.
