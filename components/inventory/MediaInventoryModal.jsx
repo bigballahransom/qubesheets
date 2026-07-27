@@ -331,8 +331,21 @@ export default function MediaInventoryModal({
   // The stack layout (small screens) has no arrows — a horizontal swipe
   // flips media instead. The gesture requires clear horizontal dominance
   // (so vertical scrolling is untouched) and ignores touches that start
-  // on the video (native scrubber drags), sliders, or form fields.
+  // on the video (native scrubber drags), sliders, form fields, or inside
+  // a horizontally scrollable region (panning a wide table IS a
+  // horizontal gesture — RoomItemsTable's overflow-x-auto wrapper on a
+  // phone — and must scroll the table, never flip media, even when the
+  // scroller is already at its far edge).
   const swipeEnabled = hasNavigation && !useResizableLayout;
+  const startsInsideHorizontalScroller = (target, boundary) => {
+    for (let el = target; el && el !== boundary; el = el.parentElement) {
+      if (el.scrollWidth > el.clientWidth + 1) {
+        const overflowX = getComputedStyle(el).overflowX;
+        if (overflowX === 'auto' || overflowX === 'scroll') return true;
+      }
+    }
+    return false;
+  };
   const handleTouchStart = (e) => {
     if (!swipeEnabled || e.touches.length !== 1) {
       touchStartRef.current = null;
@@ -341,7 +354,8 @@ export default function MediaInventoryModal({
     const target = e.target;
     if (
       target instanceof HTMLElement &&
-      target.closest('video, input, textarea, select, [role="slider"]')
+      (target.closest('video, input, textarea, select, [role="slider"], [data-media-swipe-ignore]') ||
+        startsInsideHorizontalScroller(target, e.currentTarget))
     ) {
       touchStartRef.current = null;
       return;
