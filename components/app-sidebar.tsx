@@ -74,6 +74,10 @@ interface Project {
       synced: boolean;
       syncedAt: string;
     };
+    moverightSync?: {
+      synced: boolean;
+      syncedAt: string;
+    };
   };
 }
 
@@ -93,12 +97,12 @@ type ProjectFilter = 'mine' | 'all' | 'unassigned';
 let projectsCache: Project[] | null = null;
 
 function readStoredFilter(): ProjectFilter {
-  if (typeof window === 'undefined') return 'mine';
+  if (typeof window === 'undefined') return 'all';
   try {
     const stored = window.localStorage.getItem(FILTER_STORAGE_KEY);
     if (stored === 'mine' || stored === 'all' || stored === 'unassigned') return stored;
   } catch {}
-  return 'mine';
+  return 'all';
 }
 
 export function AppSidebar() {
@@ -144,6 +148,31 @@ export function AppSidebar() {
     
     window.addEventListener('organizationDataRefresh', handleDataRefresh);
     return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
+  }, []);
+
+  // Listen for CRM sync completions and patch the affected project's
+  // metadata in place, so the synced icon appears instantly. Deliberately
+  // NOT a refetch: organizationDataRefresh drops the cache and flashes the
+  // skeleton (right for org switches, jarring after a sync), and a refetch
+  // would also re-sort the list mid-view.
+  useEffect(() => {
+    const handleSyncStatusChanged = (event: Event) => {
+      const detail = (event as CustomEvent).detail as
+        | { projectId?: string; metadataPatch?: Record<string, unknown> }
+        | undefined;
+      if (!detail?.projectId || !detail.metadataPatch) return;
+      const patch = (list: Project[]) =>
+        list.map((p) =>
+          p._id === detail.projectId
+            ? { ...p, metadata: { ...p.metadata, ...detail.metadataPatch } }
+            : p
+        );
+      if (projectsCache) projectsCache = patch(projectsCache);
+      setProjects((prev) => patch(prev));
+    };
+
+    window.addEventListener('projectSyncStatusChanged', handleSyncStatusChanged);
+    return () => window.removeEventListener('projectSyncStatusChanged', handleSyncStatusChanged);
   }, []);
   
   // Set active project based on URL
@@ -521,6 +550,7 @@ export function AppSidebar() {
                       const isSyncedToSupermove = !!project.metadata?.supermoveSync?.synced;
                       const isSyncedToChariot = !!project.metadata?.chariotSync?.synced;
                       const isSyncedToMoverbase = !!project.metadata?.moverbaseSync?.synced;
+                      const isSyncedToMoveright = !!project.metadata?.moverightSync?.synced;
 
                       return (
                         <li key={project._id}>
@@ -573,6 +603,18 @@ export function AppSidebar() {
                                       src="/moverbasetiny.png"
                                       alt="Synced to Moverbase"
                                       width={14}
+                                      height={14}
+                                      className="flex-shrink-0"
+                                    />
+                                  </span>
+                                )}
+                                {isSyncedToMoveright && (
+                                  <span title="Synced with MoveRight">
+                                    {/* moverighttiny.png is a wide wordmark, not a square mark */}
+                                    <Image
+                                      src="/moverighttiny.png"
+                                      alt="Synced to MoveRight"
+                                      width={28}
                                       height={14}
                                       className="flex-shrink-0"
                                     />

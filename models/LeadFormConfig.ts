@@ -57,6 +57,12 @@ export interface ILeadFormConfigCrmRouting {
     // Numeric Moverbase referral id (GET /v1/referrals); stored as a string
     referralId?: string;
   };
+  moveright?: {
+    // Per-form intake token override (`lead_...`). MoveRight tokens encode
+    // the referral source, so per-form tokens are how leads get attributed
+    // per form. Falls back to the integration-level token when empty.
+    intakeToken?: string;
+  };
 }
 
 export interface PostSubmitBusinessHours {

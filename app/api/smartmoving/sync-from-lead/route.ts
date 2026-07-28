@@ -430,7 +430,8 @@ export async function POST(request: NextRequest) {
         matchedLead.id,
         conversionData,
         smartMovingApiKey,
-        smartMovingClientId
+        smartMovingClientId,
+        { integrationId: integration._id.toString() }
       );
 
       if (!conversionResult.success || !conversionResult.opportunityId) {
@@ -530,7 +531,8 @@ export async function POST(request: NextRequest) {
           matchedLead.id,
           conversionData,
           smartMovingApiKey,
-          smartMovingClientId
+          smartMovingClientId,
+          { integrationId: integration._id.toString() }
         );
 
         if (!conversionResult.success || !conversionResult.opportunityId) {
@@ -681,6 +683,7 @@ export async function POST(request: NextRequest) {
       opportunityId,
       customerId,
       leadId,
+      quoteNumber,
       customerName,
       usedExistingOpportunity, // True if we used an existing opportunity (vs converting a lead)
       inventorySynced: inventorySyncResult.success,

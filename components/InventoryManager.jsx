@@ -33,6 +33,7 @@ import SupermoveSyncModal from './modals/SupermoveSyncModal';
 import SmartMovingSyncModal from './modals/SmartMovingSyncModal';
 import ChariotSyncModal from './modals/ChariotSyncModal';
 import MoverbaseSyncModal from './modals/MoverbaseSyncModal';
+import MoverightSyncModal from './modals/MoverightSyncModal';
 import EditProjectDetailsModal from './modals/EditProjectDetailsModal';
 import { MediaNavigationProvider } from './inventory/ProjectMediaNavigation';
 import InventoryNotes from './InventoryNotes';
@@ -262,6 +263,10 @@ const [moverbaseEnabled, setMoverbaseEnabled] = useState(false);
 const [moverbaseSyncStatus, setMoverbaseSyncStatus] = useState(null);
 const [moverbaseLoading, setMoverbaseLoading] = useState(false);
 const [moverbaseSyncModalOpen, setMoverbaseSyncModalOpen] = useState(false);
+const [moverightEnabled, setMoverightEnabled] = useState(false);
+const [moverightSyncStatus, setMoverightSyncStatus] = useState(null);
+const [moverightLoading, setMoverightLoading] = useState(false);
+const [moverightSyncModalOpen, setMoverightSyncModalOpen] = useState(false);
 const [editProjectModalOpen, setEditProjectModalOpen] = useState(false);
 const [refreshTrigger, setRefreshTrigger] = useState(0); // For cross-device inventory refresh
 const [notesCount, setNotesCount] = useState(0);
@@ -2392,8 +2397,14 @@ useEffect(() => {
 
       if (response.ok) {
         toast.success(`Successfully synced ${data.syncDetails.itemsSynced} items to Supermove!`);
-        // Refresh sync status
+        // Refresh sync status + patch the sidebar's synced icon in place
         await fetchSupermoveSyncStatus();
+        window.dispatchEvent(new CustomEvent('projectSyncStatusChanged', {
+          detail: {
+            projectId: currentProject._id,
+            metadataPatch: { supermoveSync: { synced: true, syncedAt: new Date().toISOString() } },
+          },
+        }));
       } else {
         throw new Error(data.error || 'Sync failed');
       }
@@ -2534,7 +2545,25 @@ useEffect(() => {
 
       if (data.success) {
         toast.success('Successfully synced to SmartMoving!');
+        // Mirror the server's metadata update locally so the quote badge/link
+        // reflects the newly linked record without a page reload.
+        setCurrentProject((prev) => prev && {
+          ...prev,
+          metadata: {
+            ...prev.metadata,
+            ...(data.opportunityId ? { smartMovingOpportunityId: data.opportunityId } : {}),
+            ...(data.leadId ? { smartMovingLeadId: data.leadId } : {}),
+            ...(data.customerId ? { smartMovingCustomerId: data.customerId } : {}),
+            ...(data.quoteNumber ? { smartMovingQuoteNumber: data.quoteNumber } : {}),
+          },
+        });
         await fetchSmartMovingSyncStatus();
+        window.dispatchEvent(new CustomEvent('projectSyncStatusChanged', {
+          detail: {
+            projectId: currentProject._id,
+            metadataPatch: { smartMovingSyncedAt: new Date().toISOString() },
+          },
+        }));
       }
     } catch (error) {
       console.error('SmartMoving sync error:', error);
@@ -2638,6 +2667,12 @@ useEffect(() => {
         );
         setChariotSyncModalOpen(false);
         await fetchChariotSyncStatus();
+        window.dispatchEvent(new CustomEvent('projectSyncStatusChanged', {
+          detail: {
+            projectId: currentProject._id,
+            metadataPatch: { chariotSync: { synced: true, syncedAt: new Date().toISOString() } },
+          },
+        }));
       } catch (error) {
         console.error('Chariot sync error:', error);
         toast.error(error.message || 'Failed to sync to Chariot');
@@ -2732,6 +2767,12 @@ useEffect(() => {
         );
         setMoverbaseSyncModalOpen(false);
         await fetchMoverbaseSyncStatus();
+        window.dispatchEvent(new CustomEvent('projectSyncStatusChanged', {
+          detail: {
+            projectId: currentProject._id,
+            metadataPatch: { moverbaseSync: { synced: true, syncedAt: new Date().toISOString() } },
+          },
+        }));
       } catch (error) {
         console.error('Moverbase sync error:', error);
         toast.error(error.message || 'Failed to sync to Moverbase');
@@ -2755,6 +2796,107 @@ useEffect(() => {
       fetchMoverbaseSyncStatus();
     }
   }, [moverbaseEnabled, fetchMoverbaseSyncStatus]);
+
+  // MoveRight Integration Functions
+  const checkMoverightIntegration = useCallback(async () => {
+    if (!currentProject?.organizationId) return;
+    try {
+      const response = await fetch(`/api/organizations/${currentProject.organizationId}/moveright`);
+      if (response.ok) {
+        const data = await response.json();
+        setMoverightEnabled(!!(data.enabled && data.configured));
+      }
+    } catch (error) {
+      console.error('Error checking MoveRight integration:', error);
+      setMoverightEnabled(false);
+    }
+  }, [currentProject?.organizationId]);
+
+  const fetchMoverightSyncStatus = useCallback(async () => {
+    if (!currentProject?._id || !moverightEnabled) return;
+    try {
+      const response = await fetch(`/api/moveright/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setMoverightSyncStatus(data);
+      }
+    } catch (error) {
+      console.error('Error fetching MoveRight sync status:', error);
+    }
+  }, [currentProject?._id, moverightEnabled]);
+
+  const handleMoverightSync = useCallback(async () => {
+    if (!currentProject?._id) return;
+    // Refresh status so the modal opens with current stats + linked job.
+    try {
+      const response = await fetch(`/api/moveright/sync-inventory?projectId=${currentProject._id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setMoverightSyncStatus(data);
+        if (!data.inventoryStats?.goingItems) {
+          toast.error('No items marked as going to sync to MoveRight');
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Error pre-fetching MoveRight status:', error);
+    }
+    setMoverightSyncModalOpen(true);
+  }, [currentProject?._id]);
+
+  const handleMoverightSyncConfirm = useCallback(
+    async (jobId, jobCode, syncOptions) => {
+      if (!currentProject?._id) return;
+      setMoverightLoading(true);
+      try {
+        const response = await fetch('/api/moveright/sync-inventory', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: currentProject._id,
+            jobId,
+            jobCode,
+            syncOptions,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || data.error || 'MoveRight sync failed');
+        }
+        toast.success(
+          `Successfully synced ${data.syncDetails?.itemsSynced ?? ''} items to MoveRight!`
+        );
+        setMoverightSyncModalOpen(false);
+        await fetchMoverightSyncStatus();
+        window.dispatchEvent(new CustomEvent('projectSyncStatusChanged', {
+          detail: {
+            projectId: currentProject._id,
+            metadataPatch: { moverightSync: { synced: true, syncedAt: new Date().toISOString() } },
+          },
+        }));
+      } catch (error) {
+        console.error('MoveRight sync error:', error);
+        toast.error(error.message || 'Failed to sync to MoveRight');
+      } finally {
+        setMoverightLoading(false);
+      }
+    },
+    [currentProject?._id, fetchMoverightSyncStatus]
+  );
+
+  // Check MoveRight integration when project loads
+  useEffect(() => {
+    if (currentProject) {
+      checkMoverightIntegration();
+    }
+  }, [currentProject, checkMoverightIntegration]);
+
+  // Fetch MoveRight sync status when enabled
+  useEffect(() => {
+    if (moverightEnabled) {
+      fetchMoverightSyncStatus();
+    }
+  }, [moverightEnabled, fetchMoverightSyncStatus]);
 
   // Memoize filtered inventory for galleries to prevent re-renders when parent state changes
   const imageInventoryItems = useMemo(() => {
@@ -4710,9 +4852,25 @@ const ProcessingNotification = () => {
             onNameChange={updateProjectName}
           />
           {currentProject.metadata?.smartMovingQuoteNumber && (
-            <span title="SmartMoving Quote Number" className="ml-2 px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded-full cursor-help">
-              #{currentProject.metadata.smartMovingQuoteNumber}
-            </span>
+            // Leads share their record id with the opportunity in SmartMoving
+            // (status-0 leads resolve at /opportunities/{id} too), so either
+            // id slot makes the badge linkable — leadId is what webhook-created
+            // projects have before their first sync converts the lead.
+            (currentProject.metadata?.smartMovingOpportunityId || currentProject.metadata?.smartMovingLeadId) ? (
+              <a
+                href={`https://app.smartmoving.com/opportunities/${currentProject.metadata.smartMovingOpportunityId || currentProject.metadata.smartMovingLeadId}/sales`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in SmartMoving"
+                className="ml-2 px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded-full hover:bg-blue-200 hover:underline"
+              >
+                #{currentProject.metadata.smartMovingQuoteNumber}
+              </a>
+            ) : (
+              <span title="SmartMoving Quote Number" className="ml-2 px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded-full cursor-help">
+                #{currentProject.metadata.smartMovingQuoteNumber}
+              </span>
+            )
           )}
           {(currentProject.metadata?.chariotSync?.jobId || chariotSyncStatus?.jobId) && (
             <span title="Chariot Job ID" className="ml-2 px-2 py-0.5 text-xs font-medium text-red-700 bg-red-100 rounded-full cursor-help">
@@ -4730,6 +4888,11 @@ const ProcessingNotification = () => {
           {(currentProject.metadata?.moverbaseSync?.jobId || moverbaseSyncStatus?.jobId) && (
             <span title="Moverbase Job ID" className="ml-2 px-2 py-0.5 text-xs font-medium text-orange-700 bg-orange-100 rounded-full cursor-help">
               Moverbase #{currentProject.metadata?.moverbaseSync?.jobId || moverbaseSyncStatus?.jobId}
+            </span>
+          )}
+          {(currentProject.metadata?.moverightSync?.jobCode || moverightSyncStatus?.jobCode) && (
+            <span title="MoveRight Job Code" className="ml-2 px-2 py-0.5 text-xs font-medium text-teal-700 bg-teal-100 rounded-full cursor-help">
+              MoveRight {currentProject.metadata?.moverightSync?.jobCode || moverightSyncStatus?.jobCode}
             </span>
           )}
           <TooltipProvider>
@@ -4944,6 +5107,32 @@ const ProcessingNotification = () => {
                     <>
                       <ExternalLink size={16} className="mr-1" />
                       Sync to Moverbase
+                    </>
+                  )}
+                </MenubarItem>
+              </>
+            )}
+            {moverightEnabled && (
+              <>
+                <MenubarSeparator />
+                <MenubarItem
+                  onClick={handleMoverightSync}
+                  disabled={moverightLoading}
+                >
+                  {moverightLoading ? (
+                    <>
+                      <Loader2 size={16} className="mr-1 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : moverightSyncStatus?.isSynced ? (
+                    <>
+                      <RefreshCw size={16} className="mr-1" />
+                      Re-sync to MoveRight
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink size={16} className="mr-1" />
+                      Sync to MoveRight
                     </>
                   )}
                 </MenubarItem>
@@ -5456,6 +5645,20 @@ const ProcessingNotification = () => {
   initialJobId={moverbaseSyncStatus?.jobId || ''}
   isResync={!!moverbaseSyncStatus?.isSynced}
   previousSyncedAt={moverbaseSyncStatus?.syncDetails?.syncedAt}
+/>
+
+{/* MoveRight Sync Modal */}
+<MoverightSyncModal
+  open={moverightSyncModalOpen}
+  onOpenChange={setMoverightSyncModalOpen}
+  onSync={handleMoverightSyncConfirm}
+  loading={moverightLoading}
+  inventoryStats={moverightSyncStatus?.inventoryStats || computedInventoryStats}
+  customer={moverightSyncStatus?.customer || {}}
+  initialJobId={moverightSyncStatus?.jobId || ''}
+  initialJobCode={moverightSyncStatus?.jobCode || ''}
+  isResync={!!moverightSyncStatus?.isSynced}
+  previousSyncedAt={moverightSyncStatus?.syncDetails?.syncedAt}
 />
 
 {/* Edit Project Details Modal */}

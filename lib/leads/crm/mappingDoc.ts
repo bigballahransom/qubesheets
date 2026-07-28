@@ -12,13 +12,14 @@
 
 import type { FieldKey } from '@/models/LeadFormConfig';
 
-export type CrmKey = 'smartmoving' | 'supermove' | 'chariot' | 'moverbase';
+export type CrmKey = 'smartmoving' | 'supermove' | 'chariot' | 'moverbase' | 'moveright';
 
 export const CRM_DISPLAY_NAME: Record<CrmKey, string> = {
   smartmoving: 'SmartMoving',
   supermove: 'Supermove',
   chariot: 'Chariot',
   moverbase: 'Moverbase',
+  moveright: 'MoveRight',
 };
 
 // Admin-facing names for the underlying fields (labels may be renamed per
@@ -131,6 +132,26 @@ export const CRM_FIELD_MAPPINGS: Record<
       note: 'city/state/ZIP parsed from the address',
     },
   },
+  moveright: {
+    firstName: { target: 'givenName' },
+    lastName: { target: 'familyName' },
+    fullName: {
+      target: 'givenName + familyName',
+      note: 'split on the first space',
+    },
+    email: { target: 'email' },
+    phone: { target: 'phone', note: 'sent as a 10-digit number' },
+    moveDate: { target: 'moveDate' },
+    moveSize: { target: 'homeSize' },
+    origin: {
+      target: 'originAddress',
+      note: 'ZIP also sent as areaCode when present',
+    },
+    destination: {
+      target: 'destAddress',
+      note: 'ZIP also sent as destinationAreaCode when present',
+    },
+  },
 };
 
 /**
@@ -171,6 +192,13 @@ export const CRM_REQUIREMENTS: Record<CrmKey, CrmRequirement[]> = {
     { description: 'a phone or email', anyOf: [['phone'], ['email']] },
   ],
   moverbase: [
+    {
+      description: 'a first name (or full name)',
+      anyOf: [['firstName'], ['fullName']],
+    },
+    { description: 'a phone or email', anyOf: [['phone'], ['email']] },
+  ],
+  moveright: [
     {
       description: 'a first name (or full name)',
       anyOf: [['firstName'], ['fullName']],

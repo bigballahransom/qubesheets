@@ -2,7 +2,8 @@
 
 // components/settings/lead-forms/tabs/CrmRoutingTab.tsx
 //
-// Four routing sections (SmartMoving / Supermove / Chariot / Moverbase). Each
+// Five routing sections (SmartMoving / Supermove / Chariot / Moverbase /
+// MoveRight). Each
 // section is gated behind the org actually having that integration configured.
 // We fetch configuration status from existing endpoints on mount. Enabled
 // sections also render a field-mapping table (driven by mappingDoc.ts) so
@@ -47,6 +48,9 @@ interface IntegrationStatus {
   supermove: boolean;
   chariot: boolean;
   moverbase: boolean;
+  // True when MoveRight is connected AND has an intake token — lead routing
+  // uses the intake token, not the GraphQL credentials.
+  moveright: boolean;
   loading: boolean;
 }
 
@@ -62,6 +66,7 @@ export function CrmRoutingTab({
     supermove: false,
     chariot: false,
     moverbase: false,
+    moveright: false,
     loading: true,
   });
 
@@ -94,14 +99,22 @@ export function CrmRoutingTab({
             .catch(() => false)
         : Promise.resolve(false);
 
-      const [smartmoving, supermove, chariot, moverbase] = await Promise.all([
+      const moverightPromise = organization?.id
+        ? fetch(`/api/organizations/${organization.id}/moveright`)
+            .then((r) => (r.ok ? r.json() : { leadRoutingReady: false }))
+            .then((d) => !!d?.leadRoutingReady)
+            .catch(() => false)
+        : Promise.resolve(false);
+
+      const [smartmoving, supermove, chariot, moverbase, moveright] = await Promise.all([
         smartmovingPromise,
         supermovePromise,
         chariotPromise,
         moverbasePromise,
+        moverightPromise,
       ]);
       if (cancelled) return;
-      setStatus({ smartmoving, supermove, chariot, moverbase, loading: false });
+      setStatus({ smartmoving, supermove, chariot, moverbase, moveright, loading: false });
     };
     load();
     return () => {
@@ -113,6 +126,7 @@ export function CrmRoutingTab({
   const supermoveEnabled = !!routing.supermove;
   const chariotEnabled = !!routing.chariot;
   const moverbaseEnabled = !!routing.moverbase;
+  const moverightEnabled = !!routing.moveright;
 
   const toggleSmartmoving = (next: boolean) => {
     if (next) {
@@ -219,6 +233,32 @@ export function CrmRoutingTab({
       ...routing,
       moverbase: {
         ...(routing.moverbase ?? {}),
+        ...patch,
+      },
+    });
+  };
+
+  const toggleMoveright = (next: boolean) => {
+    if (next) {
+      onChange({
+        ...routing,
+        moveright: routing.moveright ?? {
+          intakeToken: '',
+        },
+      });
+    } else {
+      const { moveright: _drop, ...rest } = routing;
+      onChange(rest);
+    }
+  };
+
+  const updateMoveright = (
+    patch: Partial<NonNullable<ILeadFormConfigCrmRouting['moveright']>>
+  ) => {
+    onChange({
+      ...routing,
+      moveright: {
+        ...(routing.moveright ?? {}),
         ...patch,
       },
     });
@@ -518,6 +558,61 @@ export function CrmRoutingTab({
               </div>
             </div>
             <FieldMappingSection crm="moverbase" fields={fields} customFieldCount={customFieldCount} />
+            </>
+          )
+        )}
+      </section>
+
+      {/* MoveRight */}
+      <section className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-start justify-between gap-4 px-6 py-5">
+          <div>
+            <h2 className="text-base font-medium text-gray-900">MoveRight</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Send leads to MoveRight as new jobs via its intake API.
+            </p>
+          </div>
+          <Switch
+            checked={moverightEnabled}
+            disabled={!status.moveright}
+            onCheckedChange={toggleMoveright}
+          />
+        </div>
+
+        {!status.moveright ? (
+          <div className="border-t border-gray-100 px-6 py-4 bg-gray-50/60 text-sm text-gray-600">
+            Connect MoveRight (including an intake token) first.{' '}
+            <Link
+              href="/settings/integrations"
+              className="text-blue-600 hover:underline"
+            >
+              Go to Settings → Integrations
+            </Link>
+            .
+          </div>
+        ) : (
+          moverightEnabled && (
+            <>
+            <div className="border-t border-gray-100 px-6 py-5 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="mr-intake-token">Intake token override</Label>
+                <Input
+                  id="mr-intake-token"
+                  type="text"
+                  value={routing.moveright?.intakeToken ?? ''}
+                  onChange={(e) =>
+                    updateMoveright({ intakeToken: e.target.value })
+                  }
+                  placeholder="Optional — lead_..."
+                />
+                <p className="text-xs text-gray-500">
+                  MoveRight intake tokens encode the referral source, so a
+                  per-form token attributes this form&apos;s leads separately.
+                  Leave blank to use the token from Settings → Integrations.
+                </p>
+              </div>
+            </div>
+            <FieldMappingSection crm="moveright" fields={fields} customFieldCount={customFieldCount} />
             </>
           )
         )}

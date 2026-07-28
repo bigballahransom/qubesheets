@@ -275,6 +275,20 @@ function validateCrmRouting(v: unknown): string | null {
       }
     }
   }
+
+  if (v.moveright !== undefined) {
+    const mr = v.moveright;
+    if (!isObject(mr)) return 'crmRouting.moveright must be an object';
+    if (mr.intakeToken !== undefined) {
+      if (!isString(mr.intakeToken)) return 'crmRouting.moveright.intakeToken must be a string';
+      if ((mr.intakeToken as string).length > CONFIG_LIMITS.CRM_FIELD_MAX) {
+        return `crmRouting.moveright.intakeToken exceeds ${CONFIG_LIMITS.CRM_FIELD_MAX} characters`;
+      }
+      if (mr.intakeToken && !/^lead_[A-Za-z0-9_-]+$/.test(mr.intakeToken as string)) {
+        return 'crmRouting.moveright.intakeToken must be a MoveRight intake token (lead_...)';
+      }
+    }
+  }
   return null;
 }
 

@@ -2,7 +2,7 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export type LeadSyncStatus = 'queued' | 'sent' | 'failed' | 'skipped';
-export type LeadSyncDestination = 'smartmoving' | 'supermove' | 'chariot' | 'moverbase';
+export type LeadSyncDestination = 'smartmoving' | 'supermove' | 'chariot' | 'moverbase' | 'moveright';
 
 export interface ILeadSyncAttempt extends Document {
   projectId: mongoose.Types.ObjectId;
@@ -29,7 +29,7 @@ const LeadSyncAttemptSchema: Schema = new Schema(
     organizationId: { type: String, required: true, index: true },
     destination: {
       type: String,
-      enum: ['smartmoving', 'supermove', 'chariot', 'moverbase'],
+      enum: ['smartmoving', 'supermove', 'chariot', 'moverbase', 'moveright'],
       required: true,
     },
     status: {

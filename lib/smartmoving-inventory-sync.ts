@@ -1859,20 +1859,112 @@ export function findLeadByPhone(
 }
 
 /**
- * Converts a SmartMoving lead to an opportunity
+ * Fetches a SmartMoving reference list (tariffs, referral-sources, move-sizes,
+ * users). Tolerant of their inconsistent list envelopes.
+ */
+async function fetchReferenceList(
+  path: string,
+  apiKey: string,
+  clientId: string
+): Promise<any[]> {
+  try {
+    const response = await fetch(`https://api-public.smartmoving.com/v1/api/${path}`, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (Array.isArray(data)) return data;
+    return data?.pageResults || data?.items || data?.data || [];
+  } catch {
+    return [];
+  }
+}
+
+const extractRefId = (obj: any): string | null =>
+  obj?.id || obj?.Id || obj?.guid || null;
+
+/**
+ * When a lead conversion 400s because a saved default id no longer exists in
+ * the SmartMoving account (e.g. {"tariffId":["Tariff not found."]} after the
+ * account's tariffs changed), re-fetch the relevant reference lists and pick
+ * fresh ids. The saved defaults pass the UUID-shape check that gates
+ * auto-config, so without this the sync is permanently stuck.
+ */
+async function healStaleConversionRefs(
+  errorBody: string,
+  apiKey: string,
+  clientId: string
+): Promise<Partial<ConvertLeadRequest>> {
+  let fields: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(errorBody);
+    fields = (parsed?.errors && typeof parsed.errors === 'object' ? parsed.errors : parsed) || {};
+  } catch {
+    return {};
+  }
+
+  const updates: Partial<ConvertLeadRequest> = {};
+
+  if (fields.tariffId) {
+    const tariffs = await fetchReferenceList('tariffs', apiKey, clientId);
+    const id = extractRefId(tariffs[0]);
+    if (id) updates.tariffId = id;
+  }
+  if (fields.referralSourceId) {
+    const sources = await fetchReferenceList('referral-sources', apiKey, clientId);
+    const preferred =
+      sources.find((s: any) => s?.name?.toLowerCase().includes('website')) || sources[0];
+    const id = extractRefId(preferred);
+    if (id) updates.referralSourceId = id;
+  }
+  if (fields.moveSizeId) {
+    const sizes = await fetchReferenceList('move-sizes', apiKey, clientId);
+    const id = extractRefId(sizes[0]);
+    if (id) updates.moveSizeId = id;
+  }
+  if (fields.salesPersonId) {
+    const users = await fetchReferenceList('users', apiKey, clientId);
+    const id = extractRefId(users[0]);
+    if (id) updates.salesPersonId = id;
+  }
+
+  return updates;
+}
+
+// Maps healed conversion fields to their integration-default slots.
+const REF_FIELD_TO_DEFAULT: Partial<Record<keyof ConvertLeadRequest, string>> = {
+  tariffId: 'defaultTariffId',
+  referralSourceId: 'defaultReferralSourceId',
+  moveSizeId: 'defaultMoveSizeId',
+  salesPersonId: 'defaultSalesPersonId',
+};
+
+/**
+ * Converts a SmartMoving lead to an opportunity.
+ *
+ * On a 400 caused by stale reference ids, self-heals: re-fetches the
+ * reference lists, retries once with fresh ids, and (when integrationId is
+ * provided) persists the corrected defaults so future syncs don't repeat the
+ * dance.
  */
 export async function convertLeadToOpportunity(
   leadId: string,
   conversionData: ConvertLeadRequest,
   apiKey: string,
-  clientId: string
+  clientId: string,
+  options?: { integrationId?: string }
 ): Promise<{ success: boolean; opportunityId?: string; error?: string }> {
   const url = `https://api-public.smartmoving.com/v1/api/premium/lead/${leadId}/convert`;
 
   console.log(`🔄 [SMARTMOVING-CONVERT] Converting lead ${leadId} to opportunity`);
   console.log(`📦 [SMARTMOVING-CONVERT] Conversion data:`, JSON.stringify(conversionData, null, 2));
 
-  try {
+  const attempt = async (data: ConvertLeadRequest) => {
     const response = await fetch(url, {
       method: 'PUT',
       headers: {
@@ -1880,12 +1972,40 @@ export async function convertLeadToOpportunity(
         'Ocp-Apim-Subscription-Key': clientId,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(conversionData)
+      body: JSON.stringify(data)
     });
-
     const responseText = await response.text();
     console.log(`📡 [SMARTMOVING-CONVERT] Response status: ${response.status}`);
     console.log(`📡 [SMARTMOVING-CONVERT] Response body: ${responseText}`);
+    return { response, responseText };
+  };
+
+  try {
+    let { response, responseText } = await attempt(conversionData);
+
+    if (response.status === 400) {
+      const updates = await healStaleConversionRefs(responseText, apiKey, clientId);
+      if (Object.keys(updates).length > 0) {
+        console.log(`🩹 [SMARTMOVING-CONVERT] Stale reference ids detected, retrying with fresh ids:`, updates);
+        ({ response, responseText } = await attempt({ ...conversionData, ...updates }));
+
+        if (response.ok && options?.integrationId) {
+          const defaults: Record<string, string> = {};
+          for (const [field, slot] of Object.entries(REF_FIELD_TO_DEFAULT)) {
+            const value = updates[field as keyof ConvertLeadRequest];
+            if (typeof value === 'string' && value) defaults[slot] = value;
+          }
+          if (Object.keys(defaults).length > 0) {
+            await SmartMovingIntegration.findByIdAndUpdate(options.integrationId, {
+              $set: defaults,
+            }).catch((err: unknown) =>
+              console.warn(`⚠️ [SMARTMOVING-CONVERT] Could not persist healed defaults:`, err)
+            );
+            console.log(`✅ [SMARTMOVING-CONVERT] Persisted healed defaults:`, defaults);
+          }
+        }
+      }
+    }
 
     if (!response.ok) {
       console.error(`❌ [SMARTMOVING-CONVERT] Failed to convert lead: ${response.status}`);
@@ -2282,7 +2402,8 @@ async function convertLeadToOpportunityForSync(
       leadId,
       conversionData,
       integration.smartMovingApiKey,
-      integration.smartMovingClientId
+      integration.smartMovingClientId,
+      integration._id ? { integrationId: integration._id.toString() } : undefined
     );
 
     return result;

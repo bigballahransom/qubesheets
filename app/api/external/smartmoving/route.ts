@@ -6,24 +6,35 @@ import { authenticateApiKey } from '@/lib/api-key-auth';
 import bcrypt from 'bcryptjs';
 import ApiKey from '@/models/ApiKey';
 import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
+import type { SmartMovingLead } from '@/lib/smartmoving-inventory-sync';
 
 interface SmartMovingWebhookPayload {
   'event-type': string;
   'opportunity-id'?: string;
+  // 0 = New Lead, 3 = New Opportunity (confirmed by SmartMoving, July 2026:
+  // the opportunity-created webhook fires for BOTH, distinguished by status).
+  'opportunity-status'?: number;
   'customer-id'?: string;
   data?: any;
 }
 
 interface SmartMovingOpportunity {
   id: string;
+  // NULL for status-0 "New Lead" opportunities (verified against prod July
+  // 2026) — the customer record only exists after lead conversion.
   customer: {
     id: string;
     name: string;
     phoneNumber: string;
     emailAddress?: string;
-  };
+  } | null;
+  contacts?: Array<{
+    name?: string;
+    phoneNumber?: string;
+    emailAddress?: string;
+  }>;
   quoteNumber?: number;
-  status?: any;
+  status?: number;
   serviceDate?: number;
 }
 
@@ -241,60 +252,139 @@ async function processSmartMovingWebhookAsync(
       return;
     }
     
-    // Check if project already exists for this opportunity
+    // Check if project already exists for this record. The webhook fires for
+    // both new leads (status 0) and new opportunities (status 3) with the
+    // same id field, so dedupe against both metadata slots.
     const existingProject = await Project.findOne({
       organizationId: authContext.organizationId,
-      'metadata.smartMovingOpportunityId': payload['opportunity-id']
+      $or: [
+        { 'metadata.smartMovingOpportunityId': payload['opportunity-id'] },
+        { 'metadata.smartMovingLeadId': payload['opportunity-id'] },
+      ],
     });
-    
+
     if (existingProject) {
       console.log(`Background processing: Project already exists for opportunity ${payload['opportunity-id']}`);
       return;
     }
-    
-    // Fetch opportunity details from SmartMoving API
+
+    // Fetch details. The opportunity endpoint returns 200 even for status-0
+    // "New Leads", but with customer: null (verified against prod) — the
+    // customer record only exists after conversion. When the customer is
+    // missing, fall back to the leads endpoint for name/phone and mark the
+    // project with metadata.smartMovingLeadId — the inventory sync converts
+    // the lead to an opportunity at sync time (convertLeadToOpportunityForSync).
     const opportunityDetails = await fetchSmartMovingOpportunity(
       payload['opportunity-id'],
       smartMovingIntegration.smartMovingApiKey,
       smartMovingIntegration.smartMovingClientId
     );
-    
-    if (!opportunityDetails) {
-      console.error('Background processing: Failed to fetch opportunity details');
+
+    const hasCustomer = !!opportunityDetails?.customer?.name;
+    let leadDetails: SmartMovingLead | null = null;
+    if (!hasCustomer) {
+      console.log(`Background processing: No customer on opportunity (status ${payload['opportunity-status'] ?? opportunityDetails?.status ?? 'unknown'}), fetching as lead`);
+      leadDetails = await fetchSmartMovingLead(
+        payload['opportunity-id'],
+        smartMovingIntegration.smartMovingApiKey,
+        smartMovingIntegration.smartMovingClientId
+      );
+    }
+
+    if (!opportunityDetails && !leadDetails) {
+      console.error('Background processing: Failed to fetch details as opportunity OR lead');
       return;
     }
-    
+
     // Format phone number to Twilio format if provided
     const formatPhoneForTwilio = (phone: string): string => {
       if (!phone) return '';
       const digits = phone.replace(/\D/g, '');
       return digits.length === 10 ? `+1${digits}` : '';
     };
-    
-    // Create the project
-    const customerName = opportunityDetails.customer.name;
-    const phone = opportunityDetails.customer.phoneNumber;
+
+    // Resolve customer name/phone: converted opportunity → its customer;
+    // lead → the lead record; last resort (lead endpoint didn't recognize
+    // the id) → the opportunity's contacts list or the quote number.
+    const primaryContact = opportunityDetails?.contacts?.[0];
+    const customerName =
+      (hasCustomer ? opportunityDetails!.customer!.name : leadDetails?.customerName) ||
+      primaryContact?.name ||
+      `SmartMoving Lead #${opportunityDetails?.quoteNumber ?? payload['opportunity-id'].slice(0, 8)}`;
+    const phone = hasCustomer
+      ? opportunityDetails!.customer!.phoneNumber
+      : leadDetails?.phoneNumber || primaryContact?.phoneNumber;
     const formattedPhone = phone ? formatPhoneForTwilio(phone) : undefined;
-    
+
+    // Pre-fill the rest of the project details (email, company, addresses,
+    // job date) from whichever record carries them, so webhook-created
+    // projects arrive with Edit Project Details already populated. Loose
+    // reads: SmartMoving's payloads carry more fields than our interfaces
+    // declare, and absent fields simply stay blank.
+    const looseOpp = opportunityDetails as any;
+    const looseLead = leadDetails as any;
+    const customerEmail =
+      (hasCustomer ? opportunityDetails!.customer!.emailAddress : undefined) ||
+      leadDetails?.emailAddress ||
+      primaryContact?.emailAddress ||
+      undefined;
+    const customerCompanyName =
+      looseLead?.companyName || looseOpp?.customer?.companyName || undefined;
+    const originAddress =
+      leadDetails?.originAddressFull || looseOpp?.originAddressFull || undefined;
+    const destinationAddress =
+      leadDetails?.destinationAddressFull || looseOpp?.destinationAddressFull || undefined;
+
+    // serviceDate arrives as a YYYYMMDD number (e.g. 20260727)
+    const rawServiceDate = leadDetails?.serviceDate || opportunityDetails?.serviceDate;
+    let jobDate: Date | undefined;
+    if (rawServiceDate && /^\d{8}$/.test(String(rawServiceDate))) {
+      const s = String(rawServiceDate);
+      const parsed = new Date(`${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T00:00:00`);
+      if (!isNaN(parsed.getTime())) jobDate = parsed;
+    }
+
     const projectData = {
       name: customerName,
       customerName: customerName,
       phone: formattedPhone,
+      ...(customerEmail ? { customerEmail } : {}),
+      ...(customerCompanyName ? { customerCompanyName } : {}),
+      ...(originAddress ? { origin: { address: originAddress } } : {}),
+      ...(destinationAddress ? { destination: { address: destinationAddress } } : {}),
+      ...(jobDate ? { jobDate } : {}),
       organizationId: authContext.organizationId,
       userId: 'smartmoving-webhook',
-      metadata: {
-        createdViaApi: true,
-        apiKeyId: authContext.apiKeyId,
-        smartMovingOpportunityId: payload['opportunity-id'],
-        smartMovingCustomerId: opportunityDetails.customer.id,
-        smartMovingQuoteNumber: opportunityDetails.quoteNumber,
-        source: 'smartmoving-webhook'
-      }
+      metadata: hasCustomer
+        ? {
+            createdViaApi: true,
+            apiKeyId: authContext.apiKeyId,
+            smartMovingOpportunityId: payload['opportunity-id'],
+            smartMovingCustomerId: opportunityDetails!.customer!.id,
+            smartMovingQuoteNumber: opportunityDetails!.quoteNumber,
+            source: 'smartmoving-webhook'
+          }
+        : {
+            createdViaApi: true,
+            apiKeyId: authContext.apiKeyId,
+            // Lead slot, NOT smartMovingOpportunityId: the sync flow treats
+            // an opportunityId as convertible/pushable, which a status-0
+            // record isn't until the lead converts. The proven lead path
+            // creates the customer + converts in place at sync time.
+            smartMovingLeadId: payload['opportunity-id'],
+            ...(leadDetails?.customerId
+              ? { smartMovingCustomerId: leadDetails.customerId }
+              : {}),
+            ...(opportunityDetails?.quoteNumber
+              ? { smartMovingQuoteNumber: opportunityDetails.quoteNumber }
+              : {}),
+            source: 'smartmoving-webhook'
+          }
     };
-    
+
     const project = await Project.create(projectData);
 
-    console.log(`Background processing: SmartMoving project created successfully: ${project._id} for opportunity ${payload['opportunity-id']}`);
+    console.log(`Background processing: SmartMoving project created successfully: ${project._id} for ${hasCustomer ? 'opportunity' : 'lead'} ${payload['opportunity-id']}`);
 
     // Send customer upload link if enabled and phone number is valid
     if (smartMovingIntegration.sendUploadLinkOnCreate && formattedPhone) {
@@ -371,6 +461,50 @@ async function fetchSmartMovingOpportunity(
 }
 
 /**
+ * Fetch lead details from SmartMoving API. Used when the webhook id belongs
+ * to a status-0 "New Lead", which the opportunities endpoint can't return.
+ */
+async function fetchSmartMovingLead(
+  leadId: string,
+  apiKey: string,
+  clientId: string
+): Promise<SmartMovingLead | null> {
+  try {
+    const url = `https://api-public.smartmoving.com/v1/api/leads/${leadId}`;
+    console.log(`Fetching SmartMoving lead: ${url}`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'Ocp-Apim-Subscription-Key': clientId,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log(`SmartMoving leads API response status: ${response.status} ${response.statusText}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`SmartMoving leads API error: ${response.status} ${response.statusText}`);
+      console.error(`SmartMoving leads API error body:`, errorText);
+      return null;
+    }
+
+    const lead: SmartMovingLead = await response.json();
+    if (!lead?.customerName) {
+      console.error('SmartMoving leads API returned a lead without customerName');
+      return null;
+    }
+    console.log(`Successfully fetched lead:`, JSON.stringify(lead, null, 2));
+    return lead;
+  } catch (error) {
+    console.error('Error fetching SmartMoving lead:', error);
+    return null;
+  }
+}
+
+/**
  * GET endpoint for API documentation
  */
 export async function GET() {
@@ -392,7 +526,7 @@ export async function GET() {
       }
     },
     supportedEvents: {
-      'opportunity-created': 'Creates a new project when an opportunity is created in SmartMoving'
+      'opportunity-created': 'Creates a new project when an opportunity OR new lead (opportunity-status 0) is created in SmartMoving'
     },
     requirements: [
       'SmartMoving integration must be configured in Settings > Integrations',

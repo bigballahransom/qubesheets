@@ -37,6 +37,17 @@ export default function IntegrationsPage() {
   const [hasMoverbaseIntegration, setHasMoverbaseIntegration] = useState(false);
   const [moverbaseCompanyName, setMoverbaseCompanyName] = useState('');
 
+  // MoveRight integration state. The password is exchanged for a refresh
+  // token on save and never stored, so it's always blank on load.
+  const [moverightEnabled, setMoverightEnabled] = useState(false);
+  const [moverightEmail, setMoverightEmail] = useState('');
+  const [moverightPassword, setMoverightPassword] = useState('');
+  const [moverightZoneId, setMoverightZoneId] = useState('');
+  const [moverightIntakeToken, setMoverightIntakeToken] = useState('');
+  const [moverightCrewSummary, setMoverightCrewSummary] = useState(true);
+  const [hasMoverightIntegration, setHasMoverightIntegration] = useState(false);
+  const [moverightConnectedEmail, setMoverightConnectedEmail] = useState('');
+
   useEffect(() => {
     loadIntegrations();
   }, [user, organization]);
@@ -85,6 +96,23 @@ export default function IntegrationsPage() {
           setMoverbaseCompanyName(mdata.integration.testConnection?.companyName || '');
           if (mdata.integration.hasApiKey) {
             setMoverbaseApiKey('••••••••••••••••');
+          }
+        }
+      }
+
+      // Load existing MoveRight integration
+      const moverightRes = await fetch('/api/integrations/moveright');
+      if (moverightRes.ok) {
+        const rdata = await moverightRes.json();
+        if (rdata.exists) {
+          setHasMoverightIntegration(true);
+          setMoverightEnabled(rdata.integration.enabled !== false);
+          setMoverightEmail(rdata.integration.accountEmail || '');
+          setMoverightConnectedEmail(rdata.integration.accountEmail || '');
+          setMoverightZoneId(rdata.integration.zoneId || '');
+          setMoverightCrewSummary(rdata.integration.syncCrewSummaryOnSync !== false);
+          if (rdata.integration.hasIntakeToken) {
+            setMoverightIntakeToken('••••••••••••••••');
           }
         }
       }
@@ -270,6 +298,70 @@ export default function IntegrationsPage() {
         setMoverbaseCompanyName('');
       } else if (moverbaseEnabled && !moverbaseApiKey) {
         toast.error('Please provide your Moverbase API key');
+        return;
+      }
+
+      // MoveRight save logic. A typed password means (re)connect via POST —
+      // the server exchanges it for a refresh token. Otherwise settings-only
+      // changes go through PATCH.
+      if (moverightEnabled && moverightEmail && moverightPassword) {
+        const response = await fetch('/api/integrations/moveright', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: moverightEmail,
+            password: moverightPassword,
+            zoneId: moverightZoneId || undefined,
+            intakeToken: moverightIntakeToken.includes('•')
+              ? undefined
+              : moverightIntakeToken || undefined,
+            syncCrewSummaryOnSync: moverightCrewSummary,
+            enabled: true,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Failed to connect MoveRight integration');
+        }
+        toast.success(data.message || 'MoveRight integration connected!');
+        setHasMoverightIntegration(true);
+        setMoverightConnectedEmail(moverightEmail);
+        setMoverightPassword('');
+      } else if (moverightEnabled && hasMoverightIntegration) {
+        // Settings-only update (no password typed)
+        const response = await fetch('/api/integrations/moveright', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: true,
+            syncCrewSummaryOnSync: moverightCrewSummary,
+            zoneId: moverightZoneId,
+            ...(moverightIntakeToken.includes('•')
+              ? {}
+              : { intakeToken: moverightIntakeToken }),
+          }),
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update MoveRight settings');
+        }
+      } else if (!moverightEnabled && hasMoverightIntegration) {
+        const response = await fetch('/api/integrations/moveright', {
+          method: 'DELETE',
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to delete MoveRight integration');
+        }
+        toast.success('MoveRight integration removed');
+        setHasMoverightIntegration(false);
+        setMoverightEmail('');
+        setMoverightPassword('');
+        setMoverightZoneId('');
+        setMoverightIntakeToken('');
+        setMoverightConnectedEmail('');
+      } else if (moverightEnabled && (!moverightEmail || !moverightPassword)) {
+        toast.error('Please provide your MoveRight email and password to connect');
         return;
       }
     } catch (error) {
@@ -733,6 +825,123 @@ export default function IntegrationsPage() {
                       {moverbaseCompanyName && (
                         <p className="text-xs text-green-700">
                           ✓ Connected to {moverbaseCompanyName}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* MoveRight Integration */}
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <img src="/moveright.png" alt="MoveRight" className="h-16 w-auto mb-4" />
+                <h2 className="text-lg font-medium mb-2">MoveRight Integration</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Connect MoveRight to push AI-generated inventories into MoveRight jobs
+                  and route new leads through your MoveRight intake form.
+                </p>
+
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="moveright-enabled"
+                      checked={moverightEnabled}
+                      onChange={(e) => setMoverightEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="moveright-enabled" className="text-sm">
+                      Enable MoveRight integration
+                    </label>
+                  </div>
+
+                  {moverightEnabled && (
+                    <div className="space-y-4 pt-4 border-t">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          MoveRight Email
+                        </label>
+                        <input
+                          type="email"
+                          value={moverightEmail}
+                          onChange={(e) => setMoverightEmail(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder="you@yourcompany.com"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          <Key className="inline h-4 w-4 mr-1" />
+                          MoveRight Password
+                        </label>
+                        <input
+                          type="password"
+                          value={moverightPassword}
+                          onChange={(e) => setMoverightPassword(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder={
+                            hasMoverightIntegration
+                              ? 'Enter password only to reconnect'
+                              : 'Your MoveRight password'
+                          }
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Used once to sign in to MoveRight and obtain an access
+                          token — your password is never stored.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          Zone ID <span className="text-gray-400">(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={moverightZoneId}
+                          onChange={(e) => setMoverightZoneId(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder="Only needed for multi-zone accounts"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">
+                          Intake Token <span className="text-gray-400">(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={moverightIntakeToken}
+                          onChange={(e) => setMoverightIntakeToken(e.target.value)}
+                          onFocus={() => {
+                            if (moverightIntakeToken.includes('•')) setMoverightIntakeToken('');
+                          }}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 font-mono"
+                          placeholder="lead_..."
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Generated in MoveRight admin (intake form setup). Required
+                          only for routing new leads into MoveRight — inventory sync
+                          works without it.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="moveright-crew-summary"
+                          checked={moverightCrewSummary}
+                          onChange={(e) => setMoverightCrewSummary(e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <label htmlFor="moveright-crew-summary" className="text-sm">
+                          Update the job&apos;s crew summary with Qube Sheets notes on sync
+                        </label>
+                      </div>
+                      <p className="text-xs text-gray-500 -mt-2">
+                        Syncing replaces the crew summary in MoveRight — turn this
+                        off if your team writes crew notes there directly.
+                      </p>
+
+                      {moverightConnectedEmail && (
+                        <p className="text-xs text-green-700">
+                          ✓ Connected as {moverightConnectedEmail}
                         </p>
                       )}
                     </div>

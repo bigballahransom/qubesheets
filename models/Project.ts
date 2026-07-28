@@ -92,6 +92,18 @@ export interface IProject extends Document {
       itemCount: number;
       syncedItemsHash: string;
     };
+    moverightSync?: {
+      synced: boolean;
+      // MoveRight job UUID + human-facing code (e.g. "TLED-GVQ-XZN").
+      jobId: string;
+      jobCode?: string;
+      syncedAt: Date;
+      itemCount: number;
+      syncedItemsHash: string;
+      // Set once the "Open project in Qube Sheets" comment has been posted
+      // on the job — re-syncs skip the comment to avoid spamming the feed.
+      commentPostedAt?: Date;
+    };
     [key: string]: any;
   };
   // Weight configuration (per-project override)
