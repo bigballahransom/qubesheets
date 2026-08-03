@@ -405,3 +405,27 @@ export async function deleteS3File(key: string): Promise<boolean> {
     return false;
   }
 }
+
+
+/**
+ * HEAD an object and report existence + size. Used by the stuck-recording
+ * sweeper to verify a playable file actually exists before healing a
+ * recording's status — stored duration/fileSize fields can't be trusted.
+ * Throws on ambiguous errors (throttle, network) so callers can skip rather
+ * than guess.
+ */
+export async function headS3Object(key: string): Promise<{ exists: boolean; sizeBytes: number }> {
+  const bucketName = process.env.RECORDING_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+  if (!bucketName) {
+    throw new Error('AWS bucket name not configured. Please set AWS_BUCKET_NAME or AWS_S3_BUCKET_NAME.');
+  }
+  try {
+    const head = await s3.headObject({ Bucket: bucketName, Key: key }).promise();
+    return { exists: true, sizeBytes: head.ContentLength || 0 };
+  } catch (err: any) {
+    if (err?.code === 'NotFound' || err?.code === 'NoSuchKey' || err?.statusCode === 404) {
+      return { exists: false, sizeBytes: 0 };
+    }
+    throw err;
+  }
+}

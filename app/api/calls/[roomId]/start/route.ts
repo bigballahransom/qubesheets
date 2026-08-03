@@ -19,7 +19,7 @@ const EMPTY_TIMEOUT_S = 180;
 const DEPARTURE_TIMEOUT_S = 180;
 
 const roomServiceClient = new RoomServiceClient(
-  process.env.LIVEKIT_URL!,
+  process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || '',
   process.env.LIVEKIT_API_KEY!,
   process.env.LIVEKIT_API_SECRET!
 );

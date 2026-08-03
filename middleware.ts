@@ -35,6 +35,7 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/generate-video-upload-url',  // Video upload pre-signed URL generation
   '/api/confirm-video-upload',  // Video upload confirmation
   '/api/test-webhook(.*)',  // Test webhook endpoint
+  '/api/cron/(.*)',  // Vercel Cron endpoints — carry no Clerk session; auth enforced inside via CRON_SECRET bearer
   '/api/user/(.*)',  // User profile/settings APIs - auth checked internally
   '/api/projects/(.*)/consolidate-inventory',  // Railway call service post-processing
   '/api/projects/(.*)/finalize-inventory'  // Railway call service post-processing

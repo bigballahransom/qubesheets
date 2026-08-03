@@ -854,6 +854,23 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
     // Calculate duration from timestamps
     const duration = calculateDuration(fileResult.startedAt, fileResult.endedAt);
 
+    // JUNK-FILE GATE: sub-2-second recordings are start/stop races or
+    // camera-never-live egresses, not real walkthroughs. Discard them here so
+    // they never become video cards or burn Gemini analysis. The size check
+    // protects real files whose timestamps are missing/zero.
+    const fileSizeBytes = Number(fileResult.size) || 0;
+    if (duration < 2 && fileSizeBytes < 1_000_000) {
+      console.warn(`🗑️ Discarding too-short self-serve recording for session ${session.sessionId}: ${duration}s, ${fileSizeBytes} bytes (${s3Key})`);
+      session.status = 'failed';
+      session.egressStatus = isSuccess ? 'completed' : 'failed';
+      session.analysisError = 'Recording too short — discarded';
+      session.totalDuration = duration;
+      session.s3Key = s3Key;
+      session.s3Bucket = bucket;
+      await session.save();
+      return;
+    }
+
     // Update session with final video details
     session.s3Key = s3Key;
     session.s3Bucket = bucket;

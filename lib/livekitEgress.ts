@@ -3,13 +3,13 @@ import { EncodedFileOutput, S3Upload, EncodedFileType, SegmentedFileOutput, Segm
 import connectMongoDB from './mongodb';
 
 const egressClient = new EgressClient(
-  process.env.LIVEKIT_URL!,
+  process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || '',
   process.env.LIVEKIT_API_KEY!,
   process.env.LIVEKIT_API_SECRET!
 );
 
 const roomServiceClient = new RoomServiceClient(
-  process.env.LIVEKIT_URL!,
+  process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || '',
   process.env.LIVEKIT_API_KEY!,
   process.env.LIVEKIT_API_SECRET!
 );

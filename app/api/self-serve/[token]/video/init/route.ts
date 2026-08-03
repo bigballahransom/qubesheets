@@ -7,8 +7,11 @@ import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
 
+// Fall back to the public ws URL so a partially-switched .env (only
+// NEXT_PUBLIC_LIVEKIT_URL updated) doesn't crash this module at import —
+// they must point at the same LiveKit project anyway.
 const roomServiceClient = new RoomServiceClient(
-  process.env.LIVEKIT_URL!,
+  process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || '',
   process.env.LIVEKIT_API_KEY!,
   process.env.LIVEKIT_API_SECRET!
 );
@@ -70,11 +73,14 @@ export async function POST(
 
     console.log(`📹 Initializing self-serve recording: session=${sessionId.substring(0, 12)}..., room=${roomName}`);
 
-    // Create LiveKit room with a long empty timeout (customer might pause)
+    // Create LiveKit room. emptyTimeout only matters while NO participant is
+    // connected (pre-join, and after abandonment — pauses don't empty the
+    // room), so keep it short: it caps how long an abandoned session's egress
+    // can keep recording an empty (black) room before LiveKit closes it.
     try {
       await roomServiceClient.createRoom({
         name: roomName,
-        emptyTimeout: 600, // 10 minutes - allows for pauses
+        emptyTimeout: 120, // 2 minutes
         maxParticipants: 1, // Only the customer
         metadata: JSON.stringify({
           type: 'self-serve',

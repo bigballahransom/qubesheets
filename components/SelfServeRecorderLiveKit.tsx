@@ -2,12 +2,22 @@
 
 // components/SelfServeRecorderLiveKit.tsx
 // Self-serve video recording using LiveKit (server-side recording via Egress)
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ConnectionQuality } from 'livekit-client';
 import { useSelfServeRecordingLiveKit } from '@/lib/hooks/useSelfServeRecordingLiveKit';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDetection';
+
+/** State machine for the "upload a video file instead" escape hatch offered
+ *  on every error screen. Uses the existing public presigned-URL customer
+ *  upload flow, so it works even when WebRTC/live recording can't. */
+type FallbackUploadState =
+  | { phase: 'idle' }
+  | { phase: 'uploading'; progress: number }
+  | { phase: 'done' }
+  | { phase: 'error'; message: string };
 
 // Fire-and-forget telemetry helper (mirrors the one in the hook). Tells the
 // server "this device opened the recorder UI" so we can see what hardware
@@ -117,10 +127,18 @@ export function SelfServeRecorderLiveKit({
     sessionId,
     connectionState,
     facingMode,
+    initStage,
+    cameraInterrupted,
+    errorKind,
+    savedDuration,
+    connectionQuality,
+    isReconnecting,
+    uploadConfirmed,
     initialize,
     startRecording,
     stopRecording,
     flipCamera,
+    retryFromError,
     error
   } = useSelfServeRecordingLiveKit({
     uploadToken,
@@ -139,6 +157,91 @@ export function SelfServeRecorderLiveKit({
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // ─── "Upload a video file instead" escape hatch ──────────────────
+  // Offered on every error screen: the native camera app records on every
+  // device and every network, so however the live flow failed, the customer
+  // always has a path that produces a video. Reuses the existing public
+  // presigned-URL customer upload endpoints.
+  const [fallbackUpload, setFallbackUpload] = useState<FallbackUploadState>({ phase: 'idle' });
+  const fallbackInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFallbackFile = async (file: File) => {
+    const mimeType = file.type || 'video/mp4';
+    try {
+      setFallbackUpload({ phase: 'uploading', progress: 5 });
+
+      const presignedRes = await fetch('/api/generate-video-upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType,
+          isCustomerUpload: true,
+          customerToken: uploadToken
+        })
+      });
+      if (!presignedRes.ok) {
+        const err = await presignedRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Could not prepare the upload.');
+      }
+      const { uploadUrl, s3Key, metadata } = await presignedRes.json();
+
+      // XHR instead of fetch for upload progress events.
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', mimeType);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            setFallbackUpload({ phase: 'uploading', progress: 5 + Math.round((e.loaded / e.total) * 85) });
+          }
+        };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300)
+          ? resolve()
+          : reject(new Error(`Upload failed (${xhr.status}). Please try again.`));
+        xhr.onerror = () => reject(new Error('Upload failed — please check your connection and try again.'));
+        xhr.send(file);
+      });
+
+      setFallbackUpload({ phase: 'uploading', progress: 95 });
+      const confirmRes = await fetch('/api/confirm-video-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ s3Key, metadata, actualFileSize: file.size })
+      });
+      if (!confirmRes.ok) {
+        const err = await confirmRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Could not finalize the upload.');
+      }
+
+      setFallbackUpload({ phase: 'done' });
+      onComplete?.();
+    } catch (err) {
+      setFallbackUpload({
+        phase: 'error',
+        message: err instanceof Error ? err.message : 'Upload failed. Please try again.'
+      });
+    }
+  };
+
+  const openFallbackPicker = () => fallbackInputRef.current?.click();
+
+  // Hidden file input shared by every screen that offers the fallback.
+  const fallbackInput = (
+    <input
+      ref={fallbackInputRef}
+      type="file"
+      accept="video/*"
+      className="hidden"
+      onChange={(e) => {
+        const f = e.target.files?.[0];
+        if (f) handleFallbackFile(f);
+        e.target.value = '';
+      }}
+    />
+  );
 
   // Format max duration
   const formatMaxDuration = (seconds: number): string => {
@@ -168,12 +271,108 @@ export function SelfServeRecorderLiveKit({
     }
   };
 
-  // Start recording after connection is ready
+  // Start recording after connection is ready. 'ready' now means the camera
+  // is live (not just the WebSocket), so the server-side egress can never
+  // start recording a camera-less room.
   useEffect(() => {
     if (status === 'ready' && !showInstructions) {
       startRecording();
     }
   }, [status, showInstructions, startRecording]);
+
+  // Safety net for the "Starting camera..." overlay: iOS Safari sometimes
+  // never fires loadeddata for an attached MediaStream even though frames are
+  // flowing. Clear the overlay after a few seconds so a cosmetic event miss
+  // can't leave a permanent spinner over a live recording.
+  useEffect(() => {
+    if (videoReady) return;
+    if (status !== 'ready' && status !== 'recording') return;
+    const timer = setTimeout(() => setVideoReady(true), 6000);
+    return () => clearTimeout(timer);
+  }, [videoReady, status]);
+
+  // Fallback file-upload flow takes over the screen once the user picks a
+  // file (from any error screen). Rendered before the status branches so it
+  // wins over the error state that launched it.
+  if (fallbackUpload.phase === 'uploading' || fallbackUpload.phase === 'done' || fallbackUpload.phase === 'error') {
+    return (
+      <div
+        className="fixed inset-0 flex flex-col bg-gray-900 text-white p-6 items-center justify-center"
+        style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
+      >
+        {fallbackInput}
+        {fallbackUpload.phase === 'uploading' && (
+          <div className="w-full max-w-sm flex flex-col items-center text-center">
+            <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Uploading your video…</h2>
+            <p className="text-gray-400 mb-6">Keep this page open until the upload finishes.</p>
+            <div className="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
+              <div
+                className="bg-blue-500 h-full transition-all duration-300"
+                style={{ width: `${fallbackUpload.progress}%` }}
+              />
+            </div>
+            <p className="text-sm text-gray-500 mt-2">{fallbackUpload.progress}%</p>
+          </div>
+        )}
+        {fallbackUpload.phase === 'done' && (
+          <div className="w-full max-w-sm flex flex-col items-center text-center">
+            <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mb-6">
+              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-semibold mb-2">Video uploaded!</h2>
+            <p className="text-gray-400 mb-8">
+              Our AI is now analyzing it to create your inventory.
+            </p>
+            {walkthroughReturnUrl ? (
+              <Button
+                onClick={() => router.push(walkthroughReturnUrl)}
+                size="lg"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Back to project
+              </Button>
+            ) : (
+              onCancel && (
+                <Button
+                  onClick={onCancel}
+                  variant="outline"
+                  size="lg"
+                  className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+                >
+                  Upload more
+                </Button>
+              )
+            )}
+          </div>
+        )}
+        {fallbackUpload.phase === 'error' && (
+          <div className="w-full max-w-sm flex flex-col items-center text-center">
+            <div className="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center mb-6">
+              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold mb-2">Upload failed</h2>
+            <p className="text-gray-400 mb-6">{fallbackUpload.message}</p>
+            <Button onClick={openFallbackPicker} size="lg" className="w-full bg-blue-600 hover:bg-blue-700 mb-3">
+              Try uploading again
+            </Button>
+            <Button
+              onClick={() => setFallbackUpload({ phase: 'idle' })}
+              variant="outline"
+              size="lg"
+              className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+            >
+              Back
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Instructions screen
   if (showInstructions) {
@@ -264,29 +463,146 @@ export function SelfServeRecorderLiveKit({
     );
   }
 
-  // Error state
+  // Error state — screen matches the actual failure so the recovery path is
+  // never a dead end: every variant offers a way to still deliver a video.
   if (status === 'error') {
+    const kind = errorKind ?? 'generic';
+
+    // Per-platform steps for re-enabling a denied camera permission (browsers
+    // never re-show the prompt after a hard deny — the user must flip it).
+    const browser = getBrowser();
+    const permissionSteps: string[] = isIOS()
+      ? browser === 'Safari'
+        ? [
+            'Tap the "aA" (or puzzle piece) icon in Safari\'s address bar',
+            'Choose "Website Settings"',
+            'Set Camera and Microphone to "Allow"'
+          ]
+        : [
+            'Open your iPhone Settings app',
+            `Scroll to ${browser === 'Chrome' ? 'Chrome' : 'your browser'}`,
+            'Turn on access for Camera and Microphone'
+          ]
+      : isAndroid()
+        ? [
+            'Tap the lock (or tune) icon in the address bar',
+            'Tap "Permissions"',
+            'Allow Camera and Microphone'
+          ]
+        : [
+            'Click the camera icon in your browser\'s address bar',
+            'Choose "Allow" for camera and microphone'
+          ];
+
+    const screens: Record<string, { title: string; body: string; primaryLabel: string; showSteps?: boolean; hideRetry?: boolean }> = {
+      permission_denied: {
+        title: 'Camera access needed',
+        body: 'Recording needs your camera and microphone. Access is currently blocked for this site — here\'s how to turn it on:',
+        primaryLabel: 'Check again',
+        showSteps: true
+      },
+      camera_in_use: {
+        title: 'Your camera is busy',
+        body: 'Another app is using your camera. Close any app that might be using it (camera, video calls), then try again.',
+        primaryLabel: 'Try again'
+      },
+      camera_not_found: {
+        title: 'No camera found',
+        body: 'We couldn\'t find a usable camera on this device. You can record with your camera app and upload the video instead.',
+        primaryLabel: 'Try again'
+      },
+      disconnected_mid_recording: {
+        title: 'Connection lost',
+        body: `Don't worry — the first ${formatDuration(savedDuration)} you recorded was saved and is being processed. When you're ready, continue where you left off.`,
+        primaryLabel: 'Record the rest'
+      },
+      upload_failed: {
+        title: 'Recording couldn\'t be saved',
+        body: 'Something went wrong saving your video on our end. Please record again — or record with your camera app and upload the file.',
+        primaryLabel: 'Record again'
+      },
+      unsupported_browser: {
+        title: 'This browser can\'t record',
+        body: error?.message || 'Live recording isn\'t supported here. You can still record with your camera app and upload the video below.',
+        primaryLabel: 'Try again',
+        hideRetry: true
+      },
+      generic: {
+        title: 'Something went wrong',
+        body: error?.message || 'Unable to access camera. Please check permissions and try again.',
+        primaryLabel: 'Try again'
+      }
+    };
+    const screen = screens[kind] || screens.generic;
+    const isDisconnectSave = kind === 'disconnected_mid_recording';
+
     return (
       <div
-        className="fixed inset-0 flex flex-col bg-gray-900 text-white p-4 items-center justify-center"
+        className="fixed inset-0 flex flex-col bg-gray-900 text-white p-6 items-center justify-center overflow-auto"
         style={{
           width: '100vw',
           height: '100dvh',
           minHeight: '-webkit-fill-available'
         }}
       >
-        <div className="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center mb-6">
-          <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
+        {fallbackInput}
+        <div className="w-full max-w-sm flex flex-col items-center text-center">
+          <div className={cn(
+            'w-16 h-16 rounded-full flex items-center justify-center mb-6',
+            isDisconnectSave ? 'bg-green-500' : kind === 'permission_denied' ? 'bg-yellow-500' : 'bg-red-500'
+          )}>
+            {isDisconnectSave ? (
+              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className={cn('w-8 h-8', kind === 'permission_denied' && 'text-black')} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            )}
+          </div>
+          <h2 className="text-xl font-semibold mb-2">{screen.title}</h2>
+          <p className="text-gray-400 mb-4">{screen.body}</p>
+
+          {screen.showSteps && (
+            <ol className="bg-gray-800 rounded-lg p-4 mb-4 text-left w-full space-y-2 text-sm text-gray-300">
+              {permissionSteps.map((step, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="text-blue-400 font-semibold">{i + 1}.</span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+          )}
+
+          {!screen.hideRetry && (
+            <Button
+              onClick={() => retryFromError()}
+              size="lg"
+              className="w-full bg-blue-600 hover:bg-blue-700 mb-3"
+            >
+              {screen.primaryLabel}
+            </Button>
+          )}
+          <Button
+            onClick={openFallbackPicker}
+            variant={screen.hideRetry ? 'default' : 'outline'}
+            size="lg"
+            className={cn(
+              'w-full',
+              screen.hideRetry
+                ? 'bg-blue-600 hover:bg-blue-700'
+                : 'bg-transparent border-gray-700 hover:bg-gray-800 text-white'
+            )}
+          >
+            Upload a video instead
+          </Button>
+          {kind === 'unsupported_browser' && (
+            <p className="text-sm text-gray-500 mt-4">
+              Or copy this link and open it in Safari or Chrome to record live.
+            </p>
+          )}
         </div>
-        <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
-        <p className="text-gray-400 mb-6 text-center max-w-sm">
-          {error?.message || 'Unable to access camera. Please check permissions and try again.'}
-        </p>
-        <Button onClick={() => window.location.reload()} variant="outline">
-          Try Again
-        </Button>
       </div>
     );
   }
@@ -304,8 +620,17 @@ export function SelfServeRecorderLiveKit({
       >
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
         <p className="text-gray-400">
-          {status === 'connecting' ? 'Connecting to video service...' : 'Setting up camera...'}
+          {initStage === 'camera'
+            ? 'Waiting for camera & microphone access...'
+            : initStage === 'connect'
+              ? 'Connecting to video service...'
+              : 'Setting up...'}
         </p>
+        {initStage === 'camera' && (
+          <p className="text-gray-500 text-sm mt-2 max-w-xs text-center">
+            If prompted, tap "Allow" so we can record your walkthrough.
+          </p>
+        )}
       </div>
     );
   }
@@ -333,12 +658,30 @@ export function SelfServeRecorderLiveKit({
             {walkthroughReturnUrl ? 'Walkthrough recorded!' : 'Recording Complete!'}
           </h2>
           <p className="text-gray-400 mb-4">
-            Your video has been uploaded. Our AI is now analyzing it to create your inventory.
+            {uploadConfirmed
+              ? 'Your video has been uploaded. Our AI is now analyzing it to create your inventory.'
+              : 'Your video is finishing up. Our AI will analyze it to create your inventory.'}
           </p>
-          <div className="bg-gray-800 rounded-lg p-4 mb-6 w-full">
+          <div className="bg-gray-800 rounded-lg p-4 mb-4 w-full">
             <p className="text-sm text-gray-400">Recording duration</p>
             <p className="text-2xl font-mono">{formatDuration(duration)}</p>
           </div>
+          {/* Upload verification — true means the server webhook confirmed
+              the file; null means confirmation hadn't arrived when the poll
+              window closed (long videos finalize for a while). */}
+          {uploadConfirmed ? (
+            <p className="flex items-center gap-1.5 text-sm text-green-400 mb-6">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Upload verified
+            </p>
+          ) : (
+            <p className="text-sm text-yellow-500/90 mb-6">
+              Still finalizing your upload — it's safe to close this page. Your
+              video will appear in a few minutes.
+            </p>
+          )}
           {!walkthroughReturnUrl && (
             <p className="text-sm text-gray-500 mb-8">
               You'll receive a notification when your inventory is ready.
@@ -400,9 +743,9 @@ export function SelfServeRecorderLiveKit({
         }}
       >
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Processing Recording</h2>
+        <h2 className="text-xl font-semibold mb-2">Saving Your Recording</h2>
         <p className="text-gray-400 text-center max-w-sm">
-          Please wait while we process your video...
+          Confirming your video was saved — this can take up to 30 seconds.
         </p>
         <div className="mt-4 bg-gray-800 rounded-lg p-4 text-center">
           <p className="text-sm text-gray-400">Recording duration</p>
@@ -430,6 +773,7 @@ export function SelfServeRecorderLiveKit({
         playsInline
         muted
         onLoadedData={() => setVideoReady(true)}
+        onPlaying={() => setVideoReady(true)}
         className="w-full h-full object-cover"
         style={{
           position: 'absolute',
@@ -459,6 +803,25 @@ export function SelfServeRecorderLiveKit({
         >
           <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin mb-4" />
           <p className="text-white/70 text-sm">Starting camera...</p>
+        </div>
+      )}
+
+      {/* Camera-interrupted warning — the server is receiving black video
+          (screen was locked, app backgrounded, or the OS took the camera).
+          The hook auto-stops after ~30s if this isn't resolved. */}
+      {cameraInterrupted && isRecording && (
+        <div className="absolute inset-0 z-30 bg-black/80 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-16 h-16 bg-yellow-500 rounded-full flex items-center justify-center mb-5">
+            <svg className="w-8 h-8 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-white text-xl font-semibold mb-2">We can&apos;t see your camera</h2>
+          <p className="text-gray-300 max-w-sm">
+            Keep this screen open while recording. If your phone locked or you
+            switched apps, come back here to continue — otherwise the recording
+            will stop automatically.
+          </p>
         </div>
       )}
 
@@ -492,6 +855,24 @@ export function SelfServeRecorderLiveKit({
           {formatDuration(duration)} / {formatDuration(maxDuration)}
         </div>
       </div>
+
+      {/* Network status — with server-side egress, a degraded uplink degrades
+          the RECORDING, not just the preview, so surface it prominently. */}
+      {isReconnecting && (
+        <div className="absolute top-14 left-0 right-0 z-20 flex justify-center px-4" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+          <div className="bg-orange-500 text-white px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-2 shadow-lg">
+            <div className="w-3.5 h-3.5 border-2 border-white/60 border-t-white rounded-full animate-spin" />
+            Reconnecting — hold tight…
+          </div>
+        </div>
+      )}
+      {!isReconnecting && isRecording && connectionQuality === ConnectionQuality.Poor && (
+        <div className="absolute top-14 left-0 right-0 z-20 flex justify-center px-4" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+          <div className="bg-yellow-500/95 text-black px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg">
+            Weak connection — video quality may be reduced
+          </div>
+        </div>
+      )}
 
       {/* Duration Warning - centered, only when warning */}
       {durationWarning !== 'none' && durationWarning !== 'maxed' && (

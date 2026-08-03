@@ -1,11 +1,18 @@
 // app/api/self-serve/[token]/video/start-recording/route.ts
 // Start LiveKit Egress recording for a self-serve session
 import { NextRequest, NextResponse } from 'next/server';
-import { EncodedFileOutput, S3Upload, EncodedFileType } from '@livekit/protocol';
+import { EncodedFileOutput, S3Upload, EncodedFileType, TrackType } from '@livekit/protocol';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
 import { egressClient } from '@/lib/selfServeEgress';
+
+const roomServiceClient = new RoomServiceClient(
+  process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || '',
+  process.env.LIVEKIT_API_KEY!,
+  process.env.LIVEKIT_API_SECRET!
+);
 
 export async function POST(
   request: NextRequest,
@@ -100,6 +107,32 @@ export async function POST(
     }
 
     console.log(`📹 Starting self-serve egress: session=${sessionId.substring(0, 12)}..., room=${roomName}`);
+
+    // BLACK-VIDEO GUARD: refuse to start an egress unless someone in the room
+    // is actually publishing live video. Without this, a client race (egress
+    // requested before the camera-permission prompt resolves) records a black
+    // room. Advisory: if the check itself fails, proceed rather than adding a
+    // new failure mode.
+    try {
+      const participants = await roomServiceClient.listParticipants(roomName);
+      const hasLiveVideo = participants.some(p =>
+        (p.tracks || []).some(t => t.type === TrackType.VIDEO && !t.muted)
+      );
+      if (!hasLiveVideo) {
+        console.warn(`🚫 No live video track in ${roomName} — refusing to start egress (participants: ${participants.length})`);
+        // Revert the transitional lock so the client can retry once the
+        // camera is live.
+        await SelfServeRecordingSession.findByIdAndUpdate(session._id, {
+          $set: { status: 'initialized' }
+        });
+        return NextResponse.json(
+          { error: "Your camera isn't publishing video yet. Please wait a moment and try again." },
+          { status: 400 }
+        );
+      }
+    } catch (guardErr) {
+      console.error('⚠️ listParticipants guard failed (non-fatal, proceeding):', guardErr);
+    }
 
     // DIAGNOSTIC + DEFENSIVE: Detect any pre-existing egresses on this room.
     // We just acquired the session lock, so no other code path of ours could
