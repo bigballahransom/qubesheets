@@ -38,6 +38,14 @@ export interface IImage extends Document {
   // /api/customer-upload/[token]/upload-session/finish which fires exactly
   // one notification SMS regardless of how many photos were in the batch.
   uploadSessionId?: string;
+  // Upload provenance ('customer_upload', 'admin_upload', ...). The
+  // customer-upload routes have always written source + metadata, but until
+  // 2026-08 the schema didn't define them so Mongoose silently dropped both —
+  // legacy customer photos have neither field.
+  source?: string;
+  // Free-form upload metadata; metadata.uploadToken links a customer photo
+  // back to its CustomerUpload doc (used to label on-site walkthrough photos).
+  metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,7 +89,10 @@ const ImageSchema: Schema = new Schema(
       contentType: { type: String }
     },
     // Customer batched upload session — see interface comment.
-    uploadSessionId: { type: String, required: false, index: true }
+    uploadSessionId: { type: String, required: false, index: true },
+    // Upload provenance + metadata — see interface comment.
+    source: { type: String, required: false },
+    metadata: { type: Schema.Types.Mixed, required: false }
   },
   { timestamps: true }
 );

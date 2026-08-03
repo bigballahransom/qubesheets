@@ -103,7 +103,9 @@ const VideoCard = memo(({
   // exists and plays fine. Don't attempt to load/play a file that isn't there.
   const isRecordingFailed = isSelfServe && video.status === 'failed';
   const hasS3Video = !isRecordingFailed && (isSelfServe ? (video.s3Key || video.customerVideoS3Key) : video.s3RawFile?.key);
-  const videoTitle = isSelfServe ? 'Self-Serve Recording' : video.originalName;
+  const videoTitle = isSelfServe
+    ? (video.isWalkthrough ? 'On-Site Walkthrough' : 'Self-Serve Recording')
+    : video.originalName;
 
   // Analysis stuck in 'processing' with no update for 45+ min means the worker
   // died mid-job (there is no retry/sweeper on the pipeline) — offer a rerun.
@@ -259,9 +261,15 @@ const VideoCard = memo(({
                 {videoTitle}
               </h4>
               {isSelfServe && (
-                <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
-                  Self-Serve
-                </Badge>
+                video.isWalkthrough ? (
+                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                    On-Site
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                    Self-Serve
+                  </Badge>
+                )
               )}
             </div>
             <p className="text-xs text-gray-500 flex items-center gap-1">

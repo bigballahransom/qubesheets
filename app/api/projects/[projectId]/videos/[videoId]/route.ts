@@ -4,6 +4,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
+import CustomerUpload from '@/models/CustomerUpload';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import CallAnalysisSegment from '@/models/CallAnalysisSegment';
@@ -97,11 +98,33 @@ export async function GET(
 
         const sessions = sessionIds.length > 0
           ? await SelfServeRecordingSession.find({ sessionId: { $in: sessionIds } })
-              .select('sessionId mergedS3Key')
+              .select('sessionId mergedS3Key customerUploadId')
               .lean()
           : [];
 
         const sessionMap = new Map(sessions.map((s: any) => [s.sessionId, s.mergedS3Key]));
+
+        // On-site vs self-survey provenance only lives on CustomerUpload
+        // (isWalkthrough flag, with the magic customerName as a fallback for
+        // docs where a stale dev-server schema dropped the flag on insert) —
+        // VideoRecording/session docs don't record it, so join through the
+        // session's customerUploadId.
+        const uploadIds = sessions.map((s: any) => s.customerUploadId).filter(Boolean);
+        const uploads = uploadIds.length > 0
+          ? await CustomerUpload.find({ _id: { $in: uploadIds } })
+              .select('isWalkthrough customerName')
+              .lean()
+          : [];
+        const walkthroughUploadIds = new Set(
+          uploads
+            .filter((u: any) => u.isWalkthrough || u.customerName === 'On-site walkthrough')
+            .map((u: any) => u._id.toString())
+        );
+        const walkthroughSessionIds = new Set(
+          sessions
+            .filter((s: any) => s.customerUploadId && walkthroughUploadIds.has(s.customerUploadId.toString()))
+            .map((s: any) => s.sessionId)
+        );
 
         // Map self-serve VideoRecordings to Video-like structure
         const mappedSelfServe = selfServeRecordings.map((rec: any) => {
@@ -110,9 +133,12 @@ export async function GET(
             ? (sessionMap.get(rec.selfServeSessionId) || rec.s3Key)
             : rec.s3Key;
 
+          const isWalkthrough = walkthroughSessionIds.has(rec.selfServeSessionId);
+
           // Generate display name from participants or roomId
           const customerParticipant = rec.participants?.find((p: any) => p.type === 'customer');
-          const displayName = customerParticipant?.name || `Self-Serve Recording`;
+          const displayName = customerParticipant?.name ||
+            (isWalkthrough ? `On-Site Walkthrough` : `Self-Serve Recording`);
 
           return {
             _id: rec._id,
@@ -123,6 +149,7 @@ export async function GET(
             size: rec.fileSize || 0,
             duration: rec.duration || 0,
             source: 'self_serve',
+            isWalkthrough,
             status: rec.status,
             s3Key: s3Key,
             s3RawFile: {

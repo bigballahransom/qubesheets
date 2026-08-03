@@ -35,10 +35,16 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    // Find existing active upload link
+    // Find existing active upload link. Walkthrough links are employee-facing
+    // (minted by /api/projects/[projectId]/walkthrough) — never surface them
+    // here, or the Send Upload Link modal pre-fills "On-site walkthrough" as
+    // the customer name. The customerName check covers docs where a stale
+    // dev-server schema dropped the isWalkthrough flag on insert.
     const existingLink = await CustomerUpload.findOne({
       projectId,
-      isActive: true
+      isActive: true,
+      isWalkthrough: { $ne: true },
+      customerName: { $ne: 'On-site walkthrough' }
     });
 
     if (!existingLink) {
@@ -100,9 +106,16 @@ export async function POST(
       );
     }
 
-    // Deactivate any existing active links for this project
+    // Deactivate any existing active links for this project — except
+    // walkthrough links, which belong to the employee on-site flow and would
+    // break an in-progress walkthrough if deactivated here.
     await CustomerUpload.updateMany(
-      { projectId, isActive: true },
+      {
+        projectId,
+        isActive: true,
+        isWalkthrough: { $ne: true },
+        customerName: { $ne: 'On-site walkthrough' }
+      },
       { $set: { isActive: false } }
     );
 

@@ -6,6 +6,8 @@ import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
+import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
+import CustomerUpload from '@/models/CustomerUpload';
 
 // GET: Get all currently processing items from database
 export async function GET(
@@ -47,9 +49,34 @@ export async function GET(
             'analysisResult.status': { $nin: ['completed', 'failed'] }
           }
         ]
-      }).select('_id roomId analysisResult customerEgressStatus createdAt source').lean()
+      }).select('_id roomId analysisResult customerEgressStatus createdAt source selfServeSessionId').lean()
     ]);
-    
+
+    // On-site walkthroughs share the self-serve pipeline; provenance only
+    // lives on CustomerUpload, reached via the recording's session. Only pay
+    // for the join when a self-serve recording is actually processing.
+    const selfServeSessionIds = processingCalls
+      .filter((c: any) => c.source === 'self_serve' && c.selfServeSessionId)
+      .map((c: any) => c.selfServeSessionId);
+    let walkthroughSessionIds = new Set<string>();
+    if (selfServeSessionIds.length > 0) {
+      const sessions = await SelfServeRecordingSession.find({ sessionId: { $in: selfServeSessionIds } })
+        .select('sessionId customerUploadId').lean();
+      const uploadIds = sessions.map((s: any) => s.customerUploadId).filter(Boolean);
+      const walkthroughUploads = uploadIds.length > 0
+        ? await CustomerUpload.find({
+            _id: { $in: uploadIds },
+            $or: [{ isWalkthrough: true }, { customerName: 'On-site walkthrough' }]
+          }).select('_id').lean()
+        : [];
+      const walkthroughUploadIds = new Set(walkthroughUploads.map((u: any) => u._id.toString()));
+      walkthroughSessionIds = new Set(
+        sessions
+          .filter((s: any) => s.customerUploadId && walkthroughUploadIds.has(s.customerUploadId.toString()))
+          .map((s: any) => s.sessionId)
+      );
+    }
+
     // Format for consistent response
     const processingItems = [
       ...processingImages.map((img: any) => ({
@@ -73,10 +100,11 @@ export async function GET(
         // says "Processing 1 video..." instead of "Processing 1 call..." for
         // customer self-serve walkthroughs.
         const isSelfServe = call.source === 'self_serve';
+        const isWalkthrough = isSelfServe && walkthroughSessionIds.has(call.selfServeSessionId);
         return {
           id: call._id.toString(),
           name: isSelfServe
-            ? `Self-Serve Recording`
+            ? (isWalkthrough ? `On-Site Walkthrough` : `Self-Serve Recording`)
             : `Call ${call.roomId?.split('-').pop() || 'Recording'}`,
           type: (isSelfServe ? 'video' : 'call') as 'video' | 'call',
           status: 'processing',

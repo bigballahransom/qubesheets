@@ -4,6 +4,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
+import CustomerUpload from '@/models/CustomerUpload';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/images/:imageId - Get a specific image (with binary data) or all images
@@ -42,14 +43,32 @@ export async function GET(
         
         // Get paginated images
         const images = await Image.find(filter)
-          .select('name originalName mimeType size description analysisResult s3RawFile createdAt updatedAt cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl metadata data')
+          .select('name originalName mimeType size description analysisResult source s3RawFile createdAt updatedAt cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl metadata data')
           .sort({ createdAt: -1 })
           .skip(skip)
           .limit(limit)
           .maxTimeMS(15000); // 15 second timeout
-        
+
         console.log(`🖼️ Found ${images.length} images (${totalCount} total) for project ${projectId}`);
-        
+
+        // On-site vs self-survey provenance only lives on CustomerUpload
+        // (isWalkthrough flag, magic customerName as fallback for docs where
+        // a stale dev-server schema dropped the flag) — Image docs only carry
+        // the uploadToken, so join through it to label walkthrough photos.
+        const uploadTokens = [...new Set(
+          images
+            .filter(img => img.source === 'customer_upload' && img.metadata?.uploadToken)
+            .map(img => img.metadata.uploadToken)
+        )];
+        const walkthroughTokens = new Set(
+          uploadTokens.length > 0
+            ? (await CustomerUpload.find({
+                uploadToken: { $in: uploadTokens },
+                $or: [{ isWalkthrough: true }, { customerName: 'On-site walkthrough' }]
+              }).select('uploadToken').lean()).map((u: any) => u.uploadToken)
+            : []
+        );
+
         // Transform images to include dataUrl for gallery display
         const imagesWithDataUrl = images.map(image => {
           const imageObj = image.toObject();
@@ -58,6 +77,16 @@ export async function GET(
             // Remove raw data from response to save bandwidth
             delete imageObj.data;
           }
+          // source/metadata only persist on images created after the schema
+          // gained those fields (2026-08); older customer photos are
+          // recognizable by the description the upload routes have always
+          // written.
+          if (!imageObj.source && (imageObj.description || '').startsWith('Image uploaded by')) {
+            imageObj.source = 'customer_upload';
+          }
+          imageObj.isWalkthrough =
+            !!(imageObj.metadata?.uploadToken && walkthroughTokens.has(imageObj.metadata.uploadToken)) ||
+            imageObj.description === 'Image uploaded by On-site walkthrough';
           return imageObj;
         });
         

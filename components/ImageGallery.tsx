@@ -65,6 +65,8 @@ interface ImageData {
   originalName: string;
   mimeType: string;
   size: number;
+  source?: string;
+  isWalkthrough?: boolean;
   description?: string;
   analysisResult?: {
     summary: string;
@@ -760,6 +762,17 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
                       <h4 className="font-medium text-gray-900 truncate">
                         {item.originalName}
                       </h4>
+                      {!isVideo(item) && item.source === 'customer_upload' && (
+                        item.isWalkthrough ? (
+                          <Badge variant="outline" className="text-xs shrink-0 bg-blue-50 text-blue-700 border-blue-200">
+                            On-Site
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs shrink-0 bg-purple-50 text-purple-700 border-purple-200">
+                            Self-Serve
+                          </Badge>
+                        )
+                      )}
                     </div>
                     <p className="text-xs text-gray-500 flex items-center gap-1">
                       <Calendar size={12} />

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Image from '@/models/Image';
 import Project from '@/models/Project';
+import CustomerUpload from '@/models/CustomerUpload';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/images - Get all images for a project
@@ -41,7 +42,25 @@ export async function GET(
       .sort({ createdAt: -1 });
     
     console.log(`🖼️ Found ${images.length} images for project ${projectId}`);
-    
+
+    // On-site vs self-survey provenance only lives on CustomerUpload
+    // (isWalkthrough flag, magic customerName as fallback for docs where a
+    // stale dev-server schema dropped the flag) — Image docs only carry the
+    // uploadToken, so join through it to label walkthrough photos.
+    const uploadTokens = [...new Set(
+      images
+        .filter(img => img.source === 'customer_upload' && img.metadata?.uploadToken)
+        .map(img => img.metadata.uploadToken)
+    )];
+    const walkthroughTokens = new Set(
+      uploadTokens.length > 0
+        ? (await CustomerUpload.find({
+            uploadToken: { $in: uploadTokens },
+            $or: [{ isWalkthrough: true }, { customerName: 'On-site walkthrough' }]
+          }).select('uploadToken').lean()).map((u: any) => u.uploadToken)
+        : []
+    );
+
     // Convert binary data to base64 data URLs
     const imagesWithDataUrls = images.map(img => {
       let dataUrl = null;
@@ -58,7 +77,14 @@ export async function GET(
         size: img.size,
         description: img.description,
         analysisResult: img.analysisResult,
-        source: img.source,
+        // source/metadata only persist on images created after the schema
+        // gained those fields (2026-08); older customer photos are
+        // recognizable by the description the upload routes have always
+        // written.
+        source: img.source ||
+          ((img.description || '').startsWith('Image uploaded by') ? 'customer_upload' : img.source),
+        isWalkthrough: !!(img.metadata?.uploadToken && walkthroughTokens.has(img.metadata.uploadToken)) ||
+          img.description === 'Image uploaded by On-site walkthrough',
         metadata: img.metadata,
         dataUrl, // Base64 data URL for direct display
         createdAt: img.createdAt,
