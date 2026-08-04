@@ -13,6 +13,11 @@ import { CheckCircle, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { addMonths, format, startOfMonth } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
 import { ScheduleSkeleton } from '@/components/embed/ActionSkeleton';
+import {
+  formatWithName,
+  resolveText,
+  type LeadFormTextOverrides,
+} from '@/lib/leads/appearance';
 
 export interface SlotsPayload {
   timezone: string;
@@ -27,6 +32,8 @@ interface ScheduleCallViewProps {
    *  initial GET, which makes the form → scheduler hand-off feel
    *  instant instead of flashing a spinner card. */
   prefetched?: SlotsPayload;
+  /** Per-form UI copy overrides (theme.text). Unset keys use the defaults. */
+  textOverrides?: LeadFormTextOverrides;
 }
 
 type ViewState =
@@ -77,7 +84,9 @@ function tzShortName(tz: string): string {
   return last.replace(/_/g, ' ');
 }
 
-export default function ScheduleCallView({ submissionId, prefetched }: ScheduleCallViewProps) {
+export default function ScheduleCallView({ submissionId, prefetched, textOverrides }: ScheduleCallViewProps) {
+  const uiText = (key: Parameters<typeof resolveText>[1]) =>
+    resolveText(textOverrides, key);
   const [view, setView] = useState<ViewState>(
     prefetched ? { kind: 'picking', data: prefetched } : { kind: 'loading' },
   );
@@ -226,19 +235,19 @@ export default function ScheduleCallView({ submissionId, prefetched }: ScheduleC
   if (view.kind === 'booked') {
     return (
       <div className={EMBED_OUTER}>
-        <div className={`${EMBED_CARD} text-center`}>
+        <div className={`${EMBED_CARD} qs-schedule-card text-center`}>
           <CheckCircle className="w-12 h-12 @sm:w-14 @sm:h-14 text-green-500 mx-auto mb-3" aria-hidden />
           <h1 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
-            You&apos;re on the calendar!
+            {uiText('scheduleBookedTitle')}
           </h1>
           <p className="text-gray-600 text-sm @sm:text-base">
-            We scheduled your virtual call for
+            {uiText('scheduleBookedMessage')}
           </p>
           <p className="text-gray-900 text-base @sm:text-lg font-semibold mt-1">
             {dayLabel(view.scheduledFor, customerTimezone)} at {timeLabel(view.scheduledFor, customerTimezone)}
           </p>
           <p className="text-gray-500 text-xs @sm:text-sm mt-4">
-            We just texted you a confirmation with the join link.
+            {uiText('scheduleBookedSms')}
           </p>
         </div>
       </div>
@@ -264,20 +273,19 @@ export default function ScheduleCallView({ submissionId, prefetched }: ScheduleC
 
   return (
     <div className={EMBED_OUTER}>
-      <div className={`${EMBED_CARD} space-y-4`}>
+      <div className={`${EMBED_CARD} qs-schedule-card space-y-4`}>
         <div className="text-center">
           <h1 className="text-xl @sm:text-2xl font-bold text-gray-900">
-            {greetingName ? `Pick a time, ${greetingName}` : 'Pick a time'}
+            {formatWithName(uiText('scheduleTitle'), greetingName)}
           </h1>
           <p className="text-gray-600 text-sm mt-1">
-            We&apos;ll text you a confirmation and a video-call link.
+            {uiText('scheduleSubtitle')}
           </p>
         </div>
 
         {noSlots ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            We don&apos;t have any open times in the next week. We&apos;ll reach
-            out to you directly to find a time that works.
+            {uiText('scheduleNoSlots')}
           </div>
         ) : (
           <>
@@ -342,7 +350,7 @@ export default function ScheduleCallView({ submissionId, prefetched }: ScheduleC
                         disabled={isBooking}
                         onClick={() => setSelectedSlot(slot)}
                         className={
-                          'px-2 py-2 rounded-md text-sm font-medium border transition-colors whitespace-nowrap ' +
+                          'qs-slot-button px-2 py-2 rounded-md text-sm font-medium border transition-colors whitespace-nowrap ' +
                           (isSelected
                             ? 'bg-blue-600 text-white border-blue-600'
                             : 'bg-white text-gray-900 border-gray-200 hover:border-blue-500 hover:bg-blue-50') +
@@ -364,7 +372,7 @@ export default function ScheduleCallView({ submissionId, prefetched }: ScheduleC
                 if (selectedSlot) book(selectedSlot);
               }}
               className={
-                'w-full py-3 px-4 rounded-lg text-base font-semibold transition-colors flex items-center justify-center gap-2 ' +
+                'qs-schedule-button w-full py-3 px-4 rounded-lg text-base font-semibold transition-colors flex items-center justify-center gap-2 ' +
                 (!selectedSlot || isBooking
                   ? 'bg-blue-300 text-white cursor-not-allowed'
                   : 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800')
@@ -376,7 +384,7 @@ export default function ScheduleCallView({ submissionId, prefetched }: ScheduleC
                   Scheduling…
                 </>
               ) : (
-                'Schedule Virtual Walk-through'
+                uiText('scheduleButton')
               )}
             </button>
           </>

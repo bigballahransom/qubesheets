@@ -36,6 +36,8 @@ import { PostSubmitTab } from './tabs/PostSubmitTab';
 import { JavaScriptPluginTab } from './tabs/JavaScriptPluginTab';
 import { AppearanceTab } from './tabs/AppearanceTab';
 import { FormStatsStrip } from './FormStatsStrip';
+import { LiveFormPreview } from './LiveFormPreview';
+import type { LeadFormPreviewScreen } from '@/lib/leads/appearance';
 import type {
   ILeadFormConfig,
   ILeadFormConfigCrmRouting,
@@ -143,6 +145,12 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
     toEditable(initialConfig)
   );
   const [editingName, setEditingName] = useState(false);
+  const [activeTab, setActiveTab] = useState('appearance');
+  // Which screen the live preview shows. Editing a string that belongs to a
+  // different screen auto-switches (via onPreviewScreenHint), so the admin
+  // always sees the text they're typing.
+  const [previewScreen, setPreviewScreen] = useState<LeadFormPreviewScreen>('form');
+  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [togglingActive, setTogglingActive] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -183,6 +191,11 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
     nameInvalid ||
     themeTextInvalid ||
     customFieldsInvalid;
+
+  // The live preview only makes sense on tabs that change what the customer
+  // sees; on CRM/embed/submissions tabs it would just eat 400px.
+  const showLivePreview =
+    activeTab === 'appearance' || activeTab === 'fields' || activeTab === 'post-submit';
 
   const save = async () => {
     if (saveDisabled) return;
@@ -404,7 +417,16 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
           inline-flex TabsList stretches the page and mobile Safari zooms the
           whole editor out to fit it (same pattern as InventoryManager's
           tab bar). */}
-      <Tabs defaultValue="appearance" className="w-full">
+      <Tabs
+        value={activeTab}
+        onValueChange={(tab) => {
+          setActiveTab(tab);
+          // Default the preview to the screen this tab edits.
+          if (tab === 'fields') setPreviewScreen('form');
+          if (tab === 'post-submit') setPreviewScreen('success');
+        }}
+        className="w-full"
+      >
         <div
           className="-mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto scrollbar-hide"
           style={{ WebkitOverflowScrolling: 'touch' }}
@@ -419,6 +441,37 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
             <TabsTrigger value="submissions" className="whitespace-nowrap">Submissions</TabsTrigger>
           </TabsList>
         </div>
+
+        {/* Live preview — sidebar on wide screens, collapsible block on
+            small ones. Only rendered for the tabs that change what the
+            customer sees; the draft (not the saved config) drives it, so
+            every keystroke shows up before saving. */}
+        {showLivePreview && (
+          <div className="xl:hidden pt-4">
+            <button
+              type="button"
+              onClick={() => setMobilePreviewOpen((v) => !v)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              aria-expanded={mobilePreviewOpen}
+            >
+              <Eye className="h-4 w-4" />
+              {mobilePreviewOpen ? 'Hide live preview' : 'Show live preview'}
+            </button>
+            {mobilePreviewOpen && (
+              <div className="mt-3">
+                <LiveFormPreview
+                  configId={config._id}
+                  draft={draft}
+                  screen={previewScreen}
+                  onScreenChange={setPreviewScreen}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className={showLivePreview ? 'xl:flex xl:items-start xl:gap-6' : undefined}>
+          <div className="min-w-0 flex-1">
         <TabsContent value="fields" className="pt-4">
           <FieldsTab
             fields={draft.fields}
@@ -461,6 +514,7 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
           <AppearanceTab
             theme={draft.theme}
             onChange={(theme) => setDraft((d) => ({ ...d, theme }))}
+            onPreviewScreenHint={setPreviewScreen}
           />
         </TabsContent>
         <TabsContent value="crm-routing" className="pt-4">
@@ -482,6 +536,19 @@ export function ConfigEditor({ config: initialConfig }: ConfigEditorProps) {
         <TabsContent value="submissions" className="pt-4">
           <SubmissionsTab configId={config._id} />
         </TabsContent>
+          </div>
+
+          {showLivePreview && (
+            <div className="hidden xl:block w-[400px] shrink-0 sticky top-4 pt-4">
+              <LiveFormPreview
+                configId={config._id}
+                draft={draft}
+                screen={previewScreen}
+                onScreenChange={setPreviewScreen}
+              />
+            </div>
+          )}
+        </div>
       </Tabs>
 
       {/* Delete confirmation */}

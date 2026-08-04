@@ -23,6 +23,7 @@ export default function IntegrationsPage() {
   const [hasExistingIntegration, setHasExistingIntegration] = useState(false);
   const [sendUploadLinkOnCreate, setSendUploadLinkOnCreate] = useState(false);
   const [syncCrewLinkOnSync, setSyncCrewLinkOnSync] = useState(true);
+  const [webhookRecordFilter, setWebhookRecordFilter] = useState('opportunities_and_leads');
 
   // Chariot integration state
   const [chariotEnabled, setChariotEnabled] = useState(false);
@@ -64,6 +65,7 @@ export default function IntegrationsPage() {
           setSmartMovingClientId(data.integration.smartMovingClientId);
           setSendUploadLinkOnCreate(data.integration.sendUploadLinkOnCreate || false);
           setSyncCrewLinkOnSync(data.integration.syncCrewLinkOnSync !== false);
+          setWebhookRecordFilter(data.integration.webhookRecordFilter || 'opportunities_and_leads');
           // API key is not returned for security, just show that it exists
           if (data.integration.hasApiKey) {
             setSmartMovingApiKey('••••••••••••••••');
@@ -139,6 +141,7 @@ export default function IntegrationsPage() {
             smartMovingApiKey,
             sendUploadLinkOnCreate,
             syncCrewLinkOnSync,
+            webhookRecordFilter,
           }),
         });
 
@@ -159,6 +162,7 @@ export default function IntegrationsPage() {
           body: JSON.stringify({
             sendUploadLinkOnCreate,
             syncCrewLinkOnSync,
+            webhookRecordFilter,
           }),
         });
 
@@ -184,6 +188,7 @@ export default function IntegrationsPage() {
         setSmartMovingClientId('');
         setSmartMovingApiKey('');
         setSendUploadLinkOnCreate(false);
+        setWebhookRecordFilter('opportunities_and_leads');
       } else if (smartMovingEnabled && (!smartMovingClientId || !smartMovingApiKey)) {
         toast.error('Please provide both Client ID and API Key');
         return;
@@ -640,6 +645,28 @@ export default function IntegrationsPage() {
                           </p>
                         </div>
                       )} */}
+
+                      {/* Webhook Record Type Filter */}
+                      {hasExistingIntegration && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <label htmlFor="webhook-record-filter" className="block text-sm font-medium text-gray-900 mb-1">
+                            Create projects from
+                          </label>
+                          <p className="text-xs text-gray-600 mb-2">
+                            Choose which SmartMoving records create Qube Sheets projects when the webhook fires. Limit this if leads create too much noise in your projects.
+                          </p>
+                          <select
+                            id="webhook-record-filter"
+                            value={webhookRecordFilter}
+                            onChange={(e) => setWebhookRecordFilter(e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg bg-white focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="opportunities_and_leads">Opportunities and Leads (default)</option>
+                            <option value="opportunities_only">Opportunities Only</option>
+                            <option value="leads_only">Leads Only</option>
+                          </select>
+                        </div>
+                      )}
 
                       {/* Auto-send Upload Link Option */}
                       {hasExistingIntegration && (

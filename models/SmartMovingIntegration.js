@@ -63,6 +63,15 @@ const SmartMovingIntegrationSchema = new mongoose.Schema({
   syncCrewLinkOnSync: {
     type: Boolean,
     default: true
+  },
+
+  // Which SmartMoving webhook records create projects. The opportunity-created
+  // webhook fires for both new leads (opportunity-status 0) and new
+  // opportunities (status 3); some teams only want one or the other.
+  webhookRecordFilter: {
+    type: String,
+    enum: ['opportunities_and_leads', 'opportunities_only', 'leads_only'],
+    default: 'opportunities_and_leads'
   }
 }, {
   timestamps: true // Automatically manage createdAt and updatedAt

@@ -1,5 +1,6 @@
 // models/LeadFormConfig.ts
 import mongoose, { Schema, Document } from 'mongoose';
+import type { LeadFormTextOverrides } from '@/lib/leads/appearance';
 
 // Field keys identifying every possible input the form can collect.
 // Adding a new field key requires changes elsewhere; this list is the source of truth.
@@ -138,12 +139,30 @@ export type LeadFormPostSubmit =
       hours: PostSubmitBusinessHours;
     };
 
+/**
+ * Per-string overrides for the form's static UI copy (buttons, thank-you and
+ * error screens, validation messages, the self-survey chooser, and the call
+ * scheduler). Keys come from LEAD_FORM_TEXT_DEFAULTS in
+ * lib/leads/appearance.ts (type-only import — safe in server and client
+ * bundles); unset keys fall back to the defaults there, so old configs
+ * render unchanged.
+ */
+export type ILeadFormThemeText = LeadFormTextOverrides;
+
 export interface ILeadFormConfigTheme {
   title: string;
   subtitle?: string;
   buttonText: string;
   buttonColor: string;     // hex; do not validate
   logoUrl?: string;
+  // Card background color (hex). Unset = white.
+  backgroundColor?: string;
+  // Key into FONT_OPTIONS (lib/leads/appearance.ts). Unset = system stack.
+  fontFamily?: string;
+  // Raw CSS injected into the embed page (sanitized: closing </style> tags
+  // are stripped). Targets the stable qs-* class hooks on the form.
+  customCss?: string;
+  text?: ILeadFormThemeText;
 }
 
 export interface ILeadFormConfigAbuse {
@@ -216,6 +235,11 @@ const LeadFormConfigThemeSchema = new Schema<ILeadFormConfigTheme>(
     buttonText: { type: String, required: true, default: 'Get a Quote' },
     buttonColor: { type: String, required: true, default: '#2563eb' },
     logoUrl: { type: String, required: false },
+    backgroundColor: { type: String, required: false },
+    fontFamily: { type: String, required: false },
+    customCss: { type: String, required: false },
+    // Validated key-by-key in lib/leads/validateConfig.ts.
+    text: { type: Schema.Types.Mixed, required: false },
   },
   { _id: false }
 );

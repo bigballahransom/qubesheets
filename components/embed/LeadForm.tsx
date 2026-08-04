@@ -54,6 +54,10 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { formatPhoneNumber, validatePhone } from '@/lib/phone';
+import {
+  resolveText,
+  type LeadFormTextOverrides,
+} from '@/lib/leads/appearance';
 import type { FieldKey } from '@/models/LeadFormConfig';
 import type { NormalizedAddress } from '@/lib/leads/types';
 import type { SlotsPayload } from '@/components/embed/ScheduleCallView';
@@ -136,6 +140,10 @@ interface LeadFormProps {
       buttonText: string;
       buttonColor: string;
       logoUrl?: string;
+      backgroundColor?: string;
+      fontFamily?: string;
+      customCss?: string;
+      text?: LeadFormTextOverrides;
     };
     postSubmit: { kind: 'inline-message' | 'redirect-chooser'; message?: string };
     moveSizeOptions?: string[];
@@ -144,6 +152,10 @@ interface LeadFormProps {
   };
   configId: string;
   previewMode?: boolean;
+  /** Editor live-preview mode: fully interactive, but submit never touches
+   *  the network — it flips straight to the success view so the admin can
+   *  click through the whole flow while editing. */
+  staticPreview?: boolean;
 }
 
 const FIELD_DISPLAY_ORDER: FieldKey[] = [
@@ -208,7 +220,7 @@ function computeSteps(
 // float to. Bottom padding stays small so the input stays the same overall
 // height. Border + shadow tokens kept consistent with the form card.
 const floatingInputClass =
-  'peer w-full px-4 pt-5 pb-1.5 bg-white text-gray-900 rounded-xl border border-gray-200 ' +
+  'qs-input peer w-full px-4 pt-5 pb-1.5 bg-white text-gray-900 rounded-xl border border-gray-200 ' +
   'shadow-sm transition-all duration-200 focus:outline-none text-base ' +
   'placeholder:opacity-0 placeholder:text-base';
 
@@ -260,13 +272,13 @@ function Field({
 }: FieldProps) {
   const isFloating = focused || filled;
   return (
-    <div>
+    <div className={cn('qs-field', `qs-field-${id}`)}>
       <div className="relative">
         {children}
         <label
           htmlFor={id}
           className={cn(
-            'absolute left-4 pointer-events-none transition-all duration-150 select-none',
+            'qs-label absolute left-4 pointer-events-none transition-all duration-150 select-none',
             isFloating
               ? 'top-1 text-[11px] font-medium'
               : 'top-1/2 -translate-y-1/2 text-base text-gray-400',
@@ -302,7 +314,7 @@ function Field({
             animate={{ opacity: 1, y: 0, height: 'auto' }}
             exit={{ opacity: 0, y: -2, height: 0 }}
             transition={{ duration: 0.15 }}
-            className="text-xs text-red-500 mt-1 ml-1"
+            className="qs-field-error text-xs text-red-500 mt-1 ml-1"
             id={`${id}-error`}
             role="alert"
           >
@@ -436,7 +448,7 @@ function ProgressDots({
 }) {
   if (total <= 1) return null;
   return (
-    <div className="flex items-center justify-center gap-1.5 mb-6">
+    <div className="qs-progress flex items-center justify-center gap-1.5 mb-6">
       {Array.from({ length: total }).map((_, i) => (
         <motion.div
           key={i}
@@ -484,7 +496,7 @@ function MorphingSubmitButton({
         height: 56,
       }}
       className={cn(
-        'mx-auto flex items-center justify-center text-white font-semibold text-base',
+        'qs-submit-button mx-auto flex items-center justify-center text-white font-semibold text-base',
         'shadow-sm transition-opacity',
         'hover:opacity-95 active:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed',
       )}
@@ -499,14 +511,20 @@ function MorphingSubmitButton({
 }
 
 // --- Premium success state -----------------------------------------------
+// Exported for the editor's draft-preview harness, which renders it
+// standalone (with mock data) so admins can style the thank-you screen live.
 
-function PremiumSuccess({
+export function PremiumSuccess({
   message,
+  title,
   accentColor,
+  cardStyle,
   spring,
 }: {
   message: string;
+  title: string;
   accentColor: string;
+  cardStyle?: React.CSSProperties;
   spring: Transition;
 }) {
   return (
@@ -515,7 +533,8 @@ function PremiumSuccess({
         initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={spring}
-        className="@container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-6 @sm:p-8 text-center"
+        className="qs-success-card @container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-6 @sm:p-8 text-center"
+        style={cardStyle}
       >
         <motion.div
           initial={{ scale: 0 }}
@@ -532,8 +551,8 @@ function PremiumSuccess({
             <Check className="w-8 h-8 text-white" strokeWidth={3} />
           </motion.div>
         </motion.div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Thank you!</h2>
-        <p className="text-gray-600 text-base leading-relaxed">{message}</p>
+        <h2 className="qs-success-title text-2xl font-bold text-gray-900 mb-2">{title}</h2>
+        <p className="qs-success-message text-gray-600 text-base leading-relaxed">{message}</p>
       </motion.div>
     </div>
   );
@@ -569,7 +588,7 @@ type ViewState =
 
 // --- Main component -------------------------------------------------------
 
-export default function LeadForm({ config, configId, previewMode = false }: LeadFormProps) {
+export default function LeadForm({ config, configId, previewMode = false, staticPreview = false }: LeadFormProps) {
   // Field state
   const [moveDate, setMoveDate] = useState('');
   const [moveSize, setMoveSize] = useState('');
@@ -614,6 +633,22 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
   // and applied via the SPRING/INSTANT_TRANSITION pair.
   const prefersReducedMotion = useReducedMotion();
   const spring: Transition = prefersReducedMotion ? INSTANT_TRANSITION : SPRING;
+
+  // Admin-overridable UI copy. Falls back key-by-key to the shipped defaults
+  // so configs without theme.text render exactly as before.
+  const uiText = useCallback(
+    (key: Parameters<typeof resolveText>[1]) => resolveText(config.theme.text, key),
+    [config.theme.text],
+  );
+  const requiredMsg = useCallback(
+    (label: string) => `${label} ${uiText('requiredSuffix')}`,
+    [uiText],
+  );
+  // Card background (unset = white). Applied to the form, success, and error
+  // cards so every screen of the flow shares the surface.
+  const cardStyle = config.theme.backgroundColor
+    ? { backgroundColor: config.theme.backgroundColor }
+    : undefined;
 
   const fieldEnabled = useCallback(
     (id: FieldKey): boolean =>
@@ -681,46 +716,46 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
     const required = fieldRequired(id);
     switch (id) {
       case 'firstName':
-        if (required && !firstName.trim()) return `${labelFor(id)} is required`;
+        if (required && !firstName.trim()) return requiredMsg(labelFor(id));
         return null;
       case 'lastName':
-        if (required && !lastName.trim()) return `${labelFor(id)} is required`;
+        if (required && !lastName.trim()) return requiredMsg(labelFor(id));
         return null;
       case 'fullName':
-        if (required && !fullName.trim()) return `${labelFor(id)} is required`;
+        if (required && !fullName.trim()) return requiredMsg(labelFor(id));
         return null;
       case 'email': {
-        if (required && !email.trim()) return `${labelFor(id)} is required`;
+        if (required && !email.trim()) return requiredMsg(labelFor(id));
         if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-          return 'Please enter a valid email address';
+          return uiText('invalidEmail');
         }
         return null;
       }
       case 'phone': {
         // Phone is locked to required at the editor level (10DLC).
         const err =
-          validatePhone(phone) ?? (!phone ? `${labelFor('phone')} is required` : null);
+          validatePhone(phone) ?? (!phone ? requiredMsg(labelFor('phone')) : null);
         return err;
       }
       case 'phoneType':
-        if (required && !phoneType) return `${labelFor(id)} is required`;
+        if (required && !phoneType) return requiredMsg(labelFor(id));
         return null;
       case 'moveDate':
-        if (required && !moveDate) return `${labelFor(id)} is required`;
+        if (required && !moveDate) return requiredMsg(labelFor(id));
         return null;
       case 'moveSize':
-        if (required && !moveSize) return `${labelFor(id)} is required`;
+        if (required && !moveSize) return requiredMsg(labelFor(id));
         return null;
       case 'origin':
         if (required && !(originText.trim() || originPlace))
-          return `${labelFor(id)} is required`;
+          return requiredMsg(labelFor(id));
         return null;
       case 'destination':
         if (required && !(destinationText.trim() || destinationPlace))
-          return `${labelFor(id)} is required`;
+          return requiredMsg(labelFor(id));
         return null;
       case 'companyName':
-        if (required && !companyName.trim()) return `${labelFor(id)} is required`;
+        if (required && !companyName.trim()) return requiredMsg(labelFor(id));
         return null;
     }
   }
@@ -762,7 +797,7 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
   // can't collide with built-in FieldKeys.
   function rawCustomErrorFor(cf: CustomFieldConfig): string | null {
     if (cf.required && !(customValues[cf.id] ?? '').trim()) {
-      return `${cf.label} is required`;
+      return requiredMsg(cf.label);
     }
     return null;
   }
@@ -817,6 +852,19 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
       return;
     }
     setStepError(null);
+
+    // Editor live preview: no network, just show the configured thank-you so
+    // the admin sees the full submit flow with their draft copy.
+    if (staticPreview) {
+      setView({
+        kind: 'success',
+        message:
+          (config.postSubmit.kind === 'inline-message' && config.postSubmit.message) ||
+          uiText('successFallbackMessage'),
+      });
+      return;
+    }
+
     setSubmitting(true);
 
     const originPayload =
@@ -922,14 +970,14 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
           kind: 'success',
           message:
             (typeof action.message === 'string' && action.message) ||
-            'Thanks — we received your request.',
+            uiText('successFallbackMessage'),
         });
         return;
       }
 
       setView({
         kind: 'success',
-        message: 'Thanks — we received your request.',
+        message: uiText('successFallbackMessage'),
       });
     } catch {
       setView({
@@ -992,7 +1040,9 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         {previewBanner}
         <PremiumSuccess
           message={view.message}
+          title={uiText('successTitle')}
           accentColor={config.theme.buttonColor}
+          cardStyle={cardStyle}
           spring={spring}
         />
       </>
@@ -1008,6 +1058,10 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         {previewBanner}
         <ErrorState
           message={view.message}
+          title={uiText('errorTitle')}
+          retryLabel={uiText('errorRetryButton')}
+          backLabel={uiText('errorBackButton')}
+          cardStyle={cardStyle}
           onBack={() => setView({ kind: 'form' })}
           onRetry={() => {
             setView({ kind: 'form' });
@@ -1024,7 +1078,11 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
       <>
         {honeypotField}
         {previewBanner}
-        <ScheduleCallView submissionId={view.submissionId} prefetched={view.prefetched} />
+        <ScheduleCallView
+          submissionId={view.submissionId}
+          prefetched={view.prefetched}
+          textOverrides={config.theme.text}
+        />
       </>
     );
   }
@@ -1039,6 +1097,7 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
           token={view.token}
           embedded
           showLeadGreeting
+          textOverrides={config.theme.text}
           {...(submissionIdForSchedule
             ? {
                 onSchedule: () =>
@@ -1069,12 +1128,15 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
         {/* @container drives padding + grid behavior off the card's width,
             not the viewport. Critical for iframe embeds where viewport tells
             us nothing useful about the available width. */}
-        <div className="@container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8">
+        <div
+          className="qs-form-card @container max-w-md w-full mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 p-4 @xs:p-5 @sm:p-7 @md:p-8"
+          style={cardStyle}
+        >
           {config.theme.logoUrl && (
             <img
               src={config.theme.logoUrl}
               alt=""
-              className="h-10 @sm:h-12 mx-auto mb-4 object-contain"
+              className="qs-logo h-10 @sm:h-12 mx-auto mb-4 object-contain"
             />
           )}
 
@@ -1083,11 +1145,11 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
               subtitle were previously rendering with the title visually
               touching the first input. */}
           <div className="mb-4 @sm:mb-5">
-            <h2 className="text-center text-lg @sm:text-xl font-semibold text-gray-900">
+            <h2 className="qs-title text-center text-lg @sm:text-xl font-semibold text-gray-900">
               {config.theme.title}
             </h2>
             {config.theme.subtitle && (
-              <p className="text-center text-gray-500 text-sm @sm:text-base mt-1">
+              <p className="qs-subtitle text-center text-gray-500 text-sm @sm:text-base mt-1">
                 {config.theme.subtitle}
               </p>
             )}
@@ -1124,7 +1186,7 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
               onAnimationComplete={postIframeHeight}
             >
               {currentStep.heading && (
-                <h1 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-4">
+                <h1 className="qs-step-heading text-xl @sm:text-2xl font-bold text-gray-900 mb-4">
                   {currentStep.heading}
                 </h1>
               )}
@@ -1224,10 +1286,10 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
                 type="button"
                 onClick={goBack}
                 disabled={submitting}
-                className="h-12 px-4 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white text-gray-700 font-medium text-sm hover:bg-gray-50 active:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="qs-back-button h-12 px-4 inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white text-gray-700 font-medium text-sm hover:bg-gray-50 active:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <ArrowLeft className="h-4 w-4" />
-                Back
+                {uiText('backButton')}
               </button>
             )}
             <div className="flex-1">
@@ -1245,9 +1307,9 @@ export default function LeadForm({ config, configId, previewMode = false }: Lead
                   type="button"
                   onClick={goNext}
                   style={{ backgroundColor: accentColor }}
-                  className="w-full h-12 inline-flex items-center justify-center gap-2 rounded-xl text-white font-semibold text-base shadow-sm hover:opacity-95 active:opacity-90 transition-opacity"
+                  className="qs-continue-button w-full h-12 inline-flex items-center justify-center gap-2 rounded-xl text-white font-semibold text-base shadow-sm hover:opacity-95 active:opacity-90 transition-opacity"
                 >
-                  Continue
+                  {uiText('continueButton')}
                 </button>
               )}
             </div>

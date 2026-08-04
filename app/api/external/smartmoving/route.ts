@@ -251,7 +251,27 @@ async function processSmartMovingWebhookAsync(
       console.error('Background processing: Missing opportunity ID');
       return;
     }
-    
+
+    // Org-level filter on which record types create projects. Default
+    // ('opportunities_and_leads') preserves the original accept-everything
+    // behavior. The creation webhook sends opportunity-status 0 (New Lead)
+    // or 3 (New Opportunity) — those skip before any API calls; a missing or
+    // unexpected status falls through to the hasCustomer classification
+    // after fetch below.
+    const recordFilter = smartMovingIntegration.webhookRecordFilter || 'opportunities_and_leads';
+    const payloadStatus = payload['opportunity-status'];
+    if (recordFilter !== 'opportunities_and_leads' && (payloadStatus === 0 || payloadStatus === 3)) {
+      const isLeadByStatus = payloadStatus === 0;
+      if (
+        (recordFilter === 'opportunities_only' && isLeadByStatus) ||
+        (recordFilter === 'leads_only' && !isLeadByStatus)
+      ) {
+        console.log(`Background processing: Skipping ${isLeadByStatus ? 'lead' : 'opportunity'} ${payload['opportunity-id']} (webhookRecordFilter=${recordFilter})`);
+        return;
+      }
+    }
+
+
     // Check if project already exists for this record. The webhook fires for
     // both new leads (status 0) and new opportunities (status 3) with the
     // same id field, so dedupe against both metadata slots.
@@ -293,6 +313,17 @@ async function processSmartMovingWebhookAsync(
 
     if (!opportunityDetails && !leadDetails) {
       console.error('Background processing: Failed to fetch details as opportunity OR lead');
+      return;
+    }
+
+    // Final filter pass for payloads that omitted opportunity-status: the
+    // fetched record is classified the same way the metadata branching below
+    // is — a present customer means converted opportunity, absent means lead.
+    if (
+      (recordFilter === 'opportunities_only' && !hasCustomer) ||
+      (recordFilter === 'leads_only' && hasCustomer)
+    ) {
+      console.log(`Background processing: Skipping ${hasCustomer ? 'opportunity' : 'lead'} ${payload['opportunity-id']} after fetch (webhookRecordFilter=${recordFilter})`);
       return;
     }
 
@@ -526,7 +557,7 @@ export async function GET() {
       }
     },
     supportedEvents: {
-      'opportunity-created': 'Creates a new project when an opportunity OR new lead (opportunity-status 0) is created in SmartMoving'
+      'opportunity-created': 'Creates a new project when an opportunity OR new lead (opportunity-status 0) is created in SmartMoving. Which record types are accepted is controlled by the "Create projects from" setting in Settings > Integrations (default: opportunities and leads).'
     },
     requirements: [
       'SmartMoving integration must be configured in Settings > Integrations',

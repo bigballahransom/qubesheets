@@ -17,18 +17,26 @@ const EMBED_OUTER = 'bg-transparent p-2 sm:p-3';
 const EMBED_CARD =
   '@container max-w-md w-full mx-auto bg-white rounded-xl @sm:rounded-2xl shadow-lg @sm:shadow-xl border border-gray-200 p-5 @sm:p-7 @md:p-8';
 
-export function SuccessState({ message }: { message: string }) {
+export function SuccessState({
+  message,
+  title = 'Thank you!',
+  cardStyle,
+}: {
+  message: string;
+  title?: string;
+  cardStyle?: React.CSSProperties;
+}) {
   return (
     <div className={EMBED_OUTER}>
-      <div className={`${EMBED_CARD} text-center`}>
+      <div className={`${EMBED_CARD} qs-success-card text-center`} style={cardStyle}>
         <CheckCircle
           className="w-12 h-12 @sm:w-14 @sm:h-14 text-green-500 mx-auto mb-3"
           aria-hidden
         />
-        <h2 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
-          Thank you!
+        <h2 className="qs-success-title text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
+          {title}
         </h2>
-        <p className="text-gray-600 text-sm @sm:text-base leading-relaxed">
+        <p className="qs-success-message text-gray-600 text-sm @sm:text-base leading-relaxed">
           {message}
         </p>
       </div>
@@ -51,23 +59,31 @@ export function ErrorState({
   message,
   onRetry,
   onBack,
+  title = 'Something went wrong',
+  retryLabel = 'Try again',
+  backLabel = 'Back to form',
+  cardStyle,
 }: {
   message: string;
   onRetry?: () => void;
   onBack?: () => void;
+  title?: string;
+  retryLabel?: string;
+  backLabel?: string;
+  cardStyle?: React.CSSProperties;
 }) {
   const hasInPlaceActions = !!onRetry || !!onBack;
   return (
     <div className={EMBED_OUTER}>
-      <div className={`${EMBED_CARD} text-center`}>
+      <div className={`${EMBED_CARD} qs-error-card text-center`} style={cardStyle}>
         <AlertCircle
           className="w-12 h-12 @sm:w-14 @sm:h-14 text-red-500 mx-auto mb-3"
           aria-hidden
         />
-        <h2 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
-          Something went wrong
+        <h2 className="qs-error-title text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
+          {title}
         </h2>
-        <p className="text-gray-600 text-sm @sm:text-base leading-relaxed mb-5">
+        <p className="qs-error-message text-gray-600 text-sm @sm:text-base leading-relaxed mb-5">
           {message}
         </p>
         <div className="flex flex-col @xs:flex-row gap-2 justify-center">
@@ -77,7 +93,7 @@ export function ErrorState({
               onClick={onBack}
               className="px-5 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 transition-colors"
             >
-              Back to form
+              {backLabel}
             </button>
           )}
           {onRetry ? (
@@ -86,7 +102,7 @@ export function ErrorState({
               onClick={onRetry}
               className="px-5 py-2.5 rounded-lg bg-gray-900 text-white font-medium hover:bg-gray-800 transition-colors"
             >
-              Try again
+              {retryLabel}
             </button>
           ) : (
             !hasInPlaceActions && (
@@ -95,7 +111,7 @@ export function ErrorState({
                 onClick={() => window.location.reload()}
                 className="px-5 py-2.5 rounded-lg bg-gray-900 text-white font-medium hover:bg-gray-800 transition-colors"
               >
-                Try again
+                {retryLabel}
               </button>
             )
           )}

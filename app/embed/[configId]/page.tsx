@@ -15,9 +15,31 @@
 // the form so the user sees something tangible immediately and there's no
 // layout shift when the real form takes over.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
-import LeadForm from '@/components/embed/LeadForm';
+import dynamic from 'next/dynamic';
+import LeadForm, { PremiumSuccess } from '@/components/embed/LeadForm';
+import { ErrorState } from '@/components/embed/EmbedShell';
+import { ChooserSkeleton, ScheduleSkeleton } from '@/components/embed/ActionSkeleton';
+import {
+  googleFontHref,
+  resolveFontStack,
+  resolveText,
+  sanitizeCustomCss,
+  type LeadFormPreviewScreen,
+  type LeadFormTextOverrides,
+} from '@/lib/leads/appearance';
+
+// Post-submit views used by the draft-preview harness — lazy like LeadForm's
+// own dynamic imports so the plain embed path doesn't pay for them.
+const UploadChooser = dynamic(() => import('@/components/UploadChooser'), {
+  ssr: false,
+  loading: () => <ChooserSkeleton />,
+});
+const ScheduleCallView = dynamic(() => import('@/components/embed/ScheduleCallView'), {
+  ssr: false,
+  loading: () => <ScheduleSkeleton />,
+});
 
 interface PublicFormConfig {
   id: string;
@@ -30,6 +52,10 @@ interface PublicFormConfig {
     buttonText: string;
     buttonColor: string;
     logoUrl?: string;
+    backgroundColor?: string;
+    fontFamily?: string;
+    customCss?: string;
+    text?: LeadFormTextOverrides;
   };
   postSubmit: { kind: 'inline-message' | 'redirect-chooser'; message?: string };
   moveSizeOptions?: string[];
@@ -106,6 +132,169 @@ function postIframeHeight() {
   }
 }
 
+// --- Draft-preview harness -------------------------------------------------
+//
+// Rendered when the editor opens this page with `?draftPreview=1` inside its
+// live-preview iframe. Nothing is fetched: the editor postMessages the
+// UNSAVED draft config on every change, and this host re-renders the chosen
+// screen with it. The non-form screens use mock data (fake customer, fake
+// slots) so they render fully with zero backend calls, and no interaction
+// in here can create submissions, SMS, or bookings.
+
+interface DraftPreviewPayload {
+  config: PublicFormConfig;
+  screen: LeadFormPreviewScreen;
+  // Bumped by the editor when a screen pill is clicked — used as the form's
+  // key so re-clicking "Form" restarts a form that was submitted in preview.
+  nonce: number;
+}
+
+function buildMockSlots(): string[] {
+  const slots: string[] = [];
+  const base = new Date();
+  for (let day = 1; day <= 3; day++) {
+    for (const hour of [9, 10, 11, 13, 14]) {
+      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + day, hour, 0, 0);
+      slots.push(d.toISOString());
+    }
+  }
+  return slots;
+}
+
+function DraftPreviewHost() {
+  const [payload, setPayload] = useState<DraftPreviewPayload | null>(null);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      // Only the editor (same origin) may drive the preview.
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (data?.type === 'qs-draft-preview' && data.config) {
+        setPayload({
+          config: data.config as PublicFormConfig,
+          screen: (data.screen as LeadFormPreviewScreen) ?? 'form',
+          nonce: typeof data.nonce === 'number' ? data.nonce : 0,
+        });
+      }
+    };
+    window.addEventListener('message', onMessage);
+    // Ask the editor for the initial payload — it may have posted before this
+    // listener attached.
+    window.parent?.postMessage({ type: 'qs-draft-preview-ready' }, '*');
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
+  // Keep the host iframe sized to the content on every screen/config change.
+  useEffect(() => {
+    postIframeHeight();
+    const observer = new ResizeObserver(() => postIframeHeight());
+    observer.observe(document.body);
+    return () => observer.disconnect();
+  }, [payload]);
+
+  const fontHref = googleFontHref(payload?.config.theme.fontFamily);
+  useEffect(() => {
+    if (!fontHref) return;
+    if (document.head.querySelector(`link[href="${fontHref}"]`)) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = fontHref;
+    document.head.appendChild(link);
+  }, [fontHref]);
+
+  const mockSlots = useMemo(buildMockSlots, []);
+
+  if (!payload) return <FormSkeleton />;
+
+  const { config, screen, nonce } = payload;
+  const theme = config.theme;
+  const text = theme.text;
+  const fontStack = resolveFontStack(theme.fontFamily);
+  const customCss = theme.customCss?.trim() ? sanitizeCustomCss(theme.customCss) : null;
+  const cardStyle = theme.backgroundColor
+    ? { backgroundColor: theme.backgroundColor }
+    : undefined;
+  const successMessage =
+    (config.postSubmit.kind === 'inline-message' && config.postSubmit.message) ||
+    resolveText(text, 'successFallbackMessage');
+
+  return (
+    <div
+      className="qs-embed-root"
+      style={fontStack ? { fontFamily: fontStack } : undefined}
+    >
+      {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
+
+      {screen === 'form' && (
+        <LeadForm
+          key={nonce}
+          config={config}
+          configId={config.id || 'draft-preview'}
+          staticPreview
+        />
+      )}
+
+      {screen === 'success' && (
+        <PremiumSuccess
+          message={successMessage}
+          title={resolveText(text, 'successTitle')}
+          accentColor={theme.buttonColor}
+          cardStyle={cardStyle}
+          spring={{ duration: 0 }}
+        />
+      )}
+
+      {screen === 'error' && (
+        <ErrorState
+          message="We could not submit your form. Please try again."
+          title={resolveText(text, 'errorTitle')}
+          retryLabel={resolveText(text, 'errorRetryButton')}
+          backLabel={resolveText(text, 'errorBackButton')}
+          cardStyle={cardStyle}
+          onRetry={() => {}}
+          onBack={() => {}}
+        />
+      )}
+
+      {screen === 'chooser' && (
+        <UploadChooser
+          token="draft-preview"
+          embedded
+          showLeadGreeting
+          prefetchedValidation={{
+            customerName: 'Jane Smith',
+            projectName: 'Preview',
+            branding: null,
+            uploadMode: 'both',
+            isWalkthrough: false,
+            photosEnabled: true,
+          }}
+          textOverrides={text}
+          onChoose={() => {}}
+          onSchedule={() => {}}
+        />
+      )}
+
+      {screen === 'schedule' && (
+        // Display-only: slot clicks are harmless but the confirm button would
+        // POST to a booking endpoint, so the whole view is inert.
+        <div className="pointer-events-none">
+          <ScheduleCallView
+            submissionId="draft-preview"
+            prefetched={{
+              timezone:
+                Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+              customerName: 'Jane Smith',
+              slots: mockSlots,
+            }}
+            textOverrides={text}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function EmbedPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -114,12 +303,16 @@ export default function EmbedPage() {
   // shows a sticky banner and routes submissions to the simulation
   // endpoint — no Customer/Project/credit consumption.
   const previewMode = searchParams?.get('preview') === '1';
+  // Draft-preview mode: the editor's live-preview iframe. No fetch — the
+  // editor streams the unsaved draft config in via postMessage.
+  const draftPreview = searchParams?.get('draftPreview') === '1';
 
   const [config, setConfig] = useState<PublicFormConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
+    if (draftPreview) return;
     if (!configId) {
       setUnavailable(true);
       setLoading(false);
@@ -147,13 +340,33 @@ export default function EmbedPage() {
     return () => {
       cancelled = true;
     };
-  }, [configId]);
+  }, [configId, draftPreview]);
 
   // Keep the host iframe sized correctly while we're in skeleton/unavailable
   // states. Once <LeadForm /> mounts it takes over height reporting itself.
   useEffect(() => {
     postIframeHeight();
   }, [loading, unavailable]);
+
+  // Load the themed Google Font (if any) by appending a stylesheet link.
+  // Done imperatively — React only hoists <link rel="stylesheet"> rendered
+  // in the body when given a `precedence` prop, and a plain DOM append is
+  // unambiguous about when the font starts loading.
+  const fontHref = googleFontHref(config?.theme.fontFamily);
+  useEffect(() => {
+    if (!fontHref) return;
+    if (document.head.querySelector(`link[href="${fontHref}"]`)) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = fontHref;
+    document.head.appendChild(link);
+    // Intentionally never removed — fonts are cheap to keep and removal
+    // would flash the fallback if the config refetches.
+  }, [fontHref]);
+
+  if (draftPreview) {
+    return <DraftPreviewHost />;
+  }
 
   if (loading) {
     return <FormSkeleton />;
@@ -163,5 +376,22 @@ export default function EmbedPage() {
     return <Unavailable />;
   }
 
-  return <LeadForm config={config} configId={configId} previewMode={previewMode} />;
+  const fontStack = resolveFontStack(config.theme.fontFamily);
+  const customCss = config.theme.customCss?.trim()
+    ? sanitizeCustomCss(config.theme.customCss)
+    : null;
+
+  // qs-embed-root + the injected style tag are the custom-CSS surface: the
+  // wrapper carries the themed font (inputs/buttons inherit it via Tailwind
+  // preflight) and every view — form, thank-you, error, chooser, scheduler —
+  // renders inside it.
+  return (
+    <div
+      className="qs-embed-root"
+      style={fontStack ? { fontFamily: fontStack } : undefined}
+    >
+      {customCss && <style dangerouslySetInnerHTML={{ __html: customCss }} />}
+      <LeadForm config={config} configId={configId} previewMode={previewMode} />
+    </div>
+  );
 }

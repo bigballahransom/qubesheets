@@ -17,6 +17,10 @@ export const CONFIG_LIMITS = {
   THEME_SUBTITLE_MAX: 500,
   THEME_BUTTON_TEXT_MAX: 80,
   THEME_BUTTON_COLOR_MAX: 30,
+  THEME_BG_COLOR_MAX: 30,
+  THEME_FONT_FAMILY_MAX: 60,
+  THEME_CUSTOM_CSS_MAX: 20000,
+  THEME_TEXT_OVERRIDE_MAX: 300,
   LOGO_URL_MAX: 2000,
   INLINE_MESSAGE_MAX: 5000,
   CRM_FIELD_MAX: 200,
@@ -45,6 +49,36 @@ export const CONFIG_LIMITS = {
 const VALID_FIELD_KEYS: ReadonlySet<FieldKey> = new Set([
   'firstName', 'lastName', 'fullName', 'email', 'phone', 'phoneType',
   'moveDate', 'moveSize', 'origin', 'destination', 'companyName',
+]);
+
+// Mirrors LEAD_FORM_TEXT_DEFAULTS in lib/leads/appearance.ts.
+const VALID_THEME_TEXT_KEYS = new Set([
+  'continueButton',
+  'backButton',
+  'successTitle',
+  'successFallbackMessage',
+  'errorTitle',
+  'errorRetryButton',
+  'errorBackButton',
+  'requiredSuffix',
+  'invalidEmail',
+  'chooserThanksTitle',
+  'chooserThanksMessage',
+  'chooserPrompt',
+  'chooserRecordTitle',
+  'chooserRecordDescription',
+  'chooserPhotosTitle',
+  'chooserPhotosDescription',
+  'chooserScheduleTitle',
+  'chooserScheduleDescription',
+  'chooserSecurityNote',
+  'scheduleTitle',
+  'scheduleSubtitle',
+  'scheduleButton',
+  'scheduleNoSlots',
+  'scheduleBookedTitle',
+  'scheduleBookedMessage',
+  'scheduleBookedSms',
 ]);
 
 const VALID_POST_SUBMIT_KINDS = new Set([
@@ -118,6 +152,36 @@ function validateTheme(v: unknown): string | null {
     if (!isString(v.logoUrl)) return 'theme.logoUrl must be a string';
     if (v.logoUrl.length > CONFIG_LIMITS.LOGO_URL_MAX) {
       return `theme.logoUrl exceeds ${CONFIG_LIMITS.LOGO_URL_MAX} characters`;
+    }
+  }
+  if (v.backgroundColor !== undefined) {
+    if (!isString(v.backgroundColor)) return 'theme.backgroundColor must be a string';
+    if (v.backgroundColor.length > CONFIG_LIMITS.THEME_BG_COLOR_MAX) {
+      return `theme.backgroundColor exceeds ${CONFIG_LIMITS.THEME_BG_COLOR_MAX} characters`;
+    }
+  }
+  if (v.fontFamily !== undefined) {
+    if (!isString(v.fontFamily)) return 'theme.fontFamily must be a string';
+    if (v.fontFamily.length > CONFIG_LIMITS.THEME_FONT_FAMILY_MAX) {
+      return `theme.fontFamily exceeds ${CONFIG_LIMITS.THEME_FONT_FAMILY_MAX} characters`;
+    }
+  }
+  if (v.customCss !== undefined) {
+    if (!isString(v.customCss)) return 'theme.customCss must be a string';
+    if (v.customCss.length > CONFIG_LIMITS.THEME_CUSTOM_CSS_MAX) {
+      return `theme.customCss exceeds ${CONFIG_LIMITS.THEME_CUSTOM_CSS_MAX} characters`;
+    }
+  }
+  if (v.text !== undefined) {
+    if (!isObject(v.text)) return 'theme.text must be an object';
+    for (const [key, value] of Object.entries(v.text)) {
+      if (!VALID_THEME_TEXT_KEYS.has(key)) {
+        return `theme.text.${key} is not an editable string (valid: ${Array.from(VALID_THEME_TEXT_KEYS).join(', ')})`;
+      }
+      if (!isString(value)) return `theme.text.${key} must be a string`;
+      if (value.length > CONFIG_LIMITS.THEME_TEXT_OVERRIDE_MAX) {
+        return `theme.text.${key} exceeds ${CONFIG_LIMITS.THEME_TEXT_OVERRIDE_MAX} characters`;
+      }
     }
   }
   return null;

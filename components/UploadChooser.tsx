@@ -24,6 +24,11 @@
 import { useEffect, useState } from 'react';
 import { Building2, CalendarCheck, CheckCircle, ImageIcon, Loader2, Video } from 'lucide-react';
 import { canRecordVideo } from '@/lib/deviceDetection';
+import {
+  formatWithName,
+  resolveText,
+  type LeadFormTextOverrides,
+} from '@/lib/leads/appearance';
 import Logo from '../public/logo';
 
 export interface UploadChooserValidation {
@@ -57,6 +62,10 @@ export interface UploadChooserProps {
    *  buttons instead of two. The parent (LeadForm) wires this to swap
    *  into the scheduler view. */
   onSchedule?: () => void;
+  /** Per-form UI copy overrides (theme.text) for the embedded lead
+   *  chooser. Unset keys — and the non-embedded route, which has no form
+   *  config — use the defaults. */
+  textOverrides?: LeadFormTextOverrides;
 }
 
 const DEFAULT_VALIDATION: UploadChooserValidation = {
@@ -82,7 +91,10 @@ export default function UploadChooser({
   onChoose,
   embedded,
   onSchedule,
+  textOverrides,
 }: UploadChooserProps) {
+  const uiText = (key: Parameters<typeof resolveText>[1]) =>
+    resolveText(textOverrides, key);
   const [validation, setValidation] = useState<UploadChooserValidation | null>(
     prefetchedValidation ?? null,
   );
@@ -215,7 +227,7 @@ export default function UploadChooser({
       (showLeadGreeting && leadFirstName) || validation.customerName;
     return (
       <div className={EMBED_OUTER}>
-        <div className={`${EMBED_CARD} space-y-6`}>
+        <div className={`${EMBED_CARD} qs-chooser-card space-y-6`}>
           {/* Greeting block (no company-branding header above). */}
           <div className="text-center">
             {validation.isWalkthrough ? (
@@ -234,13 +246,13 @@ export default function UploadChooser({
                   aria-hidden
                 />
                 <h1 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
-                  Thanks, {thanksName}!
+                  {formatWithName(uiText('chooserThanksTitle'), thanksName)}
                 </h1>
                 <p className="text-gray-600 text-sm @sm:text-base">
-                  We&apos;ve received your information and will get back to you shortly.
+                  {uiText('chooserThanksMessage')}
                 </p>
                 <p className="text-gray-600 text-sm @sm:text-base mt-3">
-                  Skip the wait and lock in an accurate quote — just walk us through your home below.
+                  {uiText('chooserPrompt')}
                 </p>
               </>
             )}
@@ -260,16 +272,16 @@ export default function UploadChooser({
               {canRecord && (
                 <button
                   onClick={() => handleChoose('recording')}
-                  className="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl @sm:rounded-2xl p-5 @sm:p-6 text-left transition-colors shadow-md"
+                  className="qs-chooser-option w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl @sm:rounded-2xl p-5 @sm:p-6 text-left transition-colors shadow-md"
                 >
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 @sm:w-14 @sm:h-14 bg-blue-500 rounded-xl flex items-center justify-center flex-shrink-0">
                       <Video className="w-6 h-6 @sm:w-7 @sm:h-7" />
                     </div>
                     <div className="min-w-0">
-                      <h2 className="text-base @sm:text-lg font-semibold mb-0.5">Record Video</h2>
+                      <h2 className="text-base @sm:text-lg font-semibold mb-0.5">{uiText('chooserRecordTitle')}</h2>
                       <p className="text-blue-100 text-xs @sm:text-sm">
-                        Walk through your home and record your belongings
+                        {uiText('chooserRecordDescription')}
                       </p>
                     </div>
                   </div>
@@ -278,16 +290,16 @@ export default function UploadChooser({
               {canUpload && (
                 <button
                   onClick={() => handleChoose('upload')}
-                  className="w-full bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-900 rounded-xl @sm:rounded-2xl p-5 @sm:p-6 text-left transition-colors shadow-sm border border-gray-200"
+                  className="qs-chooser-option w-full bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-900 rounded-xl @sm:rounded-2xl p-5 @sm:p-6 text-left transition-colors shadow-sm border border-gray-200"
                 >
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 @sm:w-14 @sm:h-14 bg-gray-100 rounded-xl flex items-center justify-center flex-shrink-0">
                       <ImageIcon className="w-6 h-6 @sm:w-7 @sm:h-7 text-gray-600" />
                     </div>
                     <div className="min-w-0">
-                      <h2 className="text-base @sm:text-lg font-semibold mb-0.5">Take or Upload Photos</h2>
+                      <h2 className="text-base @sm:text-lg font-semibold mb-0.5">{uiText('chooserPhotosTitle')}</h2>
                       <p className="text-gray-500 text-xs @sm:text-sm">
-                        Snap photos in-app or pick from your photo library
+                        {uiText('chooserPhotosDescription')}
                       </p>
                     </div>
                   </div>
@@ -296,16 +308,16 @@ export default function UploadChooser({
               {onSchedule && (
                 <button
                   onClick={() => onSchedule()}
-                  className="w-full bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-900 rounded-xl @sm:rounded-2xl p-5 @sm:p-6 text-left transition-colors shadow-sm border border-gray-200"
+                  className="qs-chooser-option w-full bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-900 rounded-xl @sm:rounded-2xl p-5 @sm:p-6 text-left transition-colors shadow-sm border border-gray-200"
                 >
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 @sm:w-14 @sm:h-14 bg-green-50 rounded-xl flex items-center justify-center flex-shrink-0">
                       <CalendarCheck className="w-6 h-6 @sm:w-7 @sm:h-7 text-green-600" />
                     </div>
                     <div className="min-w-0">
-                      <h2 className="text-base @sm:text-lg font-semibold mb-0.5">Schedule a virtual call</h2>
+                      <h2 className="text-base @sm:text-lg font-semibold mb-0.5">{uiText('chooserScheduleTitle')}</h2>
                       <p className="text-gray-500 text-xs @sm:text-sm">
-                        Talk live with our team to walk through your home together
+                        {uiText('chooserScheduleDescription')}
                       </p>
                     </div>
                   </div>
@@ -319,7 +331,7 @@ export default function UploadChooser({
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
-            <span>Your media is private and secure</span>
+            <span>{uiText('chooserSecurityNote')}</span>
           </div>
         </div>
       </div>
