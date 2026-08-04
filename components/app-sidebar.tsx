@@ -27,8 +27,13 @@ import {
   ChevronDown,
   Play,
   GitBranch,
-  Workflow
+  Workflow,
+  Archive,
+  ArchiveRestore,
+  MoreHorizontal,
+  UserPlus
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Sidebar } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -37,6 +42,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@clerk/nextjs';
 import { SearchDropdown } from '@/components/SearchDropdown';
@@ -53,6 +61,7 @@ interface Project {
   phone?: string;
   updatedAt: string;
   userId: string; // Creator of the project
+  isArchived?: boolean;
   assignedTo?: {
     userId: string;
     name: string;
@@ -92,7 +101,14 @@ interface Project {
 const FILTER_STORAGE_KEY = 'qs-sidebar-project-filter';
 const SCROLL_STORAGE_KEY = 'qs-sidebar-scroll';
 
-type ProjectFilter = 'mine' | 'all' | 'unassigned';
+type ProjectFilter = 'mine' | 'all' | 'unassigned' | 'archived';
+
+interface OrgMember {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  identifier: string;
+}
 
 let projectsCache: Project[] | null = null;
 
@@ -100,7 +116,7 @@ function readStoredFilter(): ProjectFilter {
   if (typeof window === 'undefined') return 'all';
   try {
     const stored = window.localStorage.getItem(FILTER_STORAGE_KEY);
-    if (stored === 'mine' || stored === 'all' || stored === 'unassigned') return stored;
+    if (stored === 'mine' || stored === 'all' || stored === 'unassigned' || stored === 'archived') return stored;
   } catch {}
   return 'all';
 }
@@ -116,6 +132,7 @@ export function AppSidebar() {
   // the server-rendered output (the dropdown only appears once projects have
   // loaded client-side), so there's no hydration mismatch to cause.
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(readStoredFilter);
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollRestoredRef = useRef(false);
@@ -134,10 +151,29 @@ export function AppSidebar() {
       fetchProjects();
     }
   }, [isLoaded, userId]);
+
+  // Fetch organization members for the assign menu (non-CRM orgs only)
+  useEffect(() => {
+    if (!organization || hasCrmAddOn) return;
+    (async () => {
+      try {
+        const response = await fetch('/api/organizations/members');
+        if (response.ok) setOrgMembers(await response.json());
+      } catch (err) {
+        console.error('Error fetching org members:', err);
+      }
+    })();
+  }, [organization, hasCrmAddOn]);
   
   // Listen for organization data refresh events
   useEffect(() => {
-    const handleDataRefresh = () => {
+    const handleDataRefresh = (event: Event) => {
+      // Same-org updates (e.g. archiving a project) pass silent: true — the
+      // list is already patched in place, so revalidate without the skeleton.
+      if ((event as CustomEvent).detail?.silent) {
+        fetchProjects();
+        return;
+      }
       console.log('Refreshing projects data due to organization change');
       // Drop the cache — a silent revalidate would keep showing the OLD
       // org's projects until the fetch lands. A skeleton is honest here.
@@ -250,6 +286,72 @@ export function AppSidebar() {
   const handleProjectClick = (projectId: string) => {
     router.push(`/projects/${projectId}`);
   };
+
+  const patchProject = (projectId: string, changes: Partial<Project>) => {
+    const patch = (list: Project[]) =>
+      list.map((p) => (p._id === projectId ? { ...p, ...changes } : p));
+    if (projectsCache) projectsCache = patch(projectsCache);
+    setProjects((prev) => patch(prev));
+  };
+
+  const setArchived = async (project: Project, isArchived: boolean) => {
+    try {
+      const response = await fetch(`/api/projects/${project._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isArchived }),
+      });
+      if (!response.ok) throw new Error(`Failed to update project: ${response.status}`);
+      patchProject(project._id, { isArchived });
+      // Let the projects page / search revalidate without flashing our skeleton
+      window.dispatchEvent(new CustomEvent('organizationDataRefresh', { detail: { silent: true } }));
+      return true;
+    } catch (err) {
+      console.error('Error archiving project:', err);
+      toast.error('Failed to update project');
+      return false;
+    }
+  };
+
+  const toggleArchive = async (project: Project) => {
+    const archiving = !project.isArchived;
+    if (!(await setArchived(project, archiving))) return;
+    toast.success(archiving ? `Archived "${project.name}"` : `Restored "${project.name}"`, {
+      action: {
+        label: 'Undo',
+        onClick: () => setArchived(project, !archiving),
+      },
+    });
+  };
+
+  const memberDisplayName = (member: OrgMember) =>
+    (member.firstName || member.lastName)
+      ? `${member.firstName} ${member.lastName}`.trim()
+      : member.identifier;
+
+  const assignProject = async (project: Project, member: OrgMember) => {
+    try {
+      const response = await fetch(`/api/projects/${project._id}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId: member.userId }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to assign project');
+        return;
+      }
+
+      const updated = await response.json();
+      patchProject(project._id, { assignedTo: updated.assignedTo });
+      window.dispatchEvent(new CustomEvent('organizationDataRefresh', { detail: { silent: true } }));
+      toast.success(`Assigned "${project.name}" to ${memberDisplayName(member)}`);
+    } catch (err) {
+      console.error('Error assigning project:', err);
+      toast.error('Failed to assign project');
+    }
+  };
   
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -260,20 +362,24 @@ export function AppSidebar() {
     });
   };
 
-  // Filter projects based on dropdown selection (only for organizations)
+  // Filter projects based on dropdown selection; archived projects only show
+  // under the 'archived' filter
   const filteredProjects = (() => {
-    if (!organization) return projects;
+    if (projectFilter === 'archived') return projects.filter(p => p.isArchived);
+
+    const active = projects.filter(p => !p.isArchived);
+    if (!organization) return active;
 
     switch (projectFilter) {
       case 'mine':
         // Falls back to userId (creator) if no assignedTo exists
-        return projects.filter(p => (p.assignedTo?.userId || p.userId) === userId);
+        return active.filter(p => (p.assignedTo?.userId || p.userId) === userId);
       case 'unassigned':
         // Projects with no assignedTo AND created via API/webhook/global-self-survey-link (not a real user)
-        return projects.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook', 'global-self-survey-link'].includes(p.userId));
+        return active.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook', 'global-self-survey-link'].includes(p.userId));
       case 'all':
       default:
-        return projects;
+        return active;
     }
   })();
 
@@ -469,52 +575,87 @@ export function AppSidebar() {
             ) : (
               /* Non-CRM: Project List */
               <>
-                {/* Project Filter Dropdown - only show for organizations.
+                {/* Project Filter Dropdown.
                     Sticky within the sidebar's scroll container so the
                     filter stays reachable while scrolling a long project
                     list. Negative margins + matching padding extend its
                     white background over the wrapper's p-2 gutters so rows
                     don't peek around it as they scroll underneath. */}
-                {organization && !loading && projects.length > 0 && (
+                {!loading && projects.length > 0 && (
                   <div className="sticky top-0 z-10 -mx-2 -mt-2 px-2 pt-2 pb-2 bg-white">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button className="flex items-center justify-between w-full px-2 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors cursor-pointer">
                           <span className="flex items-center gap-1.5">
-                            {projectFilter === 'mine' && <User size={12} />}
-                            {projectFilter === 'all' && <Users size={12} />}
-                            {projectFilter === 'unassigned' && <UserX size={12} />}
-                            {projectFilter === 'mine' && 'My Projects'}
-                            {projectFilter === 'all' && 'All Projects'}
-                            {projectFilter === 'unassigned' && 'Unassigned'}
+                            {projectFilter === 'archived' ? (
+                              <>
+                                <Archive size={12} />
+                                Archived
+                              </>
+                            ) : !organization ? (
+                              <>
+                                <Users size={12} />
+                                All Projects
+                              </>
+                            ) : (
+                              <>
+                                {projectFilter === 'mine' && <User size={12} />}
+                                {projectFilter === 'all' && <Users size={12} />}
+                                {projectFilter === 'unassigned' && <UserX size={12} />}
+                                {projectFilter === 'mine' && 'My Projects'}
+                                {projectFilter === 'all' && 'All Projects'}
+                                {projectFilter === 'unassigned' && 'Unassigned'}
+                              </>
+                            )}
                           </span>
                           <ChevronDown size={12} />
                         </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-[180px]">
+                        {organization ? (
+                          <>
+                            <DropdownMenuItem
+                              onClick={() => changeProjectFilter('mine')}
+                              className="cursor-pointer"
+                            >
+                              <User size={14} className="mr-2" />
+                              My Projects
+                              {projectFilter === 'mine' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => changeProjectFilter('all')}
+                              className="cursor-pointer"
+                            >
+                              <Users size={14} className="mr-2" />
+                              All Projects
+                              {projectFilter === 'all' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => changeProjectFilter('unassigned')}
+                              className="cursor-pointer"
+                            >
+                              <UserX size={14} className="mr-2" />
+                              Unassigned
+                              {projectFilter === 'unassigned' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                            </DropdownMenuItem>
+                          </>
+                        ) : (
+                          <DropdownMenuItem
+                            onClick={() => changeProjectFilter('all')}
+                            className="cursor-pointer"
+                          >
+                            <Users size={14} className="mr-2" />
+                            All Projects
+                            {projectFilter !== 'archived' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem
-                          onClick={() => changeProjectFilter('mine')}
+                          onClick={() => changeProjectFilter('archived')}
                           className="cursor-pointer"
                         >
-                          <User size={14} className="mr-2" />
-                          My Projects
-                          {projectFilter === 'mine' && <span className="ml-auto text-xs text-gray-400">✓</span>}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => changeProjectFilter('all')}
-                          className="cursor-pointer"
-                        >
-                          <Users size={14} className="mr-2" />
-                          All Projects
-                          {projectFilter === 'all' && <span className="ml-auto text-xs text-gray-400">✓</span>}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => changeProjectFilter('unassigned')}
-                          className="cursor-pointer"
-                        >
-                          <UserX size={14} className="mr-2" />
-                          Unassigned
-                          {projectFilter === 'unassigned' && <span className="ml-auto text-xs text-gray-400">✓</span>}
+                          <Archive size={14} className="mr-2" />
+                          Archived
+                          {projectFilter === 'archived' && <span className="ml-auto text-xs text-gray-400">✓</span>}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -541,6 +682,7 @@ export function AppSidebar() {
                     {projectFilter === 'mine' && 'No projects assigned to you.'}
                     {projectFilter === 'unassigned' && 'No unassigned projects.'}
                     {projectFilter === 'all' && 'No projects found. Create your first project!'}
+                    {projectFilter === 'archived' && 'No archived projects.'}
                   </div>
                 ) : (
                   <ul className="space-y-1">
@@ -553,17 +695,22 @@ export function AppSidebar() {
                       const isSyncedToMoveright = !!project.metadata?.moverightSync?.synced;
 
                       return (
-                        <li key={project._id}>
+                        <li key={project._id} className="group relative">
                           <button
                             onClick={() => handleProjectClick(project._id)}
                             className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
                               activeProjectId === project._id ? 'bg-gray-100' : ''
                             }`}
                           >
-                            <Folder size={16} className="mr-2 flex-shrink-0 text-blue-500" />
+                            <Folder size={16} className={`mr-2 flex-shrink-0 ${project.isArchived ? 'text-gray-400' : 'text-blue-500'}`} />
                             <div className="flex-1 overflow-hidden">
                               <p className="truncate font-medium flex items-center gap-1.5">
                                 {project.name}
+                                {project.isArchived && (
+                                  <span className="px-1.5 py-0.5 text-[10px] font-medium text-gray-600 bg-gray-200 rounded-full flex-shrink-0">
+                                    Archived
+                                  </span>
+                                )}
                                 {isSyncedToSmartMoving && (
                                   <span title="Synced with SmartMoving">
                                     <Image
@@ -625,8 +772,67 @@ export function AppSidebar() {
                                 Updated {formatDate(project.updatedAt)}
                               </p>
                             </div>
-                            <ArrowRight size={14} className="text-gray-400" />
+                            <ArrowRight size={14} className="text-gray-400 transition-opacity lg:group-hover:opacity-0" />
                           </button>
+                          {/* Hover-revealed "more options" menu. A neutral ⋯
+                              (rather than a bare archive icon) so the row
+                              still reads as navigation; archiving is a
+                              deliberate second click inside the menu, with
+                              the toast's Undo as the safety net. Desktop-only
+                              (no hover on touch); pointer-events are gated so
+                              the invisible trigger can't be clicked. */}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                title="Project options"
+                                className="hidden lg:flex absolute right-1 top-1/2 -translate-y-1/2 items-center justify-center p-1.5 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-200 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto data-[state=open]:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:bg-gray-200 data-[state=open]:text-gray-700 transition-opacity cursor-pointer"
+                              >
+                                <MoreHorizontal size={14} />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" side="right" className="w-[170px]">
+                              {organization && orgMembers.length > 0 && (
+                                <DropdownMenuSub>
+                                  {/* gap-2 + 16px icon match DropdownMenuItem's
+                                      built-in spacing so rows align */}
+                                  <DropdownMenuSubTrigger className="cursor-pointer gap-2">
+                                    <UserPlus size={16} className="mr-2" />
+                                    Assign to
+                                  </DropdownMenuSubTrigger>
+                                  <DropdownMenuSubContent>
+                                    {orgMembers.map((member) => {
+                                      const effectiveOwnerId = project.assignedTo?.userId || project.userId;
+                                      return (
+                                        <DropdownMenuItem
+                                          key={member.userId}
+                                          onClick={() => assignProject(project, member)}
+                                          disabled={member.userId === effectiveOwnerId}
+                                          className="cursor-pointer"
+                                        >
+                                          <User size={14} className="mr-2" />
+                                          {memberDisplayName(member)}
+                                          {member.userId === effectiveOwnerId && (
+                                            <span className="ml-auto text-xs text-gray-400">(Current)</span>
+                                          )}
+                                        </DropdownMenuItem>
+                                      );
+                                    })}
+                                  </DropdownMenuSubContent>
+                                </DropdownMenuSub>
+                              )}
+                              <DropdownMenuItem
+                                onClick={() => toggleArchive(project)}
+                                className="cursor-pointer"
+                              >
+                                {project.isArchived ? (
+                                  <ArchiveRestore size={14} className="mr-2" />
+                                ) : (
+                                  <Archive size={14} className="mr-2" />
+                                )}
+                                {project.isArchived ? 'Restore project' : 'Archive project'}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </li>
                       );
                     })}

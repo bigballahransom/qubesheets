@@ -58,6 +58,10 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
     return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
   }, [hasCrmAddOn]);
 
+  // Archived projects stay searchable but rank below active matches
+  const sortActiveFirst = (list: any[]) =>
+    [...list].sort((a, b) => (a.isArchived ? 1 : 0) - (b.isArchived ? 1 : 0));
+
   // Filter results when search query changes
   useEffect(() => {
     if (searchQuery.trim()) {
@@ -65,9 +69,9 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
         setFilteredCustomers(filterCustomers(customers, searchQuery));
         // Customers own name/phone/email search in CRM mode — projects only
         // surface on CRM job/quote id matches, so results aren't doubled.
-        setFilteredProjects(projects.filter((p) => projectMatchesCrmId(p, searchQuery)));
+        setFilteredProjects(sortActiveFirst(projects.filter((p) => projectMatchesCrmId(p, searchQuery))));
       } else {
-        setFilteredProjects(filterProjects(projects, searchQuery));
+        setFilteredProjects(sortActiveFirst(filterProjects(projects, searchQuery)));
       }
       setShowResults(true);
     } else {
@@ -257,9 +261,16 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
                   onClick={() => handleProjectClick(project._id)}
                   className="w-full px-4 py-2 hover:bg-gray-50 text-left flex items-start gap-3 transition-colors"
                 >
-                  <Folder className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                  <Folder className={`h-4 w-4 mt-0.5 flex-shrink-0 ${project.isArchived ? 'text-gray-400' : 'text-blue-500'}`} />
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm">{project.name}</div>
+                    <div className="font-medium text-sm flex items-center gap-1.5">
+                      <span className="truncate">{project.name}</span>
+                      {project.isArchived && (
+                        <span className="px-1.5 py-0.5 text-[10px] font-medium text-gray-600 bg-gray-200 rounded-full flex-shrink-0">
+                          Archived
+                        </span>
+                      )}
+                    </div>
                     {(project.customerName || project.phone || crmIdLabel(project)) && (
                       <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
                         {project.customerName && (

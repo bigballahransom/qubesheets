@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization, useAuth } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload, MapPin
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload, MapPin, Archive, ArchiveRestore
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -1593,6 +1593,32 @@ useEffect(() => {
     }
   };
   
+  // Toggle soft-archive on the current project (reversible, no confirmation)
+  const toggleArchiveProject = async () => {
+    if (!currentProject) return;
+
+    try {
+      const response = await fetch(`/api/projects/${currentProject._id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ isArchived: !currentProject.isArchived }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update project');
+      }
+
+      const updated = await response.json();
+      setCurrentProject(updated);
+      // Sidebar and global search keep their own project caches
+      window.dispatchEvent(new CustomEvent('organizationDataRefresh', { detail: { silent: true } }));
+    } catch (err) {
+      console.error('Error archiving project:', err);
+    }
+  };
+
   // Store previous row state to detect changes
   const previousRowsRef = useRef([]);
 
@@ -5144,7 +5170,15 @@ const ProcessingNotification = () => {
               Download
             </MenubarItem>
             <MenubarSeparator />
-            <MenubarItem 
+            <MenubarItem onClick={toggleArchiveProject}>
+              {currentProject?.isArchived ? (
+                <ArchiveRestore size={16} className="mr-1" />
+              ) : (
+                <Archive size={16} className="mr-1" />
+              )}
+              {currentProject?.isArchived ? 'Unarchive Project' : 'Archive Project'}
+            </MenubarItem>
+            <MenubarItem
               onClick={() => setIsDeleteConfirmOpen(true)}
               className="text-red-600 focus:text-red-600 focus:bg-red-50"
             >
@@ -5162,7 +5196,23 @@ const ProcessingNotification = () => {
     </div>
   )}
 </header>
-        
+
+        {/* Archived banner */}
+        {currentProject?.isArchived && (
+          <div className="max-w-7xl mx-auto px-4 pt-3">
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-800">
+              <span className="flex items-center gap-2">
+                <Archive size={16} />
+                This project is archived.
+              </span>
+              <Button size="sm" variant="outline" onClick={toggleArchiveProject}>
+                <ArchiveRestore size={14} className="mr-1" />
+                Unarchive
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Main content container */}
         <TooltipProvider>
         <div className="max-w-7xl mx-auto px-4 py-4">

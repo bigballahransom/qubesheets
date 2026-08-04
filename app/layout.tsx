@@ -45,7 +45,9 @@ export default function RootLayout({
                 <main>
                   {children}
                 </main>
-                <Toaster />
+                {/* Offset clears the Intercom launcher in the bottom-right
+                    corner, which otherwise overlaps toast action buttons */}
+                <Toaster offset={{ bottom: 88 }} mobileOffset={{ bottom: 88 }} />
               </SearchProvider>
             </FeatureAnnouncementProvider>
           </OrganizationDataProvider>

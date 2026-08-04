@@ -109,6 +109,11 @@ export interface IProject extends Document {
   // Weight configuration (per-project override)
   weightMode?: 'actual' | 'custom';
   customWeightMultiplier?: number;
+  // Soft archive — hidden from default lists but retrievable; archivedAt/archivedBy
+  // are set server-side only (see PATCH /api/projects/[projectId])
+  isArchived?: boolean;
+  archivedAt?: Date;
+  archivedBy?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -195,7 +200,10 @@ const ProjectSchema: Schema = new Schema(
       min: 4,
       max: 8,
       required: false
-    }
+    },
+    isArchived: { type: Boolean, default: false },
+    archivedAt: { type: Date, required: false },
+    archivedBy: { type: String, required: false }
   },
   { timestamps: true }
 );

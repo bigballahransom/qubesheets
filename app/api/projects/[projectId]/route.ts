@@ -95,6 +95,14 @@ export async function PATCH(
       }
     }
 
+    // Archive toggle — archivedAt/archivedBy are always server-set, never
+    // taken from the request body
+    if (typeof data.isArchived === 'boolean' && data.isArchived !== existingProject.isArchived) {
+      updateData.isArchived = data.isArchived;
+      updateData.archivedAt = data.isArchived ? new Date() : null;
+      updateData.archivedBy = data.isArchived ? authContext.userId : null;
+    }
+
     const updatedProject = await Project.findByIdAndUpdate(
       projectId,
       { $set: updateData },
