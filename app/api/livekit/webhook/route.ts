@@ -878,9 +878,17 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
 
     console.log(`📹 Self-serve video saved: ${s3Key} (${duration}s)`);
 
+    // Media Vault: recordings captured through a vault-purpose CustomerUpload
+    // are stored for reference only — no AI analysis, no inventory SMS.
+    const CustomerUploadForPurpose = (await import('@/models/CustomerUpload')).default;
+    const vaultUploadDoc = session.customerUploadId
+      ? await CustomerUploadForPurpose.findById(session.customerUploadId).select('purpose').lean()
+      : null;
+    const isVault = (vaultUploadDoc as any)?.purpose === 'vault';
+
     const finalS3Key = s3Key;
-    session.status = 'analyzing';
-    session.analysisStatus = 'processing';
+    session.status = isVault ? 'completed' : 'analyzing';
+    session.analysisStatus = isVault ? 'completed' : 'processing';
 
     // ATOMIC: Create VideoRecording only if it doesn't exist for this session
     // Uses upsert with $setOnInsert to prevent race conditions from concurrent webhooks
@@ -893,8 +901,9 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           organizationId: session.organizationId,
           roomId: session.livekitRoomName || `self-serve-${session.sessionId}`,
           egressId: egressId,
-          status: 'processing',
+          status: isVault ? 'completed' : 'processing',
           source: 'self_serve',
+          purpose: isVault ? 'vault' : 'inventory',
           selfServeSessionId: session.sessionId,
           s3Key: finalS3Key,
           startedAt: session.startedAt || new Date(),
@@ -903,7 +912,7 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           customerIdentity: session.customerIdentity || 'customer',
           customerVideoS3Key: finalS3Key,
           analysisResult: {
-            status: 'processing',
+            status: isVault ? 'skipped' : 'processing',
             totalSegments: 0,
             processedSegments: 0
           },
@@ -925,7 +934,10 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
       // Queue for Gemini analysis (reuse existing customer-video handler)
       const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
 
-      if (queueUrl) {
+      if (isVault) {
+        console.log(`🗄️ Media Vault recording — skipping AI analysis for session ${session.sessionId}`);
+        session.analysisStatus = 'completed';
+      } else if (queueUrl) {
         try {
           const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
 
@@ -977,7 +989,16 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
         const isWalkthrough =
           !!(customerUpload as any)?.isWalkthrough ||
           (customerUpload as any)?.customerName === 'On-site walkthrough';
-        if (isWalkthrough) {
+        if (isVault) {
+          // Vault recordings fire the vault-media event (separate toggle) —
+          // no inventory/analysis claims.
+          await sendInventoryUpdateNotification({
+            projectId: String(session.projectId),
+            body: `New vault video added to ${projectName}.`,
+            source: 'vault-media',
+            settingKey: 'enableVaultMediaUpdates'
+          });
+        } else if (isWalkthrough) {
           console.log(`[walkthrough] livekit/webhook: suppressing self-serve recording SMS for session ${session.sessionId}`);
         } else {
           await sendInventoryUpdateNotification({
@@ -997,8 +1018,16 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
     // routes to the failure branch; any other HEAD outcome (including
     // errors) proceeds here, so a healthy recording is never dropped.
     console.log(`⚠️ No file result in webhook but have stored S3 key: ${session.s3Key}`);
-    session.status = 'analyzing';
-    session.analysisStatus = 'processing';
+
+    // Media Vault: same skip as the primary branch — reference only.
+    const CustomerUploadForPurpose = (await import('@/models/CustomerUpload')).default;
+    const vaultUploadDoc = session.customerUploadId
+      ? await CustomerUploadForPurpose.findById(session.customerUploadId).select('purpose').lean()
+      : null;
+    const isVault = (vaultUploadDoc as any)?.purpose === 'vault';
+
+    session.status = isVault ? 'completed' : 'analyzing';
+    session.analysisStatus = isVault ? 'completed' : 'processing';
 
     const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
 
@@ -1013,8 +1042,9 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           organizationId: session.organizationId,
           roomId: session.livekitRoomName || `self-serve-${session.sessionId}`,
           egressId: egressId,
-          status: 'processing',
+          status: isVault ? 'completed' : 'processing',
           source: 'self_serve',
+          purpose: isVault ? 'vault' : 'inventory',
           selfServeSessionId: session.sessionId,
           s3Key: session.s3Key,
           startedAt: session.startedAt || new Date(),
@@ -1023,7 +1053,7 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           customerIdentity: session.customerIdentity || 'customer',
           customerVideoS3Key: session.s3Key,
           analysisResult: {
-            status: 'processing',
+            status: isVault ? 'skipped' : 'processing',
             totalSegments: 0,
             processedSegments: 0
           },
@@ -1042,7 +1072,10 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
       console.log(`📹 Created VideoRecording for self-serve (fallback): ${upsertResult._id} (source: self_serve, sessionId: ${session.sessionId})`);
 
       const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
-      if (queueUrl) {
+      if (isVault) {
+        console.log(`🗄️ Media Vault recording (fallback branch) — skipping AI analysis for session ${session.sessionId}`);
+        session.analysisStatus = 'completed';
+      } else if (queueUrl) {
         try {
           const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
 
@@ -1085,7 +1118,14 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
         const isWalkthrough =
           !!(customerUpload as any)?.isWalkthrough ||
           (customerUpload as any)?.customerName === 'On-site walkthrough';
-        if (isWalkthrough) {
+        if (isVault) {
+          await sendInventoryUpdateNotification({
+            projectId: String(session.projectId),
+            body: `New vault video added to ${projectName}.`,
+            source: 'vault-media',
+            settingKey: 'enableVaultMediaUpdates'
+          });
+        } else if (isWalkthrough) {
           console.log(`[walkthrough] livekit/webhook (fallback): suppressing self-serve recording SMS for session ${session.sessionId}`);
         } else {
           await sendInventoryUpdateNotification({

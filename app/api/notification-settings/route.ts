@@ -44,6 +44,12 @@ export async function GET(request: NextRequest) {
         notificationScope: 'all',
         enableReviewSignedUpdates: false,
         reviewSignedNotificationScope: 'all',
+        enableVaultMediaUpdates: false,
+        vaultMediaNotificationScope: 'all',
+        enableInventoryUpdateEmails: false,
+        enableReviewSignedEmails: false,
+        enableVaultMediaEmails: false,
+        notificationEmail: null,
         phoneNumber: null
       });
     }
@@ -53,6 +59,12 @@ export async function GET(request: NextRequest) {
       notificationScope: settings.notificationScope || 'all',
       enableReviewSignedUpdates: settings.enableReviewSignedUpdates || false,
       reviewSignedNotificationScope: settings.reviewSignedNotificationScope || 'all',
+      enableVaultMediaUpdates: settings.enableVaultMediaUpdates || false,
+      vaultMediaNotificationScope: settings.vaultMediaNotificationScope || 'all',
+      enableInventoryUpdateEmails: settings.enableInventoryUpdateEmails || false,
+      enableReviewSignedEmails: settings.enableReviewSignedEmails || false,
+      enableVaultMediaEmails: settings.enableVaultMediaEmails || false,
+      notificationEmail: settings.notificationEmail || null,
       phoneNumber: settings.phoneNumber
     });
   } catch (error) {
@@ -120,12 +132,41 @@ export async function POST(request: NextRequest) {
       ? incomingReviewScope
       : 'all';
 
+    const incomingVaultScope =
+      typeof data.vaultMediaNotificationScope === 'string'
+        ? data.vaultMediaNotificationScope
+        : 'all';
+    const vaultMediaNotificationScope = (allowedScopes as readonly string[]).includes(
+      incomingVaultScope
+    )
+      ? incomingVaultScope
+      : 'all';
+
+    // Validate email when provided
+    let cleanEmail: string | null = null;
+    if (data.notificationEmail && String(data.notificationEmail).trim()) {
+      const candidate = String(data.notificationEmail).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate)) {
+        return NextResponse.json(
+          { error: 'Please enter a valid email address' },
+          { status: 400 }
+        );
+      }
+      cleanEmail = candidate;
+    }
+
     const settingsData: any = {
       userId: authContext.userId,
       enableInventoryUpdates: Boolean(data.enableInventoryUpdates),
       notificationScope,
       enableReviewSignedUpdates: Boolean(data.enableReviewSignedUpdates),
       reviewSignedNotificationScope,
+      enableVaultMediaUpdates: Boolean(data.enableVaultMediaUpdates),
+      vaultMediaNotificationScope,
+      enableInventoryUpdateEmails: Boolean(data.enableInventoryUpdateEmails),
+      enableReviewSignedEmails: Boolean(data.enableReviewSignedEmails),
+      enableVaultMediaEmails: Boolean(data.enableVaultMediaEmails),
+      notificationEmail: cleanEmail,
       phoneNumber: formattedPhoneNumber
     };
     
@@ -159,6 +200,12 @@ export async function POST(request: NextRequest) {
       notificationScope: settings.notificationScope || 'all',
       enableReviewSignedUpdates: settings.enableReviewSignedUpdates || false,
       reviewSignedNotificationScope: settings.reviewSignedNotificationScope || 'all',
+      enableVaultMediaUpdates: settings.enableVaultMediaUpdates || false,
+      vaultMediaNotificationScope: settings.vaultMediaNotificationScope || 'all',
+      enableInventoryUpdateEmails: settings.enableInventoryUpdateEmails || false,
+      enableReviewSignedEmails: settings.enableReviewSignedEmails || false,
+      enableVaultMediaEmails: settings.enableVaultMediaEmails || false,
+      notificationEmail: settings.notificationEmail || null,
       phoneNumber: settings.phoneNumber
     }, { status: 200 });
   } catch (error) {

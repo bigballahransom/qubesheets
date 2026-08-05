@@ -18,8 +18,12 @@
 import Project from '@/models/Project';
 import NotificationSettings from '@/models/NotificationSettings';
 import { sendSmsWithRetry } from '@/lib/twilio';
+import { sendNotificationEmail } from '@/lib/emailNotifications';
 
-export type InventoryUpdateSource = 'photo-session' | 'self-serve-recording';
+export type InventoryUpdateSource =
+  | 'photo-session'
+  | 'self-serve-recording'
+  | 'vault-media';
 
 export interface SendInventoryUpdateOptions {
   /** Mongo ObjectId (string) of the project that just received content. */
@@ -29,6 +33,10 @@ export interface SendInventoryUpdateOptions {
   body: string;
   /** Optional source label used purely for log lines. */
   source?: InventoryUpdateSource;
+  /** Which NotificationSettings toggle gates this event. Defaults to the
+   *  inventory-update toggle; Media Vault events pass
+   *  'enableVaultMediaUpdates' (scoped by 'vaultMediaNotificationScope'). */
+  settingKey?: 'enableInventoryUpdates' | 'enableVaultMediaUpdates';
 }
 
 export interface SendInventoryUpdateResult {
@@ -40,6 +48,10 @@ export interface SendInventoryUpdateResult {
   sent: number;
   /** Failed SMS sends (Twilio errored). */
   failed: number;
+  /** Successful email sends (SendGrid accepted). */
+  emailsSent: number;
+  /** Failed email sends (excludes skips from missing SENDGRID_API_KEY). */
+  emailsFailed: number;
   /** Set true when project lookup failed — caller may want to log/skip. */
   projectMissing?: boolean;
 }
@@ -54,7 +66,8 @@ export interface SendInventoryUpdateResult {
 const SYNTHETIC_USER_IDS = new Set([
   'api-created',
   'smartmoving-webhook',
-  'global-self-survey-link'
+  'global-self-survey-link',
+  'global-vault-link'
 ]);
 
 /**
@@ -104,13 +117,16 @@ function buildProjectUrl(projectId: string): string {
 export async function sendInventoryUpdateNotification({
   projectId,
   body,
-  source
+  source,
+  settingKey = 'enableInventoryUpdates'
 }: SendInventoryUpdateOptions): Promise<SendInventoryUpdateResult> {
   const result: SendInventoryUpdateResult = {
     candidates: 0,
     matched: 0,
     sent: 0,
-    failed: 0
+    failed: 0,
+    emailsSent: 0,
+    emailsFailed: 0
   };
 
   try {
@@ -124,12 +140,12 @@ export async function sendInventoryUpdateNotification({
     }
 
     // Resolve candidates: every NotificationSettings row in the project's
-    // org with the toggle on AND a phone number that looks like a US Twilio
-    // E.164 number. For personal-account projects (no organizationId), only
-    // the project owner gets considered.
+    // org with the event toggle on. Channel eligibility (valid phone / email
+    // channel opted in) is decided per recipient below so a user can receive
+    // email-only, SMS-only, or both. For personal-account projects (no
+    // organizationId), only the project owner gets considered.
     const baseQuery: any = {
-      enableInventoryUpdates: true,
-      phoneNumber: { $exists: true, $ne: null, $regex: /^\+1\d{10}$/ }
+      [settingKey]: true
     };
     const orgId = (project as any).organizationId;
     if (orgId) {
@@ -139,14 +155,23 @@ export async function sendInventoryUpdateNotification({
       baseQuery.organizationId = { $exists: false };
     }
 
+    const scopeKey =
+      settingKey === 'enableVaultMediaUpdates'
+        ? 'vaultMediaNotificationScope'
+        : 'notificationScope';
+    const emailKey =
+      settingKey === 'enableVaultMediaUpdates'
+        ? 'enableVaultMediaEmails'
+        : 'enableInventoryUpdateEmails';
+
     const candidates = await NotificationSettings.find(baseQuery)
-      .select('userId phoneNumber notificationScope')
+      .select(`userId phoneNumber notificationEmail ${emailKey} ${scopeKey}`)
       .lean();
     result.candidates = candidates.length;
 
     // Filter by scope.
     const matched = candidates.filter((c: any) => {
-      const scope = (c.notificationScope as 'all' | 'unassigned-and-mine' | 'mine') || 'all';
+      const scope = (c[scopeKey] as 'all' | 'unassigned-and-mine' | 'mine') || 'all';
       return projectMatchesScope(project as any, c.userId, scope);
     });
     result.matched = matched.length;
@@ -156,12 +181,21 @@ export async function sendInventoryUpdateNotification({
       return result;
     }
 
-    // De-dupe by phone number.
+    // De-dupe channels independently: SMS needs a valid US phone; email
+    // needs the per-event email toggle plus a stored address.
     const phones = Array.from(
       new Set(
         matched
           .map((c: any) => c.phoneNumber)
-          .filter((p: any): p is string => typeof p === 'string' && p.length > 0)
+          .filter((p: any): p is string => typeof p === 'string' && /^\+1\d{10}$/.test(p))
+      )
+    );
+    const emails = Array.from(
+      new Set(
+        matched
+          .filter((c: any) => c[emailKey] === true)
+          .map((c: any) => c.notificationEmail)
+          .filter((e: any): e is string => typeof e === 'string' && e.includes('@'))
       )
     );
 
@@ -169,9 +203,14 @@ export async function sendInventoryUpdateNotification({
     // iOS Safari auto-detects the link).
     const projectUrl = buildProjectUrl(String(projectId));
     const fullBody = `${body}\n${projectUrl}`;
+    const isVaultEvent = settingKey === 'enableVaultMediaUpdates';
+    const emailSubject = isVaultEvent
+      ? `Vault media added — ${(project as any).name || 'Qube Sheets'}`
+      : `Inventory updated — ${(project as any).name || 'Qube Sheets'}`;
+    const emailHeading = isVaultEvent ? 'New vault media' : 'Inventory updated';
 
-    await Promise.all(
-      phones.map(async (phone) => {
+    await Promise.all([
+      ...phones.map(async (phone) => {
         const r = await sendSmsWithRetry(fullBody, phone, 2);
         if (r.success) {
           result.sent++;
@@ -183,13 +222,33 @@ export async function sendInventoryUpdateNotification({
             r.error
           );
         }
+      }),
+      ...emails.map(async (email) => {
+        const r = await sendNotificationEmail({
+          to: email,
+          subject: emailSubject,
+          heading: emailHeading,
+          text: body,
+          actionUrl: projectUrl,
+          actionLabel: 'Open project'
+        });
+        if (r.success) {
+          result.emailsSent++;
+        } else if (!r.skipped) {
+          result.emailsFailed++;
+          console.warn(
+            `⚠️ inventory-update: email to ${email.slice(0, 5)}… failed (${source || 'unknown'}):`,
+            r.error
+          );
+        }
       })
-    );
+    ]);
 
     console.log(
       `📬 inventory-update [${source || 'unknown'}]: project=${projectId} ` +
       `candidates=${result.candidates} matched=${result.matched} ` +
-      `sent=${result.sent} failed=${result.failed}`
+      `sms=${result.sent}/${result.sent + result.failed} ` +
+      `email=${result.emailsSent}/${result.emailsSent + result.emailsFailed}`
     );
   } catch (err) {
     console.error('inventory-update notification error (non-fatal):', err);

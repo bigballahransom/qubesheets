@@ -51,6 +51,15 @@ export interface IProject extends Document {
     secondFollowUpSent?: boolean;
     secondFollowUpSentAt?: Date;
   };
+  // Media Vault capture link — separate from uploadLinkTracking so the
+  // survey Send Upload Link flow never sees or deactivates it. Token points
+  // at a non-expiring CustomerUpload with purpose 'vault'.
+  vaultLinkTracking?: {
+    uploadToken?: string;
+    createdAt?: Date;
+    lastSentAt?: Date;
+    totalSent?: number;
+  };
   metadata?: {
     createdViaApi?: boolean;
     apiKeyId?: string;
@@ -109,6 +118,10 @@ export interface IProject extends Document {
   // Weight configuration (per-project override)
   weightMode?: 'actual' | 'custom';
   customWeightMultiplier?: number;
+  // Set when the org-wide Media Vault crew link couldn't phone-match an
+  // existing project and auto-created this one. Badged "Unfiled" in the
+  // projects list so admins/VAs re-file the media and clean up.
+  vaultUnfiled?: boolean;
   // Soft archive — hidden from default lists but retrievable; archivedAt/archivedBy
   // are set server-side only (see PATCH /api/projects/[projectId])
   isArchived?: boolean;
@@ -184,6 +197,12 @@ const ProjectSchema: Schema = new Schema(
       secondFollowUpSent: { type: Boolean, default: false },
       secondFollowUpSentAt: { type: Date }
     },
+    vaultLinkTracking: {
+      uploadToken: { type: String },
+      createdAt: { type: Date },
+      lastSentAt: { type: Date },
+      totalSent: { type: Number, default: 0 }
+    },
     metadata: {
       createdViaApi: { type: Boolean, default: false },
       apiKeyId: { type: String },
@@ -201,6 +220,7 @@ const ProjectSchema: Schema = new Schema(
       max: 8,
       required: false
     },
+    vaultUnfiled: { type: Boolean, default: false },
     isArchived: { type: Boolean, default: false },
     archivedAt: { type: Date, required: false },
     archivedBy: { type: String, required: false }

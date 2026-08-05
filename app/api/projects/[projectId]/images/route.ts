@@ -37,7 +37,8 @@ export async function GET(
     const filter = getProjectFilter(authContext, projectId);
     console.log('🖼️ Image gallery filter:', filter);
     
-    const images = await Image.find(filter)
+    // Vault media renders only in the Vault tab (vault-media route)
+    const images = await Image.find({ ...filter, purpose: { $ne: 'vault' } })
       .select('name originalName mimeType size description analysisResult source metadata data createdAt updatedAt')
       .sort({ createdAt: -1 });
     

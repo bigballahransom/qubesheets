@@ -8,9 +8,11 @@ const isPublicRoute = createRouteMatcher([
   '/call-complete(.*)',
   '/customer-upload(.*)',
   '/upload(.*)',  // Global org-level self-survey landing page
+  '/vault(.*)',  // Global org-level Media Vault crew capture landing page
   '/embed(.*)',  // Embedded lead-capture form (iframe on customer websites)
   '/inventory-review(.*)',
   '/crew-review(.*)',
+  '/vault-review(.*)',  // Public Media Vault share gallery (view + comments)
   '/form(.*)',
   '/sign-in(.*)',
   '/sign-up(.*)',
@@ -20,12 +22,14 @@ const isPublicRoute = createRouteMatcher([
 const isPublicApiRoute = createRouteMatcher([
   '/api/customer-upload/(.*)',
   '/api/upload/(.*)',  // Global self-survey link API (config + create-project)
+  '/api/vault/(.*)',  // Global Media Vault crew link API (match-or-create + token)
   '/api/leads/from-embed/(.*)',  // Embedded lead form submission — CORS open
   '/api/leads/schedule-call/(.*)',  // Embedded scheduler — auth'd by submissionId window
   '/api/embedded-forms/(.+)/public',  // Public form config for iframe rendering
   '/api/self-serve/(.*)',  // Customer self-serve recording endpoints (init, start, stop, telemetry) — auth checked via uploadToken
   '/api/inventory-review/(.*)',
   '/api/crew-review/(.*)',
+  '/api/vault-review/(.*)',  // Vault share gallery data + comments — auth by shareToken
   '/api/livekit/token(.*)',
   '/api/livekit/webhook(.*)',  // LiveKit webhook endpoint
   '/api/calls/(.*)',  // Lobby presence + start — customer side is anonymous, agent auth checked inside handler

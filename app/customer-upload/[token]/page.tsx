@@ -31,6 +31,9 @@ interface UploadValidation {
   uploadMode?: 'files' | 'recording' | 'both';
   recordingInstructions?: string;
   maxRecordingDuration?: number;
+  // True for Media Vault capture links — reference-only messaging, no
+  // inventory-processing UI.
+  isVault?: boolean;
   // True when minted as an employee on-site walkthrough — completion CTA
   // redirects back to /projects/{projectId} instead of looping back to the
   // upload choice screen.
@@ -194,6 +197,7 @@ export default function CustomerUploadPage() {
             recordingInstructions: data.recordingInstructions,
             maxRecordingDuration: data.maxRecordingDuration || 1200,
             isWalkthrough: !!data.isWalkthrough,
+            isVault: !!data.isVault,
             photosEnabled: data.photosEnabled !== false
           });
           
@@ -542,8 +546,10 @@ export default function CustomerUploadPage() {
       // Handle regular images and processed videos
       const uploadId = result.imageId || result.videoId;
       
-      // Track job ID for Railway SQS processing  
-      if (result.sqsMessageId && result.sqsMessageId !== 'no-analysis-data') {
+      // Track job ID for Railway SQS processing. Vault uploads are never
+      // processed ('vault-skip'), so don't arm the processing status UI —
+      // no completion event will ever arrive for them.
+      if (result.sqsMessageId && result.sqsMessageId !== 'no-analysis-data' && result.sqsMessageId !== 'vault-skip') {
         console.log('📋 SQS Job ID tracked:', result.sqsMessageId);
         setPendingJobIds(prev => [...prev, result.sqsMessageId]);
         setShowProcessingStatus(true);
@@ -701,6 +707,7 @@ export default function CustomerUploadPage() {
         onSessionComplete={handleRecordingComplete}
         onSwitchToUpload={photosAllowed ? () => setViewMode('upload') : undefined}
         isWalkthrough={!!validation.isWalkthrough}
+        isVault={!!validation.isVault}
       />
     );
   }
@@ -716,6 +723,7 @@ export default function CustomerUploadPage() {
         onComplete={handleRecordingComplete}
         onCancel={() => setViewMode('choice')}
         walkthroughReturnUrl={walkthroughReturnUrl}
+        isVault={!!validation.isVault}
       />
     );
   }
@@ -751,6 +759,7 @@ export default function CustomerUploadPage() {
           branding: validation.branding,
           uploadMode: validation.uploadMode,
           isWalkthrough: validation.isWalkthrough,
+          isVault: validation.isVault,
           photosEnabled: validation.photosEnabled,
         }}
         showLeadGreeting={searchParams?.get('greeting') === 'lead'}
@@ -794,7 +803,7 @@ export default function CustomerUploadPage() {
                 <p className="font-medium text-slate-800">
                   {validation.branding?.companyName || 'Moving Company'}
                 </p>
-                <p className="text-sm text-slate-500">Self-Serve Inventory Upload</p>
+                <p className="text-sm text-slate-500">{validation.isVault ? 'Media Vault Upload' : 'Self-Serve Inventory Upload'}</p>
               </div>
             </div>
 
@@ -887,7 +896,11 @@ export default function CustomerUploadPage() {
                   <h3 className="text-lg font-semibold text-green-800">
                     {totalUploadedFiles} File{totalUploadedFiles !== 1 ? 's' : ''} Uploaded
                   </h3>
-                  <p className="text-sm text-green-700">Successfully uploaded to cloud storage{showProcessingStatus ? ' - AI analysis in progress' : ' and ready for analysis'}</p>
+                  <p className="text-sm text-green-700">
+                    {validation.isVault
+                      ? 'Saved to the Media Vault for reference'
+                      : `Successfully uploaded to cloud storage${showProcessingStatus ? ' - AI analysis in progress' : ' and ready for analysis'}`}
+                  </p>
                 </div>
               </div>
             </div>
@@ -911,6 +924,23 @@ export default function CustomerUploadPage() {
               </div> */}
               
               {/* What's Next Section */}
+              {validation.isVault ? (
+                <div className="bg-slate-50 rounded-xl p-6 border border-slate-200">
+                  <div className="flex items-start gap-4">
+                    <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <CheckCircle className="w-5 h-5 text-slate-600" />
+                    </div>
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-slate-800 text-lg">All set</h4>
+                      <p className="text-sm text-slate-600">
+                        Your media is saved to {validation.branding?.companyName || 'the company'}&apos;s
+                        Media Vault for this project. It is stored for reference and will not be
+                        inventoried. You can add more anytime with this same link.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
               <div className="bg-blue-50 rounded-xl p-6 border border-blue-200">
                 <div className="flex items-start gap-4">
                   <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -939,6 +969,7 @@ export default function CustomerUploadPage() {
                   </div>
                 </div>
               </div>
+              )}
             </div>
           </div>
         )}

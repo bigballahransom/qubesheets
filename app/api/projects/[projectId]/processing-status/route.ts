@@ -23,20 +23,25 @@ export async function GET(
     
     // Query database for all items that are currently processing
     // Check analysisResult.status as this is what railway services actually update
+    // Vault media ('skipped' status / purpose 'vault') is never processed —
+    // it must not appear in the "Processing N items…" indicator.
     const [processingImages, processingVideos, processingCalls] = await Promise.all([
       Image.find({
         projectId,
-        'analysisResult.status': { $ne: 'completed' }
+        purpose: { $ne: 'vault' },
+        'analysisResult.status': { $nin: ['completed', 'skipped'] }
       }).select('_id name originalName processingStatus analysisResult createdAt').lean(),
 
       Video.find({
         projectId,
-        'analysisResult.status': { $ne: 'completed' }
+        purpose: { $ne: 'vault' },
+        'analysisResult.status': { $nin: ['completed', 'skipped'] }
       }).select('_id name originalName processingStatus analysisResult createdAt source').lean(),
 
       // Video call recordings being recorded OR analyzed
       VideoRecording.find({
         projectId,
+        purpose: { $ne: 'vault' },
         $or: [
           // Customer egress is active (starting or recording)
           { customerEgressStatus: { $in: ['starting', 'recording'] } },

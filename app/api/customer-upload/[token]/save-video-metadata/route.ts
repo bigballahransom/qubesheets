@@ -24,7 +24,8 @@ export async function POST(
       fileSize,
       fileType,
       videoBuffer, // Base64 encoded video data
-      customerName
+      customerName,
+      label
     } = body;
     
     console.log('💾 Received video metadata:', {
@@ -92,6 +93,9 @@ export async function POST(
     let s3Result = null;
     let sqsMessageId = 'no-analysis-data';
     
+    // Media Vault uploads are stored for reference only — no AI processing
+    const isVault = customerUpload?.purpose === 'vault';
+
     // Save video metadata to database first
     const videoDoc = await Video.create({
       name,
@@ -104,8 +108,16 @@ export async function POST(
       organizationId,
       description: `Video uploaded by ${customerName || 'anonymous customer'}`,
       source: 'customer_upload',
+      purpose: isVault ? 'vault' : 'inventory',
+      ...(label ? { label: String(label).slice(0, 200) } : {}),
+      processingStatus: isVault ? 'skipped' : 'queued',
       // Initialize with processing analysis status
-      analysisResult: {
+      analysisResult: isVault ? {
+        summary: 'Stored in Media Vault — not inventoried',
+        itemsCount: 0,
+        totalBoxes: 0,
+        status: 'skipped'
+      } : {
         summary: 'AI video analysis in progress...',
         itemsCount: 0,
         totalBoxes: 0,
@@ -153,7 +165,23 @@ export async function POST(
           }
         });
         
-        // Send to SQS for Railway processing
+        // Send to SQS for Railway processing (vault media is never processed;
+        // instead fire the vault-media notification to opted-in org members)
+        if (isVault) {
+          sqsMessageId = 'vault-skip';
+          try {
+            const { sendInventoryUpdateNotification } = await import('@/lib/inventoryUpdateNotifications');
+            const projectDoc = await Project.findById(projectId).select('name').lean();
+            await sendInventoryUpdateNotification({
+              projectId: String(projectId),
+              body: `New vault video added to ${(projectDoc as any)?.name || 'a project'}.`,
+              source: 'vault-media',
+              settingKey: 'enableVaultMediaUpdates'
+            });
+          } catch (notifyErr) {
+            console.error('vault-media SMS (video upload) failed (non-fatal):', notifyErr);
+          }
+        } else {
         sqsMessageId = await sendVideoProcessingMessage({
           videoId: videoDoc._id.toString(),
           projectId: projectId?.toString() || 'unknown',
@@ -168,9 +196,10 @@ export async function POST(
           uploadedAt: new Date().toISOString(),
           source: 'video-upload'
         });
-        
+
         console.log(`✅ SQS message sent: ${sqsMessageId}`);
-        
+        }
+
       } catch (s3Error) {
         console.error('⚠️ S3/SQS upload failed, video still saved to MongoDB:', s3Error);
         sqsMessageId = 'fallback-local-processing';
@@ -191,11 +220,13 @@ export async function POST(
         bucket: s3Result.bucket,
         url: s3Result.url
       } : null,
-      message: buffer 
+      message: isVault
+        ? 'Video saved to the Media Vault.'
+        : buffer
         ? 'Video uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.'
         : 'Video uploaded successfully! Analysis requires video data.',
       customerName: customerName || 'anonymous',
-      analysisStatus: buffer ? 'queued' : 'skipped'
+      analysisStatus: isVault ? 'skipped' : buffer ? 'queued' : 'skipped'
     });
     
   } catch (error) {

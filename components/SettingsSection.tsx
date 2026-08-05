@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import LeadFormsUpgradeModal from '@/components/LeadFormsUpgradeModal';
+import SafeIcon from '@/components/icons/SafeIcon';
 
 interface SettingsItem {
   title: string;
@@ -43,6 +44,7 @@ const settingsItems: SettingsItem[] = [
   { title: 'Templates', icon: FileText, href: '/settings/templates' },
   { title: 'Branding', icon: Palette, href: '/settings/branding' },
   { title: 'Global Self-Survey Link', icon: Link2, href: '/settings/global-upload-link' },
+  { title: 'Media Vault Crew Link', icon: SafeIcon, href: '/settings/vault-link' },
   { title: 'PDFs and Links', icon: ClipboardCheck, href: '/settings/customer-review-link' },
   { title: 'Lead Funnel', icon: Inbox, href: '/settings/lead-forms' },
   { title: 'Photo Capture', icon: Camera, href: '/settings/photos' },

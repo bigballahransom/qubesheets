@@ -61,9 +61,11 @@ export async function GET(
     const sortBy = searchParams.get('sortBy') || 'createdAt';
     const sortOrder = searchParams.get('sortOrder') === 'asc' ? 1 : -1;
 
-    // Build base match criteria
+    // Build base match criteria. Vault recordings render only in the Vault
+    // tab (vault-media route) — never in the Videos / Virtual Calls tabs.
     const matchCriteria: any = {
-      projectId: projectId
+      projectId: projectId,
+      purpose: { $ne: 'vault' }
     };
 
     // Filter by status if provided

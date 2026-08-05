@@ -3,13 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { Folder, Plus, User, Users, UserX, ChevronDown, Archive, ArchiveRestore, MoreHorizontal, UserPlus } from 'lucide-react';
+import { Folder, Plus, User, Users, UserX, ChevronDown, Archive, ArchiveRestore, MoreHorizontal, UserPlus, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DesktopHeaderBar } from "@/components/DesktopHeaderBar";
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
+import DuplicateProjectModal from '@/components/modals/DuplicateProjectModal';
 import IntercomChat from '@/components/IntercomChat';
 import { useAuth, useOrganization } from '@clerk/nextjs';
 import { toast } from 'sonner';
@@ -40,6 +41,8 @@ export default function ProjectsPage() {
   const [projectFilter, setProjectFilter] = useState('mine');
   const [filterHydrated, setFilterHydrated] = useState(false);
   const [orgMembers, setOrgMembers] = useState([]);
+  // Project being duplicated via the row menu (null = dialog closed)
+  const [duplicatingProject, setDuplicatingProject] = useState(null);
 
   const router = useRouter();
   const { isLoaded, userId } = useAuth();
@@ -62,8 +65,8 @@ export default function ProjectsPage() {
         // Falls back to userId (creator) if no assignedTo exists
         return active.filter(p => (p.assignedTo?.userId || p.userId) === userId);
       case 'unassigned':
-        // Projects with no assignedTo AND created via API/webhook/global-self-survey-link (not a real user)
-        return active.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook', 'global-self-survey-link'].includes(p.userId));
+        // Projects with no assignedTo AND created via API/webhook/global-self-survey-link/vault crew link (not a real user)
+        return active.filter(p => !p.assignedTo && ['api-created', 'smartmoving-webhook', 'global-self-survey-link', 'global-vault-link'].includes(p.userId));
       case 'all':
       default:
         return active;
@@ -252,6 +255,20 @@ export default function ProjectsPage() {
           </Button>
         </CreateProjectModal>
       </div>
+
+      {/* Duplicate project dialog (opened from a row's ... menu) */}
+      {duplicatingProject && (
+        <DuplicateProjectModal
+          isOpen={!!duplicatingProject}
+          onClose={() => setDuplicatingProject(null)}
+          projectId={duplicatingProject._id}
+          projectName={duplicatingProject.name}
+          onDuplicated={(newProjectId) => {
+            window.dispatchEvent(new CustomEvent('organizationDataRefresh', { detail: { silent: true } }));
+            router.push(`/projects/${newProjectId}`);
+          }}
+        />
+      )}
       
       {/* Projects list */}
       <div className="bg-white rounded-lg shadow-sm border">
@@ -403,6 +420,14 @@ export default function ProjectsPage() {
                             Archived
                           </span>
                         )}
+                        {project.vaultUnfiled && !project.isArchived && (
+                          <span
+                            className="px-2 py-0.5 text-xs font-medium text-amber-700 bg-amber-100 rounded-full flex-shrink-0"
+                            title="Auto-created by the Media Vault crew link — no matching job was found for this phone number. Move the media to the right project or keep this one."
+                          >
+                            Unfiled
+                          </span>
+                        )}
                         {isSyncedToSmartMoving && (
                           <span title="Synced with SmartMoving">
                             <Image
@@ -493,6 +518,16 @@ export default function ProjectsPage() {
                             </DropdownMenuSubContent>
                           </DropdownMenuSub>
                         )}
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDuplicatingProject(project);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <Copy size={14} className="mr-2" />
+                          Duplicate project
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={(e) => {
                             e.stopPropagation();

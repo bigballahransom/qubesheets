@@ -189,10 +189,11 @@ export async function GET(
     const regularItems = allItems.filter(item => item.itemType !== 'boxes_needed');
     const boxRecommendationItems = allItems.filter(item => item.itemType === 'boxes_needed');
 
-    // Fetch all media
+    // Fetch all media (vault media is internal-reference only — never shown
+    // on crew/customer review links)
     const [images, videos] = await Promise.all([
-      Image.find({ projectId: reviewLink.projectId }).select('_id name originalName mimeType manualRoomEntry'),
-      Video.find({ projectId: reviewLink.projectId }).select('_id originalName mimeType duration manualRoomEntry'),
+      Image.find({ projectId: reviewLink.projectId, purpose: { $ne: 'vault' } }).select('_id name originalName mimeType manualRoomEntry'),
+      Video.find({ projectId: reviewLink.projectId, purpose: { $ne: 'vault' } }).select('_id originalName mimeType duration manualRoomEntry'),
     ]);
 
     // Build media sections with associated items
@@ -235,7 +236,8 @@ export async function GET(
     // Fetch video recordings with full analysis data
     const videoRecordingsWithAnalysis = await VideoRecording.find({
       projectId: reviewLink.projectId,
-      status: 'completed'
+      status: 'completed',
+      purpose: { $ne: 'vault' }
     }).select('_id roomId duration s3Key createdAt analysisResult transcriptAnalysisResult').lean();
 
     // Process video recordings with their AI summaries

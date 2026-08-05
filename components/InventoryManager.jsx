@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization, useAuth } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload, MapPin, Archive, ArchiveRestore
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload, MapPin, Archive, ArchiveRestore, Copy
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -26,6 +26,10 @@ import Spreadsheet from './sheets/Spreadsheet';
 import SendUploadLinkModal from './SendUploadLinkModal';
 import ShareInventoryReviewLinkModal from './modals/ShareInventoryReviewLinkModal';
 import ShareCrewLinkModal from './modals/ShareCrewLinkModal';
+import VaultLinkModal from './modals/VaultLinkModal';
+import VaultTab from './VaultTab';
+import SafeIcon from './icons/SafeIcon';
+import DuplicateProjectModal from './modals/DuplicateProjectModal';
 import ScheduleVideoCallModal from './modals/ScheduleVideoCallModal';
 import ActivityLog from './ActivityLog';
 import BoxesManager from './BoxesManager';
@@ -237,6 +241,8 @@ export default function InventoryManager({ initialProject = null, onProjectRefre
 const [isSendLinkModalOpen, setIsSendLinkModalOpen] = useState(false);
 const [isReviewLinkModalOpen, setIsReviewLinkModalOpen] = useState(false);
 const [isCrewLinkModalOpen, setIsCrewLinkModalOpen] = useState(false);
+const [isVaultLinkModalOpen, setIsVaultLinkModalOpen] = useState(false);
+const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
 const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
 const [scheduledCalls, setScheduledCalls] = useState([]);
 const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -5020,6 +5026,12 @@ const ProcessingNotification = () => {
               Send Customer Self-Survey Link
             </MenubarItem>
             <MenubarSeparator />
+            <div className="px-2 py-1.5 text-xs font-semibold text-slate-500">Media Vault</div>
+            <MenubarItem onClick={() => setIsVaultLinkModalOpen(true)}>
+              <SafeIcon size={16} className="mr-1" />
+              Vault Capture Link / QR
+            </MenubarItem>
+            <MenubarSeparator />
             <div className="px-2 py-1.5 text-xs font-semibold text-slate-500">Review Inventory</div>
             <MenubarItem onClick={() => setIsReviewLinkModalOpen(true)}>
               <Package size={16} className="mr-1" />
@@ -5170,6 +5182,10 @@ const ProcessingNotification = () => {
               Download
             </MenubarItem>
             <MenubarSeparator />
+            <MenubarItem onClick={() => setIsDuplicateModalOpen(true)}>
+              <Copy size={16} className="mr-1" />
+              Duplicate Project
+            </MenubarItem>
             <MenubarItem onClick={toggleArchiveProject}>
               {currentProject?.isArchived ? (
                 <ArchiveRestore size={16} className="mr-1" />
@@ -5380,6 +5396,10 @@ const ProcessingNotification = () => {
                 <MessageSquare size={16} />
                 Notes
               </TabsTrigger>
+              <TabsTrigger value="vault" className="flex items-center gap-2 whitespace-nowrap px-3 py-2">
+                <SafeIcon size={16} />
+                Vault
+              </TabsTrigger>
                 </TabsList>
               </div>
             </div>
@@ -5466,6 +5486,19 @@ const ProcessingNotification = () => {
               </div>
             </TabsContent>
             
+            <TabsContent value="vault">
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="p-6">
+                  {currentProject && (
+                    <VaultTab
+                      projectId={currentProject._id}
+                      onOpenVaultLink={() => setIsVaultLinkModalOpen(true)}
+                    />
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+
             <TabsContent value="videos">
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 <div className="p-6">
@@ -5623,6 +5656,30 @@ const ProcessingNotification = () => {
     projectId={currentProject._id}
     projectName={currentProject.name}
     customerPhone={currentProject.phone}
+  />
+)}
+
+{/* Media Vault Link Modal */}
+{isVaultLinkModalOpen && currentProject && (
+  <VaultLinkModal
+    isOpen={isVaultLinkModalOpen}
+    onClose={() => setIsVaultLinkModalOpen(false)}
+    projectId={currentProject._id}
+    projectName={currentProject.name}
+  />
+)}
+
+{/* Duplicate Project Modal */}
+{isDuplicateModalOpen && currentProject && (
+  <DuplicateProjectModal
+    isOpen={isDuplicateModalOpen}
+    onClose={() => setIsDuplicateModalOpen(false)}
+    projectId={currentProject._id}
+    projectName={currentProject.name}
+    onDuplicated={(newProjectId) => {
+      window.dispatchEvent(new CustomEvent('organizationDataRefresh', { detail: { silent: true } }));
+      router.push(`/projects/${newProjectId}`);
+    }}
   />
 )}
 

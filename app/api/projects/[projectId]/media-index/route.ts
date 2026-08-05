@@ -36,27 +36,31 @@ export async function GET(
     // Same visibility rules as the galleries: the Videos tab shows self-serve
     // recordings with a playable file even mid-analysis (see videos/[videoId]
     // route), the Virtual Calls tab excludes self-serve.
+    // Vault media never appears in this index — it has its own tab/gallery.
+    const notVault = { purpose: { $ne: 'vault' } } as const;
     const selfServeFilter = {
       projectId,
       source: 'self_serve',
       status: { $in: ['processing', 'completed', 'failed', 'partial'] },
       s3Key: { $exists: true, $nin: [null, ''] },
+      ...notVault,
       ...orgFilter,
     };
     const callRecordingFilter = {
       projectId,
       source: { $ne: 'self_serve' },
       s3Key: { $exists: true, $nin: [null, ''] },
+      ...notVault,
       ...orgFilter,
     };
 
     const [images, videos, selfServe, callRecordings] = await Promise.all([
-      Image.find(imageFilter)
+      Image.find({ ...imageFilter, ...notVault })
         .select('originalName description createdAt')
         .sort({ createdAt: -1 })
         .maxTimeMS(10000)
         .lean(),
-      Video.find({ projectId, ...orgFilter })
+      Video.find({ projectId, ...notVault, ...orgFilter })
         .select('originalName description createdAt')
         .sort({ createdAt: -1 })
         .maxTimeMS(10000)

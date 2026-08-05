@@ -25,7 +25,8 @@ export async function POST(
       fileSize,
       fileType,
       customerName,
-      imageBuffer // Base64 encoded image data for analysis
+      imageBuffer, // Base64 encoded image data for analysis
+      label
     } = body;
     
     console.log('💾 Received customer image metadata:', {
@@ -89,6 +90,9 @@ export async function POST(
     const cleanCustomerName = (customerName || 'anonymous').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
     const name = `customer-${cleanCustomerName}-${timestamp}-${fileName}`;
     
+    // Media Vault uploads are stored for reference only — no AI processing
+    const isVault = customerUpload?.purpose === 'vault';
+
     // Save image metadata to database
     const imageDoc = await Image.create({
       name,
@@ -101,6 +105,9 @@ export async function POST(
       organizationId,
       description: `Image uploaded by ${customerName || 'anonymous customer'}`,
       source: 'customer_upload',
+      purpose: isVault ? 'vault' : 'inventory',
+      ...(label ? { label: String(label).slice(0, 200) } : {}),
+      processingStatus: isVault ? 'skipped' : 'queued',
       metadata: {
         uploadToken: token,
         directUpload: true,
@@ -108,7 +115,12 @@ export async function POST(
         customerName: customerName || 'anonymous'
       },
       // Initialize with processing analysis status
-      analysisResult: {
+      analysisResult: isVault ? {
+        summary: 'Stored in Media Vault — not inventoried',
+        itemsCount: 0,
+        totalBoxes: 0,
+        status: 'skipped'
+      } : {
         summary: 'AI analysis in progress...',
         itemsCount: 0,
         totalBoxes: 0,
@@ -171,7 +183,10 @@ export async function POST(
           }
         });
         
-        // Send to SQS for Railway processing
+        // Send to SQS for Railway processing (vault media is never processed)
+        if (isVault) {
+          sqsMessageId = 'vault-skip';
+        } else {
         sqsMessageId = await sendImageProcessingMessage({
           imageId: imageDoc._id.toString(),
           projectId: projectId?.toString() || 'unknown',
@@ -186,9 +201,10 @@ export async function POST(
           uploadedAt: new Date().toISOString(),
           source: 'api-upload'
         });
-        
+
         console.log(`✅ SQS message sent: ${sqsMessageId}`);
-        
+        }
+
       } catch (s3Error) {
         console.error('⚠️ S3/SQS upload failed, image still saved to MongoDB:', s3Error);
         sqsMessageId = 'fallback-local-processing';
@@ -204,11 +220,13 @@ export async function POST(
         bucket: s3Result.bucket,
         url: s3Result.url
       } : null,
-      message: buffer 
+      message: isVault
+        ? 'Photo saved to the Media Vault.'
+        : buffer
         ? 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.'
         : 'Image uploaded successfully! Analysis requires image data.',
       customerName: customerName || 'anonymous',
-      analysisStatus: buffer ? 'queued' : 'skipped'
+      analysisStatus: isVault ? 'skipped' : buffer ? 'queued' : 'skipped'
     });
     
   } catch (error) {

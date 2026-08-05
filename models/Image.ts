@@ -12,12 +12,17 @@ export interface IImage extends Document {
   organizationId?: string;
   description?: string;
   manualRoomEntry?: string; // Manual room location override
-  processingStatus?: 'queued' | 'processing' | 'completed' | 'failed';
+  // 'inventory' (default) = survey media. 'vault' = Media Vault reference
+  // media — AI processing skipped at upload (processingStatus 'skipped').
+  purpose?: 'inventory' | 'vault';
+  // Short human label for vault media ("Walk-in — Job 65503")
+  label?: string;
+  processingStatus?: 'queued' | 'processing' | 'completed' | 'failed' | 'skipped';
   analysisResult?: {
     summary: string;
     itemsCount: number;
     totalBoxes?: number;
-    status?: 'pending' | 'processing' | 'completed' | 'failed';
+    status?: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
     error?: string;
   };
   // Cloudinary storage - optional for backward compatibility
@@ -67,12 +72,14 @@ const ImageSchema: Schema = new Schema(
     organizationId: { type: String, required: false, index: true },
     description: { type: String },
     manualRoomEntry: { type: String, required: false }, // Manual room location override
-    processingStatus: { type: String, enum: ['queued', 'processing', 'completed', 'failed'], default: 'queued' },
+    purpose: { type: String, enum: ['inventory', 'vault'], default: 'inventory', index: true },
+    label: { type: String, required: false },
+    processingStatus: { type: String, enum: ['queued', 'processing', 'completed', 'failed', 'skipped'], default: 'queued' },
     analysisResult: {
       summary: { type: String },
       itemsCount: { type: Number },
       totalBoxes: { type: Number },
-      status: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
+      status: { type: String, enum: ['pending', 'processing', 'completed', 'failed', 'skipped'], default: 'pending' },
       error: { type: String }
     },
     // Cloudinary storage - optional for backward compatibility

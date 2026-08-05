@@ -12,6 +12,7 @@
 import Project from '@/models/Project';
 import NotificationSettings from '@/models/NotificationSettings';
 import { sendSmsWithRetry } from '@/lib/twilio';
+import { sendNotificationEmail } from '@/lib/emailNotifications';
 
 export interface SendReviewSignedOptions {
   /** Mongo ObjectId (string) of the project whose review link was signed. */
@@ -26,6 +27,8 @@ export interface SendReviewSignedResult {
   matched: number;
   sent: number;
   failed: number;
+  emailsSent: number;
+  emailsFailed: number;
   projectMissing?: boolean;
 }
 
@@ -78,7 +81,9 @@ export async function sendReviewSignedNotification({
     candidates: 0,
     matched: 0,
     sent: 0,
-    failed: 0
+    failed: 0,
+    emailsSent: 0,
+    emailsFailed: 0
   };
 
   try {
@@ -91,9 +96,10 @@ export async function sendReviewSignedNotification({
       return result;
     }
 
+    // Channel eligibility (valid phone / email opted in) is decided per
+    // recipient below so a user can receive email-only, SMS-only, or both.
     const baseQuery: any = {
-      enableReviewSignedUpdates: true,
-      phoneNumber: { $exists: true, $ne: null, $regex: /^\+1\d{10}$/ }
+      enableReviewSignedUpdates: true
     };
     const orgId = (project as any).organizationId;
     if (orgId) {
@@ -104,7 +110,7 @@ export async function sendReviewSignedNotification({
     }
 
     const candidates = await NotificationSettings.find(baseQuery)
-      .select('userId phoneNumber reviewSignedNotificationScope')
+      .select('userId phoneNumber notificationEmail enableReviewSignedEmails reviewSignedNotificationScope')
       .lean();
     result.candidates = candidates.length;
 
@@ -127,15 +133,23 @@ export async function sendReviewSignedNotification({
       new Set(
         matched
           .map((c: any) => c.phoneNumber)
-          .filter((p: any): p is string => typeof p === 'string' && p.length > 0)
+          .filter((p: any): p is string => typeof p === 'string' && /^\+1\d{10}$/.test(p))
+      )
+    );
+    const emails = Array.from(
+      new Set(
+        matched
+          .filter((c: any) => c.enableReviewSignedEmails === true)
+          .map((c: any) => c.notificationEmail)
+          .filter((e: any): e is string => typeof e === 'string' && e.includes('@'))
       )
     );
 
     const projectUrl = buildProjectUrl(String(projectId));
     const fullBody = `${body}\n${projectUrl}`;
 
-    await Promise.all(
-      phones.map(async (phone) => {
+    await Promise.all([
+      ...phones.map(async (phone) => {
         const r = await sendSmsWithRetry(fullBody, phone, 2);
         if (r.success) {
           result.sent++;
@@ -147,13 +161,30 @@ export async function sendReviewSignedNotification({
             r.error
           );
         }
+      }),
+      ...emails.map(async (email) => {
+        const r = await sendNotificationEmail({
+          to: email,
+          subject: `Review signed — ${(project as any).name || 'Qube Sheets'}`,
+          heading: 'Customer signed the review',
+          text: body,
+          actionUrl: projectUrl,
+          actionLabel: 'Open project'
+        });
+        if (r.success) {
+          result.emailsSent++;
+        } else if (!r.skipped) {
+          result.emailsFailed++;
+          console.warn(`⚠️ review-signed: email to ${email.slice(0, 5)}… failed:`, r.error);
+        }
       })
-    );
+    ]);
 
     console.log(
       `📬 review-signed: project=${projectId} ` +
         `candidates=${result.candidates} matched=${result.matched} ` +
-        `sent=${result.sent} failed=${result.failed}`
+        `sms=${result.sent}/${result.sent + result.failed} ` +
+        `email=${result.emailsSent}/${result.emailsSent + result.emailsFailed}`
     );
   } catch (err) {
     console.error('review-signed notification error (non-fatal):', err);

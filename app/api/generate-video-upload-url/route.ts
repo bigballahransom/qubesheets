@@ -22,11 +22,13 @@ export async function POST(request: NextRequest) {
 
     // Large videos use pre-signed URLs to bypass serverless function limits
 
-    // Validate reasonable file size (1GB max as sanity check)
-    const MAX_VIDEO_SIZE = 1024 * 1024 * 1024; // 1GB
+    // Size ceiling = S3's hard limit for a single presigned PUT (5GB).
+    // Duration (20 min) is the real product limit, enforced client-side by
+    // the uploaders — any 20-minute phone recording fits well under 5GB.
+    const MAX_VIDEO_SIZE = 5 * 1024 * 1024 * 1024; // 5GB — AWS single-PUT max
     if (fileSize > MAX_VIDEO_SIZE) {
       return NextResponse.json(
-        { error: `Video file too large (${(fileSize / (1024 * 1024)).toFixed(0)}MB). Maximum size is 1GB.` },
+        { error: `Video file too large (${(fileSize / (1024 * 1024 * 1024)).toFixed(1)}GB). Maximum size is 5GB — trim the video or export at a lower bitrate.` },
         { status: 400 }
       );
     }

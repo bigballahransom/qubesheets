@@ -49,7 +49,7 @@ export interface IVideoRecording extends Document {
   customerVideoS3Key?: string;  // S3 key for customer MP4 file (new - single file)
   // Analysis results from processing customer segments
   analysisResult?: {
-    status: 'pending' | 'processing' | 'completed' | 'failed';
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
     totalSegments: number;
     processedSegments: number;
     itemsCount: number;
@@ -113,6 +113,12 @@ export interface IVideoRecording extends Document {
   // Self-serve recording fields
   selfServeSessionId?: string; // Link to SelfServeRecordingSession.sessionId
   source?: 'livekit' | 'self_serve' | 'video_call'; // Recording source type
+  // 'inventory' (default) = survey recording. 'vault' = Media Vault reference
+  // recording — webhook sets status straight to 'completed' with no AI
+  // analysis until the user explicitly runs "Process inventory".
+  purpose?: 'inventory' | 'vault';
+  // Short human label for vault media ("Walk-in — Job 65503")
+  label?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -237,10 +243,11 @@ const VideoRecordingSchema: Schema = new Schema(
       type: String
     },
     // Analysis results from processing customer segments
+    // ('skipped' = Media Vault recording, stored without AI analysis)
     analysisResult: {
       status: {
         type: String,
-        enum: ['pending', 'processing', 'completed', 'failed']
+        enum: ['pending', 'processing', 'completed', 'failed', 'skipped']
       },
       totalSegments: { type: Number, default: 0 },
       processedSegments: { type: Number, default: 0 },
@@ -336,6 +343,15 @@ const VideoRecordingSchema: Schema = new Schema(
     source: {
       type: String,
       enum: ['livekit', 'self_serve', 'video_call']
+    },
+    purpose: {
+      type: String,
+      enum: ['inventory', 'vault'],
+      default: 'inventory',
+      index: true
+    },
+    label: {
+      type: String
     }
   },
   {

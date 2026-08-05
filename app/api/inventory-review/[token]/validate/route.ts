@@ -166,10 +166,11 @@ export async function GET(
     // Calculate stats
     const stats = computeInventoryStats(allItems, weightConfig);
 
-    // Fetch all media
+    // Fetch all media (vault media is internal-reference only — never shown
+    // on crew/customer review links)
     const [images, videos] = await Promise.all([
-      Image.find({ projectId: reviewLink.projectId }).select('_id name originalName mimeType manualRoomEntry'),
-      Video.find({ projectId: reviewLink.projectId }).select('_id originalName mimeType duration manualRoomEntry'),
+      Image.find({ projectId: reviewLink.projectId, purpose: { $ne: 'vault' } }).select('_id name originalName mimeType manualRoomEntry'),
+      Video.find({ projectId: reviewLink.projectId, purpose: { $ne: 'vault' } }).select('_id originalName mimeType duration manualRoomEntry'),
     ]);
 
     // Build media sections with associated items
@@ -218,6 +219,7 @@ export async function GET(
     // finished flushing the file to S3 while status is 'processing'.
     const videoRecordingsWithAnalysis = await VideoRecording.find({
       projectId: reviewLink.projectId,
+      purpose: { $ne: 'vault' },
       $or: [
         { status: 'completed' },
         { status: 'processing', source: 'self_serve' }

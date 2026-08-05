@@ -37,6 +37,8 @@ export interface UploadChooserValidation {
   branding?: { companyName: string; companyLogo?: string } | null;
   uploadMode?: 'files' | 'recording' | 'both';
   isWalkthrough?: boolean;
+  /** Media Vault capture link — reference-only copy, no inventory promises. */
+  isVault?: boolean;
   photosEnabled?: boolean;
 }
 
@@ -74,6 +76,7 @@ const DEFAULT_VALIDATION: UploadChooserValidation = {
   branding: null,
   uploadMode: 'both',
   isWalkthrough: false,
+  isVault: false,
   photosEnabled: true,
 };
 
@@ -125,6 +128,7 @@ export default function UploadChooser({
             branding: data.branding ?? null,
             uploadMode: data.uploadMode ?? 'both',
             isWalkthrough: !!data.isWalkthrough,
+            isVault: !!data.isVault,
             photosEnabled: data.photosEnabled !== false,
           });
         } else {
@@ -230,7 +234,17 @@ export default function UploadChooser({
         <div className={`${EMBED_CARD} qs-chooser-card space-y-6`}>
           {/* Greeting block (no company-branding header above). */}
           <div className="text-center">
-            {validation.isWalkthrough ? (
+            {validation.isVault ? (
+              <>
+                <h1 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
+                  Media Vault
+                </h1>
+                <p className="text-gray-600 text-sm @sm:text-base">
+                  Adding media to <strong>{validation.projectName}</strong> — stored for
+                  reference, not inventoried
+                </p>
+              </>
+            ) : validation.isWalkthrough ? (
               <>
                 <h1 className="text-xl @sm:text-2xl font-bold text-gray-900 mb-2">
                   On-site walkthrough
@@ -358,7 +372,7 @@ export default function UploadChooser({
             <p className="font-medium text-slate-800">
               {validation.branding?.companyName || 'Moving Company'}
             </p>
-            <p className="text-sm text-slate-500">Self-Serve Inventory Upload</p>
+            <p className="text-sm text-slate-500">{validation.isVault ? 'Media Vault Upload' : 'Self-Serve Inventory Upload'}</p>
           </div>
         </div>
       </header>
@@ -373,7 +387,17 @@ export default function UploadChooser({
             </h1>
           )}
 
-          {validation.isWalkthrough ? (
+          {validation.isVault ? (
+            <>
+              <h1 className="text-2xl font-bold text-slate-800 mb-2">
+                Media Vault
+              </h1>
+              <p className="text-slate-600 mb-8">
+                Adding media to <strong>{validation.projectName}</strong> — stored for
+                reference, not inventoried
+              </p>
+            </>
+          ) : validation.isWalkthrough ? (
             <>
               <h1 className="text-2xl font-bold text-slate-800 mb-2">
                 On-site walkthrough

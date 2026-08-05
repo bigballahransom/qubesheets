@@ -44,7 +44,9 @@ export async function GET(
       projectId,
       isActive: true,
       isWalkthrough: { $ne: true },
-      customerName: { $ne: 'On-site walkthrough' }
+      customerName: { $ne: 'On-site walkthrough' },
+      // Media Vault links live in their own flow (vault-link route)
+      purpose: { $ne: 'vault' }
     });
 
     if (!existingLink) {
@@ -108,13 +110,15 @@ export async function POST(
 
     // Deactivate any existing active links for this project — except
     // walkthrough links, which belong to the employee on-site flow and would
-    // break an in-progress walkthrough if deactivated here.
+    // break an in-progress walkthrough if deactivated here, and vault links,
+    // which are permanent QR-code targets managed by the vault-link route.
     await CustomerUpload.updateMany(
       {
         projectId,
         isActive: true,
         isWalkthrough: { $ne: true },
-        customerName: { $ne: 'On-site walkthrough' }
+        customerName: { $ne: 'On-site walkthrough' },
+        purpose: { $ne: 'vault' }
       },
       { $set: { isActive: false } }
     );

@@ -17,6 +17,8 @@ interface DesktopQRCodeViewProps {
    *  Replaces the customer-style "Hi {customerName}!" greeting and
    *  instructions with employee-flavored copy. */
   isWalkthrough?: boolean;
+  /** Media Vault capture link — reference-only copy, no survey framing. */
+  isVault?: boolean;
 }
 
 interface SessionStatus {
@@ -35,7 +37,8 @@ export function DesktopQRCodeView({
   companyLogo,
   onSessionComplete,
   onSwitchToUpload,
-  isWalkthrough
+  isWalkthrough,
+  isVault
 }: DesktopQRCodeViewProps) {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [isPolling, setIsPolling] = useState(true);
@@ -162,7 +165,16 @@ export function DesktopQRCodeView({
         <div className="max-w-lg w-full">
           {/* Greeting */}
           <div className="text-center mb-8">
-            {isWalkthrough ? (
+            {isVault ? (
+              <>
+                <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                  Media Vault
+                </h1>
+                <p className="text-gray-600">
+                  Scan with your phone to add reference media to <strong>{projectName}</strong> — not inventoried
+                </p>
+              </>
+            ) : isWalkthrough ? (
               <>
                 <h1 className="text-3xl font-bold text-gray-900 mb-2">
                   On-site walkthrough
@@ -235,7 +247,7 @@ export function DesktopQRCodeView({
                   <li>1. Open your phone camera</li>
                   <li>2. Point at the QR code</li>
                   <li>3. Tap the link that appears</li>
-                  <li>4. {isWalkthrough ? 'Record or capture photos of the home' : 'Record a walkthrough of your home'}</li>
+                  <li>4. {isVault ? 'Record video or capture photos for the vault' : isWalkthrough ? 'Record or capture photos of the home' : 'Record a walkthrough of your home'}</li>
                 </ol>
               </div>
             )}

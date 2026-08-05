@@ -28,6 +28,21 @@ export interface INotificationSettings extends Document {
   enableReviewSignedUpdates: boolean;
   reviewSignedNotificationScope: 'all' | 'unassigned-and-mine' | 'mine';
 
+  // Media Vault notifications — fired when reference media (walk-in/walk-out
+  // videos, warehouse receiving, damage docs) lands in a project's vault via
+  // any capture link. Same scope semantics; shares the single phone number.
+  enableVaultMediaUpdates: boolean;
+  vaultMediaNotificationScope: 'all' | 'unassigned-and-mine' | 'mine';
+
+  // Email channel (SendGrid, from notifications@qubesheets.com) — additive
+  // per event type on top of SMS. One shared address per user per org, same
+  // pattern as phoneNumber. The event's master toggle + scope still gate
+  // delivery; these only opt the email channel in.
+  enableInventoryUpdateEmails: boolean;
+  enableReviewSignedEmails: boolean;
+  enableVaultMediaEmails: boolean;
+  notificationEmail?: string;
+
   phoneNumber?: string; // Formatted as +1XXXXXXXXXX for Twilio
 
   // Metadata
@@ -64,6 +79,38 @@ const NotificationSettingsSchema: Schema = new Schema(
       type: String,
       enum: ['all', 'unassigned-and-mine', 'mine'],
       default: 'all'
+    },
+    enableVaultMediaUpdates: {
+      type: Boolean,
+      default: false
+    },
+    vaultMediaNotificationScope: {
+      type: String,
+      enum: ['all', 'unassigned-and-mine', 'mine'],
+      default: 'all'
+    },
+    enableInventoryUpdateEmails: {
+      type: Boolean,
+      default: false
+    },
+    enableReviewSignedEmails: {
+      type: Boolean,
+      default: false
+    },
+    enableVaultMediaEmails: {
+      type: Boolean,
+      default: false
+    },
+    notificationEmail: {
+      type: String,
+      required: false,
+      validate: {
+        validator: function(v: string) {
+          if (!v) return true; // Optional field
+          return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+        },
+        message: 'Must be a valid email address'
+      }
     },
     phoneNumber: {
       type: String,

@@ -39,11 +39,13 @@ export async function GET(
       const limit = parseInt(url.searchParams.get('limit') || '20');
       const skip = (page - 1) * limit;
       
+      // Vault media renders only in the Vault tab (vault-media route)
       const filter = {
         projectId: projectId,
+        purpose: { $ne: 'vault' },
         ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
       };
-      
+
       console.log('🎬 Video gallery filter:', JSON.stringify(filter));
       console.log(`📄 Pagination: page ${page}, limit ${limit}, skip ${skip}`);
       
@@ -58,6 +60,7 @@ export async function GET(
         const selfServeFilter = {
           projectId: projectId,
           source: 'self_serve',
+          purpose: { $ne: 'vault' },
           status: { $in: ['processing', 'completed', 'failed', 'partial'] },
           s3Key: { $exists: true, $nin: [null, ''] },
           ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })

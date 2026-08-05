@@ -189,6 +189,8 @@ export async function POST(
     const projectId = project._id;
     const userId = customerUpload.userId;
     const organizationId = customerUpload.organizationId;
+    // Media Vault uploads are stored for reference only — no AI processing
+    const isVault = customerUpload.purpose === 'vault';
 
     // Parse the form data
     const formData = await request.formData();
@@ -367,6 +369,8 @@ export async function POST(
           organizationId,
           description: `Video uploaded by ${customerName}`,
           source: 'customer_upload',
+          purpose: isVault ? 'vault' : 'inventory',
+          processingStatus: isVault ? 'skipped' : 'queued',
           s3RawFile: {
             key: s3Result.key,
             bucket: s3Result.bucket,
@@ -376,7 +380,12 @@ export async function POST(
             contentType: s3Result.contentType
           },
           // Initialize with pending analysis status
-          analysisResult: {
+          analysisResult: isVault ? {
+            summary: 'Stored in Media Vault — not inventoried',
+            itemsCount: 0,
+            totalBoxes: 0,
+            status: 'skipped'
+          } : {
             summary: 'Analysis pending...',
             itemsCount: 0,
             totalBoxes: 0,
@@ -421,8 +430,12 @@ export async function POST(
           updatedAt: new Date() 
         });
         
-        // Send to SQS for Railway video processing
+        // Send to SQS for Railway video processing (never for vault media)
         let sqsMessageId = null;
+        if (isVault) {
+          sqsMessageId = 'vault-skip';
+          console.log('🗄️ Media Vault video upload — skipping SQS processing');
+        } else {
         try {
           sqsMessageId = await sendVideoProcessingMessage({
             videoId: videoDoc._id.toString(),
@@ -445,7 +458,8 @@ export async function POST(
           console.error('⚠️ Video SQS message failed (S3 upload still successful):', sqsError);
           // Don't fail the entire request if SQS fails
         }
-        
+        }
+
         // Return success response
         return NextResponse.json({
           success: true,
@@ -456,7 +470,9 @@ export async function POST(
             bucket: s3Result.bucket,
             url: s3Result.url
           },
-          message: 'Video uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
+          message: isVault
+            ? 'Video saved to the Media Vault.'
+            : 'Video uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
           customerName,
           analysisStatus: 'queued'
         });
@@ -604,6 +620,8 @@ export async function POST(
         organizationId,
         description: `Image uploaded by ${customerName}`,
         source: 'customer_upload',
+        purpose: isVault ? 'vault' : 'inventory',
+        processingStatus: isVault ? 'skipped' : 'queued',
         // Tag with the customer's batched-upload session if present. The
         // /upload-session/finish endpoint groups photos by this id.
         ...(uploadSessionId ? { uploadSessionId } : {}),
@@ -616,7 +634,12 @@ export async function POST(
           contentType: s3Result.contentType
         },
         // Initialize with pending analysis status
-        analysisResult: {
+        analysisResult: isVault ? {
+          summary: 'Stored in Media Vault — not inventoried',
+          itemsCount: 0,
+          totalBoxes: 0,
+          status: 'skipped'
+        } : {
           summary: 'Analysis pending...',
           itemsCount: 0,
           totalBoxes: 0
@@ -654,10 +677,13 @@ export async function POST(
         updatedAt: new Date() 
       });
 
-      // Send SQS message for processing (now with the actual imageId)
-      console.log('🚀 Sending SQS message for processing...');
-      
+      // Send SQS message for processing (never for vault media)
       let sqsMessageId = null;
+      if (isVault) {
+        sqsMessageId = 'vault-skip';
+        console.log('🗄️ Media Vault image upload — skipping SQS processing');
+      } else {
+      console.log('🚀 Sending SQS message for processing...');
       try {
         sqsMessageId = await sendImageProcessingMessage({
           imageId: imageDoc._id.toString(), // Now we have the actual image ID
@@ -678,6 +704,7 @@ export async function POST(
         console.error('⚠️ SQS message failed (S3 upload still successful):', sqsError);
         // Don't fail the entire request if SQS fails
       }
+      }
 
       // Return with the actual image data
       return NextResponse.json({
@@ -690,9 +717,11 @@ export async function POST(
           url: s3Result.url
         },
         sqsMessageId,
-        message: 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
+        message: isVault
+          ? 'Photo saved to the Media Vault.'
+          : 'Image uploaded successfully! AI analysis is processing in the background and items will appear in your inventory shortly.',
         customerName,
-        analysisStatus: 'queued'
+        analysisStatus: isVault ? 'skipped' : 'queued'
       });
 
     } catch (s3Error) {

@@ -94,12 +94,28 @@ export async function POST(
     const isWalkthrough =
       !!(customerUpload as any).isWalkthrough ||
       customerUpload.customerName === 'On-site walkthrough';
-    if (matchedCount > 0 && !isWalkthrough) {
+    // Vault uploads never claim "inventory analysis is in progress" — the
+    // Media Vault notification event will cover these (separate setting).
+    const isVault = (customerUpload as any).purpose === 'vault';
+    if (matchedCount > 0 && !isWalkthrough && !isVault) {
       const body = `${matchedCount} new photo${matchedCount === 1 ? '' : 's'} uploaded for ${projectName}. Inventory analysis is in progress.`;
       const r = await sendInventoryUpdateNotification({
         projectId: String(customerUpload.projectId),
         body,
         source: 'photo-session'
+      });
+      smsSent = r.sent;
+      smsFailed = r.failed;
+      recipients = r.matched;
+    } else if (isVault && matchedCount > 0) {
+      // Vault batches fire the vault-media event (separate toggle) instead of
+      // the inventory-update one — no "analysis in progress" claims.
+      const body = `${matchedCount} new vault photo${matchedCount === 1 ? '' : 's'} added to ${projectName}.`;
+      const r = await sendInventoryUpdateNotification({
+        projectId: String(customerUpload.projectId),
+        body,
+        source: 'vault-media',
+        settingKey: 'enableVaultMediaUpdates'
       });
       smsSent = r.sent;
       smsFailed = r.failed;

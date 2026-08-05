@@ -37,6 +37,13 @@ export interface ICustomerUpload extends Document {
   // walkthrough is already the one who would receive it.
   isWalkthrough?: boolean;
 
+  // 'inventory' (default) = survey media, queued for AI inventory processing.
+  // 'vault' = Media Vault reference capture (walk-in/walk-out, warehouse
+  // receiving, damage documentation) — stored but never inventoried unless
+  // explicitly processed later. Media docs created through this token are
+  // stamped with the same purpose at creation (never join back here for it).
+  purpose?: 'inventory' | 'vault';
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -88,6 +95,13 @@ const CustomerUploadSchema: Schema = new Schema(
     }],
 
     isWalkthrough: { type: Boolean, default: false, index: true },
+
+    purpose: {
+      type: String,
+      enum: ['inventory', 'vault'],
+      default: 'inventory',
+      index: true
+    },
   },
   { timestamps: true }
 );

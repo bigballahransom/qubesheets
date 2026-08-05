@@ -26,6 +26,10 @@ export async function uploadVideoFile(
     organizationId?: string;
     manualRoomEntry?: string;
     durationSeconds?: number;
+    /** Extra fields merged into the confirm-upload metadata. The Media Vault
+     *  passes { purpose: 'vault', label } here so the same upload mechanics
+     *  route the file to the vault instead of AI processing. */
+    extraMetadata?: Record<string, unknown>;
   }
 ): Promise<VideoUploadResult> {
   const { projectId, isCustomerUpload = false, customerToken } = options;
@@ -61,6 +65,7 @@ async function uploadLargeVideo(
     organizationId?: string;
     manualRoomEntry?: string;
     durationSeconds?: number;
+    extraMetadata?: Record<string, unknown>;
   }
 ): Promise<VideoUploadResult> {
   const { projectId, isCustomerUpload, customerToken } = options;
@@ -121,11 +126,17 @@ async function uploadLargeVideo(
     fileName: file.name
   });
   
-  // Add timeout for large file uploads (10 minutes)
+  // Timeout scales with file size so multi-GB uploads on ordinary
+  // connections aren't killed early: 10-minute floor, then assume a worst
+  // case of ~1 MB/s, capped at 90 minutes.
+  const timeoutMs = Math.min(
+    90 * 60 * 1000,
+    Math.max(600000, Math.round(file.size / (1024 * 1024)) * 1000)
+  );
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort();
-  }, 600000); // 10 minutes timeout for large files
+  }, timeoutMs);
   
   let uploadResponse;
   try {
@@ -166,7 +177,7 @@ async function uploadLargeVideo(
     body: JSON.stringify({
       s3Key,
       actualFileSize: file.size,
-      metadata
+      metadata: { ...metadata, ...(options.extraMetadata || {}) }
     })
   });
 

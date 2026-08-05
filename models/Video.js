@@ -80,9 +80,23 @@ const VideoSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // 'inventory' (default) = survey media. 'vault' = Media Vault reference
+  // media — AI processing is skipped at upload (processingStatus 'skipped')
+  // until the user explicitly runs "Process inventory".
+  purpose: {
+    type: String,
+    enum: ['inventory', 'vault'],
+    default: 'inventory',
+    index: true
+  },
+  // Short human label for vault media ("SAPFA — 10 mattresses received 8/3")
+  label: {
+    type: String,
+    required: false
+  },
   processingStatus: {
     type: String,
-    enum: ['queued', 'processing', 'completed', 'failed'],
+    enum: ['queued', 'processing', 'completed', 'failed', 'skipped'],
     default: 'queued'
   },
   // S3 raw file info for streaming (from new video processing flow)
@@ -96,10 +110,10 @@ const VideoSchema = new mongoose.Schema({
     summary: String,
     itemsCount: Number,
     totalBoxes: Number,
-    status: { 
-      type: String, 
-      enum: ['pending', 'processing', 'completed', 'failed'], 
-      default: 'pending' 
+    status: {
+      type: String,
+      enum: ['pending', 'processing', 'completed', 'failed', 'skipped'],
+      default: 'pending'
     },
     error: String
   },

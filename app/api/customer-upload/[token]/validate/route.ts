@@ -196,6 +196,10 @@ export async function GET(
       // server-side SMS suppression is keyed on the same flag.
       isWalkthrough: !!customerUpload.isWalkthrough,
 
+      // True for Media Vault capture links — the page swaps survey copy for
+      // reference-only messaging and skips inventory-processing UI.
+      isVault: customerUpload.purpose === 'vault',
+
       // Org-level photo master switch. Default true; client hides photo
       // capture entirely when this resolves to false.
       photosEnabled,

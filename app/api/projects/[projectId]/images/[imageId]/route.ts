@@ -34,9 +34,10 @@ export async function GET(
       const limit = parseInt(url.searchParams.get('limit') || '20');
       const skip = (page - 1) * limit;
       
-      const filter = getProjectFilter(authContext, projectId);
+      // Vault media renders only in the Vault tab (vault-media route)
+      const filter = { ...getProjectFilter(authContext, projectId), purpose: { $ne: 'vault' } };
       console.log(`📄 Pagination: page ${page}, limit ${limit}, skip ${skip}`);
-      
+
       try {
         // Get total count for pagination
         const totalCount = await Image.countDocuments(filter);

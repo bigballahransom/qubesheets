@@ -81,7 +81,8 @@ export async function GET(
     const filter = getProjectFilter(authContext, projectId);
     console.log('🎬 Video gallery filter:', filter);
     
-    const videos = await Video.find(filter)
+    // Vault media renders only in the Vault tab (vault-media route)
+    const videos = await Video.find({ ...filter, purpose: { $ne: 'vault' } })
       .select('name originalName mimeType size duration description source metadata analysisResult s3RawFile createdAt updatedAt cloudinaryPublicId cloudinaryUrl cloudinarySecureUrl')
       .sort({ createdAt: -1 });
     

@@ -58,6 +58,8 @@ interface SelfServeRecorderLiveKitProps {
    *  Replaces the "Recording Complete! / Upload more" CTA on the complete
    *  screen with a "Back to project" button that routes to this URL. */
   walkthroughReturnUrl?: string;
+  /** Media Vault capture — reference-only copy, no "AI is analyzing" promises. */
+  isVault?: boolean;
 }
 
 export function SelfServeRecorderLiveKit({
@@ -67,7 +69,8 @@ export function SelfServeRecorderLiveKit({
   onComplete,
   onCancel,
   companyName,
-  walkthroughReturnUrl
+  walkthroughReturnUrl,
+  isVault
 }: SelfServeRecorderLiveKitProps) {
   const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
@@ -324,7 +327,9 @@ export function SelfServeRecorderLiveKit({
             </div>
             <h2 className="text-2xl font-semibold mb-2">Video uploaded!</h2>
             <p className="text-gray-400 mb-8">
-              Our AI is now analyzing it to create your inventory.
+              {isVault
+                ? 'Saved to the Media Vault for reference.'
+                : 'Our AI is now analyzing it to create your inventory.'}
             </p>
             {walkthroughReturnUrl ? (
               <Button
@@ -393,10 +398,12 @@ export function SelfServeRecorderLiveKit({
           </div>
 
           <h1 className="text-2xl font-bold mb-2">
-            {walkthroughReturnUrl ? 'Record walkthrough' : 'Record Your Home'}
+            {isVault ? 'Record video' : walkthroughReturnUrl ? 'Record walkthrough' : 'Record Your Home'}
           </h1>
           <p className="text-gray-400 mb-6">
-            {walkthroughReturnUrl
+            {isVault
+              ? 'This video is saved to the Media Vault for reference — it will not be inventoried.'
+              : walkthroughReturnUrl
               ? 'Walk through each room slowly to capture inventory.'
               : companyName
                 ? `${companyName} is ready to help with your move!`
@@ -658,7 +665,11 @@ export function SelfServeRecorderLiveKit({
             {walkthroughReturnUrl ? 'Walkthrough recorded!' : 'Recording Complete!'}
           </h2>
           <p className="text-gray-400 mb-4">
-            {uploadConfirmed
+            {isVault
+              ? uploadConfirmed
+                ? 'Your video has been saved to the Media Vault for reference.'
+                : 'Your video is finishing up. It will be saved to the Media Vault for reference.'
+              : uploadConfirmed
               ? 'Your video has been uploaded. Our AI is now analyzing it to create your inventory.'
               : 'Your video is finishing up. Our AI will analyze it to create your inventory.'}
           </p>
@@ -682,7 +693,7 @@ export function SelfServeRecorderLiveKit({
               video will appear in a few minutes.
             </p>
           )}
-          {!walkthroughReturnUrl && (
+          {!walkthroughReturnUrl && !isVault && (
             <p className="text-sm text-gray-500 mb-8">
               You'll receive a notification when your inventory is ready.
             </p>

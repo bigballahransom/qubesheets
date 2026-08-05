@@ -110,7 +110,11 @@ export async function POST(request: NextRequest) {
     }
 
     let project;
-    
+    // Media Vault: true when the upload token is a vault-purpose link OR the
+    // admin upload explicitly asks for vault storage (metadata.purpose).
+    // Vault media is stored for reference only — no AI processing.
+    let isVault = metadata.purpose === 'vault';
+
     // Handle customer upload validation
     if (isCustomerUpload && customerToken) {
       // Use CustomerUpload model where tokens are actually stored
@@ -119,14 +123,18 @@ export async function POST(request: NextRequest) {
         uploadToken: customerToken,
         isActive: true
       });
-      
+
       if (!customerUpload) {
         return NextResponse.json(
           { error: 'Invalid or expired upload link' },
           { status: 401 }
         );
       }
-      
+
+      if (customerUpload.purpose === 'vault') {
+        isVault = true;
+      }
+
       // Get the associated project
       project = await Project.findById(customerUpload.projectId);
       if (!project) {
@@ -198,6 +206,8 @@ export async function POST(request: NextRequest) {
         // The Videos tab, stream, delete, and reprocess endpoints all key
         // self-serve recordings off source: 'self_serve'.
         source: 'self_serve',
+        purpose: isVault ? 'vault' : 'inventory',
+        ...(metadata.label ? { label: String(metadata.label).slice(0, 200) } : {}),
         // The Videos tab card title comes from the customer participant name.
         participants: [{
           identity: 'admin-upload',
@@ -205,7 +215,14 @@ export async function POST(request: NextRequest) {
           joinedAt: now,
           type: 'customer'
         }],
-        analysisResult: {
+        analysisResult: isVault ? {
+          status: 'skipped',
+          totalSegments: 0,
+          processedSegments: 0,
+          itemsCount: 0,
+          totalBoxes: 0,
+          summary: 'Stored in Media Vault — not inventoried'
+        } : {
           status: 'pending',
           totalSegments: 0,
           processedSegments: 0,
@@ -220,6 +237,17 @@ export async function POST(request: NextRequest) {
           manualRoomEntry: manualRoomEntry || undefined
         }
       });
+
+      if (isVault) {
+        console.log(`🗄️ Media Vault admin upload — stored without AI analysis: ${recording._id}`);
+        return NextResponse.json({
+          success: true,
+          videoId: recording._id.toString(),
+          projectId: project._id.toString(),
+          videoUrl: signedUrl,
+          message: 'Video saved to the Media Vault'
+        });
+      }
 
       const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
       if (!queueUrl) {
@@ -300,7 +328,15 @@ export async function POST(request: NextRequest) {
       },
       uploadedAt: new Date(),
       source: videoSource,
-      analysisResult: {
+      purpose: isVault ? 'vault' : 'inventory',
+      ...(metadata.label ? { label: String(metadata.label).slice(0, 200) } : {}),
+      processingStatus: isVault ? 'skipped' : 'queued',
+      analysisResult: isVault ? {
+        status: 'skipped',
+        summary: 'Stored in Media Vault — not inventoried',
+        itemsCount: 0,
+        totalBoxes: 0
+      } : {
         status: 'pending',
         summary: null,
         itemsCount: 0,
@@ -327,12 +363,31 @@ export async function POST(request: NextRequest) {
       source: 'video-upload' as const
     };
 
-    try {
-      await sendVideoProcessingMessage(sqsMessage);
-      console.log('✅ Video processing message sent to SQS');
-    } catch (sqsError) {
-      console.error('❌ Failed to send SQS message:', sqsError);
-      // Don't fail the request - video is saved, processing can be retried
+    if (isVault) {
+      console.log('🗄️ Media Vault upload — skipping SQS processing');
+      // Customer-token vault uploads notify opted-in org members; admin
+      // uploads don't (the admin just did it themselves).
+      if (isCustomerUpload) {
+        try {
+          const { sendInventoryUpdateNotification } = await import('@/lib/inventoryUpdateNotifications');
+          await sendInventoryUpdateNotification({
+            projectId: project._id.toString(),
+            body: `New vault video added to ${project.name || 'a project'}.`,
+            source: 'vault-media',
+            settingKey: 'enableVaultMediaUpdates'
+          });
+        } catch (notifyErr) {
+          console.error('vault-media SMS (confirm upload) failed (non-fatal):', notifyErr);
+        }
+      }
+    } else {
+      try {
+        await sendVideoProcessingMessage(sqsMessage);
+        console.log('✅ Video processing message sent to SQS');
+      } catch (sqsError) {
+        console.error('❌ Failed to send SQS message:', sqsError);
+        // Don't fail the request - video is saved, processing can be retried
+      }
     }
 
     return NextResponse.json({
@@ -340,7 +395,9 @@ export async function POST(request: NextRequest) {
       videoId: savedVideo._id.toString(),
       projectId: project._id.toString(),
       videoUrl: signedUrl,
-      message: 'Video uploaded successfully and queued for processing'
+      message: isVault
+        ? 'Video saved to the Media Vault'
+        : 'Video uploaded successfully and queued for processing'
     });
 
   } catch (error) {
