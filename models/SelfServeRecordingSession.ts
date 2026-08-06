@@ -77,6 +77,12 @@ export interface ISelfServeRecordingSession extends Document {
   analysisCompletedAt?: Date;
   inventoryItemsCount?: number;
   analysisError?: string;
+  // Vault capture annotations, set by the customer/crew on the recorder's
+  // completion screen. The LiveKit webhook copies these onto the
+  // VideoRecording it creates (label/mediaDescription) — stored here because
+  // annotation can happen before OR after the webhook fires.
+  vaultLabel?: string;
+  vaultDescription?: string;
 
   // Error tracking
   lastError?: string;
@@ -211,6 +217,8 @@ const SelfServeRecordingSessionSchema: Schema = new Schema(
     analysisCompletedAt: { type: Date },
     inventoryItemsCount: { type: Number },
     analysisError: { type: String },
+    vaultLabel: { type: String },
+    vaultDescription: { type: String },
 
     // Error tracking
     lastError: { type: String },

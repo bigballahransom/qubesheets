@@ -9,6 +9,7 @@ import { useSelfServeRecordingLiveKit } from '@/lib/hooks/useSelfServeRecordingL
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDetection';
+import { getCameraPermissionState, watchCameraPermission, type CameraPermissionState } from '@/lib/cameraPermission';
 
 /** State machine for the "upload a video file instead" escape hatch offered
  *  on every error screen. Uses the existing public presigned-URL customer
@@ -18,6 +19,31 @@ type FallbackUploadState =
   | { phase: 'uploading'; progress: number }
   | { phase: 'done' }
   | { phase: 'error'; message: string };
+
+// ─── Permission-retry reload flag ──────────────────────────────────
+// On iOS WebKit a camera-permission deny only lasts for the current page
+// load — a RELOAD gets a fresh native prompt. This sessionStorage flag
+// carries "we're mid permission-retry" across that reload so the recorder
+// can skip the instructions screen and show a "tap Allow this time" priming
+// screen instead. The count caps doomed reload loops ("Never for this
+// Website" blocks survive reloads) so we can switch to settings guidance.
+const PERM_RETRY_KEY = 'qs-perm-retry';
+const PERM_RETRY_FRESH_MS = 5 * 60_000;
+
+function readPermRetry(): { count: number; at: number } | null {
+  try {
+    const raw = sessionStorage.getItem(PERM_RETRY_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    return typeof v?.count === 'number' && typeof v?.at === 'number' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPermRetry() {
+  try { sessionStorage.removeItem(PERM_RETRY_KEY); } catch {}
+}
 
 // Fire-and-forget telemetry helper (mirrors the one in the hook). Tells the
 // server "this device opened the recorder UI" so we can see what hardware
@@ -74,6 +100,12 @@ export function SelfServeRecorderLiveKit({
 }: SelfServeRecorderLiveKitProps) {
   const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
+  // Vault-only: optional title/description typed on the completion screen,
+  // saved to the session via vault-annotate (the webhook copies them onto
+  // the VideoRecording it creates).
+  const [vaultTitle, setVaultTitle] = useState('');
+  const [vaultDesc, setVaultDesc] = useState('');
+  const [vaultSaveState, setVaultSaveState] = useState('idle'); // idle | saving | saved
 
   const [videoReady, setVideoReady] = useState(false);
 
@@ -133,6 +165,7 @@ export function SelfServeRecorderLiveKit({
     initStage,
     cameraInterrupted,
     errorKind,
+    permissionPromptShown,
     savedDuration,
     connectionQuality,
     isReconnecting,
@@ -274,6 +307,92 @@ export function SelfServeRecorderLiveKit({
     }
   };
 
+  // ─── Permission-denial recovery ────────────────────────────────────
+  // showPriming: this page load is a deliberate permission retry (the flag
+  // survived the reload) — skip instructions, show "tap Allow this time".
+  const [showPriming, setShowPriming] = useState(false);
+  const [primingStarted, setPrimingStarted] = useState(false);
+  // Camera permission state via the Permissions API (Chrome family gives a
+  // definitive answer + live onchange; WebKit returns 'unknown').
+  const [camPermState, setCamPermState] = useState<CameraPermissionState | null>(null);
+  const autoRetriedRef = useRef(false);
+  const permRetryCount = useRef(0);
+
+  // On mount: if we're arriving from a permission-retry reload, go straight
+  // to the priming screen instead of the instructions screen.
+  useEffect(() => {
+    const flag = readPermRetry();
+    if (flag) {
+      permRetryCount.current = flag.count;
+      if (Date.now() - flag.at < PERM_RETRY_FRESH_MS) {
+        setShowInstructions(false);
+        setShowPriming(true);
+        pingTelemetry(uploadToken, { event: 'perm_priming_shown', retryCount: flag.count });
+      } else {
+        clearPermRetry();
+        permRetryCount.current = 0;
+      }
+    }
+  }, [uploadToken]);
+
+  // Permission retry via full page reload — the only way to get a fresh
+  // native prompt on iOS WebKit after a deny. Bumps the attempt count so we
+  // stop offering reloads that can't work (hard blocks survive them).
+  const reloadForPermissionRetry = () => {
+    const next = (readPermRetry()?.count ?? permRetryCount.current) + 1;
+    try { sessionStorage.setItem(PERM_RETRY_KEY, JSON.stringify({ count: next, at: Date.now() })); } catch {}
+    pingTelemetry(uploadToken, { event: 'perm_retry_reload', retryCount: next });
+    window.location.reload();
+  };
+
+  // Success after a permission retry → record the win and clear the flag.
+  useEffect(() => {
+    if ((status === 'ready' || status === 'recording') && readPermRetry()) {
+      pingTelemetry(uploadToken, { event: 'perm_unblocked_after_reload', retryCount: permRetryCount.current });
+      clearPermRetry();
+      permRetryCount.current = 0;
+    }
+  }, [status, uploadToken]);
+
+  // While stuck on the permission-denied screen: query the Permissions API
+  // for a definitive verdict, and (Chrome family) watch for the user flipping
+  // the site setting — the moment access is no longer denied, retry
+  // automatically so recovery needs zero extra taps.
+  useEffect(() => {
+    if (status !== 'error' || errorKind !== 'permission_denied') return;
+    autoRetriedRef.current = false;
+    getCameraPermissionState().then(setCamPermState);
+    const unwatch = watchCameraPermission((state) => {
+      setCamPermState(state);
+      if ((state === 'granted' || state === 'prompt') && !autoRetriedRef.current) {
+        autoRetriedRef.current = true;
+        pingTelemetry(uploadToken, { event: 'perm_unblocked_after_settings' });
+        retryFromError();
+      }
+    });
+    return unwatch;
+  }, [status, errorKind, uploadToken, retryFromError]);
+
+  // Measurement: record when a user hits the hard-blocked wall (settings
+  // change required) — the population the reload trick can't save.
+  const hardBlockedReportedRef = useRef(false);
+  useEffect(() => {
+    if (status !== 'error' || errorKind !== 'permission_denied') {
+      hardBlockedReportedRef.current = false;
+      return;
+    }
+    const hard = camPermState === 'denied' || (permissionPromptShown === false && permRetryCount.current >= 2);
+    if (hard && !hardBlockedReportedRef.current) {
+      hardBlockedReportedRef.current = true;
+      pingTelemetry(uploadToken, {
+        event: 'perm_hard_blocked',
+        camPermState: camPermState || 'unknown',
+        retryCount: permRetryCount.current,
+        promptShown: permissionPromptShown === true
+      });
+    }
+  }, [status, errorKind, camPermState, permissionPromptShown, uploadToken]);
+
   // Start recording after connection is ready. 'ready' now means the camera
   // is live (not just the WebSocket), so the server-side egress can never
   // start recording a camera-less room.
@@ -379,6 +498,66 @@ export function SelfServeRecorderLiveKit({
     );
   }
 
+  // Permission-retry priming screen — shown after the recovery reload,
+  // instead of the instructions screen. The whole point: the "tap Allow"
+  // coaching is on screen BEFORE and WHILE the native permission prompt is
+  // up, so the second ask succeeds.
+  if (showPriming && (status === 'idle' || status === 'initializing' || status === 'connecting')) {
+    return (
+      <div
+        className="fixed inset-0 flex flex-col bg-gray-900 text-white p-6 items-center justify-center"
+        style={{ width: '100vw', height: '100dvh', minHeight: '-webkit-fill-available' }}
+      >
+        {fallbackInput}
+        <div className="w-full max-w-sm flex flex-col items-center text-center">
+          <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mb-6">
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold mb-2">This time, tap "Allow"</h2>
+          <p className="text-gray-400 mb-6">
+            Your browser is about to ask for camera &amp; microphone access.
+            Recording only works if you allow it.
+          </p>
+
+          {/* Mock of the native prompt with Allow highlighted */}
+          <div className="bg-gray-800 rounded-xl p-4 mb-6 w-full">
+            <p className="text-sm text-gray-300 mb-3">
+              This website would like to access your camera and microphone
+            </p>
+            <div className="flex gap-3 justify-center">
+              <span className="px-4 py-1.5 rounded-lg bg-gray-700 text-gray-500 text-sm">Don't Allow</span>
+              <span className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold ring-2 ring-blue-300/70 animate-pulse">Allow</span>
+            </div>
+          </div>
+
+          {!primingStarted ? (
+            <Button
+              onClick={() => { setPrimingStarted(true); initialize(); }}
+              size="lg"
+              className="w-full bg-blue-600 hover:bg-blue-700 mb-4"
+            >
+              Turn on camera
+            </Button>
+          ) : (
+            <div className="flex items-center gap-3 mb-4 text-gray-300">
+              <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              Waiting for camera access — tap "Allow" on the popup
+            </div>
+          )}
+
+          <button
+            onClick={openFallbackPicker}
+            className="text-gray-400 hover:text-white text-sm"
+          >
+            Or upload a video instead
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Instructions screen
   if (showInstructions) {
     return (
@@ -442,12 +621,19 @@ export function SelfServeRecorderLiveKit({
             )}
           </div>
 
-          <div className="flex items-center gap-2 text-sm text-gray-400 mb-6">
+          <div className="flex items-center gap-2 text-sm text-gray-400 mb-3">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
             Your video is private and secure
           </div>
+
+          {/* Pre-prompt priming: warn about the permission ask BEFORE it
+              fires, so first-attempt denials (the expensive ones) drop. */}
+          <p className="text-sm text-gray-400 mb-6">
+            Your browser will ask to use the camera &amp; microphone — tap{' '}
+            <span className="font-semibold text-white">Allow</span>.
+          </p>
 
           <Button
             onClick={handleStart}
@@ -494,20 +680,39 @@ export function SelfServeRecorderLiveKit({
         ? [
             'Tap the lock (or tune) icon in the address bar',
             'Tap "Permissions"',
-            'Allow Camera and Microphone'
+            'Allow Camera and Microphone',
+            'Still blocked? Open phone Settings → Apps → your browser → Permissions → allow Camera & Microphone'
           ]
         : [
             'Click the camera icon in your browser\'s address bar',
             'Choose "Allow" for camera and microphone'
           ];
 
+    // Permission-denial recovery branching:
+    // - Chrome family reports 'denied' via the Permissions API → definitive:
+    //   a reload can NOT re-prompt; only the site-settings toggle helps (and
+    //   the watcher auto-retries the instant it flips).
+    // - WebKit (iOS): a deny is per-page-load, so a primed RELOAD gets a
+    //   fresh prompt — unless repeated reloads keep failing instantly with no
+    //   prompt shown, which means "Never for this Website" / OS-level block.
+    const permDefinitiveDenied = camPermState === 'denied';
+    const permHardBlocked =
+      kind === 'permission_denied' &&
+      (permDefinitiveDenied || (permissionPromptShown === false && permRetryCount.current >= 2));
+
     const screens: Record<string, { title: string; body: string; primaryLabel: string; showSteps?: boolean; hideRetry?: boolean }> = {
-      permission_denied: {
-        title: 'Camera access needed',
-        body: 'Recording needs your camera and microphone. Access is currently blocked for this site — here\'s how to turn it on:',
-        primaryLabel: 'Check again',
-        showSteps: true
-      },
+      permission_denied: permHardBlocked
+        ? {
+            title: 'Camera access is turned off',
+            body: 'Your browser is blocking camera access for this site. Here\'s how to turn it back on:',
+            primaryLabel: permDefinitiveDenied ? 'Check again' : 'Try again',
+            showSteps: true
+          }
+        : {
+            title: 'Camera access needed',
+            body: 'No problem — we\'ll ask one more time. When the popup appears, tap "Allow".',
+            primaryLabel: 'Try again'
+          },
       camera_in_use: {
         title: 'Your camera is busy',
         body: 'Another app is using your camera. Close any app that might be using it (camera, video calls), then try again.',
@@ -582,9 +787,25 @@ export function SelfServeRecorderLiveKit({
             </ol>
           )}
 
+          {screen.showSteps && permDefinitiveDenied && (
+            <p className="text-sm text-gray-500 mb-4">
+              This screen updates automatically once you allow access.
+            </p>
+          )}
+
           {!screen.hideRetry && (
             <Button
-              onClick={() => retryFromError()}
+              onClick={() => {
+                // WebKit permission denials recover via a primed reload (a
+                // fresh page load re-prompts); everything else — including
+                // Chrome's definitive denied state, where a reload is
+                // pointless — retries in place.
+                if (kind === 'permission_denied' && !permDefinitiveDenied) {
+                  reloadForPermissionRetry();
+                } else {
+                  retryFromError();
+                }
+              }}
               size="lg"
               className="w-full bg-blue-600 hover:bg-blue-700 mb-3"
             >
@@ -697,6 +918,56 @@ export function SelfServeRecorderLiveKit({
             <p className="text-sm text-gray-500 mb-8">
               You'll receive a notification when your inventory is ready.
             </p>
+          )}
+
+          {/* Vault-only: optional title + description for this recording */}
+          {isVault && (
+            <div className="w-full bg-gray-800 rounded-lg p-4 mb-6 text-left space-y-2">
+              <p className="text-sm font-medium text-gray-300">Add details (optional)</p>
+              <input
+                value={vaultTitle}
+                onChange={(e) => { setVaultTitle(e.target.value); setVaultSaveState('idle'); }}
+                placeholder="Title — e.g. Walk-in, Job 65503"
+                className="w-full text-sm bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              <textarea
+                value={vaultDesc}
+                onChange={(e) => { setVaultDesc(e.target.value); setVaultSaveState('idle'); }}
+                placeholder="Description — condition notes, contents, context"
+                rows={2}
+                className="w-full text-sm bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+              />
+              <Button
+                onClick={async () => {
+                  if (vaultSaveState === 'saving' || (!vaultTitle.trim() && !vaultDesc.trim())) return;
+                  setVaultSaveState('saving');
+                  try {
+                    const r = await fetch(`/api/customer-upload/${uploadToken}/vault-annotate`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        kind: 'session',
+                        id: sessionId,
+                        label: vaultTitle.trim(),
+                        description: vaultDesc.trim(),
+                      }),
+                    });
+                    setVaultSaveState(r.ok ? 'saved' : 'idle');
+                  } catch {
+                    setVaultSaveState('idle');
+                  }
+                }}
+                size="sm"
+                disabled={vaultSaveState === 'saving' || (!vaultTitle.trim() && !vaultDesc.trim())}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {vaultSaveState === 'saving'
+                  ? 'Saving...'
+                  : vaultSaveState === 'saved'
+                  ? 'Details saved ✓'
+                  : 'Save details'}
+              </Button>
+            </div>
           )}
 
           {walkthroughReturnUrl ? (

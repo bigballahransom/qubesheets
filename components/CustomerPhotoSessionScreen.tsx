@@ -22,7 +22,8 @@ import {
   X,
   Loader2,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Pencil
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -42,6 +43,9 @@ interface CustomerPhotoSessionScreenProps {
    *  screen with a "Walkthrough saved! / Back to project" one that routes
    *  to the URL passed in. */
   walkthroughReturnUrl?: string;
+  /** Media Vault capture — uploaded photo tiles become tappable to attach
+   *  an optional title + description (saved via vault-annotate). */
+  isVault?: boolean;
 }
 
 // 'pending'   — picked/captured by the customer, sitting on-device only.
@@ -63,6 +67,10 @@ interface StagedPhoto {
   imageId?: string;
   /** Last error message for failed uploads. */
   errorMessage?: string;
+  /** Vault annotations already saved for this photo (so reopening the
+   *  details sheet shows them). */
+  label?: string;
+  description?: string;
 }
 
 const MAX_CONCURRENT_UPLOADS = 3;
@@ -82,9 +90,15 @@ export function CustomerPhotoSessionScreen({
   uploadToken,
   companyName,
   onUploadMore,
-  walkthroughReturnUrl
+  walkthroughReturnUrl,
+  isVault
 }: CustomerPhotoSessionScreenProps) {
   const router = useRouter();
+  // Vault details sheet — the uploaded photo being annotated (null = closed)
+  const [detailPhoto, setDetailPhoto] = useState<StagedPhoto | null>(null);
+  const [detailTitle, setDetailTitle] = useState('');
+  const [detailDesc, setDetailDesc] = useState('');
+  const [detailSaving, setDetailSaving] = useState(false);
 
   // Session id — regenerated when the customer taps "Upload more" after
   // finishing, so each finalize-fire is its own session.
@@ -108,12 +122,18 @@ export function CustomerPhotoSessionScreen({
   // StagedPhoto rather than its id avoids reading partially-committed React
   // state inside the pump.
   const queueRef = useRef<StagedPhoto[]>([]);
-  // Mirror of `photos` used by the unmount cleanup (state can't be safely
-  // read inside a cleanup once the component is tearing down) and by
-  // handleDone (which needs the latest snapshot to evaluate post-pump state
-  // without waiting for a render cycle).
+  // Synchronous mirror of `photos`. The ref is the source of truth and is
+  // updated IN THE SAME TICK as every mutation (via updatePhotos below);
+  // React state exists only to drive rendering. This is load-bearing for
+  // handleDone: waitForDrain() resolves inside an upload's `finally`, before
+  // React commits the 'uploaded' status update — an effect-synced mirror
+  // would still show 'uploading' there and Done would conclude "no photos
+  // to upload" even though every upload succeeded.
   const photosRef = useRef<StagedPhoto[]>([]);
-  useEffect(() => { photosRef.current = photos; }, [photos]);
+  const updatePhotos = useCallback((updater: (prev: StagedPhoto[]) => StagedPhoto[]) => {
+    photosRef.current = updater(photosRef.current);
+    setPhotos(photosRef.current);
+  }, []);
   // Re-entrancy guard for handleDone — React state updates aren't atomic, so
   // a double-tap of "I'm Done" within the same tick would otherwise start
   // two parallel upload pumps.
@@ -192,7 +212,7 @@ export function CustomerPhotoSessionScreen({
   const startUpload = useCallback(async (photo: StagedPhoto) => {
     console.log(`📤 starting upload (${photo.id.slice(0, 8)}…) — ${photo.file.name} ${(photo.file.size / 1024).toFixed(1)} KB`);
 
-    setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'uploading' as const, errorMessage: undefined } : p)));
+    updatePhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'uploading' as const, errorMessage: undefined } : p)));
     inFlightRef.current += 1;
 
     try {
@@ -215,11 +235,11 @@ export function CustomerPhotoSessionScreen({
 
       const data = await res.json().catch(() => ({}));
       console.log(`✅ upload ok (${photo.id.slice(0, 8)}…) → image ${data.imageId}`);
-      setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'uploaded' as const, imageId: data.imageId } : p)));
+      updatePhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'uploaded' as const, imageId: data.imageId } : p)));
     } catch (err: any) {
       const msg = err?.name === 'AbortError' ? 'Upload timed out' : (err?.message || 'Upload failed');
       console.warn(`📤 photo upload failed (${photo.id.slice(0, 8)}…):`, msg);
-      setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'failed' as const, errorMessage: msg } : p)));
+      updatePhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'failed' as const, errorMessage: msg } : p)));
     } finally {
       inFlightRef.current = Math.max(0, inFlightRef.current - 1);
       pumpQueue();
@@ -229,7 +249,7 @@ export function CustomerPhotoSessionScreen({
         resolvers.forEach((r) => r());
       }
     }
-  }, [uploadSessionId, uploadToken]);
+  }, [uploadSessionId, uploadToken, updatePhotos]);
 
   const pumpQueue = useCallback(() => {
     while (inFlightRef.current < MAX_CONCURRENT_UPLOADS && queueRef.current.length > 0) {
@@ -248,8 +268,8 @@ export function CustomerPhotoSessionScreen({
       status: 'pending' as const
     }));
 
-    setPhotos((prev) => [...prev, ...newPhotos]);
-  }, []);
+    updatePhotos((prev) => [...prev, ...newPhotos]);
+  }, [updatePhotos]);
 
   const handleCapture = useCallback(async () => {
     try {
@@ -272,22 +292,20 @@ export function CustomerPhotoSessionScreen({
   }, [enqueue]);
 
   const handleRemove = useCallback((photoId: string) => {
-    setPhotos((prev) => {
-      const target = prev.find((p) => p.id === photoId);
-      if (target) {
-        try { URL.revokeObjectURL(target.thumbUrl); } catch {}
-      }
-      return prev.filter((p) => p.id !== photoId);
-    });
+    const target = photosRef.current.find((p) => p.id === photoId);
+    if (target) {
+      try { URL.revokeObjectURL(target.thumbUrl); } catch {}
+    }
+    updatePhotos((prev) => prev.filter((p) => p.id !== photoId));
     // Also remove from the upload queue if it was waiting.
     queueRef.current = queueRef.current.filter((p) => p.id !== photoId);
-  }, []);
+  }, [updatePhotos]);
 
   const handleRetry = useCallback((photo: StagedPhoto) => {
-    setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'queued' as const, errorMessage: undefined } : p)));
+    updatePhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, status: 'queued' as const, errorMessage: undefined } : p)));
     queueRef.current.push(photo);
     pumpQueue();
-  }, [pumpQueue]);
+  }, [updatePhotos, pumpQueue]);
 
   const handleDone = useCallback(async () => {
     if (isSubmittingRef.current || screen !== 'capturing') return;
@@ -304,7 +322,7 @@ export function CustomerPhotoSessionScreen({
 
     const pending = photosRef.current.filter((p) => p.status === 'pending');
     if (pending.length > 0) {
-      setPhotos((prev) => prev.map((p) => (p.status === 'pending' ? { ...p, status: 'queued' as const } : p)));
+      updatePhotos((prev) => prev.map((p) => (p.status === 'pending' ? { ...p, status: 'queued' as const } : p)));
       queueRef.current.push(...pending);
       pumpQueue();
     }
@@ -365,7 +383,7 @@ export function CustomerPhotoSessionScreen({
       hasAttemptedSubmitRef.current = true;
       initCamera();
     }
-  }, [screen, pumpQueue, waitForDrain, cleanupCamera, uploadToken, uploadSessionId, initCamera]);
+  }, [screen, pumpQueue, waitForDrain, cleanupCamera, uploadToken, uploadSessionId, initCamera, updatePhotos]);
 
   const handleUploadMore = useCallback(() => {
     // Revoke any existing thumb URLs to avoid leaking object URLs between
@@ -383,7 +401,7 @@ export function CustomerPhotoSessionScreen({
 
     // Fallback: in-place reset (used only if the component is rendered
     // standalone without a parent callback).
-    setPhotos([]);
+    updatePhotos(() => []);
     queueRef.current = [];
     inFlightRef.current = 0;
     drainResolversRef.current = [];
@@ -619,8 +637,86 @@ export function CustomerPhotoSessionScreen({
                 isSubmitting={isSubmitting}
                 onRemove={() => handleRemove(photo.id)}
                 onRetry={() => handleRetry(photo)}
+                onAddDetails={
+                  isVault && photo.status === 'uploaded'
+                    ? () => {
+                        setDetailPhoto(photo);
+                        setDetailTitle(photo.label || '');
+                        setDetailDesc(photo.description || '');
+                      }
+                    : undefined
+                }
               />
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Vault details sheet — title/description for one uploaded photo */}
+      {detailPhoto && (
+        <div className="absolute inset-0 z-30 bg-black/60 flex items-end" onClick={() => setDetailPhoto(null)}>
+          <div
+            className="w-full bg-gray-900 rounded-t-2xl p-4 space-y-3"
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={detailPhoto.thumbUrl} alt="" className="w-12 h-12 rounded-md object-cover flex-shrink-0" />
+              <p className="text-sm font-medium text-white flex-1">Add details</p>
+              <button
+                type="button"
+                onClick={() => setDetailPhoto(null)}
+                className="p-1.5 bg-gray-800 rounded-full"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4 text-gray-300" />
+              </button>
+            </div>
+            <input
+              value={detailTitle}
+              onChange={(e) => setDetailTitle(e.target.value)}
+              placeholder="Title — e.g. Damaged carton, Job 65503"
+              className="w-full text-sm bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+            <textarea
+              value={detailDesc}
+              onChange={(e) => setDetailDesc(e.target.value)}
+              placeholder="Description — condition notes, contents, context"
+              rows={2}
+              className="w-full text-sm bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+            />
+            <Button
+              onClick={async () => {
+                if (detailSaving || !detailPhoto.imageId) return;
+                setDetailSaving(true);
+                try {
+                  const r = await fetch(`/api/customer-upload/${uploadToken}/vault-annotate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      kind: 'image',
+                      id: detailPhoto.imageId,
+                      label: detailTitle.trim(),
+                      description: detailDesc.trim(),
+                    }),
+                  });
+                  if (r.ok) {
+                    const saved = { label: detailTitle.trim(), description: detailDesc.trim() };
+                    updatePhotos((prev) =>
+                      prev.map((p) => (p.id === detailPhoto.id ? { ...p, ...saved } : p))
+                    );
+                    setDetailPhoto(null);
+                  }
+                } finally {
+                  setDetailSaving(false);
+                }
+              }}
+              disabled={detailSaving}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {detailSaving ? 'Saving...' : 'Save details'}
+            </Button>
           </div>
         </div>
       )}
@@ -695,12 +791,16 @@ function ThumbCard({
   photo,
   isSubmitting,
   onRemove,
-  onRetry
+  onRetry,
+  onAddDetails
 }: {
   photo: StagedPhoto;
   isSubmitting: boolean;
   onRemove: () => void;
   onRetry: () => void;
+  /** Vault only — set on uploaded photos; tapping the thumb opens the
+   *  title/description sheet. */
+  onAddDetails?: () => void;
 }) {
   // The X is hidden while an upload is in flight for this photo — removing
   // mid-POST would orphan an S3 write. It stays available for 'pending' and
@@ -711,7 +811,26 @@ function ThumbCard({
   return (
     <div className="relative w-16 h-16 flex-shrink-0 rounded-md overflow-hidden bg-gray-800">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={photo.thumbUrl} alt="" className="w-full h-full object-cover" />
+      <img
+        src={photo.thumbUrl}
+        alt=""
+        className="w-full h-full object-cover"
+        onClick={onAddDetails}
+      />
+
+      {/* Vault: pencil badge signals tappable details; filled blue once saved */}
+      {onAddDetails && (
+        <button
+          type="button"
+          onClick={onAddDetails}
+          className={`absolute bottom-1 left-1 w-4 h-4 rounded-full flex items-center justify-center ${
+            photo.label || photo.description ? 'bg-blue-500' : 'bg-black/70'
+          }`}
+          aria-label="Add title and description"
+        >
+          <Pencil className="w-2.5 h-2.5 text-white" />
+        </button>
+      )}
 
       {(photo.status === 'queued' || photo.status === 'uploading') && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center">

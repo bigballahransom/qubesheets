@@ -119,6 +119,8 @@ export interface IVideoRecording extends Document {
   purpose?: 'inventory' | 'vault';
   // Short human label for vault media ("Walk-in — Job 65503")
   label?: string;
+  // Longer free-text notes on vault media
+  mediaDescription?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -351,6 +353,9 @@ const VideoRecordingSchema: Schema = new Schema(
       index: true
     },
     label: {
+      type: String
+    },
+    mediaDescription: {
       type: String
     }
   },

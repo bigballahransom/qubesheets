@@ -151,6 +151,11 @@ export default function VaultMediaModal({
             <span className="text-xs text-slate-400 flex-shrink-0">
               {index + 1} of {items.length}
             </span>
+            {item.description && (
+              <span className="text-xs text-slate-500 truncate hidden md:inline" title={item.description}>
+                — {item.description}
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}

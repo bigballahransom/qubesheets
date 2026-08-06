@@ -740,6 +740,7 @@ export default function CustomerUploadPage() {
         companyName={validation.branding?.companyName}
         onUploadMore={() => setViewMode('choice')}
         walkthroughReturnUrl={walkthroughReturnUrl}
+        isVault={!!validation.isVault}
       />
     );
   }

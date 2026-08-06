@@ -28,6 +28,7 @@ interface VaultItem {
   id: string;
   name: string;
   label: string | null;
+  description: string | null;
   duration: number;
   createdAt: string;
   mediaType: 'video' | 'image';
@@ -236,6 +237,11 @@ export default function VaultReviewPage() {
                       <p className="font-medium text-slate-800">
                         {item.label || item.name}
                       </p>
+                      {item.description && (
+                        <p className="text-sm text-slate-600 mt-1 whitespace-pre-wrap">
+                          {item.description}
+                        </p>
+                      )}
                       <p className="text-xs text-slate-400 mt-0.5">
                         {formatDate(item.createdAt)}
                         {item.duration ? ` · ${formatDuration(item.duration)}` : ''}

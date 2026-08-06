@@ -38,11 +38,11 @@ export async function GET(
 
     const [videos, images, recordings] = await Promise.all([
       Video.find({ ...getProjectFilter(authContext, projectId), purpose: 'vault' })
-        .select('originalName label mimeType size duration source s3RawFile createdAt')
+        .select('originalName label mediaDescription mimeType size duration source s3RawFile createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       Image.find({ ...getProjectFilter(authContext, projectId), purpose: 'vault' })
-        .select('originalName label mimeType size source s3RawFile createdAt')
+        .select('originalName label mediaDescription mimeType size source s3RawFile createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       // projectId is a string on VideoRecording (not ObjectId)
@@ -52,7 +52,7 @@ export async function GET(
         s3Key: { $exists: true, $nin: [null, ''] },
         ...orgFilter,
       })
-        .select('roomId label duration s3Key source participants createdAt')
+        .select('roomId label mediaDescription duration s3Key source participants createdAt')
         .sort({ createdAt: -1 })
         .lean(),
     ]);
@@ -78,6 +78,7 @@ export async function GET(
         id: String(v._id),
         name: v.originalName || 'Video',
         label: v.label || null,
+        description: v.mediaDescription || null,
         duration: v.duration || 0,
         createdAt: v.createdAt,
         mediaType: 'video' as const,
@@ -90,6 +91,7 @@ export async function GET(
           r.participants?.find((p: any) => p.type === 'customer')?.name ||
           'Recorded video',
         label: r.label || null,
+        description: r.mediaDescription || null,
         duration: r.duration || 0,
         createdAt: r.createdAt,
         mediaType: 'video' as const,
@@ -111,6 +113,7 @@ export async function GET(
           id: String(img._id),
           name: img.originalName || 'Photo',
           label: img.label || null,
+          description: img.mediaDescription || null,
           duration: 0,
           createdAt: img.createdAt,
           mediaType: 'image' as const,
@@ -330,13 +333,23 @@ export async function PATCH(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const { kind, id, label } = await request.json();
+    const { kind, id, label, description } = await request.json();
     if (!kind || !id) {
       return NextResponse.json({ error: 'kind and id are required' }, { status: 400 });
     }
 
-    const cleanLabel = typeof label === 'string' ? label.slice(0, 200) : '';
-    const update = { $set: { label: cleanLabel } };
+    // Only fields present in the body are updated, so a label-only PATCH
+    // never clears the description and vice versa.
+    const set: Record<string, string> = {};
+    if (label !== undefined) set.label = typeof label === 'string' ? label.slice(0, 200) : '';
+    if (description !== undefined) {
+      set.mediaDescription = typeof description === 'string' ? description.slice(0, 1000) : '';
+    }
+    if (Object.keys(set).length === 0) {
+      return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
+    }
+    const cleanLabel = set.label ?? '';
+    const update = { $set: set };
 
     let result = null;
     if (kind === 'video') {
@@ -365,7 +378,11 @@ export async function PATCH(
       return NextResponse.json({ error: 'Media not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, label: cleanLabel });
+    return NextResponse.json({
+      success: true,
+      label: cleanLabel,
+      description: set.mediaDescription ?? null,
+    });
   } catch (error) {
     console.error('Error updating vault media label:', error);
     return NextResponse.json(

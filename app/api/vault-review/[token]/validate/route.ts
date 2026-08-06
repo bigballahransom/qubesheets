@@ -55,11 +55,11 @@ export async function GET(
 
     const [videos, images, recordings, comments, branding] = await Promise.all([
       Video.find({ projectId, purpose: 'vault' })
-        .select('originalName label duration s3RawFile createdAt')
+        .select('originalName label mediaDescription duration s3RawFile createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       Image.find({ projectId, purpose: 'vault' })
-        .select('originalName label s3RawFile createdAt')
+        .select('originalName label mediaDescription s3RawFile createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       VideoRecording.find({
@@ -67,7 +67,7 @@ export async function GET(
         purpose: 'vault',
         s3Key: { $exists: true, $nin: [null, ''] },
       })
-        .select('label duration s3Key participants createdAt')
+        .select('label mediaDescription duration s3Key participants createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       MediaComment.find({ projectId })
@@ -99,6 +99,7 @@ export async function GET(
         id: String(v._id),
         name: v.originalName || 'Video',
         label: v.label || null,
+        description: v.mediaDescription || null,
         duration: v.duration || 0,
         createdAt: v.createdAt,
         mediaType: 'video' as const,
@@ -109,6 +110,7 @@ export async function GET(
         id: String(r._id),
         name: r.participants?.find((p: any) => p.type === 'customer')?.name || 'Recorded video',
         label: r.label || null,
+        description: r.mediaDescription || null,
         duration: r.duration || 0,
         createdAt: r.createdAt,
         mediaType: 'video' as const,
@@ -119,6 +121,7 @@ export async function GET(
         id: String(img._id),
         name: img.originalName || 'Photo',
         label: img.label || null,
+        description: img.mediaDescription || null,
         duration: 0,
         createdAt: img.createdAt,
         mediaType: 'image' as const,

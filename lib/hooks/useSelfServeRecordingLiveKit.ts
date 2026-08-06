@@ -114,6 +114,11 @@ export interface UseSelfServeRecordingLiveKitReturn {
   /** What actually went wrong when status is 'error' — drives which recovery
    *  screen the UI shows. Null while there is no error. */
   errorKind: RecordingErrorKind | null;
+  /** For permission_denied errors: true = the user saw the browser prompt
+   *  and denied it (a reload can re-prompt on WebKit); false = getUserMedia
+   *  failed instantly with no prompt (hard-blocked at site/OS level — only a
+   *  settings change helps); null = no permission failure yet. */
+  permissionPromptShown: boolean | null;
   /** Seconds of footage that were already safely recorded when a
    *  mid-recording disconnect happened (for "your first X:XX was saved"). */
   savedDuration: number;
@@ -186,6 +191,7 @@ export function useSelfServeRecordingLiveKit({
   const [recordingStarted, setRecordingStarted] = useState(false);
   const [initStage, setInitStage] = useState<InitStage>('session');
   const [errorKind, setErrorKind] = useState<RecordingErrorKind | null>(null);
+  const [permissionPromptShown, setPermissionPromptShown] = useState<boolean | null>(null);
   const [savedDuration, setSavedDuration] = useState(0);
   const [connectionQuality, setConnectionQuality] = useState<ConnectionQuality>(ConnectionQuality.Unknown);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -476,7 +482,9 @@ export function useSelfServeRecordingLiveKit({
       if (perm?.state === 'denied') {
         console.warn('🚫 Camera permission already denied for this site');
         sendTelemetry(uploadToken, { event: 'camera_permission_predenied', browser: getBrowser() });
-        const error = new Error('Camera access is turned off for this site. Enable it in your browser settings, then tap "Check again".');
+        const error = new Error('Camera access is turned off for this site.');
+        // Pre-denied via the Permissions API = blocked before any prompt.
+        setPermissionPromptShown(false);
         setErrorKind('permission_denied');
         setError(error);
         setStatus('error');
@@ -654,6 +662,7 @@ export function useSelfServeRecordingLiveKit({
     }
 
     // STEP 4: Request camera + microphone permissions (this triggers the OS prompt).
+    const cameraEnableStartedAt = Date.now();
     try {
       console.log('📹 Enabling camera and microphone...');
       setInitStage('camera');
@@ -670,11 +679,20 @@ export function useSelfServeRecordingLiveKit({
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to access camera/microphone');
       console.error('❌ Init step failed (enableCameraAndMicrophone):', error);
+      // Failure timing distinguishes "the user saw the prompt and denied it"
+      // (recoverable via reload-and-reprompt on WebKit) from "blocked before
+      // any prompt could show" (site/OS-level block — only a settings change
+      // helps). An instant rejection means no human was in the loop.
+      const enableElapsedMs = Date.now() - cameraEnableStartedAt;
+      const promptWasShown = enableElapsedMs >= 500;
+      setPermissionPromptShown(promptWasShown);
       sendTelemetry(uploadToken, {
         event: 'init_failed',
         step: 'enable_camera_mic',
         errorName: error.name,
-        errorMessage: error.message
+        errorMessage: error.message,
+        enableElapsedMs,
+        promptShown: promptWasShown
       });
       // Disconnect so we don't leave a connected-but-camera-less participant
       // holding the room open (the egress has NOT started yet — 'ready' is
@@ -974,6 +992,7 @@ export function useSelfServeRecordingLiveKit({
     cleanup();
     setError(null);
     setErrorKind(null);
+    setPermissionPromptShown(null);
     setRecordingStarted(false);
     setUploadConfirmed(null);
     setDuration(0);
@@ -1048,6 +1067,7 @@ export function useSelfServeRecordingLiveKit({
     initStage,
     cameraInterrupted,
     errorKind,
+    permissionPromptShown,
     savedDuration,
     connectionQuality,
     isReconnecting,

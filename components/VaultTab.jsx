@@ -372,6 +372,11 @@ export default function VaultTab({ projectId, onOpenVaultLink }) {
                       </button>
                     )}
                     <p className="text-xs text-slate-400 truncate mt-0.5">{item.name}</p>
+                    {item.description && (
+                      <p className="text-xs text-slate-500 mt-1 line-clamp-2" title={item.description}>
+                        {item.description}
+                      </p>
+                    )}
                   </div>
                   <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">
                     {item.mediaType === 'video' ? <Film size={10} /> : <ImageIcon size={10} />}

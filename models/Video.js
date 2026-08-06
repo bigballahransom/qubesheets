@@ -94,6 +94,12 @@ const VideoSchema = new mongoose.Schema({
     type: String,
     required: false
   },
+  // Longer free-text notes on vault media (separate from `description`,
+  // which carries upload-provenance strings)
+  mediaDescription: {
+    type: String,
+    required: false
+  },
   processingStatus: {
     type: String,
     enum: ['queued', 'processing', 'completed', 'failed', 'skipped'],

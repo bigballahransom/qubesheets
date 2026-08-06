@@ -37,6 +37,9 @@ export async function POST(
     const file = formData.get('file') as File | null;
     const labelRaw = formData.get('label');
     const label = typeof labelRaw === 'string' ? labelRaw.trim().slice(0, 200) : '';
+    const descriptionRaw = formData.get('description');
+    const mediaDescription =
+      typeof descriptionRaw === 'string' ? descriptionRaw.trim().slice(0, 1000) : '';
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
@@ -90,6 +93,7 @@ export async function POST(
       updatedAt: now,
     };
     if (label) doc.label = label;
+    if (mediaDescription) doc.mediaDescription = mediaDescription;
     if (!authContext.isPersonalAccount) doc.organizationId = authContext.organizationId;
 
     const inserted = await Image.collection.insertOne(doc);

@@ -17,6 +17,9 @@ export interface IImage extends Document {
   purpose?: 'inventory' | 'vault';
   // Short human label for vault media ("Walk-in — Job 65503")
   label?: string;
+  // Longer free-text notes on vault media (kept separate from `description`,
+  // which carries upload-provenance strings)
+  mediaDescription?: string;
   processingStatus?: 'queued' | 'processing' | 'completed' | 'failed' | 'skipped';
   analysisResult?: {
     summary: string;
@@ -74,6 +77,7 @@ const ImageSchema: Schema = new Schema(
     manualRoomEntry: { type: String, required: false }, // Manual room location override
     purpose: { type: String, enum: ['inventory', 'vault'], default: 'inventory', index: true },
     label: { type: String, required: false },
+    mediaDescription: { type: String, required: false },
     processingStatus: { type: String, enum: ['queued', 'processing', 'completed', 'failed', 'skipped'], default: 'queued' },
     analysisResult: {
       summary: { type: String },

@@ -53,7 +53,7 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
     const accepted = [];
     for (const file of fileList) {
       if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
-        accepted.push({ id: nextId++, file, label: '', status: 'pending', error: null });
+        accepted.push({ id: nextId++, file, label: '', description: '', status: 'pending', error: null });
       }
     }
     if (accepted.length === 0) {
@@ -72,6 +72,7 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
     const form = new FormData();
     form.append('file', entry.file);
     if (entry.label.trim()) form.append('label', entry.label.trim());
+    if (entry.description.trim()) form.append('description', entry.description.trim());
     const res = await fetch(`/api/projects/${projectId}/vault-media/upload`, {
       method: 'POST',
       body: form,
@@ -101,6 +102,7 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
       extraMetadata: {
         purpose: 'vault',
         ...(entry.label.trim() ? { label: entry.label.trim() } : {}),
+        ...(entry.description.trim() ? { description: entry.description.trim() } : {}),
       },
     });
     if (!result.success) {
@@ -245,13 +247,23 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
                     ) : entry.status === 'error' ? (
                       <p className="text-xs text-red-600 truncate">{entry.error}</p>
                     ) : (
-                      <input
-                        value={entry.label}
-                        onChange={(e) => setEntry(entry.id, { label: e.target.value })}
-                        placeholder="Label (optional) — e.g. Walk-in, Job 65503"
-                        disabled={entry.status === 'uploading'}
-                        className="w-full text-xs border border-slate-200 rounded px-2 py-1 mt-0.5 focus:ring-1 focus:ring-slate-400 outline-none"
-                      />
+                      <>
+                        <input
+                          value={entry.label}
+                          onChange={(e) => setEntry(entry.id, { label: e.target.value })}
+                          placeholder="Title (optional) — e.g. Walk-in, Job 65503"
+                          disabled={entry.status === 'uploading'}
+                          className="w-full text-xs border border-slate-200 rounded px-2 py-1 mt-0.5 focus:ring-1 focus:ring-slate-400 outline-none"
+                        />
+                        <textarea
+                          value={entry.description}
+                          onChange={(e) => setEntry(entry.id, { description: e.target.value })}
+                          placeholder="Description (optional) — condition notes, contents, context"
+                          disabled={entry.status === 'uploading'}
+                          rows={2}
+                          className="w-full text-xs border border-slate-200 rounded px-2 py-1 mt-1 focus:ring-1 focus:ring-slate-400 outline-none resize-none"
+                        />
+                      </>
                     )}
                   </div>
                   <div className="flex-shrink-0">

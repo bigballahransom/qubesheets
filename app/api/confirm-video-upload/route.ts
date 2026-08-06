@@ -208,6 +208,7 @@ export async function POST(request: NextRequest) {
         source: 'self_serve',
         purpose: isVault ? 'vault' : 'inventory',
         ...(metadata.label ? { label: String(metadata.label).slice(0, 200) } : {}),
+        ...(metadata.description ? { mediaDescription: String(metadata.description).slice(0, 1000) } : {}),
         // The Videos tab card title comes from the customer participant name.
         participants: [{
           identity: 'admin-upload',
@@ -330,6 +331,7 @@ export async function POST(request: NextRequest) {
       source: videoSource,
       purpose: isVault ? 'vault' : 'inventory',
       ...(metadata.label ? { label: String(metadata.label).slice(0, 200) } : {}),
+      ...(metadata.description ? { mediaDescription: String(metadata.description).slice(0, 1000) } : {}),
       processingStatus: isVault ? 'skipped' : 'queued',
       analysisResult: isVault ? {
         status: 'skipped',
