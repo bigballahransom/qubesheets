@@ -299,10 +299,38 @@ export function SelfServeRecorderLiveKit({
     }
   };
 
+  // Fire the real camera/mic permission prompt directly inside a user
+  // gesture, BEFORE the server/LiveKit handshake. The native popup appears
+  // the instant the user taps — not seconds later over a spinner — and once
+  // granted, initialize()'s own camera step proceeds without a second ask
+  // (grants persist for the page load). Best-effort: on deny/failure we
+  // continue into initialize(), whose camera step classifies the failure
+  // and routes to the right recovery screen.
+  const requestPermissionUpfront = async (context: 'start' | 'priming') => {
+    try {
+      const stream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('upfront-prompt-timeout')), 60_000)
+        )
+      ]);
+      stream.getTracks().forEach((t) => t.stop());
+      pingTelemetry(uploadToken, { event: 'upfront_prompt_result', context, result: 'granted' });
+    } catch (err: any) {
+      pingTelemetry(uploadToken, {
+        event: 'upfront_prompt_result',
+        context,
+        result: err?.name || 'error'
+      });
+    }
+  };
+
   // Handle start
   const handleStart = async () => {
+    ensureAudioReady();
     setShowInstructions(false);
     if (status === 'idle') {
+      await requestPermissionUpfront('start');
       await initialize();
     }
   };
@@ -401,6 +429,111 @@ export function SelfServeRecorderLiveKit({
       startRecording();
     }
   }, [status, showInstructions, startRecording]);
+
+  // ─── 3-2-1 countdown on recording start ──────────────────────────
+  // Runs the moment recording kicks off, CONCURRENTLY with the server-side
+  // egress spin-up (the /start-recording API + composite renderer take a
+  // few seconds to actually begin encoding). By the time the countdown ends
+  // and REC appears, the egress is genuinely rolling — so the user's first
+  // words land on tape instead of being clipped during startup.
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownStartedRef = useRef(false);
+
+  // ─── Countdown audio cues (Web Audio, no asset files) ─────────────
+  // Soft tick on 3-2-1, brighter two-tone on "go" — the camera-self-timer
+  // pattern, so the user knows when to start talking without watching the
+  // screen. The AudioContext must be created/resumed inside a user gesture
+  // (iOS requirement), so every button that leads into recording calls
+  // ensureAudioReady(). Everything here is best-effort: if audio can't
+  // play, the visual countdown carries the interaction unchanged.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const lastCueRef = useRef<number | null>(null);
+
+  const ensureAudioReady = () => {
+    try {
+      if (!audioCtxRef.current) {
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!Ctx) return;
+        audioCtxRef.current = new Ctx();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        void audioCtxRef.current.resume();
+      }
+    } catch { /* no audio — countdown stays visual-only */ }
+  };
+
+  const playCue = (kind: 'tick' | 'go') => {
+    try {
+      const ctx = audioCtxRef.current;
+      if (!ctx || ctx.state !== 'running') return;
+      const now = ctx.currentTime;
+      const gain = ctx.createGain();
+      gain.connect(ctx.destination);
+      if (kind === 'tick') {
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = 880;
+        osc.connect(gain);
+        osc.start(now);
+        osc.stop(now + 0.12);
+      } else {
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        const o1 = ctx.createOscillator();
+        o1.type = 'sine';
+        o1.frequency.value = 988; // B5
+        o1.connect(gain);
+        o1.start(now);
+        o1.stop(now + 0.15);
+        const o2 = ctx.createOscillator();
+        o2.type = 'sine';
+        o2.frequency.value = 1319; // E6
+        o2.connect(gain);
+        o2.start(now + 0.15);
+        o2.stop(now + 0.35);
+      }
+    } catch { /* best-effort */ }
+    // Haptic tick where supported (Android; iOS Safari has no web haptics).
+    try { (navigator as any).vibrate?.(kind === 'tick' ? 30 : 60); } catch {}
+  };
+
+  // Tidy up the AudioContext when the recorder unmounts.
+  useEffect(() => {
+    return () => { try { audioCtxRef.current?.close(); } catch {} };
+  }, []);
+
+  useEffect(() => {
+    if (isRecording && !countdownStartedRef.current) {
+      countdownStartedRef.current = true;
+      lastCueRef.current = null;
+      setCountdown(3);
+    } else if (!isRecording && status !== 'stopping' && status !== 'processing') {
+      // Reset for a fresh take (retry after error, new session, etc.).
+      countdownStartedRef.current = false;
+      lastCueRef.current = null;
+      setCountdown(null);
+    }
+  }, [isRecording, status]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    // Cue once per value (the ref guard also absorbs StrictMode's dev-mode
+    // double effect invocation).
+    if (lastCueRef.current !== countdown) {
+      lastCueRef.current = countdown;
+      playCue(countdown <= 0 ? 'go' : 'tick');
+    }
+    if (countdown <= 0) {
+      setCountdown(null);
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown]);
+
+  const countingDown = countdown !== null && countdown > 0;
 
   // Safety net for the "Starting camera..." overlay: iOS Safari sometimes
   // never fires loadeddata for an attached MediaStream even though frames are
@@ -517,33 +650,46 @@ export function SelfServeRecorderLiveKit({
           </div>
           <h2 className="text-2xl font-bold mb-2">This time, tap "Allow"</h2>
           <p className="text-gray-400 mb-6">
-            Your browser is about to ask for camera &amp; microphone access.
-            Recording only works if you allow it.
+            Tap <span className="font-semibold text-white">Allow</span> below —
+            the real popup will appear right where you tapped. Tap Allow on it too.
           </p>
 
-          {/* Mock of the native prompt with Allow highlighted */}
+          {/* Interactive rehearsal of the native prompt: the Allow button IS
+              the action. Firing getUserMedia inside this tap makes the real
+              popup appear instantly, with the user's thumb already in
+              position and "tap Allow" fresh in muscle memory. */}
           <div className="bg-gray-800 rounded-xl p-4 mb-6 w-full">
             <p className="text-sm text-gray-300 mb-3">
               This website would like to access your camera and microphone
             </p>
             <div className="flex gap-3 justify-center">
-              <span className="px-4 py-1.5 rounded-lg bg-gray-700 text-gray-500 text-sm">Don't Allow</span>
-              <span className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold ring-2 ring-blue-300/70 animate-pulse">Allow</span>
+              <span className="px-4 py-1.5 rounded-lg bg-gray-700 text-gray-500 text-sm opacity-60 select-none">Don't Allow</span>
+              <button
+                type="button"
+                disabled={primingStarted}
+                onClick={async () => {
+                  if (primingStarted) return;
+                  ensureAudioReady();
+                  setPrimingStarted(true);
+                  await requestPermissionUpfront('priming');
+                  await initialize();
+                }}
+                className={cn(
+                  'px-5 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold',
+                  primingStarted
+                    ? 'opacity-60'
+                    : 'ring-2 ring-blue-300/70 animate-pulse active:bg-blue-700'
+                )}
+              >
+                Allow
+              </button>
             </div>
           </div>
 
-          {!primingStarted ? (
-            <Button
-              onClick={() => { setPrimingStarted(true); initialize(); }}
-              size="lg"
-              className="w-full bg-blue-600 hover:bg-blue-700 mb-4"
-            >
-              Turn on camera
-            </Button>
-          ) : (
+          {primingStarted && (
             <div className="flex items-center gap-3 mb-4 text-gray-300">
               <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              Waiting for camera access — tap "Allow" on the popup
+              Now tap "Allow" on the popup
             </div>
           )}
 
@@ -796,6 +942,7 @@ export function SelfServeRecorderLiveKit({
           {!screen.hideRetry && (
             <Button
               onClick={() => {
+                ensureAudioReady();
                 // WebKit permission denials recover via a primed reload (a
                 // fresh page load re-prompts); everything else — including
                 // Chrome's definitive denied state, where a reload is
@@ -1107,7 +1254,25 @@ export function SelfServeRecorderLiveKit({
         </div>
       )}
 
-      {/* Top overlay - minimal, just REC indicator and time */}
+      {/* 3-2-1 countdown — big number over the live preview so the user can
+          compose their shot. Runs concurrently with egress startup; controls
+          and REC are hidden until it finishes. */}
+      {countingDown && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 pointer-events-none">
+          <span
+            key={countdown}
+            className="text-white font-bold drop-shadow-2xl animate-in zoom-in-50 fade-in duration-300"
+            style={{ fontSize: '9rem', lineHeight: 1 }}
+          >
+            {countdown}
+          </span>
+        </div>
+      )}
+
+      {/* Top overlay - minimal, just REC indicator and time. Hidden during
+          the countdown (the ticking duration + STARTING spinner would fight
+          the big numbers). */}
+      {!countingDown && (
       <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8px)' }}>
         {/* Recording indicator. Show "STARTING…" while /start-recording is in
             flight so the user doesn't think the recording has begun and tap
@@ -1137,6 +1302,7 @@ export function SelfServeRecorderLiveKit({
           {formatDuration(duration)} / {formatDuration(maxDuration)}
         </div>
       </div>
+      )}
 
       {/* Network status — with server-side egress, a degraded uplink degrades
           the RECORDING, not just the preview, so surface it prominently. */}
@@ -1175,14 +1341,14 @@ export function SelfServeRecorderLiveKit({
       <div className="absolute bottom-0 left-0 right-0 z-10 flex justify-center" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 60px)' }}>
         {status === 'ready' && (
           <button
-            onClick={startRecording}
+            onClick={() => { ensureAudioReady(); startRecording(); }}
             className="w-[72px] h-[72px] bg-red-500 hover:bg-red-600 active:bg-red-700 rounded-full flex items-center justify-center shadow-lg border-4 border-white/30"
             aria-label="Start recording"
           >
             <div className="w-6 h-6 bg-white rounded-full" />
           </button>
         )}
-        {isRecording && (
+        {isRecording && !countingDown && (
           <button
             onClick={stopRecording}
             disabled={!recordingStarted}
