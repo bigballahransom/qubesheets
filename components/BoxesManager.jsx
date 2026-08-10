@@ -245,7 +245,10 @@ export default function BoxesManager({
       const grouped = {};
       
       boxes.forEach(box => {
-        const boxType = box.box_details?.box_type || box.packed_box_details?.size || box.name;
+        // Name wins for packed containers ("Large Box", "Garbage Bag");
+        // packed_box_details.size is a bare "Large"/"Medium" fallback for
+        // legacy items that predate container-based names.
+        const boxType = box.box_details?.box_type || box.name || box.packed_box_details?.size;
         const capacity = getPerUnitCuft(box);
         const isRecommended = box.itemType === 'boxes_needed';
 

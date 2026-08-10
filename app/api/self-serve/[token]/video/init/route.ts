@@ -73,14 +73,20 @@ export async function POST(
 
     console.log(`📹 Initializing self-serve recording: session=${sessionId.substring(0, 12)}..., room=${roomName}`);
 
-    // Create LiveKit room. emptyTimeout only matters while NO participant is
-    // connected (pre-join, and after abandonment — pauses don't empty the
-    // room), so keep it short: it caps how long an abandoned session's egress
-    // can keep recording an empty (black) room before LiveKit closes it.
+    // Create LiveKit room. emptyTimeout only matters while NO participant has
+    // ever connected (pre-join), so keep it short: it caps how long an
+    // abandoned session's egress can keep recording an empty (black) room
+    // before LiveKit closes it. departureTimeout governs how long the room
+    // survives after the last participant DROPS — the default (20s) closed
+    // the room, and killed the egress, before a phone that lost signal
+    // mid-walkthrough could reconnect. 120s comfortably covers the client's
+    // 60s reconnect window; the client's stop-beacon and the /stop reaper
+    // still close things promptly on a deliberate exit.
     try {
       await roomServiceClient.createRoom({
         name: roomName,
         emptyTimeout: 120, // 2 minutes
+        departureTimeout: 120, // 2 minutes
         maxParticipants: 1, // Only the customer
         metadata: JSON.stringify({
           type: 'self-serve',

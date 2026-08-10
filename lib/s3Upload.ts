@@ -429,3 +429,72 @@ export async function headS3Object(key: string): Promise<{ exists: boolean; size
     throw err;
   }
 }
+
+// ─── Multipart upload primitives (self-serve local capture) ────────────
+// The local-first recorder uploads the video the customer's browser recorded
+// as an S3 multipart upload: parts are presigned here, PUT directly from the
+// browser (bytes never touch a Vercel function), and completed server-side
+// at finalize. Parts must be ≥5MB except the last — the client aggregates
+// its ~5s MediaRecorder chunks into parts before requesting URLs.
+
+function resolveBucketName(): string {
+  const bucketName = process.env.RECORDING_S3_BUCKET || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME;
+  if (!bucketName) {
+    throw new Error('AWS bucket name not configured. Please set AWS_BUCKET_NAME or AWS_S3_BUCKET_NAME.');
+  }
+  return bucketName;
+}
+
+export async function createS3MultipartUpload(key: string, contentType: string): Promise<{ uploadId: string; bucket: string }> {
+  const bucket = resolveBucketName();
+  const result = await s3.createMultipartUpload({
+    Bucket: bucket,
+    Key: key,
+    ContentType: contentType
+  }).promise();
+  if (!result.UploadId) {
+    throw new Error('S3 did not return an UploadId for multipart upload');
+  }
+  return { uploadId: result.UploadId, bucket };
+}
+
+export function getPresignedPartUrl(key: string, uploadId: string, partNumber: number, expiresIn: number = 3600): string {
+  return s3.getSignedUrl('uploadPart', {
+    Bucket: resolveBucketName(),
+    Key: key,
+    UploadId: uploadId,
+    PartNumber: partNumber,
+    Expires: expiresIn
+  });
+}
+
+export async function completeS3MultipartUpload(
+  key: string,
+  uploadId: string,
+  parts: Array<{ partNumber: number; eTag: string }>
+): Promise<void> {
+  await s3.completeMultipartUpload({
+    Bucket: resolveBucketName(),
+    Key: key,
+    UploadId: uploadId,
+    MultipartUpload: {
+      Parts: parts
+        .slice()
+        .sort((a, b) => a.partNumber - b.partNumber)
+        .map((p) => ({ PartNumber: p.partNumber, ETag: p.eTag }))
+    }
+  }).promise();
+}
+
+export async function abortS3MultipartUpload(key: string, uploadId: string): Promise<void> {
+  try {
+    await s3.abortMultipartUpload({
+      Bucket: resolveBucketName(),
+      Key: key,
+      UploadId: uploadId
+    }).promise();
+  } catch (err) {
+    // Abort is best-effort cleanup — never fail the caller over it.
+    console.warn(`abortS3MultipartUpload(${key}) failed (non-fatal):`, err instanceof Error ? err.message : err);
+  }
+}

@@ -95,6 +95,20 @@ export async function POST(request: Request) {
 
     const normalizedSubdomain = normalizeSubdomain(clientSubdomain);
 
+    // Swapped-credential guard. Chariot auth tokens are 40-char hex; account
+    // IDs are human-readable slugs (e.g. "majormoversinc_qubesheets_api").
+    // Pasting them into the opposite fields produces a confusing 403 on every
+    // sync (real incident 2026-08-06: Major Movers). A 40-hex value in the
+    // accountId field with a non-hex authToken is unambiguous — fix it
+    // silently rather than bouncing the user.
+    let finalAuthToken = String(authToken).trim();
+    let finalAccountId = accountId ? String(accountId).trim() : undefined;
+    const looksLikeToken = (v: string | undefined) => !!v && /^[0-9a-f]{40}$/i.test(v);
+    if (finalAccountId && looksLikeToken(finalAccountId) && !looksLikeToken(finalAuthToken)) {
+      console.warn(`⚠️ Chariot credentials appear swapped for org ${orgId} — auto-correcting (token↔accountId)`);
+      [finalAuthToken, finalAccountId] = [finalAccountId, finalAuthToken];
+    }
+
     await connectMongoDB();
 
     const integration = await ChariotIntegration.findOneAndUpdate(
@@ -103,8 +117,8 @@ export async function POST(request: Request) {
         userId,
         organizationId: orgId,
         clientSubdomain: normalizedSubdomain,
-        authToken: String(authToken).trim(),
-        accountId: accountId ? String(accountId).trim() : undefined,
+        authToken: finalAuthToken,
+        accountId: finalAccountId,
         enabled: enabled !== false,
       },
       { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }

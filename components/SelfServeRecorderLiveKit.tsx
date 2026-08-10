@@ -6,6 +6,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ConnectionQuality } from 'livekit-client';
 import { useSelfServeRecordingLiveKit } from '@/lib/hooks/useSelfServeRecordingLiveKit';
+import { useSelfServeLocalRecording } from '@/lib/hooks/useSelfServeLocalRecording';
+import { SelfServeLocalRecorder, type ResumableUpload } from '@/lib/selfServeLocalRecorder';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDetection';
@@ -86,6 +88,13 @@ interface SelfServeRecorderLiveKitProps {
   walkthroughReturnUrl?: string;
   /** Media Vault capture — reference-only copy, no "AI is analyzing" promises. */
   isVault?: boolean;
+  /** Which recording engine to use (from the upload link's validate API).
+   *  'local' — on-device MediaRecorder → IndexedDB → resumable S3 multipart
+   *  upload: capture survives dead spots entirely (walkthrough links).
+   *  'livekit' (default) — server-side egress recording.
+   *  Browsers that can't run local capture silently fall back to LiveKit.
+   *  ?capture=local / ?capture=livekit override for testing. */
+  captureEngine?: 'local' | 'livekit';
 }
 
 export function SelfServeRecorderLiveKit({
@@ -96,10 +105,21 @@ export function SelfServeRecorderLiveKit({
   onCancel,
   companyName,
   walkthroughReturnUrl,
-  isVault
+  isVault,
+  captureEngine
 }: SelfServeRecorderLiveKitProps) {
   const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
+
+  // Engine selection, decided once on mount. Local capture requires
+  // MediaRecorder + IndexedDB; where unsupported we silently keep LiveKit
+  // (still better than a dead end — and modern iOS/Android both support it).
+  const [useLocalEngine] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const param = new URLSearchParams(window.location.search).get('capture');
+    const requested = param === 'livekit' ? false : (captureEngine === 'local' || param === 'local');
+    return requested && SelfServeLocalRecorder.isSupported();
+  });
   // Vault-only: optional title/description typed on the completion screen,
   // saved to the session via vault-annotate (the webhook copies them onto
   // the VideoRecording it creates).
@@ -115,11 +135,13 @@ export function SelfServeRecorderLiveKit({
   useEffect(() => {
     pingTelemetry(uploadToken, {
       event: 'recorder_mounted',
+      engine: useLocalEngine ? 'local' : 'livekit',
+      localCaptureSupported: SelfServeLocalRecorder.isSupported(),
       browser: getBrowser(),
       platform: isIOS() ? 'iOS' : isAndroid() ? 'Android' : 'Other',
       inAppBrowser: detectInAppBrowser()
     });
-  }, [uploadToken]);
+  }, [uploadToken, useLocalEngine]);
 
   // Set body/html background color to match iOS Safari dark mode
   useEffect(() => {
@@ -151,6 +173,20 @@ export function SelfServeRecorderLiveKit({
     };
   }, []);
 
+  // Both engines are instantiated (hooks can't be conditional) but only the
+  // selected one is ever initialized — the unselected hook is inert state.
+  const engineOptions = {
+    uploadToken,
+    maxDuration,
+    onRecordingComplete: (sid?: string) => {
+      onComplete?.(sid);
+    },
+    onDurationWarning: (warning: 'none' | '2min' | '1min' | '30sec', remaining: number) => {
+      console.log(`Duration warning: ${warning}, ${remaining}s remaining`);
+    }
+  };
+  const livekitEngine = useSelfServeRecordingLiveKit(engineOptions);
+  const localEngine = useSelfServeLocalRecording(engineOptions);
   const {
     status,
     isRecording,
@@ -176,16 +212,10 @@ export function SelfServeRecorderLiveKit({
     flipCamera,
     retryFromError,
     error
-  } = useSelfServeRecordingLiveKit({
-    uploadToken,
-    maxDuration,
-    onRecordingComplete: (sid) => {
-      onComplete?.(sid);
-    },
-    onDurationWarning: (warning, remaining) => {
-      console.log(`Duration warning: ${warning}, ${remaining}s remaining`);
-    }
-  });
+  } = useLocalEngine ? localEngine : livekitEngine;
+  /** Post-stop upload progress — only the local engine reports it (the
+   *  LiveKit egress uploads server-side). */
+  const uploadProgress = useLocalEngine ? localEngine.uploadProgress : null;
 
   // Format duration as MM:SS
   const formatDuration = (seconds: number): string => {
@@ -325,6 +355,103 @@ export function SelfServeRecorderLiveKit({
     }
   };
 
+  // ─── Unfinished upload from an earlier page-load (local engine) ───
+  // If a recording finished (or the page died) before its upload drained,
+  // the footage is still in IndexedDB. Offer to finish the upload — this is
+  // what makes closing the page during "Saving your video…" non-fatal.
+  const [pendingUpload, setPendingUpload] = useState<ResumableUpload | null>(null);
+  useEffect(() => {
+    if (!useLocalEngine || !showInstructions) return;
+    let cancelled = false;
+    SelfServeLocalRecorder.listResumable(uploadToken).then((list) => {
+      if (!cancelled && list.length > 0) {
+        setPendingUpload(list[0]);
+        pingTelemetry(uploadToken, {
+          event: 'resumable_upload_found',
+          resumedSessionId: list[0].sessionId,
+          pendingBytes: list[0].totalBytes,
+          pendingDuration: list[0].durationSeconds
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [useLocalEngine, showInstructions, uploadToken]);
+
+  // ─── Online/offline (for honest copy on the upload screen) ────────
+  const [isOffline, setIsOffline] = useState(false);
+  useEffect(() => {
+    const sync = () => setIsOffline(typeof navigator !== 'undefined' && navigator.onLine === false);
+    sync();
+    window.addEventListener('online', sync);
+    window.addEventListener('offline', sync);
+    return () => {
+      window.removeEventListener('online', sync);
+      window.removeEventListener('offline', sync);
+    };
+  }, []);
+
+  // ─── One-time ".5× recommended" tip ───────────────────────────────
+  // Ultra-wide is the right lens for walkthroughs (whole rooms in frame),
+  // but nobody discovers a tiny pill on their own. Show a small bubble over
+  // the zoom controls once the camera is live IF this device can do 0.5× —
+  // auto-hides after 5s, X dismisses, tapping it applies .5× directly.
+  const [wideTipVisible, setWideTipVisible] = useState(false);
+  const wideTipShownRef = useRef(false);
+  useEffect(() => {
+    if (!useLocalEngine || wideTipShownRef.current) return;
+    if (status !== 'ready' && status !== 'recording') return;
+    const r = localEngine.zoomRange;
+    if (!r || r.min > 0.55) return;
+    wideTipShownRef.current = true;
+    setWideTipVisible(true);
+    pingTelemetry(uploadToken, { event: 'wide_lens_tip_shown' });
+  }, [useLocalEngine, status, localEngine.zoomRange, uploadToken]);
+  useEffect(() => {
+    if (!wideTipVisible) return;
+    const t = setTimeout(() => setWideTipVisible(false), 10_000);
+    return () => clearTimeout(t);
+  }, [wideTipVisible]);
+
+  // ─── Pre-flight signal check ─────────────────────────────────────
+  // With server-side egress, a weak connection doesn't just degrade quality —
+  // it can end the recording outright (the 2026-08-07 WNY basement incident).
+  // Probe the network while the user reads the instructions: the Network
+  // Information API where available (Android Chrome), plus a timed round-trip
+  // to our own API (works on iOS Safari, and measures the path that matters).
+  // A weak result steers the user toward the record-locally-and-upload path
+  // BEFORE they start, not after a failure.
+  const [weakSignal, setWeakSignal] = useState(false);
+  useEffect(() => {
+    // Local capture records on-device and survives dead spots — no steering
+    // needed there.
+    if (!showInstructions || useLocalEngine) return;
+    let cancelled = false;
+    const conn = (navigator as any).connection;
+    const connWeak = !!conn && (
+      ['slow-2g', '2g'].includes(conn.effectiveType) ||
+      (typeof conn.downlink === 'number' && conn.downlink > 0 && conn.downlink < 1)
+    );
+    const startedAt = Date.now();
+    const probe = fetch(`/api/customer-upload/${uploadToken}/validate`, { cache: 'no-store' })
+      .then((r) => ({ ok: r.ok, rttMs: Date.now() - startedAt }))
+      .catch(() => ({ ok: false, rttMs: Date.now() - startedAt }));
+    probe.then(({ ok, rttMs }) => {
+      if (cancelled) return;
+      const rttWeak = !ok || rttMs > 3000;
+      if (connWeak || rttWeak) {
+        setWeakSignal(true);
+        pingTelemetry(uploadToken, {
+          event: 'preflight_weak_signal',
+          rttMs,
+          probeOk: ok,
+          effectiveType: conn?.effectiveType || null,
+          downlink: conn?.downlink ?? null
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [showInstructions, uploadToken]);
+
   // Handle start
   const handleStart = async () => {
     ensureAudioReady();
@@ -420,6 +547,58 @@ export function SelfServeRecorderLiveKit({
       });
     }
   }, [status, errorKind, camPermState, permissionPromptShown, uploadToken]);
+
+  // ─── Auto-resume after a mid-recording disconnect ─────────────────
+  // On the "Connection lost" screen, quietly probe until the network is back,
+  // then count down and restart recording automatically ("record the rest").
+  // The user is usually mid-walkthrough with wet hands and a phone held up —
+  // the fewer taps between "signal came back" and "recording again", the more
+  // of the house gets captured. One shot per disconnect; Cancel stays put.
+  const [autoResumeIn, setAutoResumeIn] = useState<number | null>(null);
+  const autoResumeArmedRef = useRef(false);
+  useEffect(() => {
+    if (status !== 'error' || errorKind !== 'disconnected_mid_recording') {
+      autoResumeArmedRef.current = false;
+      setAutoResumeIn(null);
+      return;
+    }
+    if (autoResumeArmedRef.current) return;
+    autoResumeArmedRef.current = true;
+    let cancelled = false;
+    let probeTimer: NodeJS.Timeout | null = null;
+    const probe = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/customer-upload/${uploadToken}/validate`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('still offline');
+        if (cancelled) return;
+        pingTelemetry(uploadToken, { event: 'auto_resume_connection_restored' });
+        setAutoResumeIn(5);
+      } catch {
+        probeTimer = setTimeout(probe, 4000);
+      }
+    };
+    probeTimer = setTimeout(probe, 2000);
+    return () => {
+      cancelled = true;
+      if (probeTimer) clearTimeout(probeTimer);
+    };
+  }, [status, errorKind, uploadToken]);
+
+  // Countdown driver — separate effect so "Cancel" (setAutoResumeIn(null))
+  // cleanly stops it without fighting the probe closure.
+  useEffect(() => {
+    if (autoResumeIn == null) return;
+    if (autoResumeIn <= 0) {
+      setAutoResumeIn(null);
+      pingTelemetry(uploadToken, { event: 'auto_resume_started' });
+      ensureAudioReady();
+      retryFromError();
+      return;
+    }
+    const t = setTimeout(() => setAutoResumeIn((n) => (n == null ? null : n - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [autoResumeIn, uploadToken, retryFromError]);
 
   // Start recording after connection is ready. 'ready' now means the camera
   // is live (not just the WebSocket), so the server-side egress can never
@@ -781,6 +960,63 @@ export function SelfServeRecorderLiveKit({
             <span className="font-semibold text-white">Allow</span>.
           </p>
 
+          {weakSignal && (
+            <div className="w-full bg-yellow-500/10 border border-yellow-500/40 rounded-lg p-3 mb-4 text-left">
+              <p className="text-sm text-yellow-300 font-medium mb-1">Weak connection detected</p>
+              <p className="text-sm text-gray-300">
+                Live recording may cut out where signal is poor. For a
+                guaranteed capture, record with your camera app and upload the
+                video instead.
+              </p>
+            </div>
+          )}
+
+          {useLocalEngine && (
+            <p className="flex items-center gap-1.5 text-sm text-gray-400 mb-4">
+              <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Records on your phone — keeps working even without signal
+            </p>
+          )}
+
+          {pendingUpload && (
+            <div className="w-full bg-blue-500/10 border border-blue-500/40 rounded-lg p-3 mb-4 text-left">
+              <p className="text-sm text-blue-300 font-medium mb-1">Unfinished upload from earlier</p>
+              <p className="text-sm text-gray-300 mb-3">
+                You have {formatDuration(pendingUpload.durationSeconds)} of recorded video on this
+                phone that hasn&apos;t finished uploading yet.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => {
+                    const p = pendingUpload;
+                    setPendingUpload(null);
+                    setShowInstructions(false);
+                    localEngine.resumeUpload(p.sessionId, p.durationSeconds);
+                  }}
+                  size="sm"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  Finish upload
+                </Button>
+                <Button
+                  onClick={() => {
+                    const p = pendingUpload;
+                    setPendingUpload(null);
+                    pingTelemetry(uploadToken, { event: 'resumable_upload_discarded', resumedSessionId: p.sessionId });
+                    SelfServeLocalRecorder.discard(uploadToken, p.sessionId);
+                  }}
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+                >
+                  Discard
+                </Button>
+              </div>
+            </div>
+          )}
+
           <Button
             onClick={handleStart}
             size="lg"
@@ -788,6 +1024,17 @@ export function SelfServeRecorderLiveKit({
           >
             Start Recording
           </Button>
+
+          {weakSignal && (
+            <Button
+              onClick={openFallbackPicker}
+              variant="outline"
+              size="lg"
+              className="w-full mt-3 bg-transparent border-gray-700 hover:bg-gray-800 text-white"
+            >
+              Upload a video instead
+            </Button>
+          )}
 
           {onCancel && (
             <button
@@ -798,6 +1045,7 @@ export function SelfServeRecorderLiveKit({
             </button>
           )}
         </div>
+        {fallbackInput}
       </div>
     );
   }
@@ -861,7 +1109,7 @@ export function SelfServeRecorderLiveKit({
           },
       camera_in_use: {
         title: 'Your camera is busy',
-        body: 'Another app is using your camera. Close any app that might be using it (camera, video calls), then try again.',
+        body: "Another app is using your camera or microphone — this happens during phone and video calls. End the call (or close the other app), then try again.",
         primaryLabel: 'Try again'
       },
       camera_not_found: {
@@ -872,6 +1120,11 @@ export function SelfServeRecorderLiveKit({
       disconnected_mid_recording: {
         title: 'Connection lost',
         body: `Don't worry — the first ${formatDuration(savedDuration)} you recorded was saved and is being processed. When you're ready, continue where you left off.`,
+        primaryLabel: 'Record the rest'
+      },
+      partial_capture: {
+        title: 'Only part of your video was saved',
+        body: `Your connection dropped while recording — we received the first ${formatDuration(savedDuration)} of the ${formatDuration(duration)} you recorded. That part is saved and processing. Please record the rest of your home before leaving.`,
         primaryLabel: 'Record the rest'
       },
       upload_failed: {
@@ -891,7 +1144,17 @@ export function SelfServeRecorderLiveKit({
         primaryLabel: 'Try again'
       }
     };
-    const screen = screens[kind] || screens.generic;
+    let screen = screens[kind] || screens.generic;
+    // Local engine: an upload failure hasn't lost anything — the footage is
+    // still in IndexedDB. Retry the UPLOAD, never make them re-record.
+    const canRetryLocalUpload = useLocalEngine && kind === 'upload_failed' && !!sessionId;
+    if (canRetryLocalUpload) {
+      screen = {
+        title: "Upload didn't finish",
+        body: `Your video is saved on this phone — nothing was lost. ${error?.message ? `(${error.message}) ` : ''}Tap retry to finish uploading without re-recording.`,
+        primaryLabel: 'Retry upload'
+      };
+    }
     const isDisconnectSave = kind === 'disconnected_mid_recording';
 
     return (
@@ -907,20 +1170,38 @@ export function SelfServeRecorderLiveKit({
         <div className="w-full max-w-sm flex flex-col items-center text-center">
           <div className={cn(
             'w-16 h-16 rounded-full flex items-center justify-center mb-6',
-            isDisconnectSave ? 'bg-green-500' : kind === 'permission_denied' ? 'bg-yellow-500' : 'bg-red-500'
+            isDisconnectSave ? 'bg-green-500' : (kind === 'permission_denied' || kind === 'partial_capture') ? 'bg-yellow-500' : 'bg-red-500'
           )}>
             {isDisconnectSave ? (
               <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             ) : (
-              <svg className={cn('w-8 h-8', kind === 'permission_denied' && 'text-black')} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className={cn('w-8 h-8', (kind === 'permission_denied' || kind === 'partial_capture') && 'text-black')} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
             )}
           </div>
           <h2 className="text-xl font-semibold mb-2">{screen.title}</h2>
           <p className="text-gray-400 mb-4">{screen.body}</p>
+
+          {isDisconnectSave && autoResumeIn != null && (
+            <div className="w-full bg-green-500/10 border border-green-500/40 rounded-lg p-3 mb-4 flex items-center justify-between gap-3">
+              <p className="text-sm text-green-300 text-left">
+                Connection restored — recording resumes in{' '}
+                <span className="font-mono font-semibold">{autoResumeIn}</span>…
+              </p>
+              <button
+                onClick={() => {
+                  pingTelemetry(uploadToken, { event: 'auto_resume_cancelled' });
+                  setAutoResumeIn(null);
+                }}
+                className="text-sm text-gray-300 hover:text-white underline shrink-0"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           {screen.showSteps && (
             <ol className="bg-gray-800 rounded-lg p-4 mb-4 text-left w-full space-y-2 text-sm text-gray-300">
@@ -943,11 +1224,14 @@ export function SelfServeRecorderLiveKit({
             <Button
               onClick={() => {
                 ensureAudioReady();
-                // WebKit permission denials recover via a primed reload (a
-                // fresh page load re-prompts); everything else — including
-                // Chrome's definitive denied state, where a reload is
-                // pointless — retries in place.
-                if (kind === 'permission_denied' && !permDefinitiveDenied) {
+                // Local upload failures retry the upload (footage is safe
+                // on-device). WebKit permission denials recover via a primed
+                // reload (a fresh page load re-prompts); everything else —
+                // including Chrome's definitive denied state, where a reload
+                // is pointless — retries in place.
+                if (canRetryLocalUpload) {
+                  localEngine.resumeUpload(sessionId!, duration || undefined);
+                } else if (kind === 'permission_denied' && !permDefinitiveDenied) {
                   reloadForPermissionRetry();
                 } else {
                   retryFromError();
@@ -1172,10 +1456,35 @@ export function SelfServeRecorderLiveKit({
         }}
       >
         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Saving Your Recording</h2>
+        <h2 className="text-xl font-semibold mb-2">
+          {uploadProgress !== null && uploadProgress < 100 ? 'Saving Your Video' : 'Saving Your Recording'}
+        </h2>
         <p className="text-gray-400 text-center max-w-sm">
-          Confirming your video was saved — this can take up to 30 seconds.
+          {uploadProgress !== null && uploadProgress < 100
+            ? 'Uploading your recording — keep this page open. This works even on a slow connection.'
+            : 'Confirming your video was saved — this can take up to 30 seconds.'}
         </p>
+        {uploadProgress !== null && uploadProgress < 100 && (
+          <div className="mt-4 w-full max-w-xs">
+            <div className="h-2 rounded-full bg-gray-700 overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-500"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+            <p className="text-center text-sm text-gray-400 mt-2">{uploadProgress}%</p>
+          </div>
+        )}
+        {uploadProgress !== null && uploadProgress < 100 && isOffline && (
+          <div className="mt-3 max-w-xs bg-yellow-500/10 border border-yellow-500/40 rounded-lg p-3">
+            <p className="text-sm text-yellow-300 text-center">
+              No connection right now — your video is safe on this phone and
+              the upload continues automatically when signal returns. If you
+              need to leave, you can finish the upload next time you open
+              this link.
+            </p>
+          </div>
+        )}
         <div className="mt-4 bg-gray-800 rounded-lg p-4 text-center">
           <p className="text-sm text-gray-400">Recording duration</p>
           <p className="text-2xl font-mono">{formatDuration(duration)}</p>
@@ -1245,12 +1554,26 @@ export function SelfServeRecorderLiveKit({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <h2 className="text-white text-xl font-semibold mb-2">We can&apos;t see your camera</h2>
-          <p className="text-gray-300 max-w-sm">
-            Keep this screen open while recording. If your phone locked or you
-            switched apps, come back here to continue — otherwise the recording
-            will stop automatically.
-          </p>
+          {useLocalEngine ? (
+            <>
+              <h2 className="text-white text-xl font-semibold mb-2">Recording paused</h2>
+              <p className="text-gray-300 max-w-sm">
+                Another app took the camera or microphone — usually a phone or
+                video call. Everything so far is saved, and recording resumes
+                automatically when it&apos;s done. If it doesn&apos;t come back
+                within a minute, we&apos;ll finish and save what you recorded.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-white text-xl font-semibold mb-2">We can&apos;t see your camera</h2>
+              <p className="text-gray-300 max-w-sm">
+                Keep this screen open while recording. If your phone locked or you
+                switched apps, come back here to continue — otherwise the recording
+                will stop automatically.
+              </p>
+            </>
+          )}
         </div>
       )}
 
@@ -1336,6 +1659,112 @@ export function SelfServeRecorderLiveKit({
           </div>
         </div>
       )}
+
+      {/* Camera controls — zoom presets + torch, only for what THIS device
+          actually supports (local engine reads track capabilities; 0.5× only
+          appears on multi-lens phones). Zoom applies mid-recording safely.
+          Laid out camera-app style, flanking the shutter at the bottom edge —
+          out of the viewfinder, not floating mid-view. */}
+      {useLocalEngine && (status === 'ready' || isRecording) && (() => {
+        const range = localEngine.zoomRange;
+        const presets = range
+          ? [0.5, 1, 2, 3].filter((z) => z >= range.min - 0.01 && z <= range.max + 0.01)
+          : [];
+        const showZoom = presets.length >= 2;
+        if (!showZoom && !localEngine.torchAvailable) return null;
+        const nearest = presets.reduce(
+          (best, z) => (Math.abs(z - localEngine.currentZoom) < Math.abs(best - localEngine.currentZoom) ? z : best),
+          presets[0] ?? 1
+        );
+        return (
+          <>
+            {/* One-time tip: ultra-wide fits whole rooms in frame — better
+                walkthrough coverage. Auto-hides after 10s (drain bar shows
+                the countdown); X dismisses; tapping it applies .5× directly. */}
+            {wideTipVisible && presets.includes(0.5) && (
+              <div
+                className="absolute left-1/2 -translate-x-1/2 z-20 w-[250px] animate-in fade-in slide-in-from-bottom-2 duration-300"
+                style={{ bottom: 'calc(env(safe-area-inset-bottom) + 202px)' }}
+              >
+                <style>{`@keyframes qs-tip-drain { from { width: 100%; } to { width: 0%; } }`}</style>
+                <div className="bg-black/60 backdrop-blur-xl border border-white/15 text-white rounded-xl px-3 pt-2 pb-1.5 shadow-lg overflow-hidden">
+                  <div className="flex items-start gap-2">
+                    <button
+                      className="text-sm text-left"
+                      onClick={() => {
+                        setWideTipVisible(false);
+                        localEngine.setCameraZoom(0.5);
+                      }}
+                    >
+                      <span className="font-semibold">Tip:</span> shoot at{' '}
+                      <span className="font-semibold">.5×</span> — whole rooms
+                      fit in frame. Tap to switch.
+                    </button>
+                    <button
+                      onClick={() => setWideTipVisible(false)}
+                      className="shrink-0 text-white/70 hover:text-white p-0.5 -mt-0.5"
+                      aria-label="Dismiss tip"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  {/* drain bar — visualizes the 10s auto-dismiss */}
+                  <div className="mt-1.5 h-[3px] rounded-full bg-white/15">
+                    <div
+                      className="h-full rounded-full bg-white/60"
+                      style={{ animation: 'qs-tip-drain 10s linear forwards' }}
+                    />
+                  </div>
+                </div>
+                {/* pointer nub aimed at the zoom pills below */}
+                <div className="mx-auto w-2.5 h-2.5 bg-black/60 border-r border-b border-white/15 rotate-45 -mt-1.5 backdrop-blur-xl" />
+              </div>
+            )}
+            {/* Liquid-glass control cluster, centered above the shutter. */}
+            <div
+              className="absolute left-0 right-0 z-10 flex items-center justify-center gap-3"
+              style={{ bottom: 'calc(env(safe-area-inset-bottom) + 150px)' }}
+            >
+              {showZoom && (
+                <div className="flex items-center gap-1 bg-white/10 backdrop-blur-2xl border border-white/20 rounded-full px-2 py-1 shadow-lg">
+                  {presets.map((z) => (
+                    <button
+                      key={z}
+                      onClick={() => { setWideTipVisible(false); localEngine.setCameraZoom(z); }}
+                      className={cn(
+                        'min-w-[38px] h-[34px] px-2 rounded-full text-sm font-semibold transition-colors',
+                        nearest === z ? 'bg-white/90 text-black shadow' : 'text-white/95'
+                      )}
+                      aria-label={`Zoom ${z}x`}
+                    >
+                      {z === 0.5 ? '.5' : `${z}`}
+                      <span className="text-[10px] align-top">×</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {localEngine.torchAvailable && (
+                <button
+                  onClick={() => localEngine.toggleTorch()}
+                  className={cn(
+                    'w-[42px] h-[42px] rounded-full flex items-center justify-center backdrop-blur-2xl border shadow-lg',
+                    localEngine.torchOn
+                      ? 'bg-yellow-400/90 border-yellow-200/50 text-black'
+                      : 'bg-white/10 border-white/20 text-white'
+                  )}
+                  aria-label={localEngine.torchOn ? 'Turn flashlight off' : 'Turn flashlight on'}
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Bottom controls - centered stop button */}
       <div className="absolute bottom-0 left-0 right-0 z-10 flex justify-center" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 60px)' }}>

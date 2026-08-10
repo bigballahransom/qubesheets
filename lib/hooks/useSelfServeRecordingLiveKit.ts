@@ -9,7 +9,7 @@ import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDe
  * Used to surface device/failure info from real customers' devices in the
  * server log without remote-debugging access. Never throws, never awaits.
  */
-function sendTelemetry(uploadToken: string, payload: Record<string, unknown>) {
+export function sendTelemetry(uploadToken: string, payload: Record<string, unknown>) {
   if (typeof window === 'undefined') return;
   try {
     const body = JSON.stringify({
@@ -76,6 +76,7 @@ export type RecordingErrorKind =
   | 'camera_in_use'              // NotReadableError — another app holds the camera
   | 'camera_not_found'           // no usable camera on the device
   | 'disconnected_mid_recording' // network died while recording; partial footage was saved
+  | 'partial_capture'            // stop looked normal, but the server's file is much shorter than the time the user recorded
   | 'upload_failed'              // egress ended but the server never confirmed a saved file
   | 'unsupported_browser'        // in-app webview / no WebRTC
   | 'generic';
@@ -211,6 +212,20 @@ export function useSelfServeRecordingLiveKit({
   const DEAD_VIDEO_AUTO_STOP_MS = 30_000;
   const INTERRUPT_WARN_DELAY_MS = 1_500;
 
+  // ─── Reconnect give-up cap ───────────────────────────────────────
+  // LiveKit can sit in 'Reconnecting' indefinitely (iOS Safari suspends the
+  // page mid-retry and the Disconnected event never fires) while the
+  // server-side room has already closed and finalized the egress. Without a
+  // cap, the UI keeps showing REC + a ticking timer while nothing reaches
+  // the server — the user walks their whole house recording into the void.
+  const RECONNECT_GIVE_UP_MS = 60_000;
+  const reconnectGiveUpTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Wall-clock accounting for time spent reconnecting, so the duration timer
+  // can exclude it: footage isn't reaching the server during a reconnect, and
+  // an inflated timer is what makes a partial capture look like success.
+  const reconnectStartedAtMsRef = useRef<number | null>(null);
+  const reconnectPausedMsRef = useRef<number>(0);
+
   // Keep the screen awake while the camera is live. Without this, phones
   // auto-lock mid-walkthrough (the user is holding the phone up, not
   // touching it), which kills the camera track. Released in cleanup(); the
@@ -314,6 +329,12 @@ export function useSelfServeRecordingLiveKit({
       durationIntervalRef.current = null;
     }
 
+    if (reconnectGiveUpTimerRef.current) {
+      clearTimeout(reconnectGiveUpTimerRef.current);
+      reconnectGiveUpTimerRef.current = null;
+    }
+    reconnectStartedAtMsRef.current = null;
+
     clearWatchdogTimers();
     setCameraInterrupted(false);
     releaseWakeLock();
@@ -346,6 +367,61 @@ export function useSelfServeRecordingLiveKit({
     setLocalVideoTrack(null);
   }, [clearWatchdogTimers, releaseWakeLock]);
 
+  // Shared mid-recording failure path: the connection is gone (or the server
+  // already finalized the egress without us). Stop the egress server-side so
+  // it doesn't keep recording an empty room, release the camera, and show
+  // the recovery screen. The footage up to the drop IS saved (the egress
+  // finalizes on stop) — savedDuration lets the UI say so instead of
+  // implying total loss. When the server has told us the real file duration,
+  // prefer it over the client timer.
+  const failRecordingAsDisconnected = useCallback((telemetryEvent: string, serverSavedDuration?: number | null) => {
+    // 'stopping' is included for the stop-while-offline path: the user tapped
+    // Stop but the /stop request couldn't reach the server.
+    if (!['recording', 'stopping'].includes(statusRef.current)) return;
+    console.error(`❌ Recording lost mid-flight (${telemetryEvent})`);
+    sendTelemetry(uploadToken, {
+      event: telemetryEvent,
+      durationAtDisconnect: durationRef.current,
+      ...(typeof serverSavedDuration === 'number' ? { serverSavedDuration } : {})
+    });
+    bestEffortStop();
+    cleanup();
+    setSavedDuration(typeof serverSavedDuration === 'number' ? serverSavedDuration : durationRef.current);
+    setIsReconnecting(false);
+    setErrorKind('disconnected_mid_recording');
+    setError(new Error('Connection lost during recording'));
+    setStatus('error');
+  }, [uploadToken, bestEffortStop, cleanup]);
+
+  // After the page comes back from being hidden mid-recording (screen lock,
+  // app switch), ask the server whether the session is actually still live.
+  // iOS suspension freezes LiveKit's reconnect loop, so the room can close
+  // and the egress finalize without any client event ever firing — the UI
+  // would happily keep showing REC. The webhook flips the session to
+  // analyzing/completed/failed the moment the egress finalizes, so any of
+  // those (or a finished egressStatus) while we think we're recording means
+  // the recording is already over.
+  const verifyServerSessionAlive = useCallback(async () => {
+    const sid = sessionDataRef.current?.sessionId;
+    if (!sid || statusRef.current !== 'recording') return;
+    try {
+      const res = await fetch(`/api/self-serve/${uploadToken}/video/status?sessionId=${encodeURIComponent(sid)}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (statusRef.current !== 'recording') return; // stopped while we polled
+      const egressDone = ['completed', 'failed', 'aborted'].includes(data.egressStatus);
+      const sessionDone = ['analyzing', 'completed', 'failed'].includes(data.status);
+      if (egressDone || sessionDone) {
+        failRecordingAsDisconnected(
+          'stale_recording_detected_on_resume',
+          typeof data.duration === 'number' ? data.duration : null
+        );
+      }
+    } catch {
+      /* offline or transient — the reconnect give-up cap covers this path */
+    }
+  }, [uploadToken, failRecordingAsDisconnected]);
+
   // Handle connection state changes.
   // NOTE: Connected deliberately does NOT transition to 'ready' here — 'ready'
   // is only set at the end of initialize(), after the camera is live. The UI
@@ -358,22 +434,10 @@ export function useSelfServeRecordingLiveKit({
 
     if (state === ConnectionState.Disconnected && statusRef.current === 'recording') {
       // Unexpected disconnect during recording (LiveKit's automatic reconnect
-      // has already given up by the time Disconnected fires). Stop the egress
-      // server-side so it doesn't keep recording an empty room, then release
-      // the camera and show the recovery screen. The footage up to this point
-      // IS saved (the egress finalizes on stop) — savedDuration lets the UI
-      // say so instead of implying total loss.
-      console.error('❌ Disconnected during recording');
-      sendTelemetry(uploadToken, { event: 'disconnected_while_recording', durationAtDisconnect: durationRef.current });
-      bestEffortStop();
-      cleanup();
-      setSavedDuration(durationRef.current);
-      setIsReconnecting(false);
-      setErrorKind('disconnected_mid_recording');
-      setError(new Error('Connection lost during recording'));
-      setStatus('error');
+      // has already given up by the time Disconnected fires).
+      failRecordingAsDisconnected('disconnected_while_recording');
     }
-  }, [uploadToken, bestEffortStop, cleanup]);
+  }, [failRecordingAsDisconnected]);
 
   // Handle track subscribed (for local preview)
   const handleLocalTrackPublished = useCallback((publication: any, participant: LocalParticipant) => {
@@ -406,6 +470,12 @@ export function useSelfServeRecordingLiveKit({
         if (statusRef.current === 'recording' || statusRef.current === 'ready') {
           acquireWakeLock();
         }
+        // The room may have closed and the egress finalized while the page
+        // was suspended — no client event fires for that. Verify with the
+        // server instead of trusting local state.
+        if (statusRef.current === 'recording') {
+          verifyServerSessionAlive();
+        }
         // If the camera track survived the backgrounding, clear the warning;
         // if it's still muted, leave the watchdog armed (TrackUnmuted will
         // clear it when the camera actually comes back).
@@ -417,7 +487,7 @@ export function useSelfServeRecordingLiveKit({
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [uploadToken, onCameraDead, onCameraAlive, acquireWakeLock]);
+  }, [uploadToken, onCameraDead, onCameraAlive, acquireWakeLock, verifyServerSessionAlive]);
 
   // Closing the tab / navigating away mid-recording: finalize the egress via
   // sendBeacon (survives page teardown) so the server saves what was captured
@@ -603,12 +673,36 @@ export function useSelfServeRecordingLiveKit({
       });
       room.on(RoomEvent.Reconnecting, () => {
         setIsReconnecting(true);
+        if (reconnectStartedAtMsRef.current == null) {
+          reconnectStartedAtMsRef.current = Date.now();
+        }
         if (statusRef.current === 'recording') {
           sendTelemetry(uploadToken, { event: 'reconnecting_while_recording', durationAtEvent: durationRef.current });
+          // Give-up cap: if the reconnect hasn't succeeded within the window,
+          // treat it as a disconnect instead of letting the UI show REC
+          // forever. The server-side room closes (departureTimeout) not long
+          // after we vanish, so past this window there is nothing to rejoin.
+          if (!reconnectGiveUpTimerRef.current) {
+            reconnectGiveUpTimerRef.current = setTimeout(() => {
+              reconnectGiveUpTimerRef.current = null;
+              if (statusRef.current === 'recording') {
+                failRecordingAsDisconnected('reconnect_timeout_while_recording');
+              }
+            }, RECONNECT_GIVE_UP_MS);
+          }
         }
       });
       room.on(RoomEvent.Reconnected, () => {
         setIsReconnecting(false);
+        if (reconnectGiveUpTimerRef.current) {
+          clearTimeout(reconnectGiveUpTimerRef.current);
+          reconnectGiveUpTimerRef.current = null;
+        }
+        // Bank the time spent reconnecting so the duration timer excludes it.
+        if (reconnectStartedAtMsRef.current != null) {
+          reconnectPausedMsRef.current += Date.now() - reconnectStartedAtMsRef.current;
+          reconnectStartedAtMsRef.current = null;
+        }
       });
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Failed to construct LiveKit Room');
@@ -752,7 +846,7 @@ export function useSelfServeRecordingLiveKit({
       setStatus('error');
       onError?.(error);
     }
-  }, [uploadToken, handleConnectionStateChanged, handleLocalTrackPublished, onCameraDead, onCameraAlive, acquireWakeLock, cleanup, onError]);
+  }, [uploadToken, handleConnectionStateChanged, handleLocalTrackPublished, onCameraDead, onCameraAlive, acquireWakeLock, cleanup, onError, failRecordingAsDisconnected]);
 
   // Start server-side recording (Egress)
   const startRecording = useCallback(async () => {
@@ -810,10 +904,18 @@ export function useSelfServeRecordingLiveKit({
       setRecordingStarted(true);
       sendTelemetry(uploadToken, { event: 'recording_started' });
 
-      // Start duration timer
+      // Start duration timer. Time spent in 'Reconnecting' is excluded: no
+      // footage reaches the server during a reconnect, and an inflated timer
+      // is exactly what made a 105s partial capture look like an 18-minute
+      // success to the user (2026-08-07 WNY Moving incident).
       const startTime = Date.now();
+      reconnectPausedMsRef.current = 0;
+      reconnectStartedAtMsRef.current = null;
       durationIntervalRef.current = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const pausedMs =
+          reconnectPausedMsRef.current +
+          (reconnectStartedAtMsRef.current != null ? Date.now() - reconnectStartedAtMsRef.current : 0);
+        const elapsed = Math.max(0, Math.floor((Date.now() - startTime - pausedMs) / 1000));
         const remaining = maxDuration - elapsed;
 
         setDuration(elapsed);
@@ -925,6 +1027,7 @@ export function useSelfServeRecordingLiveKit({
       // silent data loss into an immediately recoverable moment.
       const sid = sessionDataRef.current?.sessionId;
       let confirmed: boolean | null = null;
+      let serverDuration: number | null = null;
       if (sid) {
         const deadline = Date.now() + 30_000;
         while (Date.now() < deadline) {
@@ -932,7 +1035,13 @@ export function useSelfServeRecordingLiveKit({
             const res = await fetch(`/api/self-serve/${uploadToken}/video/status?sessionId=${encodeURIComponent(sid)}`);
             if (res.ok) {
               const data = await res.json();
-              if (['analyzing', 'completed'].includes(data.status)) { confirmed = true; break; }
+              if (['analyzing', 'completed'].includes(data.status)) {
+                confirmed = true;
+                // Webhook-written file duration — the ground truth for how
+                // much footage actually reached the server.
+                serverDuration = typeof data.duration === 'number' ? data.duration : null;
+                break;
+              }
               if (data.status === 'failed') { confirmed = false; break; }
             }
           } catch { /* transient poll failure — keep trying until deadline */ }
@@ -940,13 +1049,36 @@ export function useSelfServeRecordingLiveKit({
         }
       }
       setUploadConfirmed(confirmed);
-      sendTelemetry(uploadToken, { event: 'upload_confirmation', result: confirmed === null ? 'unconfirmed' : confirmed ? 'confirmed' : 'failed', recordedDuration: durationRef.current });
+      sendTelemetry(uploadToken, { event: 'upload_confirmation', result: confirmed === null ? 'unconfirmed' : confirmed ? 'confirmed' : 'failed', recordedDuration: durationRef.current, serverDuration });
 
       if (confirmed === false) {
         // The server actively reported failure (no file / junk gate). Don't
         // show a success screen for a recording that doesn't exist.
         setErrorKind('upload_failed');
         setError(new Error("Your recording couldn't be saved."));
+        setStatus('error');
+        return;
+      }
+
+      // A confirmed file that's much shorter than what the user recorded is
+      // NOT a success — it means the egress died mid-recording and the tail
+      // never reached the server. Say so while they're still standing in the
+      // house, with a path to record the missing part. Thresholds allow for
+      // normal egress startup/finalization skew (a few seconds).
+      if (
+        confirmed === true &&
+        serverDuration != null &&
+        durationRef.current - serverDuration > 15 &&
+        serverDuration < durationRef.current * 0.8
+      ) {
+        sendTelemetry(uploadToken, {
+          event: 'partial_capture_detected',
+          recordedDuration: durationRef.current,
+          serverDuration
+        });
+        setSavedDuration(serverDuration);
+        setErrorKind('partial_capture');
+        setError(new Error('Only part of the recording reached the server'));
         setStatus('error');
         return;
       }
@@ -959,11 +1091,26 @@ export function useSelfServeRecordingLiveKit({
     } catch (err) {
       console.error('❌ Stop recording failed:', err);
       const error = err instanceof Error ? err : new Error('Failed to stop recording');
+      // A network-level fetch failure here (Safari: "Load failed", Chrome:
+      // "Failed to fetch") means the phone is offline — airplane mode or a
+      // dead zone — and the /stop request never reached the server. That's a
+      // disconnect, not a generic error: the server closes the room on its
+      // own (departureTimeout) and finalizes what was captured, so show the
+      // "first X:XX saved" recovery screen — whose auto-resume probe restarts
+      // recording the moment signal returns — instead of a dead end.
+      const isNetworkFailure =
+        (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+        err instanceof TypeError ||
+        /load failed|failed to fetch|network/i.test(error.message);
+      if (isNetworkFailure) {
+        failRecordingAsDisconnected('stop_failed_offline');
+        return;
+      }
       setError(error);
       setStatus('error');
       onError?.(error);
     }
-  }, [uploadToken, cleanup, onRecordingComplete, onError]);
+  }, [uploadToken, cleanup, onRecordingComplete, onError, failRecordingAsDisconnected]);
 
   // Keep the watchdog's handle on stopRecording fresh (the watchdog callbacks
   // are defined earlier in the hook and can't depend on stopRecording

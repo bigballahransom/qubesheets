@@ -38,6 +38,9 @@ interface UploadValidation {
   // redirects back to /projects/{projectId} instead of looping back to the
   // upload choice screen.
   isWalkthrough?: boolean;
+  // Which recording engine to use: 'local' (on-device capture, survives dead
+  // spots — walkthrough links) or 'livekit' (server-side egress).
+  captureEngine?: 'local' | 'livekit';
   // Org-level master switch. When false, the choice screen hides photo
   // capture and 'files'-only links short-circuit to a "photos disabled"
   // empty state.
@@ -198,7 +201,8 @@ export default function CustomerUploadPage() {
             maxRecordingDuration: data.maxRecordingDuration || 1200,
             isWalkthrough: !!data.isWalkthrough,
             isVault: !!data.isVault,
-            photosEnabled: data.photosEnabled !== false
+            photosEnabled: data.photosEnabled !== false,
+            captureEngine: data.captureEngine === 'local' ? 'local' : 'livekit'
           });
           
           // Set project ID for SSE connection
@@ -724,7 +728,9 @@ export default function CustomerUploadPage() {
         onCancel={() => setViewMode('choice')}
         walkthroughReturnUrl={walkthroughReturnUrl}
         isVault={!!validation.isVault}
+        captureEngine={validation.captureEngine}
       />
+
     );
   }
 

@@ -196,6 +196,18 @@ export async function GET(
       // server-side SMS suppression is keyed on the same flag.
       isWalkthrough: !!customerUpload.isWalkthrough,
 
+      // Which recording engine the page should use. Local-first capture is
+      // the DEFAULT for all self-serve links (on-device MediaRecorder →
+      // resumable S3 multipart upload): server-side egress can only render
+      // frozen/black frames during a connection drop, so "one continuous
+      // gapless video" is only possible recording on the device itself
+      // (2026-08-07 WNY incident + 2026-08-10 frozen-time repro). The
+      // recorder falls back to LiveKit automatically when the browser can't
+      // run local capture; ?capture=livekit overrides per-link, and setting
+      // SELF_SERVE_CAPTURE_ENGINE=livekit in the environment flips the whole
+      // platform back without a code deploy.
+      captureEngine: process.env.SELF_SERVE_CAPTURE_ENGINE === 'livekit' ? 'livekit' : 'local',
+
       // True for Media Vault capture links — the page swaps survey copy for
       // reference-only messaging and skips inventory-processing UI.
       isVault: customerUpload.purpose === 'vault',
