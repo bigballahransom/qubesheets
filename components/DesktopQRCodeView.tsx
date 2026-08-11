@@ -13,6 +13,9 @@ interface DesktopQRCodeViewProps {
   companyLogo?: string;
   onSessionComplete?: (sessionId?: string) => void;
   onSwitchToUpload?: () => void;
+  /** Lead tokens with an open scheduling window: navigates to the hosted
+   *  standalone scheduler so desktop leads aren't funneled to QR-only. */
+  onSchedule?: () => void;
   /** Set when this token was minted as an employee on-site walkthrough.
    *  Replaces the customer-style "Hi {customerName}!" greeting and
    *  instructions with employee-flavored copy. */
@@ -37,6 +40,7 @@ export function DesktopQRCodeView({
   companyLogo,
   onSessionComplete,
   onSwitchToUpload,
+  onSchedule,
   isWalkthrough,
   isVault
 }: DesktopQRCodeViewProps) {
@@ -265,15 +269,29 @@ export function DesktopQRCodeView({
             )}
           </div>
 
-          {/* Alternative Option */}
-          {onSwitchToUpload && !sessionStatus?.hasSession && (
-            <div className="text-center mt-6">
-              <button
-                onClick={onSwitchToUpload}
-                className="text-gray-500 hover:text-gray-700 text-sm underline"
-              >
-                Or upload photos instead
-              </button>
+          {/* Alternative Options */}
+          {(onSwitchToUpload || onSchedule) && !sessionStatus?.hasSession && (
+            <div className="text-center mt-6 space-y-2">
+              {onSwitchToUpload && (
+                <div>
+                  <button
+                    onClick={onSwitchToUpload}
+                    className="text-gray-500 hover:text-gray-700 text-sm underline"
+                  >
+                    Or upload photos instead
+                  </button>
+                </div>
+              )}
+              {onSchedule && (
+                <div>
+                  <button
+                    onClick={onSchedule}
+                    className="text-gray-500 hover:text-gray-700 text-sm underline"
+                  >
+                    Or schedule a virtual call instead
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

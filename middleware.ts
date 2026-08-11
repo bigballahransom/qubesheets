@@ -10,6 +10,7 @@ const isPublicRoute = createRouteMatcher([
   '/upload(.*)',  // Global org-level self-survey landing page
   '/vault(.*)',  // Global org-level Media Vault crew capture landing page
   '/embed(.*)',  // Embedded lead-capture form (iframe on customer websites)
+  '/schedule-call(.*)',  // Hosted standalone lead scheduler — auth'd by submissionId window
   '/inventory-review(.*)',
   '/crew-review(.*)',
   '/vault-review(.*)',  // Public Media Vault share gallery (view + comments)

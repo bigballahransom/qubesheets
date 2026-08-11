@@ -59,10 +59,10 @@ export interface UploadChooserProps {
    *  the two action buttons. Used when the chooser is shown as the next
    *  view inside the embed iframe. */
   embedded?: boolean;
-  /** Optional callback for a third "Schedule a virtual call" option.
-   *  When provided AND `embedded` is true, the chooser renders three
-   *  buttons instead of two. The parent (LeadForm) wires this to swap
-   *  into the scheduler view. */
+  /** Optional callback for a third "Schedule a virtual call" option —
+   *  rendered in both contexts when provided. The embed parent (LeadForm)
+   *  wires this to swap into its in-iframe scheduler view; the hosted
+   *  customer-upload route navigates to /schedule-call/[submissionId]. */
   onSchedule?: () => void;
   /** Per-form UI copy overrides (theme.text) for the embedded lead
    *  chooser. Unset keys — and the non-embedded route, which has no form
@@ -467,6 +467,25 @@ export default function UploadChooser({
                     <h2 className="text-lg font-semibold mb-1">Take or Upload Photos</h2>
                     <p className="text-slate-500 text-sm">
                       Snap photos in-app or pick from your photo library
+                    </p>
+                  </div>
+                </div>
+              </button>
+            )}
+
+            {onSchedule && (
+              <button
+                onClick={() => onSchedule()}
+                className="w-full bg-white hover:bg-slate-50 text-slate-800 rounded-2xl p-6 text-left transition-all shadow-lg hover:shadow-xl border border-slate-200"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-green-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <CalendarCheck className="w-7 h-7 text-green-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold mb-1">Schedule a Virtual Call</h2>
+                    <p className="text-slate-500 text-sm">
+                      Pick a time and we&apos;ll walk through together on video
                     </p>
                   </div>
                 </div>

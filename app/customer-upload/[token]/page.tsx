@@ -45,6 +45,10 @@ interface UploadValidation {
   // capture and 'files'-only links short-circuit to a "photos disabled"
   // empty state.
   photosEnabled?: boolean;
+  // Set (only while the scheduling window is open) for lead-pipeline tokens
+  // whose form offered "Let the customer choose" — adds a "Schedule a
+  // virtual call" option linking to /schedule-call/[submissionId].
+  scheduleCallSubmissionId?: string | null;
 }
 
 type ViewMode = 'choice' | 'recording' | 'upload' | 'qr';
@@ -202,7 +206,8 @@ export default function CustomerUploadPage() {
             isWalkthrough: !!data.isWalkthrough,
             isVault: !!data.isVault,
             photosEnabled: data.photosEnabled !== false,
-            captureEngine: data.captureEngine === 'local' ? 'local' : 'livekit'
+            captureEngine: data.captureEngine === 'local' ? 'local' : 'livekit',
+            scheduleCallSubmissionId: data.scheduleCallSubmissionId || null
           });
           
           // Set project ID for SSE connection
@@ -697,6 +702,16 @@ export default function CustomerUploadPage() {
 
   const photosAllowed = validation.photosEnabled !== false;
 
+  // Lead tokens with an open scheduling window get a third chooser option —
+  // navigate to the hosted standalone scheduler (same surface the JS-plugin
+  // schedulerUrl points at) rather than rendering a scheduler in place.
+  const scheduleSubmissionId = validation.scheduleCallSubmissionId;
+  const onSchedule = scheduleSubmissionId
+    ? () => {
+        window.location.href = `/schedule-call/${scheduleSubmissionId}`;
+      }
+    : undefined;
+
   // Desktop QR Code View - shows QR for mobile handoff.
   // Suppress the "Or upload photos instead" affordance when the org has
   // turned photo capture off.
@@ -710,6 +725,7 @@ export default function CustomerUploadPage() {
         companyLogo={validation.branding?.companyLogo}
         onSessionComplete={handleRecordingComplete}
         onSwitchToUpload={photosAllowed ? () => setViewMode('upload') : undefined}
+        onSchedule={onSchedule}
         isWalkthrough={!!validation.isWalkthrough}
         isVault={!!validation.isVault}
       />
@@ -771,6 +787,7 @@ export default function CustomerUploadPage() {
         }}
         showLeadGreeting={searchParams?.get('greeting') === 'lead'}
         onChoose={(kind) => setViewMode(kind)}
+        onSchedule={onSchedule}
       />
     );
   }

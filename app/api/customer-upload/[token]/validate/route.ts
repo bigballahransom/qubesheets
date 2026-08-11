@@ -10,6 +10,8 @@ import Branding from '@/models/Branding';
 import Template from '@/models/Template';
 import ActivityLog from '@/models/ActivityLog';
 import OrganizationSettings from '@/models/OrganizationSettings';
+import LeadSubmission from '@/models/LeadSubmission';
+import { isSchedulingWindowOpen } from '@/lib/leads/scheduling';
 
 export async function GET(
   request: NextRequest,
@@ -116,6 +118,25 @@ export async function GET(
       }
     }
 
+    // Lead-pipeline tokens for self-survey-or-schedule forms carry a
+    // submission handle. Only surface it while the scheduling window is
+    // still open — the schedule-call API 410s after that, and a dead
+    // "Schedule a virtual call" button is worse than no button.
+    let scheduleCallSubmissionId: string | null = null;
+    if (customerUpload.leadSubmissionId) {
+      try {
+        const submission = await LeadSubmission.findById(
+          customerUpload.leadSubmissionId
+        );
+        if (submission && isSchedulingWindowOpen(submission.submittedAt)) {
+          scheduleCallSubmissionId = String(submission._id);
+        }
+      } catch (submissionError) {
+        console.warn('Error checking lead submission for scheduling:', submissionError);
+        // Continue without the schedule option - it's optional
+      }
+    }
+
     // Fetch custom instructions template based on user/org
     let instructions = null;
     try {
@@ -215,6 +236,12 @@ export async function GET(
       // Org-level photo master switch. Default true; client hides photo
       // capture entirely when this resolves to false.
       photosEnabled,
+
+      // Set (only while the scheduling window is open) for lead-pipeline
+      // tokens whose form offered "Let the customer choose". The chooser
+      // adds a "Schedule a virtual call" option linking to the hosted
+      // scheduler at /schedule-call/[submissionId].
+      scheduleCallSubmissionId,
     });
 
   } catch (error) {

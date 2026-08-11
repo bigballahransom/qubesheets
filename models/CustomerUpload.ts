@@ -44,6 +44,12 @@ export interface ICustomerUpload extends Document {
   // stamped with the same purpose at creation (never join back here for it).
   purpose?: 'inventory' | 'vault';
 
+  // Set when this token was minted by the lead pipeline for a
+  // self-survey-or-schedule form. Lets the customer-upload chooser offer
+  // "Schedule a virtual call" — but only while the submission's scheduling
+  // window (see lib/leads/scheduling.ts) is still open.
+  leadSubmissionId?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -102,6 +108,8 @@ const CustomerUploadSchema: Schema = new Schema(
       default: 'inventory',
       index: true
     },
+
+    leadSubmissionId: { type: String, required: false },
   },
   { timestamps: true }
 );

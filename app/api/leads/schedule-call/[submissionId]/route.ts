@@ -19,7 +19,9 @@ import LeadSubmission from '@/models/LeadSubmission';
 import LeadFormConfig from '@/models/LeadFormConfig';
 import Project from '@/models/Project';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
+import Branding from '@/models/Branding';
 import { scheduleVideoCall } from '@/lib/video-call-scheduling';
+import { SCHEDULING_WINDOW_MS } from '@/lib/leads/scheduling';
 import type {
   ILeadFormConfig,
   LeadFormPostSubmit,
@@ -37,9 +39,6 @@ const corsHeaders = {
 export async function OPTIONS() {
   return new NextResponse(null, { status: 200, headers: corsHeaders });
 }
-
-// How long after the form submission scheduling stays valid.
-const SCHEDULING_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 
 const DEFAULT_HOURS: PostSubmitBusinessHours = {
   startTime: '09:00',
@@ -97,6 +96,26 @@ interface SlotsResponse {
   customerName: string;
   customerEmail?: string;
   slots: string[]; // ISO datetimes
+  // Org branding for the hosted standalone scheduler page's header. The
+  // in-iframe scheduler ignores it (the form card carries the branding).
+  branding?: { companyName: string; companyLogo?: string } | null;
+}
+
+/** Org branding for the hosted scheduler page header — best-effort. */
+async function resolveBranding(
+  organizationId: string | undefined | null,
+): Promise<SlotsResponse['branding']> {
+  if (!organizationId) return null;
+  try {
+    const branding = await Branding.findOne({ organizationId });
+    if (!branding?.companyName) return null;
+    return {
+      companyName: branding.companyName,
+      companyLogo: branding.companyLogo || undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function resolveSubmissionContext(submissionId: string) {
@@ -182,6 +201,7 @@ export async function GET(
           timezone: hours.timezone,
           customerName: '',
           slots: [],
+          branding: await resolveBranding(ctx.project.organizationId),
         },
         { headers: corsHeaders },
       );
@@ -229,6 +249,7 @@ export async function GET(
         customerName,
         customerEmail,
         slots,
+        branding: await resolveBranding(ctx.project.organizationId),
       },
       { headers: corsHeaders },
     );

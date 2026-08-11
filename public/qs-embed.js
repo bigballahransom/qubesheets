@@ -4,8 +4,28 @@
  * site, point it at one of their existing forms, declare a field mapping,
  * and the plugin will intercept the form's submit event, POST a normalized
  * lead to /api/leads/from-embed/<configId>, and dispatch the configured
- * post-submit action (redirect to the customer-upload chooser OR inline
- * success message).
+ * post-submit action.
+ *
+ * The submit response's `action` field (also passed to onSuccess as
+ * `result.action`) is one of:
+ *
+ *   { kind: 'inline-message',  message }
+ *       Show a thank-you message.
+ *   { kind: 'redirect-chooser', uploadUrl }
+ *       Send the customer to the hosted self-survey chooser
+ *       (record video / take photos).
+ *   { kind: 'schedule-call', submissionId, schedulerUrl }
+ *       Send the customer to the hosted virtual-call scheduler.
+ *   { kind: 'self-survey-or-schedule', uploadUrl, submissionId, schedulerUrl }
+ *       "Let the customer choose" — uploadUrl hosts the full chooser
+ *       (record video / take photos / schedule a call); schedulerUrl
+ *       deep-links straight to the scheduler.
+ *
+ * Custom onSuccess handlers can render their own UI with those URLs
+ * (e.g. separate buttons linking to uploadUrl and schedulerUrl). Note the
+ * scheduler link expires ~30 minutes after submission; uploadUrl stays
+ * valid for 30 days. Without an onSuccess handler the plugin redirects to
+ * uploadUrl / schedulerUrl automatically.
  *
  * Usage on the host page:
  *
@@ -160,6 +180,16 @@
           var action = result.data.action;
           if (action && action.kind === 'redirect-chooser' && action.uploadUrl) {
             window.location.href = action.uploadUrl;
+            return;
+          }
+          // "Let the customer choose" — the hosted page at uploadUrl offers
+          // all three options (record / photos / schedule a call).
+          if (action && action.kind === 'self-survey-or-schedule' && action.uploadUrl) {
+            window.location.href = action.uploadUrl;
+            return;
+          }
+          if (action && action.kind === 'schedule-call' && action.schedulerUrl) {
+            window.location.href = action.schedulerUrl;
             return;
           }
           if (action && action.kind === 'inline-message') {

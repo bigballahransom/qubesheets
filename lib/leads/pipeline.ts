@@ -13,6 +13,7 @@ import type { ILeadFormConfig } from '@/models/LeadFormConfig';
 import { normalize } from './normalize';
 import { provisionProject } from './provisionProject';
 import { mintUploadToken } from './mintUploadToken';
+import { createSchedulerUrl } from './scheduling';
 import { recordLeadEvent } from './recordEvent';
 import { dispatchCrmFanOut } from './crm/fanOut';
 import { resolvePostSubmitAction } from './resolvePostSubmit';
@@ -154,6 +155,10 @@ export async function ingestLead(
         projectId,
         customerName: lead.fullName ?? lead.email ?? lead.phone ?? 'New lead',
         customerPhone: lead.phone,
+        // Only self-survey-or-schedule tokens carry the submission handle —
+        // redirect-chooser means the org chose survey-only, no scheduling.
+        leadSubmissionId:
+          terminal.kind === 'self-survey-or-schedule' ? submissionId : undefined,
       });
       uploadToken = minted.token;
       uploadUrl = minted.uploadUrl;
@@ -204,8 +209,13 @@ export async function ingestLead(
   } else if (terminal.kind === 'schedule-call') {
     // The scheduler view fetches available slots and books via the
     // `/api/leads/schedule-call/[submissionId]` endpoint. The submissionId
-    // is the authorization — short-lived, single-use.
-    action = { kind: 'schedule-call', submissionId };
+    // is the authorization — short-lived, single-use. schedulerUrl is the
+    // hosted page wrapping the same view for non-iframe integrations.
+    action = {
+      kind: 'schedule-call',
+      submissionId,
+      schedulerUrl: createSchedulerUrl(submissionId),
+    };
   } else if (terminal.kind === 'self-survey-or-schedule' && uploadUrl) {
     // The chooser surfaces BOTH self-survey buttons and a "Schedule a
     // virtual call" button — the customer picks. We hand the iframe both
@@ -214,6 +224,7 @@ export async function ingestLead(
       kind: 'self-survey-or-schedule',
       uploadUrl,
       submissionId,
+      schedulerUrl: createSchedulerUrl(submissionId),
     };
   } else if (terminal.kind === 'inline-message') {
     action = { kind: 'inline-message', message: terminal.message };

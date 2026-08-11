@@ -25,6 +25,9 @@ export async function mintUploadToken(params: {
   projectId: string;
   customerName: string;
   customerPhone?: string;
+  /** Set for self-survey-or-schedule submissions so the hosted chooser can
+   *  offer "Schedule a virtual call" (while the scheduling window is open). */
+  leadSubmissionId?: string;
 }): Promise<MintedToken> {
   const token = generateUploadToken();
 
@@ -39,6 +42,7 @@ export async function mintUploadToken(params: {
     customerPhone: params.customerPhone ?? '',
     uploadToken: token,
     expiresAt,
+    leadSubmissionId: params.leadSubmissionId,
   });
 
   const baseUrl = createUploadUrl(token);

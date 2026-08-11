@@ -33,7 +33,7 @@ export function generateUploadToken(): string {
 /**
  * Get the correct base URL for the application
  */
-function getBaseUrl(): string {
+export function getBaseUrl(): string {
   // Production URL
   if (process.env.NODE_ENV === 'production') {
     return process.env.NEXT_PUBLIC_APP_URL || 'https://app.qubesheets.com';
@@ -66,9 +66,10 @@ export async function createCustomerUploadRecord(params: {
   customerPhone: string;
   uploadToken: string;
   expiresAt: Date;
+  leadSubmissionId?: string;
 }): Promise<any> {
   await connectMongoDB();
-  
+
   const customerUploadData: any = {
     projectId: params.projectId,
     userId: params.userId,
@@ -78,10 +79,16 @@ export async function createCustomerUploadRecord(params: {
     expiresAt: params.expiresAt,
     isActive: true,
   };
-  
+
   // Only add organizationId if provided (for organization accounts)
   if (params.organizationId) {
     customerUploadData.organizationId = params.organizationId;
+  }
+
+  // Lead-pipeline tokens for self-survey-or-schedule forms carry the
+  // submission handle so the chooser can offer scheduling.
+  if (params.leadSubmissionId) {
+    customerUploadData.leadSubmissionId = params.leadSubmissionId;
   }
   
   return await CustomerUpload.create(customerUploadData);
