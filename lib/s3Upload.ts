@@ -486,6 +486,34 @@ export async function completeS3MultipartUpload(
   }).promise();
 }
 
+/** List the parts S3 actually holds for an in-progress multipart upload —
+ *  the ground truth when a client-side manifest may carry stale eTags (a
+ *  timed-out part PUT that lands after its successful retry overwrites the
+ *  part, last-writer-wins per part number). */
+export async function listS3MultipartParts(
+  key: string,
+  uploadId: string
+): Promise<Array<{ partNumber: number; eTag: string }>> {
+  const bucket = resolveBucketName();
+  const parts: Array<{ partNumber: number; eTag: string }> = [];
+  let partNumberMarker: string | undefined;
+  do {
+    const page = await s3.listParts({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      ...(partNumberMarker ? { PartNumberMarker: Number(partNumberMarker) } : {})
+    }).promise();
+    for (const p of page.Parts || []) {
+      if (p.PartNumber != null && p.ETag) {
+        parts.push({ partNumber: p.PartNumber, eTag: p.ETag });
+      }
+    }
+    partNumberMarker = page.IsTruncated ? String(page.NextPartNumberMarker) : undefined;
+  } while (partNumberMarker);
+  return parts;
+}
+
 export async function abortS3MultipartUpload(key: string, uploadId: string): Promise<void> {
   try {
     await s3.abortMultipartUpload({

@@ -27,10 +27,20 @@ const DB_NAME = 'qube-local-capture';
 const DB_VERSION = 1;
 const CHUNK_TIMESLICE_MS = 5_000;
 const MAX_UPLOAD_ATTEMPTS = 8;
-/** Parts uploaded concurrently. 3 saturates a typical phone uplink and
- *  drains an offline backlog ~3× faster than serial without starving the
- *  presign requests. */
+/** Parts uploaded concurrently ON A HEALTHY LINK. 3 saturates a typical
+ *  phone uplink and drains an offline backlog ~3× faster than serial. The
+ *  engine starts at 1 (probe) and only fans out after a part succeeds; any
+ *  stall drops it back to 1 — on a thin pipe, splitting bandwidth three
+ *  ways just makes every part slower to checkpoint (2026-08-11 Grace
+ *  Moving incident). */
 const PART_CONCURRENCY = 3;
+/** Abort a part only when it makes NO progress for this long. A fixed
+ *  total-duration timeout killed uploads that were slowly but steadily
+ *  progressing — each retry then restarted the part from byte zero, so a
+ *  slow connection could never finish at all. */
+const PART_STALL_MS = 45_000;
+/** Absolute per-attempt ceiling — pathological-case backstop only. */
+const PART_HARD_CAP_MS = 20 * 60_000;
 
 export interface LocalRecorderCallbacks {
   /** Upload progress: bytes uploaded vs bytes recorded so far (total grows while recording). */
@@ -159,6 +169,12 @@ export class SelfServeLocalRecorder {
   private uploadedBytes = 0;
   /** Live byte counts of parts currently PUTting (partNumber → loaded). */
   private inFlightLoaded = new Map<number, number>();
+  /** Current fan-out: starts serial (probe), grows to PART_CONCURRENCY after
+   *  a success, collapses back to serial the moment the link shows strain. */
+  private effectiveConcurrency = 1;
+  /** Latched once the link has stalled/timed out — stay serial for the rest
+   *  of the session. */
+  private degradedLink = false;
   private destroyed = false;
   private failed = false;
   private storageFullSignaled = false;
@@ -577,15 +593,21 @@ export class SelfServeLocalRecorder {
       this.maybeResolveDrain();
       return;
     }
-    while (this.inFlightCount < PART_CONCURRENCY && this.uploadQueue.length > 0 && !this.failed) {
+    while (this.inFlightCount < this.effectiveConcurrency && this.uploadQueue.length > 0 && !this.failed) {
       const part = this.uploadQueue.shift()!;
       this.inFlightCount++;
       this.uploadPart(part)
         .then(async () => {
           this.uploadedBytes += part.size;
           this.emitProgress();
+          // Link proven healthy — fan out (unless it already showed strain).
+          if (!this.degradedLink) this.effectiveConcurrency = PART_CONCURRENCY;
+          // Deliberately NOT deleting this part's chunks yet: the phone
+          // stays the source of truth for the WHOLE recording until finalize
+          // confirms a verified server copy (2026-08-11: per-part deletion
+          // left nothing local to recover after a server-side failure).
+          // deleteSessionData purges everything once finalize succeeds.
           await this.persistSession();
-          await this.deleteChunks(part.seqStart, part.seqEnd);
         })
         .catch((err) => {
           this.fail(err instanceof Error ? err : new Error('Upload failed'));
@@ -636,6 +658,13 @@ export class SelfServeLocalRecorder {
         return;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error('Upload failed');
+        // Any stall/timeout/network strain → collapse to serial uploads for
+        // the rest of the session. On a thin pipe, one part at a time
+        // checkpoints progress fastest and wastes the least on retries.
+        if (/stall|timed out|network|hard time cap/i.test(lastError.message)) {
+          this.degradedLink = true;
+          this.effectiveConcurrency = 1;
+        }
         this.callbacks.onRetry?.({ partNumber: part.partNumber, attempt, message: lastError.message });
         if (attempt < MAX_UPLOAD_ATTEMPTS) {
           // Short backoff: the offline case is handled by waitForOnline
@@ -650,20 +679,34 @@ export class SelfServeLocalRecorder {
 
   /** PUT one part via XHR — gives byte-level upload progress (so the bar
    *  moves during a long part instead of freezing at the last part boundary)
-   *  and a hard timeout (a hung request becomes a retry, never a frozen
-   *  screen). */
+   *  and STALL-based abort: a part is only killed when bytes stop moving,
+   *  never for being slow. Slow-but-steady must always eventually finish. */
   private putPart(url: string, body: Blob, partNumber: number): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', url);
-      xhr.timeout = 120_000;
+      const startedAt = Date.now();
+      let lastProgressAt = Date.now();
+      let abortReason: string | null = null;
+      const stallWatch = setInterval(() => {
+        const now = Date.now();
+        if (now - lastProgressAt > PART_STALL_MS) {
+          abortReason = 'Part upload stalled (no progress)';
+          xhr.abort();
+        } else if (now - startedAt > PART_HARD_CAP_MS) {
+          abortReason = 'Part upload exceeded hard time cap';
+          xhr.abort();
+        }
+      }, 5_000);
       xhr.upload.onprogress = (e) => {
+        lastProgressAt = Date.now();
         if (e.lengthComputable) {
           this.inFlightLoaded.set(partNumber, e.loaded);
           this.emitProgress();
         }
       };
       const settle = (fn: () => void) => {
+        clearInterval(stallWatch);
         this.inFlightLoaded.delete(partNumber);
         fn();
       };
@@ -687,7 +730,7 @@ export class SelfServeLocalRecorder {
       });
       xhr.onerror = () => settle(() => reject(new Error('Part upload network error')));
       xhr.ontimeout = () => settle(() => reject(new Error('Part upload timed out')));
-      xhr.onabort = () => settle(() => reject(new Error('Part upload aborted')));
+      xhr.onabort = () => settle(() => reject(new Error(abortReason || 'Part upload aborted')));
       xhr.send(body);
     });
   }

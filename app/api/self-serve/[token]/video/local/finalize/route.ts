@@ -11,7 +11,7 @@ import connectMongoDB from '@/lib/mongodb';
 import CustomerUpload from '@/models/CustomerUpload';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
 import VideoRecording from '@/models/VideoRecording';
-import { completeS3MultipartUpload, abortS3MultipartUpload, headS3Object } from '@/lib/s3Upload';
+import { completeS3MultipartUpload, listS3MultipartParts, headS3Object } from '@/lib/s3Upload';
 import { sendInventoryUpdateNotification } from '@/lib/inventoryUpdateNotifications';
 
 const MAX_SIZE_BYTES = 1024 * 1024 * 1024; // 1GB, same sanity cap as uploads
@@ -59,30 +59,57 @@ export async function POST(
     const session = await SelfServeRecordingSession.findOne({ sessionId, uploadToken: token });
 
     // 1. Complete the multipart upload (S3 verifies each part's ETag).
-    // Idempotent: a retried finalize (timeout, lost response) finds the
-    // multipart already completed — completeMultipartUpload then throws
-    // NoSuchUpload, but the assembled object exists. Verify via HEAD before
-    // treating a complete-failure as fatal.
+    // Failure ladder — every rung preserves recoverable state:
+    //   a. Client manifest → normal path.
+    //   b. On failure (typically InvalidPart: a timed-out part PUT that
+    //      landed AFTER its successful retry overwrote the part with a
+    //      different eTag), re-complete using S3's OWN part listing — the
+    //      ground truth beats the client's stale manifest.
+    //   c. If the multipart is gone, HEAD the key: a previous finalize may
+    //      have completed it (idempotent retry).
+    //   d. Still nothing → 409, and CRITICALLY: never abort. Uploaded parts
+    //      are recoverable state; the bucket lifecycle rule cleans truly
+    //      abandoned ones. (2026-08-11: an abort here destroyed a fully
+    //      uploaded 337MB walkthrough that ListParts would have saved.)
+    let assembledFromServerParts = false;
     try {
       await completeS3MultipartUpload(s3Key, uploadId, parts);
     } catch (completeErr) {
-      const already = await headS3Object(s3Key).catch(() => ({ exists: false, sizeBytes: 0 }));
-      if (!already.exists || already.sizeBytes === 0) {
-        console.error(`local-capture finalize: completeMultipartUpload failed for ${s3Key}:`, completeErr);
-        await abortS3MultipartUpload(s3Key, uploadId);
-        return NextResponse.json(
-          { error: 'Upload could not be assembled. Please try uploading again.' },
-          { status: 409 }
-        );
+      console.warn(`local-capture finalize: complete with client manifest failed for ${s3Key} — trying S3's own part list:`, completeErr);
+      let assembled = false;
+      try {
+        const actualParts = await listS3MultipartParts(s3Key, uploadId);
+        if (actualParts.length > 0) {
+          await completeS3MultipartUpload(s3Key, uploadId, actualParts);
+          assembled = true;
+          assembledFromServerParts = true;
+          console.log(`local-capture finalize: assembled ${s3Key} from S3's part list (${actualParts.length} parts)`);
+        }
+      } catch (fallbackErr) {
+        console.error(`local-capture finalize: S3-part-list fallback failed for ${s3Key}:`, fallbackErr);
       }
-      console.log(`local-capture finalize: multipart already completed for ${s3Key} — continuing idempotently`);
+      if (!assembled) {
+        const already = await headS3Object(s3Key).catch(() => ({ exists: false, sizeBytes: 0 }));
+        if (!already.exists || already.sizeBytes === 0) {
+          console.error(`local-capture finalize: completeMultipartUpload failed for ${s3Key}:`, completeErr);
+          return NextResponse.json(
+            { error: 'Upload could not be assembled. Please try uploading again.' },
+            { status: 409 }
+          );
+        }
+        console.log(`local-capture finalize: multipart already completed for ${s3Key} — continuing idempotently`);
+      }
     }
 
     // 2. Verify the assembled object exists and matches what the client sent.
+    // When assembly came from S3's own part list, the exact-equality check
+    // is skipped — the server truth may legitimately differ a whisker from
+    // the client manifest (that mismatch is why we fell back), and an
+    // existing playable file beats a rejected one.
     const head = await headS3Object(s3Key);
     const expectedBytes = Number(totalBytes) || 0;
     if (!head.exists || head.sizeBytes === 0 || head.sizeBytes > MAX_SIZE_BYTES ||
-        (expectedBytes > 0 && head.sizeBytes !== expectedBytes)) {
+        (!assembledFromServerParts && expectedBytes > 0 && head.sizeBytes !== expectedBytes)) {
       console.error(
         `local-capture finalize: verification failed for ${s3Key} — exists=${head.exists} size=${head.sizeBytes} expected=${expectedBytes}`
       );
