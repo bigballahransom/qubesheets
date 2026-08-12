@@ -171,10 +171,33 @@ export async function POST(
     customerUpload.completedRecordingSessionId = session?._id;
     await customerUpload.save();
 
-    // 4. Queue Gemini analysis (same message shape as the egress path — the
-    // worker's customer-video handler processes any MP4/WebM by key).
+    // 4. Queue processing jobs.
     const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
     const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+
+    // 4a. Fast playback remux — EVERY local-capture upload, vault included.
+    // MediaRecorder emits fragmented MP4 (browsers see ~10s duration, can't
+    // seek, and crawl through the file); the worker flattens the container
+    // in seconds so local recordings play as instantly as egress ones.
+    if (queueUrl) {
+      try {
+        const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
+        await sqs.sendMessage({
+          QueueUrl: queueUrl,
+          MessageBody: JSON.stringify({
+            type: 'remux-playback',
+            videoRecordingId: recording._id.toString(),
+            s3Key,
+            s3Bucket: bucket
+          })
+        }).promise();
+      } catch (remuxErr) {
+        console.warn('local-capture finalize: remux-playback enqueue failed (non-fatal):', remuxErr);
+      }
+    }
+
+    // 4b. Gemini analysis (same message shape as the egress path — the
+    // worker's customer-video handler processes any MP4/WebM by key).
     if (isVault) {
       // no-op: vault media is never analyzed
     } else if (queueUrl) {
