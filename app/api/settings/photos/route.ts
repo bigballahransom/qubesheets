@@ -1,7 +1,7 @@
 // app/api/settings/photos/route.ts
 //
-// GET/POST the three per-flow photo switches. Each flag controls whether
-// the "Take or Upload Photos" option appears for one specific upload-link
+// GET/POST the per-flow photo switches. Each flag controls whether the
+// "Take or Upload Photos" option appears for one specific upload-link
 // flow. All default true.
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,13 +15,15 @@ type PhotoFlag =
   | 'photosEnabledGlobalLink'
   | 'photosEnabledCustomerLink'
   | 'photosEnabledWalkthrough'
-  | 'photosEnabledWebForm';
+  | 'photosEnabledWebForm'
+  | 'photosEnabledVault';
 
 const PHOTO_FLAGS: PhotoFlag[] = [
   'photosEnabledGlobalLink',
   'photosEnabledCustomerLink',
   'photosEnabledWalkthrough',
-  'photosEnabledWebForm'
+  'photosEnabledWebForm',
+  'photosEnabledVault'
 ];
 
 export async function GET(_request: NextRequest) {
@@ -48,7 +50,8 @@ export async function GET(_request: NextRequest) {
       photosEnabledGlobalLink: settings?.photosEnabledGlobalLink ?? DEFAULT_ENABLED,
       photosEnabledCustomerLink: settings?.photosEnabledCustomerLink ?? DEFAULT_ENABLED,
       photosEnabledWalkthrough: settings?.photosEnabledWalkthrough ?? DEFAULT_ENABLED,
-      photosEnabledWebForm: settings?.photosEnabledWebForm ?? DEFAULT_ENABLED
+      photosEnabledWebForm: settings?.photosEnabledWebForm ?? DEFAULT_ENABLED,
+      photosEnabledVault: settings?.photosEnabledVault ?? DEFAULT_ENABLED
     });
   } catch (error) {
     console.error('Error fetching photo settings:', error);
@@ -78,7 +81,7 @@ export async function POST(request: NextRequest) {
     const data = await request.json();
 
     // Only patch flags the client actually sent so the endpoint accepts
-    // partial updates (e.g. flipping one toggle without re-sending all three).
+    // partial updates (e.g. flipping one toggle without re-sending the rest).
     const update: Record<string, boolean> = {};
     for (const flag of PHOTO_FLAGS) {
       if (data[flag] !== undefined) {
@@ -114,7 +117,8 @@ export async function POST(request: NextRequest) {
       photosEnabledGlobalLink: settings.photosEnabledGlobalLink ?? DEFAULT_ENABLED,
       photosEnabledCustomerLink: settings.photosEnabledCustomerLink ?? DEFAULT_ENABLED,
       photosEnabledWalkthrough: settings.photosEnabledWalkthrough ?? DEFAULT_ENABLED,
-      photosEnabledWebForm: settings.photosEnabledWebForm ?? DEFAULT_ENABLED
+      photosEnabledWebForm: settings.photosEnabledWebForm ?? DEFAULT_ENABLED,
+      photosEnabledVault: settings.photosEnabledVault ?? DEFAULT_ENABLED
     }, { status: 200 });
   } catch (error) {
     console.error('Error saving photo settings:', error);

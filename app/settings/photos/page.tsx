@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
 import { Camera, Link2, MessageSquare, Building2, Globe } from 'lucide-react';
+import SafeIcon from '@/components/icons/SafeIcon';
 import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { toast } from 'sonner';
 
@@ -13,13 +14,15 @@ interface PhotoFlags {
   photosEnabledCustomerLink: boolean;
   photosEnabledWalkthrough: boolean;
   photosEnabledWebForm: boolean;
+  photosEnabledVault: boolean;
 }
 
 const DEFAULT_FLAGS: PhotoFlags = {
   photosEnabledGlobalLink: DEFAULT_ENABLED,
   photosEnabledCustomerLink: DEFAULT_ENABLED,
   photosEnabledWalkthrough: DEFAULT_ENABLED,
-  photosEnabledWebForm: DEFAULT_ENABLED
+  photosEnabledWebForm: DEFAULT_ENABLED,
+  photosEnabledVault: DEFAULT_ENABLED
 };
 
 type FlagKey = keyof PhotoFlags;
@@ -55,6 +58,12 @@ const FLAG_DEFINITIONS: FlagDefinition[] = [
     title: 'Embedded Web Form',
     description: 'The lead-capture form embedded on your website. When off, the post-submit chooser will only show the video-recording option.',
     icon: Globe
+  },
+  {
+    key: 'photosEnabledVault',
+    title: 'Media Vault',
+    description: 'Vault capture links — the per-project vault link and the crew QR flow. When off, anyone opening them will only see the video-recording option.',
+    icon: SafeIcon
   }
 ];
 
@@ -83,7 +92,8 @@ export default function PhotosSettingsPage() {
           photosEnabledGlobalLink: config.photosEnabledGlobalLink ?? DEFAULT_ENABLED,
           photosEnabledCustomerLink: config.photosEnabledCustomerLink ?? DEFAULT_ENABLED,
           photosEnabledWalkthrough: config.photosEnabledWalkthrough ?? DEFAULT_ENABLED,
-          photosEnabledWebForm: config.photosEnabledWebForm ?? DEFAULT_ENABLED
+          photosEnabledWebForm: config.photosEnabledWebForm ?? DEFAULT_ENABLED,
+          photosEnabledVault: config.photosEnabledVault ?? DEFAULT_ENABLED
         });
       } else if (response.status === 403) {
         setLoading(false);

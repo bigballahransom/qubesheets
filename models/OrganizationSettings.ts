@@ -137,10 +137,13 @@ export interface IOrganizationSettings extends Document {
   //   - photosEnabledCustomerLink:  per-customer SMS/email links
   //   - photosEnabledWalkthrough:   employee on-site walkthroughs
   //   - photosEnabledWebForm:       embedded lead-form chooser (mover's website)
+  //   - photosEnabledVault:         Media Vault capture links (per-project
+  //                                 vault link and the /vault/[orgId] crew QR)
   photosEnabledGlobalLink?: boolean;
   photosEnabledCustomerLink?: boolean;
   photosEnabledWalkthrough?: boolean;
   photosEnabledWebForm?: boolean;
+  photosEnabledVault?: boolean;
 
   // Customer Review Link (/inventory-review/[token]) display toggles. Movers
   // that don't want to expose a truck-size recommendation to customers can
@@ -305,6 +308,10 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: true
     },
     photosEnabledWebForm: {
+      type: Boolean,
+      default: true
+    },
+    photosEnabledVault: {
       type: Boolean,
       default: true
     },

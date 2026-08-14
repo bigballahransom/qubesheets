@@ -83,7 +83,13 @@ export async function GET(
     }
 
     // Resolve the org-level photo switch for whichever flow this token
-    // belongs to. Four independent flags exist on OrganizationSettings:
+    // belongs to. Five independent flags exist on OrganizationSettings:
+    //   - photosEnabledVault:         token minted with purpose === 'vault'
+    //                                 (per-project vault link and /vault/[orgId]
+    //                                 crew QR) — checked first since vault tokens
+    //                                 carry an employee userId or
+    //                                 'global-vault-link' and would otherwise
+    //                                 fall through to the customer-link flag
     //   - photosEnabledGlobalLink:    token minted by /api/upload/[orgId]/create-project
     //                                 (discriminated by userId === 'global-self-survey-link')
     //   - photosEnabledWalkthrough:   token minted with isWalkthrough: true
@@ -100,7 +106,9 @@ export async function GET(
         });
         if (orgSettings) {
           let flagValue: boolean | undefined;
-          if (customerUpload.isWalkthrough) {
+          if (customerUpload.purpose === 'vault') {
+            flagValue = orgSettings.photosEnabledVault;
+          } else if (customerUpload.isWalkthrough) {
             flagValue = orgSettings.photosEnabledWalkthrough;
           } else if (customerUpload.userId === 'global-self-survey-link') {
             flagValue = orgSettings.photosEnabledGlobalLink;
