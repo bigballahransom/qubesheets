@@ -25,8 +25,6 @@ import {
 } from 'lucide-react';
 import VideoChapters, { hasVideoChapters } from './video/VideoChapters';
 import { useVideoChapters, computeOffsetSeconds } from '@/lib/hooks/useVideoChapters';
-import CallSegmentBar from './video/CallSegmentBar';
-import { getMidCallState, getWalkthroughDuration, getContinuationDuration } from '@/lib/midCallState';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Slider } from './ui/slider';
@@ -77,45 +75,12 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
   // stays here because the recording modal enriches it with the recording's
   // `roomCatalog` (see above); we forward it via `availableRoomsOverride`.
 
-  // Mid-call "Stop & Process": the recording prop is a snapshot from when
-  // the modal opened, but a mid-call recording keeps evolving (analysis
-  // lands, wrap-up gets stitched). liveDoc tracks the latest server state
-  // while the recording is in flight; everything state-derived reads `rec`.
-  const [liveDoc, setLiveDoc] = useState(null);
-  const [analysisRefreshKey, setAnalysisRefreshKey] = useState(0);
-  const lastPolledDocRef = useRef(null);
-  const resumeTimeRef = useRef(null);
-  const rec = liveDoc || recording;
-  const midCallState = getMidCallState(rec);
-
-  const { chapters } = useVideoChapters({
+  const { chapters, activeChapter } = useVideoChapters({
     projectId,
     recording,
     currentTime,
     enabled: isOpen,
-    refreshKey: analysisRefreshKey,
   });
-
-  // When stitched, the splice point becomes a permanent chapter alongside
-  // the room chapters (scrubber divider + chapter list entry).
-  const displayChapters = useMemo(() => {
-    if (midCallState !== 'stitched') return chapters;
-    const wt = getWalkthroughDuration(rec);
-    if (!wt) return chapters;
-    if (chapters.some((c) => c.room === 'Review & wrap-up')) return chapters;
-    return [...chapters, { room: 'Review & wrap-up', startTime: wt, endTime: null, itemCount: 0 }];
-  }, [chapters, midCallState, rec]);
-
-  // Active chapter must be derived from displayChapters (not the hook's list)
-  // so the appended Review & wrap-up chapter highlights once the playhead
-  // passes the splice.
-  const activeChapter = useMemo(() => {
-    if (!displayChapters.length) return null;
-    for (let i = displayChapters.length - 1; i >= 0; i--) {
-      if (currentTime >= displayChapters[i].startTime) return displayChapters[i];
-    }
-    return null;
-  }, [displayChapters, currentTime]);
 
   const seekTo = (timeSec) => {
     if (!videoRef.current) return;
@@ -155,58 +120,8 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
       setError(null);
       setStreamUrl(null);
       setAnalysisData(null);
-      setLiveDoc(null);
-      lastPolledDocRef.current = null;
-      resumeTimeRef.current = null;
     }
   }, [isOpen]);
-
-  // Poll the recording doc while a mid-call recording is in flight so the
-  // modal transitions live: analysis landing refreshes chapters/summary,
-  // and the stitch landing swaps the video source to the full call
-  // (preserving the playhead).
-  useEffect(() => {
-    if (!isOpen || !recording?._id || !projectId) return;
-    if (!['live_analyzing', 'live_ready', 'finalizing'].includes(midCallState)) return;
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/projects/${projectId}/video-recordings/${recording._id}`);
-        if (!res.ok) return;
-        const doc = await res.json();
-        const prevDoc = lastPolledDocRef.current || recording;
-        lastPolledDocRef.current = doc;
-        setLiveDoc(doc);
-
-        // Stitch landed → reload the source at the same position
-        if (doc.s3Key && prevDoc.s3Key && doc.s3Key !== prevDoc.s3Key) {
-          resumeTimeRef.current = videoRef.current?.currentTime || 0;
-          try {
-            const streamRes = await fetch(`/api/projects/${projectId}/video-recordings/${recording._id}/stream`);
-            if (streamRes.ok) {
-              const streamData = await streamRes.json();
-              setStreamUrl(streamData.streamUrl);
-            }
-          } catch (streamErr) {
-            console.warn('Failed to refresh stream after stitch:', streamErr);
-          }
-        }
-
-        // Analysis landed → refresh summary + chapters
-        if (
-          doc.analysisResult?.status === 'completed' &&
-          prevDoc.analysisResult?.status !== 'completed'
-        ) {
-          setAnalysisRefreshKey((k) => k + 1);
-        }
-      } catch {
-        // transient — keep polling
-      }
-    };
-
-    const interval = setInterval(poll, 5000);
-    return () => clearInterval(interval);
-  }, [isOpen, recording, projectId, midCallState]);
 
   // Fetch stream URL when modal opens
   useEffect(() => {
@@ -257,7 +172,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     };
 
     fetchAnalysisData();
-  }, [isOpen, recording, projectId, analysisRefreshKey]);
+  }, [isOpen, recording, projectId]);
 
   // Auto-seek to initialItem is owned by MediaInventoryModal via the
   // shared `useAutoSeekOnInitialItem` hook — we forward videoRef, streamUrl,
@@ -268,12 +183,6 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     if (videoRef.current) {
       setDuration(videoRef.current.duration);
       setIsLoading(false);
-      // After a mid-call stitch swaps the source, restore the playhead
-      if (resumeTimeRef.current != null) {
-        videoRef.current.currentTime = resumeTimeRef.current;
-        setCurrentTime(resumeTimeRef.current);
-        resumeTimeRef.current = null;
-      }
     }
   };
 
@@ -288,22 +197,10 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
   // manage directly.
 
   const getRoomSegments = useCallback((roomName) => {
-    // The chapter builder gives the LAST chapter a zero-length range
-    // (endTime === startTime, there being no next chapter), which made the
-    // loop's inside-segment check always fail → a seek-back storm that froze the
-    // video on the segment's first frame. Treat missing/degenerate ends as
-    // open and resolve them to where room content actually stops: the splice
-    // point on stitched mid-call recordings (the review portion isn't a
-    // room), else the end of the video.
-    const walkthroughEnd = midCallState === 'stitched' ? getWalkthroughDuration(rec) : null;
-    const openEnd = walkthroughEnd || duration || Infinity;
     return chapters
       .filter((c) => c.room === roomName)
-      .map((c) => ({
-        startTime: c.startTime,
-        endTime: c.endTime == null || c.endTime <= c.startTime ? openEnd : c.endTime,
-      }));
-  }, [chapters, midCallState, rec, duration]);
+      .map((c) => ({ startTime: c.startTime, endTime: c.endTime }));
+  }, [chapters]);
 
   const togglePlayRoom = useCallback((roomName) => {
     const segments = getRoomSegments(roomName);
@@ -499,7 +396,6 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
   // the video on the top-left and chapters + AI summary on the top-right.
   // Side-by-side / stack layouts still stack all three in the same column.
   const mediaCol = (
-          <>
             <div
               ref={containerRef}
               className="relative bg-black rounded-lg overflow-hidden aspect-video group"
@@ -507,13 +403,6 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
               onMouseEnter={() => setShowControls(true)}
               onMouseLeave={() => isPlaying && setShowControls(false)}
             >
-              {/* Mid-call: the call is still happening while this walkthrough plays */}
-              {(midCallState === 'live_analyzing' || midCallState === 'live_ready') && (
-                <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5 bg-emerald-600/90 text-white text-[10px] font-bold tracking-wide px-2.5 py-1 rounded-full pointer-events-none">
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                  CALL IN PROGRESS
-                </div>
-              )}
               {isLoading && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black z-10">
                   <div className="text-center text-white">
@@ -579,7 +468,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                       className="w-full [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-white/30 [&_[data-slot=slider-range]]:bg-red-500 [&_[data-slot=slider-thumb]]:w-3 [&_[data-slot=slider-thumb]]:h-3 [&_[data-slot=slider-thumb]]:bg-red-500"
                     />
                     {/* Chapter dividers - skip the first one (always at 0%) */}
-                    {duration > 0 && displayChapters.slice(1).map((chapter, idx) => (
+                    {duration > 0 && chapters.slice(1).map((chapter, idx) => (
                       <div
                         key={`${chapter.startTime}-${chapter.room}-${idx}`}
                         className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-0.5 h-3 bg-white/90 rounded-sm pointer-events-none"
@@ -685,21 +574,11 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                 </div>
               )}
             </div>
-
-            {/* Mid-call segment bar: what exists now vs. what's coming */}
-            <CallSegmentBar
-              state={midCallState}
-              walkthroughDuration={getWalkthroughDuration(rec)}
-              continuationDuration={getContinuationDuration(rec)}
-              itemsCount={rec?.analysisResult?.itemsCount}
-              onSeek={seekTo}
-            />
-          </>
   );
 
-  const chaptersCol = hasVideoChapters(displayChapters) ? (
+  const chaptersCol = hasVideoChapters(chapters) ? (
     <VideoChapters
-      chapters={displayChapters}
+      chapters={chapters}
       activeChapter={activeChapter}
       onSeek={seekTo}
     />
@@ -778,16 +657,6 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                   </div>
                 )}
               </div>
-  ) : midCallState === 'live_analyzing' ? (
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 animate-pulse">
-                <div className="flex items-center gap-2 mb-1">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-500" />
-                  <h4 className="font-medium text-gray-700 text-sm">Analyzing the walkthrough…</h4>
-                </div>
-                <p className="text-xs text-gray-500 mb-0">
-                  Items, boxes, and chapters will appear here in a few minutes. You can keep watching while it runs.
-                </p>
-              </div>
   ) : null;
 
   return (
@@ -804,7 +673,7 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
       media={{
         id: recording?._id,
         sourceKey: 'sourceVideoRecordingId',
-        chapters: displayChapters,
+        chapters,
         onSeek: seekToItemTimestamp,
         initialItem,
         videoRef,

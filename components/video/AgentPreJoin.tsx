@@ -20,6 +20,7 @@ import { Slider } from '@/components/ui/slider';
 import { useAndroidCompatibleVideoTrack } from '@/lib/hooks/useAndroidCompatibleVideoTrack';
 import { UnsupportedBrowserScreen } from './UnsupportedBrowserScreen';
 import { getDeviceInfo } from '@/lib/webrtc-compatibility';
+import { MEDIAPIPE_ASSET_PATHS, DEFAULT_BLUR_RADIUS, MAX_BLUR_RADIUS } from '@/lib/backgroundProcessor';
 
 interface Background {
   id: string;
@@ -85,7 +86,7 @@ export default function AgentPreJoin({
 
   // Background state
   const [backgroundMode, setBackgroundMode] = useState<'none' | 'blur' | 'virtual'>('none');
-  const [blurRadius, setBlurRadius] = useState(10);
+  const [blurRadius, setBlurRadius] = useState(DEFAULT_BLUR_RADIUS);
   const [selectedBackground, setSelectedBackground] = useState<string | null>(null);
   const [customBackgrounds, setCustomBackgrounds] = useState<Background[]>([]);
   const [isLoadingBackgrounds, setIsLoadingBackgrounds] = useState(false);
@@ -188,7 +189,8 @@ export default function AgentPreJoin({
         // and also ensures the WebGL canvas handles mobile video orientation correctly.
         processorRef.current = BackgroundProcessor({
           mode: 'background-blur',
-          blurRadius: 0
+          blurRadius: 0,
+          assetPaths: MEDIAPIPE_ASSET_PATHS
         });
         await videoTrack.setProcessor(processorRef.current);
 
@@ -560,7 +562,7 @@ export default function AgentPreJoin({
                     value={[blurRadius]}
                     onValueChange={([value]) => setBlurRadius(value)}
                     min={1}
-                    max={20}
+                    max={MAX_BLUR_RADIUS}
                     step={1}
                     className="w-full"
                   />

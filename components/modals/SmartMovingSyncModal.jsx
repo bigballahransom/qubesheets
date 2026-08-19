@@ -10,7 +10,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Loader2, Phone, CheckCircle, XCircle, AlertTriangle, Info, ExternalLink, Package, Box, Layers, User, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Loader2, Phone, CheckCircle, XCircle, AlertTriangle, Info, ExternalLink, Package, Box, Layers, User, FileText, ChevronRight, ArrowLeft, Search } from 'lucide-react';
 
 export default function SmartMovingSyncModal({
   open,
@@ -22,7 +22,9 @@ export default function SmartMovingSyncModal({
   result = null,
   onReset,
   inventoryStats = {},
-  isResync = false
+  isResync = false,
+  isLinked = false,
+  linkedQuoteNumber = null
 }) {
   // Modal step: searching, no_results, selecting, ready, syncing, success, error
   const [modalStep, setModalStep] = useState('searching');
@@ -31,22 +33,25 @@ export default function SmartMovingSyncModal({
   const [searchError, setSearchError] = useState(null);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [isChangingSelection, setIsChangingSelection] = useState(false);
+  const [filterText, setFilterText] = useState('');
 
   // Search for SmartMoving records when modal opens
   const searchRecords = useCallback(async (forceSearch = false) => {
+    // Already linked to a SmartMoving job (via sync or webhook): auto-select it
+    // and go straight to the sync options (unless the user wants to change jobs)
+    if ((isResync || isLinked) && !forceSearch) {
+      setModalStep('ready');
+      return;
+    }
+
     if (!projectId || !projectPhone) {
       setModalStep('no_results');
       return;
     }
 
-    // For re-syncs, skip search and go directly to ready state (unless forcing)
-    if (isResync && !forceSearch) {
-      setModalStep('ready');
-      return;
-    }
-
     setModalStep('searching');
     setSearchError(null);
+    setFilterText('');
 
     try {
       const response = await fetch(`/api/smartmoving/search-records?projectId=${projectId}`);
@@ -68,14 +73,14 @@ export default function SmartMovingSyncModal({
       setSearchError('Failed to search SmartMoving');
       setModalStep('no_results');
     }
-  }, [projectId, projectPhone, isResync]);
+  }, [projectId, projectPhone, isResync, isLinked]);
 
   // Trigger search when modal opens
   useEffect(() => {
-    if (open && projectPhone) {
+    if (open && (projectPhone || isResync || isLinked)) {
       searchRecords();
     }
-  }, [open, projectPhone, searchRecords]);
+  }, [open, projectPhone, isResync, isLinked, searchRecords]);
 
   // Handle sync result
   useEffect(() => {
@@ -96,6 +101,7 @@ export default function SmartMovingSyncModal({
     setSelectedRecord(null);
     setSearchError(null);
     setIsChangingSelection(false);
+    setFilterText('');
     onOpenChange(false);
   };
 
@@ -149,6 +155,30 @@ export default function SmartMovingSyncModal({
 
   const totalRecords = searchResults.leads.length +
     searchResults.customers.reduce((sum, c) => sum + (c.opportunities?.length || 0), 0);
+
+  // Filter search results by name, phone, quote number, or address
+  const filterLower = filterText.trim().toLowerCase();
+  const matchesFilter = (...fields) =>
+    !filterLower || fields.some(f => f != null && String(f).toLowerCase().includes(filterLower));
+
+  const filteredLeads = searchResults.leads.filter(lead =>
+    matchesFilter(lead.customerName, lead.phoneNumber, lead.originAddressFull, lead.destinationAddressFull)
+  );
+
+  const filteredCustomers = searchResults.customers
+    .map(customer => {
+      if (matchesFilter(customer.name, customer.phoneNumber)) return customer;
+      const opportunities = (customer.opportunities || []).filter(opp =>
+        matchesFilter(opp.quoteNumber, opp.statusLabel)
+      );
+      return opportunities.length > 0 ? { ...customer, opportunities } : null;
+    })
+    .filter(Boolean);
+
+  const filteredRecords = filteredLeads.length +
+    filteredCustomers.reduce((sum, c) => sum + (c.opportunities?.length || 0), 0);
+
+  const linkedJobLabel = `Linked SmartMoving job${linkedQuoteNumber ? ` (Quote #${linkedQuoteNumber})` : ''}`;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -216,19 +246,40 @@ export default function SmartMovingSyncModal({
                   <p className="font-medium text-gray-900">{projectPhone}</p>
                 </div>
                 <span className="ml-auto text-sm text-gray-500">
-                  {totalRecords} record{totalRecords !== 1 ? 's' : ''} found
+                  {filterLower
+                    ? `${filteredRecords} of ${totalRecords} record${totalRecords !== 1 ? 's' : ''}`
+                    : `${totalRecords} record${totalRecords !== 1 ? 's' : ''} found`}
                 </span>
+              </div>
+
+              {/* Search filter */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                  placeholder="Search by name, quote #, or address..."
+                  autoFocus
+                  className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
               </div>
 
               {/* Records List */}
               <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {filterLower && filteredRecords === 0 && filteredCustomers.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-6 text-center">
+                    <p className="text-sm text-gray-500">No records match &quot;{filterText}&quot;</p>
+                  </div>
+                )}
+
                 {/* Leads */}
-                {searchResults.leads.length > 0 && (
+                {filteredLeads.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-gray-500 uppercase tracking-wide px-1">
                       Leads
                     </p>
-                    {searchResults.leads.map((lead) => (
+                    {filteredLeads.map((lead) => (
                       <button
                         key={lead.id}
                         onClick={() => handleSelectRecord({
@@ -254,12 +305,12 @@ export default function SmartMovingSyncModal({
                 )}
 
                 {/* Customers & Opportunities */}
-                {searchResults.customers.length > 0 && (
+                {filteredCustomers.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-gray-500 uppercase tracking-wide px-1 mt-4">
                       Existing Customers
                     </p>
-                    {searchResults.customers.map((customer) => (
+                    {filteredCustomers.map((customer) => (
                       <div key={customer.id} className="space-y-1">
                         {customer.opportunities?.length > 0 ? (
                           customer.opportunities.map((opp) => (
@@ -313,7 +364,9 @@ export default function SmartMovingSyncModal({
                 <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
-                    <p className="font-medium text-amber-800">Re-syncing to SmartMoving</p>
+                    <p className="font-medium text-amber-800">
+                      Re-syncing to SmartMoving{linkedQuoteNumber ? ` (Quote #${linkedQuoteNumber})` : ''}
+                    </p>
                     <p className="text-sm text-amber-700 mt-1">
                       This will replace all existing inventory items in SmartMoving with the current items from this project.
                     </p>
@@ -331,12 +384,12 @@ export default function SmartMovingSyncModal({
                   <CheckCircle className="h-5 w-5 text-blue-600" />
                   <div className="flex-1">
                     <p className="text-sm text-blue-700">Syncing to</p>
-                    <p className="font-medium text-blue-900">{selectedRecord?.label}</p>
+                    <p className="font-medium text-blue-900">{selectedRecord?.label || linkedJobLabel}</p>
                   </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={handleBackToSelection}
+                    onClick={selectedRecord ? handleBackToSelection : handleChangeLinkedProject}
                     className="text-blue-600 hover:text-blue-800"
                   >
                     <ArrowLeft className="h-4 w-4 mr-1" />

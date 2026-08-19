@@ -10,7 +10,9 @@
 //     upload. A dead spot mid-walkthrough cannot lose footage.
 //   - Backgrounding/locking the phone PAUSES the recording (no black video
 //     is ever captured) and resumes on return; a 60s absence finishes the
-//     recording with what was captured.
+//     recording with what was captured. Resume is VERIFIED (frames + mic
+//     signal probed) before trusting it — iOS fires 'unmute' after a phone
+//     call even when the capture pipeline never actually restarted.
 //   - stopRecording drains the upload with visible progress, then the server
 //     verifies the assembled file before the recording record exists — so a
 //     success screen here can never lie about what was saved.
@@ -26,8 +28,13 @@ import {
   UseSelfServeRecordingLiveKitReturn
 } from '@/lib/hooks/useSelfServeRecordingLiveKit';
 import { detectInAppBrowser, getBrowser, isIOS, isAndroid } from '@/lib/deviceDetection';
+import { verifyCaptureAlive, sampleVideoLuma, BLACK_LUMA_THRESHOLD } from '@/lib/captureLiveness';
 
 const HIDDEN_AUTO_FINISH_MS = 60_000;
+/** Black-video watchdog cadence and how many consecutive black samples
+ *  (~12s) raise the on-screen warning. */
+const BLACK_WATCHDOG_INTERVAL_MS = 3_000;
+const BLACK_WATCHDOG_TRIGGER_SAMPLES = 4;
 
 export interface UseSelfServeLocalRecordingReturn extends UseSelfServeRecordingLiveKitReturn {
   /** Upload progress percent (0–100) while the recording drains to S3 after
@@ -49,6 +56,11 @@ export interface UseSelfServeLocalRecordingReturn extends UseSelfServeRecordingL
   torchAvailable: boolean;
   torchOn: boolean;
   toggleTorch: () => Promise<void>;
+  /** True while recording is live but the sampled preview has been pure
+   *  black for a sustained stretch (lens covered / phone pocketed / camera
+   *  silently dead). UI shows a non-blocking warning; recording continues —
+   *  dark rooms are legitimate footage. */
+  blackVideoWarning: boolean;
 }
 
 export function useSelfServeLocalRecording({
@@ -75,6 +87,8 @@ export function useSelfServeLocalRecording({
   const [currentZoom, setCurrentZoom] = useState(1);
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [savedDuration, setSavedDuration] = useState(0);
+  const [blackVideoWarning, setBlackVideoWarning] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -90,6 +104,17 @@ export function useSelfServeLocalRecording({
   const wakeLockRef = useRef<any>(null);
   const hiddenFinishTimerRef = useRef<NodeJS.Timeout | null>(null);
   const stopRef = useRef<() => Promise<void>>(async () => {});
+  /** AudioContext for liveness probes. Created inside the Start tap's user
+   *  gesture — iOS won't let one created later (e.g. in an 'unmute' handler)
+   *  leave the suspended state. */
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  /** A verifyCaptureAlive probe is in flight — suppresses re-entry and the
+   *  black-video watchdog. */
+  const verifyingRef = useRef(false);
+  /** The in-flight stop was triggered by an unrecovered interruption — its
+   *  success lands on the 'capture_interrupted_saved' screen, not success. */
+  const interruptedFinishRef = useRef(false);
+  const blackRunRef = useRef(0);
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
@@ -117,6 +142,12 @@ export function useSelfServeLocalRecording({
     engineRef.current?.destroy();
     engineRef.current = null;
     setCameraInterrupted(false);
+    cameraInterruptedRef.current = false;
+    setBlackVideoWarning(false);
+    blackRunRef.current = 0;
+    interruptedFinishRef.current = false;
+    try { audioCtxRef.current?.close(); } catch {}
+    audioCtxRef.current = null;
     releaseStream();
   }, [releaseStream]);
 
@@ -316,6 +347,11 @@ export function useSelfServeLocalRecording({
       setRecordingStarted(true);
       sendTelemetry(uploadToken, { event: 'recording_started', engine: 'local' });
 
+      try {
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
+        if (AC && !audioCtxRef.current) audioCtxRef.current = new AC();
+      } catch {}
+
       // Duration ticker — advances only while capture is actually running
       // (paused while hidden AND while a call/other app holds the camera, so
       // interrupted time isn't reported as recorded time).
@@ -349,9 +385,13 @@ export function useSelfServeLocalRecording({
     const engine = engineRef.current;
     if (!engine) return;
 
+    const finishingInterrupted = interruptedFinishRef.current;
+    interruptedFinishRef.current = false;
+
     setStatus('stopping');
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     if (hiddenFinishTimerRef.current) { clearTimeout(hiddenFinishTimerRef.current); hiddenFinishTimerRef.current = null; }
+    if (interruptFinishTimerRef.current) { clearTimeout(interruptFinishTimerRef.current); interruptFinishTimerRef.current = null; }
 
     try {
       setStatus('processing');
@@ -364,8 +404,18 @@ export function useSelfServeLocalRecording({
       // upload and HEAD-verified the assembled file before returning.
       setUploadConfirmed(true);
       sendTelemetry(uploadToken, { event: 'upload_confirmation', engine: 'local', result: 'confirmed', recordedDuration: durationRef.current });
-      setStatus('complete');
-      onRecordingComplete?.(engine.sessionId ?? undefined);
+      if (finishingInterrupted) {
+        // The footage up to the interruption is uploaded and verified, but
+        // the walkthrough isn't done — land on the "Record the rest" screen
+        // instead of success so the customer finishes their home.
+        setSavedDuration(durationRef.current);
+        setError(new Error('A call interrupted the recording.'));
+        setErrorKind('capture_interrupted_saved');
+        setStatus('error');
+      } else {
+        setStatus('complete');
+        onRecordingComplete?.(engine.sessionId ?? undefined);
+      }
     } catch (err) {
       sendTelemetry(uploadToken, {
         event: 'local_upload_failed',
@@ -378,6 +428,59 @@ export function useSelfServeLocalRecording({
   }, [uploadToken, releaseStream, onRecordingComplete, failWith]);
 
   useEffect(() => { stopRef.current = stopRecording; }, [stopRecording]);
+
+  /** Finalize with everything captured so far and land on the "Record the
+   *  rest" screen — used when an interruption ends the recording (60s
+   *  timeout, or the camera came back dead after a call). */
+  const finishInterrupted = useCallback(() => {
+    if (statusRef.current !== 'recording') return;
+    if (interruptFinishTimerRef.current) { clearTimeout(interruptFinishTimerRef.current); interruptFinishTimerRef.current = null; }
+    interruptedFinishRef.current = true;
+    stopRef.current();
+  }, []);
+
+  /** Resume after an interruption ONLY once capture is proven alive. iOS
+   *  fires 'unmute' after a phone call even when the capture pipeline never
+   *  restarted — the tracks claim to be live but deliver black frames and
+   *  digital silence from then on. So the recorder stays paused (and the
+   *  interruption overlay stays up) while a ~2.5s probe confirms real frames
+   *  and mic signal; a dead resume finalizes the good footage instead of
+   *  silently recording nothing. */
+  const attemptVerifiedResume = useCallback(async () => {
+    if (!cameraInterruptedRef.current || verifyingRef.current) return;
+    if (statusRef.current !== 'recording') return;
+    verifyingRef.current = true;
+    try {
+      const result = await verifyCaptureAlive(videoRef.current, streamRef.current, audioCtxRef.current);
+      // Re-check the world after the await — the user may have stopped, or
+      // the interruption may have come back mid-probe.
+      if (statusRef.current !== 'recording' || !cameraInterruptedRef.current) return;
+      if (document.hidden) return; // visibility handler owns the next resume
+      const stillMuted = streamRef.current
+        ? [...streamRef.current.getVideoTracks(), ...streamRef.current.getAudioTracks()].some((t) => (t as any).muted)
+        : false;
+      if (stillMuted) return; // re-interrupted; the next unmute retries
+      if (result.alive) {
+        if (interruptFinishTimerRef.current) { clearTimeout(interruptFinishTimerRef.current); interruptFinishTimerRef.current = null; }
+        engineRef.current?.resume();
+        cameraInterruptedRef.current = false;
+        setCameraInterrupted(false);
+        sendTelemetry(uploadToken, { event: 'capture_resumed_after_interrupt', engine: 'local', durationAtResume: durationRef.current, verified: true });
+      } else {
+        sendTelemetry(uploadToken, {
+          event: 'capture_dead_after_resume',
+          engine: 'local',
+          durationAtStop: durationRef.current,
+          framesFlowing: result.framesFlowing,
+          videoBlack: result.videoBlack,
+          audioSilent: result.audioSilent
+        });
+        finishInterrupted();
+      }
+    } finally {
+      verifyingRef.current = false;
+    }
+  }, [uploadToken, finishInterrupted]);
 
   // ─── Finish-later: drain an upload interrupted on an earlier page-load ──
   const resumeUpload = useCallback(async (sid: string, durationSeconds?: number) => {
@@ -432,6 +535,7 @@ export function useSelfServeLocalRecording({
       const engine = engineRef.current;
       if (document.hidden) {
         engine?.pause();
+        cameraInterruptedRef.current = true;
         setCameraInterrupted(true);
         sendTelemetry(uploadToken, { event: 'page_hidden_while_recording', engine: 'local', durationAtHide: durationRef.current });
         hiddenFinishTimerRef.current = setTimeout(() => {
@@ -444,18 +548,19 @@ export function useSelfServeLocalRecording({
         // Back on the page, but the OS may still hold the camera/mic (an
         // ongoing call) — the tracks report muted. Stay paused; the track
         // 'unmute' handler resumes the moment the hardware is released.
+        // When the tracks look free, resume goes through the liveness probe:
+        // iOS can hand back tracks that claim to be live but are dead.
         const stillHeld = streamRef.current
           ? [...streamRef.current.getVideoTracks(), ...streamRef.current.getAudioTracks()].some((t) => (t as any).muted)
           : false;
         if (!stillHeld) {
-          engine?.resume();
-          setCameraInterrupted(false);
+          attemptVerifiedResume();
         }
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [uploadToken, acquireWakeLock]);
+  }, [uploadToken, acquireWakeLock, attemptVerifiedResume]);
 
   // ─── Call / OS capture interruption ───────────────────────────────
   // Answering a phone or video call makes the OS seize the camera and mic:
@@ -477,6 +582,10 @@ export function useSelfServeLocalRecording({
 
     const onMute = () => {
       if (statusRef.current !== 'recording' || cameraInterruptedRef.current) return;
+      // Sync ref write, not just setState: video and audio mute events land
+      // in the same task, and the state-mirroring effect runs too late to
+      // stop the second event re-entering here (duplicate telemetry).
+      cameraInterruptedRef.current = true;
       engineRef.current?.pause();
       setCameraInterrupted(true);
       sendTelemetry(uploadToken, { event: 'capture_interrupted', engine: 'local', durationAtInterrupt: durationRef.current, pageHidden: document.hidden });
@@ -485,24 +594,18 @@ export function useSelfServeLocalRecording({
           interruptFinishTimerRef.current = null;
           if (statusRef.current === 'recording' && cameraInterruptedRef.current) {
             sendTelemetry(uploadToken, { event: 'auto_finished_after_interrupt', engine: 'local', durationAtStop: durationRef.current });
-            stopRef.current();
+            finishInterrupted();
           }
         }, HIDDEN_AUTO_FINISH_MS);
       }
     };
     const onUnmute = () => {
       // Resume only once EVERY track is back — resuming with a still-dead
-      // mic would record silent video.
+      // mic would record silent video. The probe inside attemptVerifiedResume
+      // keeps the recorder paused until capture is PROVEN alive (the 60s
+      // auto-finish timer stays armed as a backstop until then).
       if (anyMuted() || document.hidden) return;
-      if (interruptFinishTimerRef.current) {
-        clearTimeout(interruptFinishTimerRef.current);
-        interruptFinishTimerRef.current = null;
-      }
-      if (cameraInterruptedRef.current) {
-        sendTelemetry(uploadToken, { event: 'capture_resumed_after_interrupt', engine: 'local', durationAtResume: durationRef.current });
-      }
-      engineRef.current?.resume();
-      setCameraInterrupted(false);
+      attemptVerifiedResume();
     };
 
     tracks.forEach((t) => {
@@ -524,6 +627,39 @@ export function useSelfServeLocalRecording({
         interruptFinishTimerRef.current = null;
       }
     };
+  }, [status, uploadToken, finishInterrupted, attemptVerifiedResume]);
+
+  // ─── Black-video watchdog ─────────────────────────────────────────
+  // A covered lens or pocketed phone records real (but black) frames with no
+  // mute event to catch it. Sample the preview every few seconds; a sustained
+  // unbroken run of pure black raises a non-blocking warning banner. The
+  // recording continues — dark rooms are legitimate footage, which is also
+  // why the threshold is pure black, not "dim".
+  useEffect(() => {
+    if (status !== 'recording') {
+      setBlackVideoWarning(false);
+      blackRunRef.current = 0;
+      return;
+    }
+    const iv = setInterval(() => {
+      if (document.hidden || cameraInterruptedRef.current || verifyingRef.current) {
+        blackRunRef.current = 0;
+        return;
+      }
+      const luma = sampleVideoLuma(videoRef.current);
+      if (luma == null) return;
+      if (luma <= BLACK_LUMA_THRESHOLD) {
+        blackRunRef.current += 1;
+        if (blackRunRef.current === BLACK_WATCHDOG_TRIGGER_SAMPLES) {
+          setBlackVideoWarning(true);
+          sendTelemetry(uploadToken, { event: 'black_video_warning_shown', engine: 'local', durationAtWarning: durationRef.current });
+        }
+      } else {
+        blackRunRef.current = 0;
+        setBlackVideoWarning(false);
+      }
+    }, BLACK_WATCHDOG_INTERVAL_MS);
+    return () => clearInterval(iv);
   }, [status, uploadToken]);
 
   // Cleanup on unmount.
@@ -542,6 +678,7 @@ export function useSelfServeLocalRecording({
     setRecordingStarted(false);
     setUploadConfirmed(null);
     setUploadProgress(null);
+    setSavedDuration(0);
     setDuration(0);
     durationRef.current = 0;
     warningRef.current = 'none';
@@ -589,7 +726,7 @@ export function useSelfServeLocalRecording({
     cameraInterrupted,
     errorKind,
     permissionPromptShown,
-    savedDuration: 0,
+    savedDuration,
     connectionQuality: ConnectionQuality.Unknown,
     isReconnecting: false,
     uploadConfirmed,
@@ -609,6 +746,7 @@ export function useSelfServeLocalRecording({
     torchAvailable,
     torchOn,
     toggleTorch,
+    blackVideoWarning,
     cleanup
   };
 }

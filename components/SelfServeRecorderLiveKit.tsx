@@ -936,6 +936,10 @@ export function SelfServeRecorderLiveKit({
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-green-400 mt-0.5">4.</span>
+                Turn on Do Not Disturb — a call can cut off the camera
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-400 mt-0.5">5.</span>
                 Max recording time: {formatMaxDuration(maxDuration)}
               </li>
             </ul>
@@ -1127,6 +1131,11 @@ export function SelfServeRecorderLiveKit({
         body: `Your connection dropped while recording — we received the first ${formatDuration(savedDuration)} of the ${formatDuration(duration)} you recorded. That part is saved and processing. Please record the rest of your home before leaving.`,
         primaryLabel: 'Record the rest'
       },
+      capture_interrupted_saved: {
+        title: 'A call interrupted your camera',
+        body: `Don't worry — the first ${formatDuration(savedDuration)} you recorded was saved and is being processed. After a call, the camera often can't restart on its own, so tap below and record the rest of your home from where you left off.`,
+        primaryLabel: 'Record the rest'
+      },
       upload_failed: {
         title: 'Recording couldn\'t be saved',
         body: 'Something went wrong saving your video on our end. Please record again — or record with your camera app and upload the file.',
@@ -1155,7 +1164,9 @@ export function SelfServeRecorderLiveKit({
         primaryLabel: 'Retry upload'
       };
     }
-    const isDisconnectSave = kind === 'disconnected_mid_recording';
+    // Green check styling: the footage was SAVED — the screen is a nudge to
+    // continue, not a failure report.
+    const isDisconnectSave = kind === 'disconnected_mid_recording' || kind === 'capture_interrupted_saved';
 
     return (
       <div
@@ -1544,9 +1555,13 @@ export function SelfServeRecorderLiveKit({
         </div>
       )}
 
-      {/* Camera-interrupted warning — the server is receiving black video
-          (screen was locked, app backgrounded, or the OS took the camera).
-          The hook auto-stops after ~30s if this isn't resolved. */}
+      {/* Camera-interrupted warning. LiveKit engine: the server is receiving
+          black video (screen locked, app backgrounded, OS took the camera)
+          and the hook auto-stops after ~30s. Local engine: recording is
+          PAUSED, and stays paused until the liveness probe confirms the
+          camera actually came back (iOS fires 'unmute' after a call even
+          when the capture pipeline is dead) — a dead comeback finalizes the
+          saved footage onto the "Record the rest" screen. */}
       {cameraInterrupted && isRecording && (
         <div className="absolute inset-0 z-30 bg-black/80 flex flex-col items-center justify-center p-6 text-center">
           <div className="w-16 h-16 bg-yellow-500 rounded-full flex items-center justify-center mb-5">
@@ -1641,6 +1656,17 @@ export function SelfServeRecorderLiveKit({
         <div className="absolute top-14 left-0 right-0 z-20 flex justify-center px-4" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
           <div className="bg-yellow-500/95 text-black px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg">
             Weak connection — video quality may be reduced
+          </div>
+        </div>
+      )}
+
+      {/* Black-video watchdog — the local engine samples the preview and
+          raises this when it's been pure black for ~12s (lens covered,
+          phone pocketed). Non-blocking: dark rooms are legitimate. */}
+      {useLocalEngine && isRecording && !cameraInterrupted && localEngine.blackVideoWarning && (
+        <div className="absolute top-14 left-0 right-0 z-20 flex justify-center px-4" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+          <div className="bg-yellow-500/95 text-black px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg">
+            We can&apos;t see anything — is the camera covered?
           </div>
         </div>
       )}

@@ -791,6 +791,7 @@ export async function GET(request: NextRequest) {
         hasPhone,
         isResync: hasOpportunityId,
         opportunityId: project.metadata?.smartMovingOpportunityId || null,
+        quoteNumber: project.metadata?.smartMovingQuoteNumber || null,
         syncedAt: project.metadata?.smartMovingSyncedAt || null
       }
     });

@@ -220,6 +220,59 @@ export async function stopRecording(roomName: string): Promise<boolean> {
   }
 }
 
+/**
+ * Start a continuation room-composite egress for mid-call "Stop & Process".
+ * Identical output config to the auto-egress attached at room creation
+ * (grid layout, single MP4 to S3) so the two files can later be
+ * concatenated with a stream-copy. Deliberately does NOT touch any
+ * VideoRecording doc — the caller persists the returned ids, and only
+ * stops the main egress after this has succeeded (no-gap guarantee).
+ */
+export async function startContinuationEgress(
+  roomName: string
+): Promise<{ egressId: string; s3Key: string }> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const s3Key = `recordings/${roomName}/${timestamp}-part2.mp4`;
+
+  const s3Upload = new S3Upload({
+    accessKey: process.env.AWS_ACCESS_KEY_ID!,
+    secret: process.env.AWS_SECRET_ACCESS_KEY!,
+    region: process.env.AWS_REGION!,
+    bucket: process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME!,
+    forcePathStyle: false,
+  });
+
+  const fileOutput = new EncodedFileOutput({
+    fileType: EncodedFileType.MP4,
+    filepath: s3Key,
+    output: {
+      case: 's3',
+      value: s3Upload
+    }
+  });
+
+  const egress = await egressClient.startRoomCompositeEgress(
+    roomName,
+    fileOutput,
+    {
+      layout: 'grid',
+      audioOnly: false,
+      videoOnly: false,
+    }
+  );
+
+  console.log(`✅ Continuation egress started for room ${roomName}: ${egress.egressId} → ${s3Key}`);
+  return { egressId: egress.egressId, s3Key };
+}
+
+/**
+ * Stop a specific egress by id (used by mid-call Stop & Process, where the
+ * room-level stopRecording() lookup semantics don't apply).
+ */
+export async function stopEgressById(egressId: string): Promise<void> {
+  await egressClient.stopEgress(egressId);
+}
+
 export async function getRecordingStatus(roomName: string): Promise<RecordingState[string] | null> {
   return activeRecordings[roomName] || null;
 }

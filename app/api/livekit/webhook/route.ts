@@ -296,6 +296,19 @@ async function handleEgressStarted(event: WebhookEvent) {
     date: new Date(startedAtMs)
   });
 
+  // Check if this is a mid-call "Stop & Process" continuation egress
+  const continuationStartedRecording = await VideoRecording.findOne({
+    continuationEgressId: egressId
+  });
+
+  if (continuationStartedRecording) {
+    console.log(`🎬 Continuation egress started: ${egressId} (room ${roomName})`);
+    await VideoRecording.findByIdAndUpdate(continuationStartedRecording._id, {
+      continuationStatus: 'recording'
+    });
+    return;
+  }
+
   // Check if this is a customer egress (by matching customerEgressId)
   const customerEgressRecording = await VideoRecording.findOne({
     roomId: roomName,
@@ -390,6 +403,20 @@ async function handleEgressEnded(event: WebhookEvent) {
 
   const VideoRecording = (await import('@/models/VideoRecording')).default;
 
+  // Check if this is a mid-call "Stop & Process" continuation egress. This
+  // MUST run before the room-composite branch: the roomId fallback lookups
+  // there would match the main recording and overwrite its s3Key with the
+  // continuation (part2) key.
+  const continuationRecording = await VideoRecording.findOne({
+    continuationEgressId: egressId
+  });
+
+  if (continuationRecording) {
+    console.log(`🎬 Continuation egress ended: ${egressId}`);
+    await handleContinuationEgressEnded(event, continuationRecording);
+    return;
+  }
+
   // Check if this is a customer egress (by matching customerEgressId)
   const customerEgressRecording = await VideoRecording.findOne({
     customerEgressId: egressId
@@ -445,12 +472,17 @@ async function handleEgressEnded(event: WebhookEvent) {
 
   // Mark the scheduled call (if any) as completed — the egress is the canonical
   // call-ended signal under Auto Egress, since participant_left no longer stops
-  // the recording.
-  const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
-  await ScheduledVideoCall.findOneAndUpdate(
-    { roomId: roomName, status: 'started' },
-    { status: 'completed', completedAt: new Date() }
-  );
+  // the recording. EXCEPTION: mid-call "Stop & Process" stops this egress while
+  // the call is still live; the continuation egress's end is the real call end.
+  if (!existingRecording.midCallProcessedAt) {
+    const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
+    await ScheduledVideoCall.findOneAndUpdate(
+      { roomId: roomName, status: 'started' },
+      { status: 'completed', completedAt: new Date() }
+    );
+  } else {
+    console.log(`🎬 Mid-call processed recording — call stays live, skipping ScheduledVideoCall completion`);
+  }
 
   // Convert nanosecond timestamps to milliseconds
   const endedAtMs = event.egressInfo.endedAt
@@ -632,6 +664,139 @@ async function handleEgressEnded(event: WebhookEvent) {
         }
       }
     }
+
+    // Mid-call Stop & Process: if the continuation egress already finished
+    // (rep ended the call moments after processing started, and the two
+    // egress_ended webhooks raced), queue the concat now — the atomic claim
+    // inside queueConcatIfReady makes this safe against the continuation
+    // webhook doing the same.
+    if (updateResult.midCallProcessedAt) {
+      await queueConcatIfReady(updateResult._id.toString());
+    }
+  }
+}
+
+// Mid-call "Stop & Process": the continuation egress recorded the remainder of
+// the call after the walkthrough was sent for analysis. Its end is the TRUE
+// call end — do the bookkeeping the mid-call finalize deliberately skipped,
+// then queue the concat job (never analysis) so the stored video becomes the
+// full call.
+async function handleContinuationEgressEnded(event: WebhookEvent, recording: any) {
+  const roomName = event.egressInfo!.roomName;
+
+  const ScheduledVideoCall = (await import('@/models/ScheduledVideoCall')).default;
+  await ScheduledVideoCall.findOneAndUpdate(
+    { roomId: roomName, status: 'started' },
+    { status: 'completed', completedAt: new Date() }
+  );
+
+  // Catch notes taken during the review portion — the walkthrough finalize
+  // already migrated earlier ones; this only touches stragglers.
+  const InventoryNote = (await import('@/models/InventoryNote')).default;
+  await InventoryNote.updateMany(
+    {
+      attachedToRoomId: recording.roomId,
+      attachedToVideoRecording: { $exists: false }
+    },
+    {
+      $set: { attachedToVideoRecording: recording._id.toString() },
+      $unset: { attachedToRoomId: "" }
+    }
+  );
+
+  const VideoRecording = (await import('@/models/VideoRecording')).default;
+
+  if (event.egressInfo!.status !== 3) { // 3 = EgressStatus.EGRESS_COMPLETE
+    console.error(`❌ Continuation egress failed for room ${roomName}: ${event.egressInfo!.error || `status ${event.egressInfo!.status}`} — keeping the analyzed walkthrough video as-is`);
+    await VideoRecording.findByIdAndUpdate(recording._id, {
+      continuationStatus: 'failed',
+      'metadata.continuationError': event.egressInfo!.error || `egress status ${event.egressInfo!.status}`
+    });
+    return;
+  }
+
+  const update: any = { continuationStatus: 'completed' };
+  const fileResult = event.egressInfo!.fileResults?.[0];
+  if (fileResult) {
+    let s3Key = fileResult.location;
+    if (s3Key.startsWith('s3://')) {
+      s3Key = s3Key.replace(/^s3:\/\/[^\/]+\//, '');
+    } else if (s3Key.includes('.s3.amazonaws.com/') || s3Key.includes('.s3.us-east-1.amazonaws.com/')) {
+      s3Key = s3Key.replace(/^https?:\/\/[^\/]+\//, '');
+    }
+    if (s3Key && !s3Key.includes('://') && s3Key.endsWith('.mp4')) {
+      update.continuationS3Key = s3Key;
+    }
+    update['metadata.continuationFileSize'] = parseInt(fileResult.size);
+    update['metadata.continuationDuration'] = calculateDuration(fileResult.startedAt, fileResult.endedAt);
+  }
+
+  await VideoRecording.findByIdAndUpdate(recording._id, update);
+  console.log(`✅ Continuation egress completed for room ${roomName}`);
+
+  await queueConcatIfReady(recording._id.toString());
+}
+
+// Queue the concat-videos job exactly once. The main-egress and
+// continuation-egress webhooks can race (rep hits End Call right after
+// "Process inventory") — the atomic claim on metadata.concatQueued means
+// whichever fires second actually queues.
+async function queueConcatIfReady(recordingId: string) {
+  const VideoRecording = (await import('@/models/VideoRecording')).default;
+
+  const claimed = await VideoRecording.findOneAndUpdate(
+    {
+      _id: recordingId,
+      status: 'completed',
+      continuationStatus: 'completed',
+      continuationS3Key: { $exists: true, $ne: null },
+      'metadata.concatQueued': { $ne: true }
+    },
+    { $set: { 'metadata.concatQueued': true } },
+    { new: true }
+  );
+
+  if (!claimed) return; // other side not finished yet, or already queued
+
+  if (!claimed.s3Key || claimed.s3Key.includes('/pending.mp4')) {
+    console.error(`❌ Concat not queued for ${recordingId}: main s3Key invalid (${claimed.s3Key})`);
+    return;
+  }
+
+  // Stitching runs on the dedicated stitch worker so it never competes with
+  // Gemini analysis; fall back to the call queue (whose worker retains the
+  // concat handler) until the stitch queue is provisioned.
+  const queueUrl = process.env.AWS_SQS_STITCH_QUEUE_URL || process.env.AWS_SQS_CALL_QUEUE_URL;
+  if (!queueUrl) {
+    console.warn('⚠️ No SQS queue configured — skipping continuation concat');
+    return;
+  }
+
+  const AWS = (await import('aws-sdk')).default;
+  const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
+  const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
+
+  try {
+    await sqs.sendMessage({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify({
+        type: 'concat-videos',
+        videoRecordingId: claimed._id.toString(),
+        part1Key: claimed.s3Key,
+        part2Key: claimed.continuationS3Key,
+        s3Bucket: bucket,
+        roomName: claimed.roomId
+      })
+    }).promise();
+    console.log(`✅ Queued concat-videos for recording ${claimed._id}`);
+  } catch (err) {
+    console.error('❌ Failed to queue concat-videos:', err);
+    // Release the claim; continuationStatus stays 'completed' so the sweeper
+    // can move it to a terminal state later. Video remains the analyzed
+    // walkthrough — no loss.
+    await VideoRecording.findByIdAndUpdate(recordingId, {
+      $set: { 'metadata.concatQueued': false }
+    });
   }
 }
 

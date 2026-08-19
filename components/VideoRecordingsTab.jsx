@@ -41,6 +41,7 @@ import VideoRecordingModal from './VideoRecordingModal';
 import { useMediaNavigation, useMediaNavigationFor } from '@/components/inventory/ProjectMediaNavigation';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { getMidCallState, getWalkthroughDuration, getContinuationDuration } from '@/lib/midCallState';
 
 const VideoRecordingsTab = ({
   projectId,
@@ -248,10 +249,13 @@ const VideoRecordingsTab = ({
 
   // Auto-refresh effect for processing recordings
   useEffect(() => {
-    // Check if we have any processing recordings (including analysis in progress)
+    // Check if we have any processing recordings (including analysis in
+    // progress, and mid-call continuations that are recording or being
+    // stitched — those rows keep updating until 'concatenated')
     const hasProcessing = recordings.some(r =>
       r.status === 'starting' || r.status === 'recording' || r.status === 'processing' ||
-      r.analysisResult?.status === 'processing' || r.analysisResult?.status === 'queued'
+      r.analysisResult?.status === 'processing' || r.analysisResult?.status === 'queued' ||
+      ['starting', 'recording', 'completed', 'concatenating'].includes(r.continuationStatus)
     );
     
     if (!hasProcessing || !projectId) {
@@ -475,6 +479,38 @@ const VideoRecordingsTab = ({
   };
 
   // Determine display status based on recording and analysis state
+  // Mid-call "Stop & Process" affordances (one row per call; states derived
+  // in lib/midCallState). Live chip = the call is still happening.
+  const LiveChip = () => (
+    <Badge className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 border-emerald-200 inline-flex items-center gap-1.5 flex-shrink-0">
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+      Live
+    </Badge>
+  );
+
+  // Mini split-bar echoing the modal's segment bar: green = walkthrough
+  // (exists), striped = the rest of the call (recording / being stitched).
+  const MidCallSplitBar = ({ recording }) => {
+    const state = getMidCallState(recording);
+    if (!['live_analyzing', 'live_ready', 'finalizing'].includes(state)) return null;
+    const wt = getWalkthroughDuration(recording);
+    const cont = getContinuationDuration(recording);
+    const flexA = wt && cont ? wt : 3;
+    const flexB = wt && cont ? cont : 2;
+    return (
+      <div
+        className="hidden sm:flex h-1.5 rounded-full overflow-hidden w-28 flex-shrink-0"
+        title="Green: walkthrough (watchable) · Striped: rest of the call"
+      >
+        <div className="bg-emerald-500" style={{ flex: flexA }} />
+        <div
+          className="animate-pulse bg-[repeating-linear-gradient(-45deg,#94a3b8_0,#94a3b8_4px,#7c8aa0_4px,#7c8aa0_8px)]"
+          style={{ flex: flexB }}
+        />
+      </div>
+    );
+  };
+
   const getDisplayStatus = (recording) => {
     // Recording still in progress (egress running)
     if (['waiting', 'starting', 'recording'].includes(recording.status)) {
@@ -725,21 +761,45 @@ const VideoRecordingsTab = ({
                       {formatMeetingName(recording.participants)}
                     </h3>
                     {(() => {
+                      const midCallState = getMidCallState(recording);
+                      const isLiveCall =
+                        midCallState === 'live_analyzing' ||
+                        midCallState === 'live_ready' ||
+                        ['starting', 'recording'].includes(recording.status);
                       const displayStatus = getDisplayStatus(recording);
-                      // Show badge for non-completed status OR analysis_failed
-                      if (displayStatus !== 'completed') {
-                        return (
-                          <span className="flex-shrink-0">
-                            {getStatusBadge(displayStatus)}
-                          </span>
-                        );
-                      }
-                      return null;
+
+                      return (
+                        <>
+                          {isLiveCall && <LiveChip />}
+                          {midCallState === 'live_analyzing' ? (
+                            <Badge className="text-xs px-2 py-0.5 bg-amber-50 text-amber-800 border-amber-200 inline-flex items-center gap-1 flex-shrink-0 animate-pulse">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Analyzing walkthrough…
+                            </Badge>
+                          ) : midCallState === 'finalizing' ? (
+                            <Badge className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 border-gray-200 inline-flex items-center gap-1 flex-shrink-0">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Finalizing full video…
+                            </Badge>
+                          ) : displayStatus !== 'completed' &&
+                            !(isLiveCall && ['starting', 'recording'].includes(displayStatus)) ? (
+                            // Live rows show the Live chip instead of a raw
+                            // Recording/Starting badge; everything else keeps
+                            // today's badges.
+                            <span className="flex-shrink-0">
+                              {getStatusBadge(displayStatus)}
+                            </span>
+                          ) : null}
+                        </>
+                      );
                     })()}
                   </div>
 
-                  {/* Analysis Status Badge - only show if actively processing/queued (not failed) */}
-                  {(recording.analysisResult?.status === 'processing' || recording.analysisResult?.status === 'queued') &&
+                  {/* Analysis Status Badge - only show if actively processing/queued (not failed).
+                      Suppressed for live mid-call rows — they show the amber
+                      "Analyzing walkthrough…" badge next to the title instead. */}
+                  {!['live_analyzing', 'live_ready'].includes(getMidCallState(recording)) &&
+                   (recording.analysisResult?.status === 'processing' || recording.analysisResult?.status === 'queued') &&
                    getDisplayStatus(recording) !== 'analysis_failed' && (
                     <div className="flex gap-1 mt-1">
                       <Badge variant="secondary" className="text-xs px-1.5 py-0.5 animate-pulse">
@@ -788,6 +848,9 @@ const VideoRecordingsTab = ({
               </div>
 
               <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                {/* Mid-call split-bar: walkthrough vs rest-of-call at a glance */}
+                <MidCallSplitBar recording={recording} />
+
                 {/* Relative Date */}
                 <span className="text-sm text-gray-500 whitespace-nowrap">
                   {formatRelativeDate(recording.startedAt || recording.createdAt)}

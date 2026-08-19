@@ -2495,6 +2495,9 @@ useEffect(() => {
     // Check sync status first
     const statusResponse = await fetch(`/api/smartmoving/sync-from-lead?projectId=${currentProject._id}`);
     const statusData = await statusResponse.json();
+    if (statusData.success) {
+      setSmartMovingSyncStatus(statusData.status);
+    }
 
     // Check for phone if this is a new sync (no existing opportunity from webhook)
     if (!statusData.status?.hasOpportunityId && !statusData.status?.hasPhone) {
@@ -5723,6 +5726,8 @@ const ProcessingNotification = () => {
   onReset={handleSmartMovingSyncReset}
   inventoryStats={computedInventoryStats}
   isResync={!!smartMovingSyncStatus?.syncedAt}
+  isLinked={!!smartMovingSyncStatus?.hasOpportunityId}
+  linkedQuoteNumber={smartMovingSyncStatus?.quoteNumber}
 />
 
 {/* Chariot Sync Modal */}

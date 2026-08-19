@@ -81,6 +81,12 @@ export default function VideoCallPage() {
   // tries to acquire the same device.
   const [readyForLive, setReadyForLive] = useState(false);
 
+  // Leave/End Call: instant full-screen feedback + single-flight so repeated
+  // clicks (or the disconnect event firing alongside a button press) can't
+  // stack; navigation is never held hostage by slow fetches.
+  const [isEndingCall, setIsEndingCall] = useState(false);
+  const endingCallRef = useRef(false);
+
   const presenceRef = useRef<PresenceState>(DEFAULT_PRESENCE);
   presenceRef.current = presence;
 
@@ -280,36 +286,51 @@ export default function VideoCallPage() {
   };
 
   const handleCallEnd = async () => {
+    // Single-flight: the disconnect event and repeated Leave clicks all
+    // funnel here — only the first one does the work.
+    if (endingCallRef.current) return;
+    endingCallRef.current = true;
+    setIsEndingCall(true);
+
     const participantName = getParticipantName();
 
-    // Agent hitting End Call ends the meeting for everyone: delete the room,
-    // which forces all participants to disconnect and triggers Auto Egress to
-    // finalize the recording to S3 immediately. Customer's End Call just
-    // disconnects them; the room stays open in case the agent needs another
-    // moment to wrap up notes.
-    if (isAgent) {
-      try {
-        await fetch(`/api/calls/${roomId}/end`, { method: 'POST' });
-      } catch (endError) {
-        console.warn('Failed to call /end endpoint:', endError);
-      }
-    }
-
+    // Activity log is fire-and-forget (keepalive survives the navigation).
     try {
       const callEndTime = new Date();
       const duration = Math.round((callEndTime.getTime() - callStartTime.getTime()) / 1000);
-      await fetch(`/api/projects/${projectId}/log-video-call`, {
+      fetch(`/api/projects/${projectId}/log-video-call`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
         body: JSON.stringify({
           roomId,
           duration,
           participantCount: isAgent ? 2 : 1,
           userName: participantName,
         }),
-      });
+      }).catch((logError) => console.warn('Failed to log video call activity:', logError));
     } catch (logError) {
       console.warn('Failed to log video call activity:', logError);
+    }
+
+    // Agent hitting End Call ends the meeting for everyone: delete the room,
+    // which forces all participants to disconnect and triggers Auto Egress to
+    // finalize the recording to S3 immediately. Customer's End Call just
+    // disconnects them; the room stays open in case the agent needs another
+    // moment to wrap up notes.
+    //
+    // Wait for /end, but never hold the UI hostage: cap the wait at 4s —
+    // keepalive keeps the request alive through the route change if we
+    // navigate before it completes.
+    if (isAgent) {
+      try {
+        await Promise.race([
+          fetch(`/api/calls/${roomId}/end`, { method: 'POST', keepalive: true }),
+          new Promise((resolve) => setTimeout(resolve, 4000)),
+        ]);
+      } catch (endError) {
+        console.warn('Failed to call /end endpoint:', endError);
+      }
     }
 
     if (isAgent && userId) {
@@ -318,6 +339,19 @@ export default function VideoCallPage() {
       router.push('/call-complete');
     }
   };
+
+  // Instant feedback the moment Leave/End Call is pressed — replaces the call
+  // UI immediately so a slow /end request can't make the button feel dead.
+  if (isEndingCall) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-white" />
+          <p className="text-white/70">Ending the call…</p>
+        </div>
+      </div>
+    );
+  }
 
   // Loading state
   if ((!isLoaded && isAgent) || isValidating) {

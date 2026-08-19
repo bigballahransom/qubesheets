@@ -77,6 +77,7 @@ export type RecordingErrorKind =
   | 'camera_not_found'           // no usable camera on the device
   | 'disconnected_mid_recording' // network died while recording; partial footage was saved
   | 'partial_capture'            // stop looked normal, but the server's file is much shorter than the time the user recorded
+  | 'capture_interrupted_saved'  // a call took the camera and it came back dead (or never came back); footage up to the interruption was saved (local engine)
   | 'upload_failed'              // egress ended but the server never confirmed a saved file
   | 'unsupported_browser'        // in-app webview / no WebRTC
   | 'generic';

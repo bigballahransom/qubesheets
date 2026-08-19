@@ -41,6 +41,15 @@ export interface IVideoRecording extends Document {
     videoCodec?: string;
     [key: string]: any;
   };
+  // Mid-call "Stop & Process": the walkthrough egress was stopped and sent for
+  // analysis while the call continued on a fresh continuation egress. The
+  // continuation is concatenated onto this recording at call end — never analyzed.
+  midCallProcessedAt?: Date;
+  continuationEgressId?: string;
+  continuationS3Key?: string;
+  continuationStatus?: 'starting' | 'recording' | 'completed' | 'failed' | 'concatenating' | 'concatenated' | 'concat_failed';
+  // Original walkthrough-only s3Key, preserved when concat repoints s3Key
+  preConcatS3Key?: string;
   // Customer-only egress for analysis
   customerEgressId?: string;
   customerEgressStatus?: 'starting' | 'recording' | 'completed' | 'failed';
@@ -224,6 +233,25 @@ const VideoRecordingSchema: Schema = new Schema(
       audioCodec: { type: String },
       videoCodec: { type: String },
       type: mongoose.Schema.Types.Mixed
+    },
+    // Mid-call "Stop & Process" continuation egress (see interface comment)
+    midCallProcessedAt: {
+      type: Date
+    },
+    continuationEgressId: {
+      type: String,
+      sparse: true,
+      index: true
+    },
+    continuationS3Key: {
+      type: String
+    },
+    continuationStatus: {
+      type: String,
+      enum: ['starting', 'recording', 'completed', 'failed', 'concatenating', 'concatenated', 'concat_failed']
+    },
+    preConcatS3Key: {
+      type: String
     },
     // Customer-only egress for analysis
     customerEgressId: {

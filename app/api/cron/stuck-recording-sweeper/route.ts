@@ -114,11 +114,29 @@ export async function GET(request: NextRequest) {
       }
     );
 
+    // Rule D — mid-call "Stop & Process" continuation never reached a terminal
+    // state (egress_ended lost, concat message lost, or worker died mid-concat).
+    // Move to 'concat_failed' — s3Key is untouched, so the stored video remains
+    // the analyzed walkthrough. Part2 stays in S3 for manual recovery.
+    const ruleD = await VideoRecording.updateMany(
+      {
+        continuationStatus: { $in: ['starting', 'recording', 'completed', 'concatenating'] },
+        updatedAt: { $lt: staleAnalysis }
+      },
+      {
+        $set: {
+          continuationStatus: 'concat_failed',
+          'metadata.concatError': 'Continuation never reached a terminal state — swept'
+        }
+      }
+    );
+
     const summary = {
       analysisTimedOut: ruleA.modifiedCount,
       lifecycleHealedToCompleted: ruleBCompleted,
       lifecycleFailedNoFile: ruleBFailed,
-      neverCompleted: ruleC.modifiedCount
+      neverCompleted: ruleC.modifiedCount,
+      continuationSwept: ruleD.modifiedCount
     };
     if (Object.values(summary).some((n) => n > 0)) {
       console.log('🧹 stuck-recording-sweeper:', summary);

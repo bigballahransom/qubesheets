@@ -67,7 +67,23 @@ import FrameProcessor from './FrameProcessor';
 import TranscriptDisplay from './TranscriptDisplay';
 import Logo from '../../public/logo';
 import { Button } from '../ui/button';
+import { buildBackgroundConfig } from '../../lib/backgroundProcessor';
+import { useMediaRecovery } from '../../lib/hooks/useMicRecovery';
 // Client-side recording removed - using LiveKit Egress (server-side) recording
+
+// Remount GridLayout whenever tile membership changes (participant
+// joins/leaves, or a camera placeholder swaps for a real track). Works around
+// a known @livekit/components-react bug where GridLayout's pagination keeps
+// last render's tile list and throws "Element not part of the array" when an
+// old tile is no longer present.
+const gridMembershipKey = (tracks) =>
+  tracks
+    .map((t) =>
+      t.publication?.trackSid
+        ? `${t.participant?.identity}_${t.source}_${t.publication.trackSid}`
+        : `${t.participant?.identity}_${t.source}_placeholder`
+    )
+    .join('|');
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 import VideoCallNotes from '../VideoCallNotes';
 import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimizedRoomOptions } from '@/lib/webrtc-compatibility';
@@ -76,15 +92,20 @@ import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimi
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
 const darkGlassStyle = "backdrop-blur-xl bg-black/20 border border-white/10 shadow-2xl";
 
-// Component to apply background effects to local video track
+// FALLBACK path for applying background effects. The primary path attaches
+// the processor at track creation via roomOptions.videoCaptureDefaults
+// (see pendingProcessor in VideoCallInventory) so no raw frame is ever
+// published. This component only attaches a processor if the published track
+// somehow has none (e.g. the pre-build timed out).
 const BackgroundApplier = React.memo(({ backgroundSettings }) => {
   const { localParticipant } = useLocalParticipant();
   const processorRef = useRef(null);
   const [isApplied, setIsApplied] = useState(false);
 
   useEffect(() => {
-    if (!backgroundSettings || backgroundSettings.mode === 'none') return;
     if (!localParticipant) return;
+    const processorConfig = buildBackgroundConfig(backgroundSettings);
+    if (!processorConfig) return;
 
     let cancelled = false;
     let retryCount = 0;
@@ -106,23 +127,13 @@ const BackgroundApplier = React.memo(({ backgroundSettings }) => {
           const videoTrack = localParticipant.getTrackPublication(Track.Source.Camera)?.track;
 
           if (videoTrack && videoTrack instanceof LocalVideoTrack) {
-            // Track is ready - apply processor
-            let processorConfig;
-            if (backgroundSettings.mode === 'blur') {
-              processorConfig = {
-                mode: 'background-blur',
-                blurRadius: backgroundSettings.blurRadius || 10
-              };
-            } else if (backgroundSettings.mode === 'virtual' && backgroundSettings.imageUrl) {
-              processorConfig = {
-                mode: 'virtual-background',
-                imagePath: backgroundSettings.imageUrl
-              };
-            } else {
+            if (videoTrack.getProcessor()) {
+              // Already processed at creation via videoCaptureDefaults —
+              // nothing to do.
+              setIsApplied(true);
               return;
             }
-
-            console.log('Applying background to call:', processorConfig);
+            console.log('Applying background to call (fallback path):', processorConfig);
             processorRef.current = BackgroundProcessor(processorConfig);
             await videoTrack.setProcessor(processorRef.current);
             setIsApplied(true);
@@ -151,6 +162,24 @@ const BackgroundApplier = React.memo(({ backgroundSettings }) => {
 
   return null;
 });
+
+// Tap-to-reconnect pill shown when automatic media recovery needs a user
+// gesture (iOS requires one for a fresh getUserMedia after the OS seized the
+// mic/camera during a phone-call interruption).
+const MediaRecoveryBanner = ({ visible, label, onRecover }) => {
+  if (!visible) return null;
+  return (
+    <div className="absolute top-safe-or-4 left-1/2 -translate-x-1/2 z-50">
+      <button
+        onClick={onRecover}
+        className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-red-500 hover:bg-red-600 text-white text-sm font-semibold shadow-2xl transition-all duration-200 active:scale-95 animate-pulse"
+      >
+        {label === 'Microphone' ? <MicOff className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+        {label || 'Media'} disconnected — tap to reconnect
+      </button>
+    </div>
+  );
+};
 
 // Hook for manual recording control (agent only)
 function useRecordingControl(projectId, roomId) {
@@ -586,6 +615,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
     (p) => !p.identity?.startsWith('EG_')
   );
   const connectionState = useConnectionState();
+  const { needsManualRecovery: mediaNeedsRecovery, failedLabel: mediaFailedLabel, recover: recoverMedia } = useMediaRecovery();
 
   // Custom control states
   const [isMicEnabled, setIsMicEnabled] = useState(true);
@@ -792,7 +822,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
 
   // Render the video call interface for small screens
   return (
-    <div 
+    <div
       className={`h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex flex-col relative overflow-hidden ${isAndroid ? 'android-video-fix' : ''}`}
       style={{
         ...(isAndroid && {
@@ -802,6 +832,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
         })
       }}
     >
+      <MediaRecoveryBanner visible={mediaNeedsRecovery} label={mediaFailedLabel} onRecover={recoverMedia} />
       {/* Recording Indicator - Hidden
       <RecordingIndicator 
         recordingStatus={recordingStatus.recordingStatus}
@@ -866,6 +897,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
           // Desktop: use GridLayout for side-by-side view
           <>
             <GridLayout
+              key={gridMembershipKey(tracks)}
               tracks={tracks}
               style={{ height: '100%', width: '100%' }}
             >
@@ -1030,6 +1062,7 @@ const AgentView = React.memo(({
   // Get participant identity for audio processor
   const { localParticipant } = useLocalParticipant();
   const participantIdentity = localParticipant?.identity || '';
+  const { needsManualRecovery: mediaNeedsRecovery, failedLabel: mediaFailedLabel, recover: recoverMedia } = useMediaRecovery();
 
   // Handler for when a new transcript segment is received
   const handleTranscriptReceived = useCallback((segment) => {
@@ -1083,6 +1116,142 @@ const AgentView = React.memo(({
       onCallEnd();
     }
   }, [onCallEnd]);
+
+  // Mid-call "Stop & Process": one-shot button that stops the walkthrough
+  // recording and sends it for AI analysis while the call stays live. The
+  // rest of the call keeps recording (appended to the video at call end).
+  const [processState, setProcessState] = useState('idle'); // idle | confirming | starting | processing | done | failed
+  const [processRecordingId, setProcessRecordingId] = useState(null);
+  const [processedItemCount, setProcessedItemCount] = useState(0);
+
+  const startInventoryProcessing = useCallback(async () => {
+    setProcessState('starting');
+    try {
+      const response = await fetch(`/api/calls/${roomId}/process-inventory`, { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || 'Could not start processing');
+      }
+      if (data.warning) toast.warning(data.warning);
+      setProcessRecordingId(data.recordingId);
+      setProcessState('processing');
+      toast.success('Walkthrough sent for analysis — the call keeps recording');
+    } catch (error) {
+      console.error('Failed to start inventory processing:', error);
+      toast.error(error.message || 'Could not start processing — the call is still being recorded');
+      setProcessState('idle');
+    }
+  }, [roomId]);
+
+  // Poll analysis status while processing
+  useEffect(() => {
+    if (processState !== 'processing' || !processRecordingId || !projectId) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/video-recordings/${processRecordingId}`);
+        if (!response.ok) return;
+        const recording = await response.json();
+        if (cancelled) return;
+        const status = recording?.analysisResult?.status;
+        if (status === 'completed') {
+          setProcessedItemCount(recording.analysisResult?.itemsCount || 0);
+          setProcessState('done');
+        } else if (status === 'failed') {
+          setProcessState('failed');
+        }
+      } catch (e) {
+        // transient poll error — keep polling
+      }
+    };
+    const interval = setInterval(check, 5000);
+    check();
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [processState, processRecordingId, projectId]);
+
+  const renderProcessStatusChip = (dark) => {
+    if (processState === 'starting' || processState === 'processing') {
+      return dark ? (
+        <div className={`px-4 py-2 rounded-2xl ${glassStyle} flex items-center gap-2 bg-amber-500/20 border-amber-400/50`}>
+          <Loader2 className="w-4 h-4 text-white animate-spin" />
+          <span className="text-white text-sm font-bold">ANALYZING…</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm font-medium">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Analyzing walkthrough…
+        </div>
+      );
+    }
+    if (processState === 'done') {
+      // Success + jump-off to review the inventory. Opens in a new tab so the
+      // agent never leaves the live call.
+      const openProject = () => window.open(`/projects/${projectId}`, '_blank', 'noopener');
+      return dark ? (
+        <button
+          onClick={openProject}
+          className={`px-4 py-2 rounded-2xl ${glassStyle} flex items-center gap-2 bg-green-500/20 border-green-400/50 transition-all duration-200 active:scale-95 hover:bg-green-500/30`}
+        >
+          <CheckCircle className="w-4 h-4 text-white" />
+          <span className="text-white text-sm font-bold">INVENTORY READY</span>
+          <span className="text-white/90 text-sm font-bold flex items-center gap-1">
+            · OPEN PROJECT <ArrowRight className="w-3.5 h-3.5" />
+          </span>
+        </button>
+      ) : (
+        <button
+          onClick={openProject}
+          className="flex items-center gap-2 px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded-lg text-white text-sm font-medium transition-colors"
+        >
+          <CheckCircle className="w-4 h-4" />
+          Inventory ready
+          <span className="flex items-center gap-1 font-semibold">
+            · Open project <ArrowRight className="w-3.5 h-3.5" />
+          </span>
+        </button>
+      );
+    }
+    if (processState === 'failed') {
+      return dark ? (
+        <div className={`px-4 py-2 rounded-2xl ${glassStyle} flex items-center gap-2 bg-red-500/20 border-red-400/50`}>
+          <AlertCircle className="w-4 h-4 text-white" />
+          <span className="text-white text-sm font-bold">ANALYSIS FAILED</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm font-medium">
+          <AlertCircle className="w-4 h-4" />
+          Analysis failed — reprocess after the call
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const processConfirmDialog = processState === 'confirming' && (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">Process inventory now?</h3>
+        <p className="text-sm text-gray-600 mb-5">
+          This ends the walkthrough capture and starts AI analysis while you stay on the call.
+          The rest of the call keeps recording and is added to the video afterward.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={() => setProcessState('idle')}
+            className="px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-100 font-medium transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={startInventoryProcessing}
+            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-colors"
+          >
+            Process now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   // Recording is now automatic - starts when both join, stops when either leaves
   // No manual recording control needed
@@ -1175,9 +1344,11 @@ const AgentView = React.memo(({
   if (isSmallScreen) {
     return (
       <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900 relative overflow-hidden">
+        <MediaRecoveryBanner visible={mediaNeedsRecovery} label={mediaFailedLabel} onRecover={recoverMedia} />
         {/* Video area - Full screen */}
         <div className="absolute inset-0 z-10">
-          <GridLayout 
+          <GridLayout
+            key={gridMembershipKey(tracks)}
             tracks={tracks}
             style={{ height: '100%', width: '100%' }}
           >
@@ -1205,6 +1376,8 @@ const AgentView = React.memo(({
                   </span>
                 </div>
               )}
+
+              {renderProcessStatusChip(true)}
             </div>
 
           </div>
@@ -1213,6 +1386,17 @@ const AgentView = React.memo(({
         {/* Floating Action Buttons - Right Side */}
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
+
+            {/* Mid-call Stop & Process trigger (one-shot) */}
+            {processState === 'idle' && (
+              <button
+                onClick={() => setProcessState('confirming')}
+                title="Process inventory now"
+                className={`relative p-4 rounded-2xl ${glassStyle} bg-emerald-600/30 border-emerald-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95`}
+              >
+                <Sparkles size={24} />
+              </button>
+            )}
 
             {/* Notes Toggle */}
             <button
@@ -1223,6 +1407,8 @@ const AgentView = React.memo(({
             </button>
           </div>
         )}
+
+        {processConfirmDialog}
 
         {/* Custom Mobile Controls - Same as Customer View */}
         <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
@@ -1382,7 +1568,8 @@ const AgentView = React.memo(({
 
   // Desktop view - Compact layout with controls
   return (
-    <div className="h-full flex flex-col bg-gray-50 overflow-hidden">
+    <div className="h-full flex flex-col bg-gray-50 overflow-hidden relative">
+      <MediaRecoveryBanner visible={mediaNeedsRecovery} label={mediaFailedLabel} onRecover={recoverMedia} />
       {/* Recording Indicator - Hidden
       <RecordingIndicator 
         recordingStatus={recordingStatus.recordingStatus}
@@ -1403,15 +1590,28 @@ const AgentView = React.memo(({
           </div>
           
           <div className="flex items-center gap-3">
+            {/* Mid-call Stop & Process (one-shot) */}
+            {processState === 'idle' && (
+              <button
+                onClick={() => setProcessState('confirming')}
+                title="Stop the walkthrough and analyze inventory now — the call keeps recording"
+                className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors"
+              >
+                <Sparkles size={16} />
+                Process inventory
+              </button>
+            )}
+            {renderProcessStatusChip(false)}
+
             {/* Room selector */}
             {isInventoryActive && (
-              <RoomSelector 
-                currentRoom={currentRoom} 
+              <RoomSelector
+                currentRoom={currentRoom}
                 onChange={setCurrentRoom}
                 isSmallScreen={false}
               />
             )}
-            
+
             {/* Inventory toggle */}
             <button
               onClick={toggleSidebar}
@@ -1436,10 +1636,11 @@ const AgentView = React.memo(({
           {/* Video Grid */}
           <div className="flex-1 flex items-center justify-center p-4 min-h-0">
             <div className="w-full h-full flex items-center justify-center">
-              <GridLayout 
+              <GridLayout
+                key={gridMembershipKey(tracks)}
                 tracks={tracks}
-                style={{ 
-                  height: '100%', 
+                style={{
+                  height: '100%',
                   width: '100%',
                   backgroundColor: 'transparent',
                   display: 'flex',
@@ -1518,6 +1719,7 @@ const AgentView = React.memo(({
         */}
 
         {/* Enhanced Inventory Sidebar */}
+      {processConfirmDialog}
       <RoomAudioRenderer />
     </div>
   );
@@ -1741,36 +1943,58 @@ export default function VideoCallInventory({
     };
   }, []);
 
-  // Fetch LiveKit token on mount
+  // Fetch LiveKit token on mount. Each attempt is capped at 10s — a request
+  // that hangs (e.g. dev server mid-compile, flaky mobile network) used to
+  // leave this screen on the "Connecting…" loader forever because a
+  // never-resolving fetch neither succeeds nor throws. Retries twice with
+  // backoff; on final failure token stays empty → the Connection Failed
+  // screen with its Retry button renders.
   useEffect(() => {
+    let cancelled = false;
+
     const fetchToken = async () => {
-      try {
-        const response = await fetch('/api/livekit/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            roomName: roomId,
-            participantName,
-            isAgent: isAgentUser,  // Pass explicit agent status for correct identity
-          }),
-        });
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const response = await fetch('/api/livekit/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              roomName: roomId,
+              participantName,
+              isAgent: isAgentUser,  // Pass explicit agent status for correct identity
+            }),
+            signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+              ? AbortSignal.timeout(10000)
+              : undefined,
+          });
 
-        if (!response.ok) {
-          throw new Error('Failed to get token');
+          if (!response.ok) {
+            throw new Error('Failed to get token');
+          }
+
+          const data = await response.json();
+          if (cancelled) return;
+          setToken(data.token);
+          setServerUrl(data.url);
+          setIsConnecting(false);
+          return;
+        } catch (error) {
+          if (cancelled) return;
+          console.warn(`Token fetch attempt ${attempt}/${maxAttempts} failed:`, error);
+          if (attempt === maxAttempts) {
+            toast.error('Failed to connect to video call');
+            setIsConnecting(false);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+          if (cancelled) return;
         }
-
-        const data = await response.json();
-        setToken(data.token);
-        setServerUrl(data.url);
-        setIsConnecting(false);
-      } catch (error) {
-        console.error('Error fetching token:', error);
-        toast.error('Failed to connect to video call');
-        setIsConnecting(false);
       }
     };
 
     fetchToken();
+    return () => { cancelled = true; };
   }, [roomId, participantName, isAgentUser]);
 
   // Save items to inventory
@@ -1786,6 +2010,62 @@ export default function VideoCallInventory({
   const deviceInfo = useMemo(() => getDeviceInfo(), []);
 
   // Enhanced LiveKit room options with mobile camera optimization, Android compatibility, and better permissions
+  // Pre-build the background processor BEFORE connecting so the camera track
+  // is created with it already attached (videoCaptureDefaults.processor) — no
+  // raw frame of the agent's real background is ever published. State:
+  // undefined = still building (hold the room mount), null = no processing
+  // needed or unavailable, object = ready.
+  const [pendingProcessor, setPendingProcessor] = useState(() =>
+    buildBackgroundConfig(backgroundSettings) ? undefined : null
+  );
+
+  useEffect(() => {
+    const config = buildBackgroundConfig(backgroundSettings);
+    if (!config) {
+      setPendingProcessor(null);
+      return;
+    }
+    let cancelled = false;
+    let timedOut = false;
+    // Never block joining the call on background init — after 3s join anyway
+    // and let the post-publish BackgroundApplier fallback attach the effect.
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      console.warn('Background processor pre-build timed out — joining without it');
+      setPendingProcessor(null);
+    }, 3000);
+    (async () => {
+      try {
+        const { BackgroundProcessor, supportsBackgroundProcessors } = await import('@livekit/track-processors');
+        if (cancelled || timedOut) return;
+        if (!supportsBackgroundProcessors || !supportsBackgroundProcessors()) {
+          console.log('Background processors not supported — joining without background');
+          setPendingProcessor(null);
+          return;
+        }
+        setPendingProcessor(BackgroundProcessor(config));
+      } catch (err) {
+        console.error('Failed to pre-build background processor:', err);
+        if (!cancelled && !timedOut) setPendingProcessor(null);
+      } finally {
+        clearTimeout(timeout);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [backgroundSettings]);
+
+  // Watchdog independent of the processor-build effect: the mount gate below
+  // may never be held longer than this, no matter what happens inside the
+  // build effect. Joining without the background beats never joining.
+  const [processorGateExpired, setProcessorGateExpired] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setProcessorGateExpired(true), 4000);
+    return () => clearTimeout(t);
+  }, []);
+
   const roomOptions = useMemo(() => {
     const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
     const optimizedOptions = getOptimizedRoomOptions(deviceInfo);
@@ -1847,6 +2127,9 @@ export default function VideoCallInventory({
           ? { width: recommended.width || 640, height: recommended.height || 480 }
           : { width: 1280, height: 720 },
         frameRate: isSmallScreen ? (recommended.frameRate || 24) : 30,
+        // Attach the pre-built background processor at track creation so the
+        // first published frame is already blurred/replaced.
+        ...(pendingProcessor ? { processor: pendingProcessor } : {}),
       },
       // Audio capture defaults optimized for Android
       audioCaptureDefaults: {
@@ -1860,14 +2143,17 @@ export default function VideoCallInventory({
       e2eeOptions: undefined, // Disable E2EE for better compatibility
       expWebAudioMix: false, // Disable experimental features that might cause issues
     };
-  }, [deviceInfo, customerSettings, isCurrentUserAgent]);
+  }, [deviceInfo, customerSettings, isCurrentUserAgent, pendingProcessor]);
   
   // Note: We removed the pre-request camera permissions useEffect because:
   // 1. LiveKit handles permission requests internally when connecting
   // 2. The duplicate request was causing confusing error toast sequences
   // 3. Permissions are already requested in the AgentPreJoin screen if using it
 
-  if (isConnecting) {
+  // Hold the room mount while the background processor pre-builds (typically
+  // <300ms — assets are browser-cached from pre-join; hard 3s cap above, plus
+  // the independent 4s watchdog) so the camera track is born processed.
+  if (isConnecting || (pendingProcessor === undefined && !processorGateExpired)) {
     return (
       <div className="flex items-center justify-center h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
         <div className="text-center bg-white/80 backdrop-blur-xl p-12 rounded-3xl shadow-2xl border border-white/20">
@@ -1948,6 +2234,16 @@ export default function VideoCallInventory({
         connect={true}
         onError={(error) => {
           const errorMsg = error.message || String(error);
+
+          // Transient device-acquisition interruption (iOS aborts camera/mic
+          // acquisition during the join handoff or a phone call). The media
+          // recovery watchdog restores the track — don't surface an error.
+          if (error?.name === 'AbortError' ||
+              errorMsg.toLowerCase().includes('operation was aborted')) {
+            console.warn('LiveKit room error (transient, recovery will handle):', errorMsg);
+            return;
+          }
+
           console.error('LiveKit room error:', errorMsg);
 
           // Skip permission errors - handled by onMediaDeviceFailure

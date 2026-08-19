@@ -173,17 +173,21 @@ export async function POST(
 
     // 4. Queue processing jobs.
     const queueUrl = process.env.AWS_SQS_CALL_QUEUE_URL;
+    // Pure-ffmpeg jobs run on the dedicated stitch worker so they never
+    // compete with Gemini analysis; falls back to the call queue (whose
+    // worker retains the remux handler) until the stitch queue exists.
+    const stitchQueueUrl = process.env.AWS_SQS_STITCH_QUEUE_URL || queueUrl;
     const bucket = process.env.RECORDING_S3_BUCKET || process.env.AWS_S3_BUCKET_NAME || '';
 
     // 4a. Fast playback remux — EVERY local-capture upload, vault included.
     // MediaRecorder emits fragmented MP4 (browsers see ~10s duration, can't
     // seek, and crawl through the file); the worker flattens the container
     // in seconds so local recordings play as instantly as egress ones.
-    if (queueUrl) {
+    if (stitchQueueUrl) {
       try {
         const sqs = new AWS.SQS({ region: process.env.AWS_REGION || 'us-east-1' });
         await sqs.sendMessage({
-          QueueUrl: queueUrl,
+          QueueUrl: stitchQueueUrl,
           MessageBody: JSON.stringify({
             type: 'remux-playback',
             videoRecordingId: recording._id.toString(),

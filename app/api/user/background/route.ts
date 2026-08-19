@@ -1,6 +1,7 @@
 // app/api/user/background/route.ts - Manage user's virtual background images (MongoDB storage)
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
+import mongoose from 'mongoose';
 import connectMongoDB from '@/lib/mongodb';
 import UserBackground from '@/models/UserBackground';
 
@@ -200,8 +201,10 @@ export async function PATCH(request: NextRequest) {
       { isSelected: false }
     );
 
-    // Select the chosen background if provided
-    if (backgroundId) {
+    // Select the chosen background if provided. Preset backgrounds have ids
+    // like "preset_qubesheets" — not ObjectIds and not stored in this
+    // collection — so selecting one just deselects all customs (above).
+    if (backgroundId && mongoose.isValidObjectId(backgroundId)) {
       await UserBackground.updateOne(
         { _id: backgroundId, userId },
         { isSelected: true }

@@ -94,7 +94,7 @@ export const config = {
     // The page is fully public via /embed in isPublicRoute; the
     // /api/leads/from-embed and /api/embedded-forms/.../public routes still match
     // (they must keep running as public API routes).
-    '/((?!_next|embed/|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    '/((?!_next|embed/|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest|wasm|tflite)).*)',
     // Always run for API routes
     '/(api|trpc)(.*)',
   ],
