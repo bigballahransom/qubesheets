@@ -79,6 +79,7 @@ export type RecordingErrorKind =
   | 'partial_capture'            // stop looked normal, but the server's file is much shorter than the time the user recorded
   | 'capture_interrupted_saved'  // a call took the camera and it came back dead (or never came back); footage up to the interruption was saved (local engine)
   | 'upload_failed'              // egress ended but the server never confirmed a saved file
+  | 'nothing_captured'           // local engine: the browser produced zero video data (dead MediaRecorder on every codec) — nothing exists to retry; route to file upload
   | 'unsupported_browser'        // in-app webview / no WebRTC
   | 'generic';
 

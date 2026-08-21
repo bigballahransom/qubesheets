@@ -25,6 +25,7 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/upload/(.*)',  // Global self-survey link API (config + create-project)
   '/api/vault/(.*)',  // Global Media Vault crew link API (match-or-create + token)
   '/api/leads/from-embed/(.*)',  // Embedded lead form submission — CORS open
+  '/api/leads/form-events/(.*)',  // Embedded lead form step telemetry — CORS open, fire-and-forget
   '/api/leads/schedule-call/(.*)',  // Embedded scheduler — auth'd by submissionId window
   '/api/embedded-forms/(.+)/public',  // Public form config for iframe rendering
   '/api/self-serve/(.*)',  // Customer self-serve recording endpoints (init, start, stop, telemetry) — auth checked via uploadToken

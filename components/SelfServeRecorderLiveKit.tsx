@@ -1141,6 +1141,12 @@ export function SelfServeRecorderLiveKit({
         body: 'Something went wrong saving your video on our end. Please record again — or record with your camera app and upload the file.',
         primaryLabel: 'Record again'
       },
+      nothing_captured: {
+        title: 'This browser couldn\'t record',
+        body: 'Your phone\'s browser wasn\'t able to capture video on this page, so nothing was saved. No problem — record your walkthrough with your camera app, then upload the video here.',
+        primaryLabel: 'Upload a video instead',
+        hideRetry: true
+      },
       unsupported_browser: {
         title: 'This browser can\'t record',
         body: error?.message || 'Live recording isn\'t supported here. You can still record with your camera app and upload the video below.',
@@ -1270,6 +1276,12 @@ export function SelfServeRecorderLiveKit({
           {kind === 'unsupported_browser' && (
             <p className="text-sm text-gray-500 mt-4">
               Or copy this link and open it in Safari or Chrome to record live.
+            </p>
+          )}
+          {kind === 'nothing_captured' && (
+            <p className="text-sm text-gray-500 mt-4">
+              Tip: if this is a Private Browsing tab, reopening the link in a
+              regular tab usually fixes live recording.
             </p>
           )}
         </div>

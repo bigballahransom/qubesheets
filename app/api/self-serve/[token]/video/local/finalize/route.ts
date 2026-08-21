@@ -42,8 +42,14 @@ export async function POST(
     if (typeof uploadId !== 'string' || !uploadId || typeof sessionId !== 'string' || !sessionId) {
       return NextResponse.json({ error: 'Missing uploadId or sessionId' }, { status: 400 });
     }
-    if (!Array.isArray(parts) || parts.length === 0 ||
-        parts.some((p: any) => !Number.isInteger(p?.partNumber) || typeof p?.eTag !== 'string' || !p.eTag)) {
+    // An EMPTY manifest means the browser never captured/uploaded any video —
+    // distinct from a malformed one, and the client should have caught it
+    // before calling (see the local recorder's nothing_captured path); the
+    // distinct message keeps the two failure modes separable in telemetry.
+    if (!Array.isArray(parts) || parts.length === 0) {
+      return NextResponse.json({ error: 'No video data was uploaded for this recording' }, { status: 400 });
+    }
+    if (parts.some((p: any) => !Number.isInteger(p?.partNumber) || typeof p?.eTag !== 'string' || !p.eTag)) {
       return NextResponse.json({ error: 'Invalid parts manifest' }, { status: 400 });
     }
     // Cap relative to the link's configured limit, with slack for clock skew

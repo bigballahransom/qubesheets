@@ -31,7 +31,8 @@ import {
   Archive,
   ArchiveRestore,
   MoreHorizontal,
-  UserPlus
+  UserPlus,
+  ShieldCheck
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sidebar } from '@/components/ui/sidebar';
@@ -46,7 +47,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu';
-import { useAuth } from '@clerk/nextjs';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { SearchDropdown } from '@/components/SearchDropdown';
 import CreateProjectModal from '@/components/modals/CreateProjectModal';
 import CreateCustomerModal from '@/components/modals/CreateCustomerModal';
@@ -141,9 +142,16 @@ export function AppSidebar() {
   const pathname = usePathname();
   const { isLoaded, userId } = useAuth();
   const { organization } = useOrganization();
+  const { user } = useUser();
 
   // Check if organization has CRM add-on
   const hasCrmAddOn = (organization?.publicMetadata as any)?.subscription?.addOns?.includes('crm');
+
+  // Qube Sheets staff-only Admin entry (visibility only — /admin and its API
+  // enforce the same allowlist server-side in lib/adminAccess).
+  const isQubeAdmin = !!user?.emailAddresses?.some(
+    (e) => e.emailAddress?.toLowerCase() === 'andrew@qubesheets.com'
+  );
   
   // Fetch projects when auth state loads initially
   useEffect(() => {
@@ -421,6 +429,21 @@ export function AppSidebar() {
             {hasCrmAddOn ? (
               /* CRM Navigation */
               <ul className="space-y-1">
+                {/* Qube Sheets internal admin (staff only) */}
+                {isQubeAdmin && (
+                  <li>
+                    <button
+                      onClick={() => router.push('/admin')}
+                      className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
+                        pathname === '/admin' ? 'bg-gray-100' : ''
+                      }`}
+                    >
+                      <ShieldCheck size={16} className="mr-2 flex-shrink-0 text-purple-500" />
+                      <span className="font-medium">Admin</span>
+                    </button>
+                  </li>
+                )}
+
                 {/* Dashboard */}
                 <li>
                   <button
@@ -846,6 +869,19 @@ export function AppSidebar() {
         {/* Footer menu */}
         <ClerkProvider>
         <div className="border-t bg-white flex-shrink-0 mobile-safe-bottom">
+        {/* Qube Sheets internal admin (staff only) */}
+        {isQubeAdmin && !hasCrmAddOn && (
+          <button
+            onClick={() => router.push('/admin')}
+            className={`flex items-center gap-2 w-full p-3 text-gray-700 transition-colors cursor-pointer hover:bg-gray-100 active:bg-gray-200 ${
+              pathname === '/admin' ? 'bg-gray-100' : ''
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 flex-shrink-0 text-purple-500" />
+            <span className="text-sm font-medium">Admin</span>
+          </button>
+        )}
+
         {/* Dashboard Link - only for non-CRM users since CRM users have it in navigation */}
         {!hasCrmAddOn && (
           <button

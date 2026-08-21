@@ -115,6 +115,12 @@ export function useSelfServeLocalRecording({
    *  success lands on the 'capture_interrupted_saved' screen, not success. */
   const interruptedFinishRef = useRef(false);
   const blackRunRef = useRef(0);
+  /** Codec proven to deliver data by the pre-flight probe (null = probe
+   *  pending/failed; engine falls back to its own pick + watchdog). */
+  const probedMimeTypeRef = useRef<string | null>(null);
+  /** In-flight probe — awaited (briefly) before starting the real recorder
+   *  so two MediaRecorders never run on the stream at once. */
+  const probePromiseRef = useRef<Promise<unknown> | null>(null);
 
   useEffect(() => { statusRef.current = status; }, [status]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
@@ -292,6 +298,31 @@ export function useSelfServeLocalRecording({
       detectTrackControls(stream);
       acquireWakeLock();
       setStatus('ready');
+      // Pre-flight capture probe (background): prove the recorder actually
+      // DELIVERS data before the customer invests in a walkthrough —
+      // isTypeSupported lies on some devices (2026-08-20 Jill Stark). A
+      // working codec is remembered as the preference for start. ADVISORY
+      // only: encoders can legitimately be slow to first-flush (Chrome mp4),
+      // so a failed probe never blocks — the in-recording no-data watchdog
+      // is the enforcement point.
+      probePromiseRef.current = (async () => {
+        const probeStartedAt = Date.now();
+        try {
+          // Keep probing while idle/priming ('initializing' — statusRef lags
+          // the 'ready' setState by a render); stop once recording starts.
+          const working = await SelfServeLocalRecorder.probeCapture(
+            stream,
+            () => ['initializing', 'ready'].includes(statusRef.current)
+          );
+          probedMimeTypeRef.current = working;
+          sendTelemetry(uploadToken, {
+            event: 'capture_probe',
+            engine: 'local',
+            result: working || 'none',
+            ms: Date.now() - probeStartedAt
+          });
+        } catch { /* probe must never break init */ }
+      })();
     } catch (err) {
       const e = err instanceof Error ? err : new Error('Failed to access camera/microphone');
       sendTelemetry(uploadToken, { event: 'init_failed', engine: 'local', step: 'get_user_media', errorName: e.name, errorMessage: e.message });
@@ -328,20 +359,36 @@ export function useSelfServeLocalRecording({
     if (statusRef.current !== 'ready' || !streamRef.current) return;
     setStatus('recording');
     try {
+      // Let an in-flight capture probe settle (bounded) so its throwaway
+      // MediaRecorder is stopped before the real one starts on this stream.
+      if (probePromiseRef.current) {
+        await Promise.race([probePromiseRef.current, new Promise((r) => setTimeout(r, 2_500))]);
+      }
       const engine = new SelfServeLocalRecorder(uploadToken, {
         onProgress: (uploaded, total) => {
           if (total > 0) setUploadProgress(Math.min(99, Math.round((uploaded / total) * 100)));
         },
-        onError: () => { /* surfaced by stop(); mid-recording upload errors retry internally */ },
+        onError: (err) => {
+          // Upload failures stay passive: footage keeps accumulating locally
+          // and a retry can finish the upload. But a recorder that produced
+          // NOTHING on every codec must fail fast — every further second is
+          // the customer narrating into a dead camera.
+          if ((err as any)?.code === 'nothing_captured' && statusRef.current === 'recording') {
+            sendTelemetry(uploadToken, { event: 'nothing_captured_auto_stop', engine: 'local', durationAtStop: durationRef.current });
+            stopRef.current();
+          }
+        },
         onRetry: (info) => sendTelemetry(uploadToken, { event: 'part_upload_retry', engine: 'local', ...info }),
         onCaptureSettings: (info) => sendTelemetry(uploadToken, { event: 'capture_settings', engine: 'local', ...info }),
-        onStorageFull: () => {
-          // Save everything captured so far instead of erroring on a full disk.
-          sendTelemetry(uploadToken, { event: 'storage_full_auto_stop', engine: 'local', durationAtStop: durationRef.current });
+        onCaptureBroken: (reason) => {
+          // Capture died with real footage already saved (encoder error,
+          // full disk, ...) — stop gracefully so everything so far uploads.
+          sendTelemetry(uploadToken, { event: 'capture_broken_auto_stop', engine: 'local', reason, durationAtStop: durationRef.current });
           stopRef.current();
-        }
+        },
+        onDiagnostic: (event, info) => sendTelemetry(uploadToken, { event: `engine_${event}`, engine: 'local', ...(info || {}) })
       });
-      await engine.start(streamRef.current);
+      await engine.start(streamRef.current, probedMimeTypeRef.current || undefined);
       engineRef.current = engine;
       setSessionId(engine.sessionId);
       setRecordingStarted(true);
@@ -417,13 +464,21 @@ export function useSelfServeLocalRecording({
         onRecordingComplete?.(engine.sessionId ?? undefined);
       }
     } catch (err) {
+      const code = (err as any)?.code;
       sendTelemetry(uploadToken, {
         event: 'local_upload_failed',
         engine: 'local',
-        errorMessage: err instanceof Error ? err.message : String(err)
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorCode: code || null,
+        // The engine attaches its original mid-recording failure as `cause` —
+        // without it, telemetry can never say WHY a device failed.
+        underlyingError: (err as any)?.cause?.message || null
       });
       releaseStream();
-      failWith(err instanceof Error ? err : new Error('Failed to save recording'), 'upload_failed');
+      failWith(
+        err instanceof Error ? err : new Error('Failed to save recording'),
+        code === 'nothing_captured' ? 'nothing_captured' : 'upload_failed'
+      );
     }
   }, [uploadToken, releaseStream, onRecordingComplete, failWith]);
 
@@ -514,11 +569,22 @@ export function useSelfServeLocalRecording({
       setStatus('complete');
       onRecordingComplete?.(sid);
     } catch (err) {
+      const code = (err as any)?.code;
       sendTelemetry(uploadToken, {
         event: 'resume_upload_failed',
         engine: 'local',
-        errorMessage: err instanceof Error ? err.message : String(err)
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorCode: code || null,
+        underlyingError: (err as any)?.cause?.message || null
       });
+      if (code === 'nothing_captured') {
+        // The session holds zero video — retrying can never succeed. Discard
+        // it so neither the retry button nor the resume banner resurrects the
+        // dead loop (pre-fix, one customer retried this 92 times).
+        SelfServeLocalRecorder.discard(uploadToken, sid).catch(() => {});
+        failWith(err instanceof Error ? err : new Error('Nothing was captured'), 'nothing_captured');
+        return;
+      }
       failWith(err instanceof Error ? err : new Error('Failed to finish the upload'), 'upload_failed');
     }
   }, [uploadToken, onRecordingComplete, failWith]);

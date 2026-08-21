@@ -683,6 +683,48 @@ export default function LeadForm({ config, configId, previewMode = false, static
   const isFirstStep = stepIndex === 0;
   const isMultiStep = enabledSteps.length > 1;
 
+  // --- Step telemetry (fire-and-forget; never in editor previews) ---------
+  // One anonymous token per pageload so funnels count visitors, not events.
+  const visitorTokenRef = useRef('');
+  if (!visitorTokenRef.current) {
+    visitorTokenRef.current =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  }
+  const track = useCallback(
+    (event: 'form_viewed' | 'step_completed' | 'form_submitted', trackedStep?: number, stepHeading?: string) => {
+      if (previewMode || staticPreview) return;
+      try {
+        const body = JSON.stringify({
+          token: visitorTokenRef.current,
+          event,
+          stepIndex: trackedStep,
+          stepHeading,
+        });
+        const url = `/api/leads/form-events/${configId}`;
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+        } else {
+          fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch {
+        // Telemetry must never break the form.
+      }
+    },
+    [configId, previewMode, staticPreview],
+  );
+  useEffect(() => {
+    track('form_viewed');
+    // Mount-only: one view per pageload, matching the visitor token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // --- Focus management: focus first input of new step after transition ---
 
   const stepContainerRef = useRef<HTMLDivElement | null>(null);
@@ -834,6 +876,7 @@ export default function LeadForm({ config, configId, previewMode = false, static
       return;
     }
     setStepError(null);
+    track('step_completed', stepIndex, currentStep?.heading);
     setDirection(1);
     setStepIndex((i) => Math.min(i + 1, enabledSteps.length - 1));
   };
@@ -918,6 +961,8 @@ export default function LeadForm({ config, configId, previewMode = false, static
         });
         return;
       }
+
+      track('form_submitted', stepIndex);
 
       if (previewMode) {
         setView({ kind: 'preview-result', result: data as PreviewResult });
