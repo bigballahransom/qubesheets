@@ -921,17 +921,16 @@ export function AppSidebar() {
               <div className="flex-1 min-w-0 max-w-[180px] sm:max-w-none">
                 <OrganizationSwitcher
                   organizationProfileMode="modal"
-                  createOrganizationMode="modal"
-                  afterCreateOrganizationUrl="/"
                   afterSelectOrganizationUrl="/"
-                  hidePersonal={false}
+                  hidePersonal={true}
                   appearance={{
                     elements: {
                       rootBox: "w-full",
                       organizationSwitcherTrigger: "w-full justify-start text-left px-2 py-1.5 border rounded-md hover:bg-gray-100 text-xs sm:text-sm truncate min-h-[32px]",
                       organizationPreviewTextContainer: "text-xs sm:text-sm font-medium truncate",
                       organizationSwitcherPreviewMainIdentifier: "truncate max-w-[120px] sm:max-w-none",
-                      organizationSwitcherTriggerIcon: "w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0"
+                      organizationSwitcherTriggerIcon: "w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0",
+                      organizationSwitcherPopoverActionButton__createOrganization: "hidden"
                     }
                   }}
                 />

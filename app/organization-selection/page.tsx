@@ -28,10 +28,11 @@ function OrganizationSelectionContent() {
       <div className="max-w-md w-full space-y-8">
         <div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Select or Create Organization
+            Select Organization
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Choose an organization to continue, or create a new one
+            Choose an organization to continue. If you don&apos;t see one, ask
+            your administrator for an invitation.
           </p>
         </div>
         
@@ -40,7 +41,7 @@ function OrganizationSelectionContent() {
             afterCreateOrganizationUrl={redirectUrl}
             afterSelectOrganizationUrl={redirectUrl}
             skipInvitationScreen={false}
-            hidePersonal={false}
+            hidePersonal={true}
           />
         </div>
       </div>

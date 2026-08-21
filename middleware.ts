@@ -69,20 +69,23 @@ export default clerkMiddleware(async (auth, req) => {
     return;
   }
 
-  // Protect all other routes - but allow personal accounts
   await auth.protect();
 
-  // Get orgId separately (might be null for personal accounts)
   const { orgId } = await auth();
 
-  // For organization-specific routes, allow both personal accounts (no orgId) 
-  // and organization accounts (with orgId)
-  // Only redirect if user is not in any organization AND there are organizations available
+  // Personal accounts (no active org) are not supported — force organization
+  // selection. API calls get a 403 so client fetches fail loudly instead of
+  // following a redirect to an HTML page.
   if (isOrganizationRoute(req) && !orgId) {
-    // Allow personal account usage - they will use userId in the database
-    // Only redirect if we need to force organization selection
-    // For now, let personal accounts work with userId-based data
-    return;
+    if (req.nextUrl.pathname.startsWith('/api')) {
+      return Response.json(
+        { error: 'An active organization is required' },
+        { status: 403 }
+      );
+    }
+    const selectionUrl = new URL('/organization-selection', req.url);
+    selectionUrl.searchParams.set('redirectUrl', req.nextUrl.pathname);
+    return Response.redirect(selectionUrl);
   }
 });
 

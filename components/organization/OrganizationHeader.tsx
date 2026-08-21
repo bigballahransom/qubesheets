@@ -23,16 +23,14 @@ export default function OrganizationHeader() {
             <OrganizationSwitcher
               organizationProfileMode="navigation"
               organizationProfileUrl="/organization-profile"
-              createOrganizationMode="navigation"
-              createOrganizationUrl="/organization-selection"
-              afterCreateOrganizationUrl="/projects"
               afterSelectOrganizationUrl="/projects"
-              hidePersonal={false}
+              hidePersonal={true}
               appearance={{
                 elements: {
                   rootBox: "flex items-center",
                   organizationSwitcherTrigger: "border-none shadow-none px-2 py-1 hover:bg-gray-100 rounded-md",
-                  organizationPreviewTextContainer: "text-sm font-medium"
+                  organizationPreviewTextContainer: "text-sm font-medium",
+                  organizationSwitcherPopoverActionButton__createOrganization: "hidden"
                 }
               }}
             />

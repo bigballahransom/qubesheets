@@ -69,17 +69,16 @@ export function DesktopHeaderBar() {
             <div className="min-w-[200px]">
               <OrganizationSwitcher
                 organizationProfileMode="modal"
-                createOrganizationMode="modal"
-                afterCreateOrganizationUrl="/"
                 afterSelectOrganizationUrl="/"
-                hidePersonal={false}
+                hidePersonal={true}
                 appearance={{
                   elements: {
                     rootBox: "w-full",
                     organizationSwitcherTrigger: "w-full justify-start text-left px-3 py-2 border rounded-md hover:bg-gray-50 text-sm min-h-[40px]",
                     organizationPreviewTextContainer: "text-sm font-medium",
                     organizationSwitcherPreviewMainIdentifier: "truncate max-w-[150px]",
-                    organizationSwitcherTriggerIcon: "w-4 h-4 flex-shrink-0"
+                    organizationSwitcherTriggerIcon: "w-4 h-4 flex-shrink-0",
+                    organizationSwitcherPopoverActionButton__createOrganization: "hidden"
                   }
                 }}
               />
