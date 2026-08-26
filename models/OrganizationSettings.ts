@@ -117,6 +117,12 @@ export interface IOrganizationSettings extends Document {
   // Ignored when boxRecommendationsEnabled is false.
   boxRecommendationLevel?: number;
 
+  // Inventory Stock: when true, the AI treats the org's stock library
+  // cuft/weight as QUOTING STANDARDS — closely-matched items take the
+  // library values (deviating only for clearly different sizes). When
+  // false (default), library values are soft reference points only.
+  stockCuftWeightStandards?: boolean;
+
   // Custom box types — when present, overrides the eight canonical defaults
   // (lib/defaultBoxTypes.ts) for the AI prompt's "BOX TYPES" section. Movers
   // can add their own SKUs, edit capacities, or delete defaults they don't
@@ -284,6 +290,10 @@ const OrganizationSettingsSchema: Schema = new Schema(
       default: 2,
       min: 1,
       max: 3
+    },
+    stockCuftWeightStandards: {
+      type: Boolean,
+      default: false
     },
     boxTypes: {
       type: [{

@@ -8,8 +8,9 @@ import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
-// Level 2 ("Balanced") matches the current Railway box-recommendation prompt;
-// orgs that never touch the slider keep producing today's output.
+// Level 2 ("Balanced") is the default for orgs that never touch the slider.
+// 2026-08-24: the whole scale shifted one notch leaner — see
+// lib/boxRecommendationPrompts.ts (BOX_REC_CONFIG_SYNC) for the prompts.
 const DEFAULT_LEVEL = 2;
 const DEFAULT_ENABLED = true;
 
@@ -26,15 +27,15 @@ const LEVEL_LABELS: Record<number, { name: string; description: string }> = {
   // Light — 'Fewest boxes. Lowest total packing cuft on the estimate — suits crews that prefer to add boxes on move day if needed.'
   1: {
     name: 'Competitive',
-    description: 'Lean estimate. Slightly fewer boxes than the inventory implies — useful for staying price-competitive against quotes from other movers.'
+    description: 'Leanest estimate. Only recommends boxes that clearly visible items justify, with minimal assumptions about closed storage — the lowest defensible count for winning bids.'
   },
   2: {
     name: 'Balanced',
-    description: 'Default. Recommends boxes that match the inventory without padding the estimate.'
+    description: 'Default. Lean, realistic estimate driven by visible inventory, with light assumptions for closed storage.'
   },
   3: {
     name: 'Padded',
-    description: 'Slight overestimate. Adds a small buffer of boxes on top of the inventory so the crew rarely runs short.'
+    description: 'Fuller estimate. Assumes closed storage is half to mostly full so the crew rarely runs short.'
   }
   // Generous — 'Highest box count. Maximum packing coverage — recommends boxes liberally on top of the inventory.'
 };

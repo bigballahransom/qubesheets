@@ -4,6 +4,8 @@ import connectMongoDB from '@/lib/mongodb';
 import VideoRecording from '@/models/VideoRecording';
 import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import InventoryItem from '@/models/InventoryItem';
+import SpreadsheetData from '@/models/SpreadsheetData';
+import RoomPhoto from '@/models/RoomPhoto';
 import Project from '@/models/Project';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import AWS from 'aws-sdk';
@@ -116,11 +118,35 @@ export async function POST(
     if (recording.customerEgressId) orConditions.push({ sourceRecordingSessionId: recording.customerEgressId });
     if (recording.roomId) orConditions.push({ sourceRecordingSessionId: recording.roomId });
 
+    // Capture ids before deleting so the linked spreadsheet rows can be
+    // pulled too — otherwise each reprocess stacks a fresh generation of
+    // rows onto the sheet. (Rows are linked via rows.inventoryItemId; rows
+    // created before that field was persisted can't be matched and are left
+    // alone.)
+    const doomedItems = await InventoryItem.find(
+      { $or: orConditions, projectId: recording.projectId },
+      { _id: 1 }
+    ).lean();
+    const doomedIds = doomedItems.map((d: any) => d._id.toString());
+
     const deletedItems = await InventoryItem.deleteMany({
       $or: orConditions,
       projectId: recording.projectId
     });
     console.log(`   Deleted ${deletedItems.deletedCount} old inventory items`);
+
+    if (doomedIds.length > 0) {
+      const pulled = await SpreadsheetData.updateMany(
+        { projectId: recording.projectId },
+        { $pull: { rows: { inventoryItemId: { $in: doomedIds } } } } as any
+      );
+      console.log(`   Pulled spreadsheet rows for ${doomedIds.length} item(s) (${pulled.modifiedCount} sheet(s))`);
+    }
+
+    // Scene photos are keyed to the recording — clear so the rerun replaces
+    // them (worker also clears at run start; belt and braces).
+    const delPhotos = await RoomPhoto.deleteMany({ videoRecordingId: recording._id });
+    console.log(`   Deleted ${delPhotos.deletedCount} scene photo(s)`);
 
     // Reset status fields
     await VideoRecording.findByIdAndUpdate(recording._id, {
@@ -142,7 +168,11 @@ export async function POST(
         'consolidationResult': null,
         'consolidatedInventory': [],
         'transcriptAnalysisResult': null
-      }
+      },
+      // Clear the previous run's processing claim — otherwise the worker
+      // defers the new message as "owned by another live worker" and the
+      // reprocess stalls for claim-staleness + SQS visibility (~15-25 min).
+      $unset: { claimId: '', claimHeartbeatAt: '' }
     });
 
     // Send SQS message to reprocess

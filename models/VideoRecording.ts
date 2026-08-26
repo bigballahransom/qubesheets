@@ -83,6 +83,9 @@ export interface IVideoRecording extends Document {
     startedAt?: Date;
     completedAt?: Date;
     error?: string;
+    // Non-fatal degradations recorded by the worker (room-scoped fallback,
+    // AI tagging failure, …). Ops visibility only — never user-facing.
+    warnings?: Array<{ step: string; message: string; at: Date }>;
   };
   // STAGING: Consolidated inventory (stored here until finalize creates InventoryItems)
   consolidatedInventory?: Array<{
@@ -311,7 +314,8 @@ const VideoRecordingSchema: Schema = new Schema(
       segmentsTotal: { type: Number, default: 0 },
       startedAt: { type: Date },
       completedAt: { type: Date },
-      error: { type: String }
+      error: { type: String },
+      warnings: [{ _id: false, step: String, message: String, at: Date }]
     },
     // STAGING: Consolidated inventory (stored here until finalize creates InventoryItems)
     consolidatedInventory: [{

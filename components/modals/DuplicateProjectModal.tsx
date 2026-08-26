@@ -51,7 +51,14 @@ export default function DuplicateProjectModal({
         throw new Error(err.error || 'Failed to duplicate project');
       }
       const result = await res.json();
-      toast.success(`Created "${trimmed}" (${result.itemsCopied} item${result.itemsCopied !== 1 ? 's' : ''} copied)`);
+      const parts = [`${result.itemsCopied} item${result.itemsCopied !== 1 ? 's' : ''}`];
+      if (result.mediaCopied > 0) {
+        parts.push(`${result.mediaCopied} media file${result.mediaCopied !== 1 ? 's' : ''}`);
+      }
+      toast.success(`Created "${trimmed}" (${parts.join(' and ')} copied)`);
+      if (result.mediaFailed > 0) {
+        toast.warning(`${result.mediaFailed} media file${result.mediaFailed !== 1 ? 's' : ''} couldn't be copied and ${result.mediaFailed !== 1 ? 'were' : 'was'} left out of the new project.`);
+      }
       onClose();
       onDuplicated?.(result.projectId, trimmed);
     } catch (error) {

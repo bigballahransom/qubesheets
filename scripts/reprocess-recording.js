@@ -42,8 +42,34 @@ if (!RECORDING_ID) { console.error('Usage: node reprocess-recording.js <recordin
   if (recording.egressId) orConds.push({ sourceRecordingSessionId: recording.egressId });
   if (recording.customerEgressId) orConds.push({ sourceRecordingSessionId: recording.customerEgressId });
   if (recording.roomId) orConds.push({ sourceRecordingSessionId: recording.roomId });
-  const delItems = await db.collection('inventoryitems').deleteMany({ $or: orConds, projectId: recording.projectId });
+  // videorecordings.projectId is a string but inventoryitems.projectId is an
+  // ObjectId — match both forms or the delete silently removes nothing and
+  // the fresh analysis stacks duplicate items on top of the old ones.
+  const projectIdForms = [recording.projectId, String(recording.projectId)];
+  try { projectIdForms.push(new mongoose.Types.ObjectId(String(recording.projectId))); } catch (e) {}
+  // Capture ids BEFORE deleting so the matching spreadsheet rows can be
+  // pulled too — without this, each reprocess stacked a fresh generation of
+  // rows onto the sheet.
+  const doomedItems = await db.collection('inventoryitems')
+    .find({ $or: orConds, projectId: { $in: projectIdForms } }, { projection: { _id: 1 } })
+    .toArray();
+  const doomedIds = doomedItems.map((d) => d._id.toString());
+
+  const delItems = await db.collection('inventoryitems').deleteMany({ $or: orConds, projectId: { $in: projectIdForms } });
   console.log(`Deleted ${delItems.deletedCount} inventory item(s)`);
+
+  if (doomedIds.length > 0) {
+    const delRows = await db.collection('spreadsheetdatas').updateMany(
+      { projectId: recording.projectId ? new mongoose.Types.ObjectId(String(recording.projectId)) : null },
+      { $pull: { rows: { inventoryItemId: { $in: doomedIds } } } }
+    );
+    console.log(`Pulled spreadsheet rows for ${doomedIds.length} item(s) (${delRows.modifiedCount} sheet(s) touched)`);
+  }
+
+  // Scene photos are keyed to the recording — clear so the rerun replaces
+  // them (the worker also deletes at run start; belt and braces).
+  const delPhotos = await db.collection('roomphotos').deleteMany({ videoRecordingId: recIdObj });
+  console.log(`Deleted ${delPhotos.deletedCount} scene photo(s)`);
 
   await db.collection('videorecordings').updateOne({ _id: recIdObj }, {
     $set: {
@@ -64,7 +90,11 @@ if (!RECORDING_ID) { console.error('Usage: node reprocess-recording.js <recordin
       'consolidationResult': null,
       'consolidatedInventory': [],
       'transcriptAnalysisResult': null
-    }
+    },
+    // Clear the previous run's processing claim — otherwise the worker sees a
+    // fresh heartbeat, defers the message as "owned by another live worker",
+    // and the reprocess stalls for claim-staleness + SQS visibility (~25 min).
+    $unset: { claimId: '', claimHeartbeatAt: '' }
   });
   console.log('Reset analysis fields');
 

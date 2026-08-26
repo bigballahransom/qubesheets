@@ -408,6 +408,36 @@ export async function deleteS3File(key: string): Promise<boolean> {
 
 
 /**
+ * Server-side copy of an S3 object to a fresh key in the same bucket (used by
+ * project duplication so the copy owns its files outright). The new key keeps
+ * the source's folder prefix so lifecycle/CORS rules keep applying. Throws on
+ * failure — including objects over S3's 5GB single-CopyObject limit — so the
+ * caller can skip that one media doc and keep going.
+ */
+export async function copyS3Object(
+  sourceKey: string,
+  options: { bucket?: string } = {}
+): Promise<{ key: string; bucket: string; url: string }> {
+  const bucket = options.bucket || resolveBucketName();
+  const lastSlash = sourceKey.lastIndexOf('/');
+  const prefix = lastSlash >= 0 ? sourceKey.slice(0, lastSlash + 1) : '';
+  const basename = lastSlash >= 0 ? sourceKey.slice(lastSlash + 1) : sourceKey;
+  const key = `${prefix}${Date.now()}-${Math.random().toString(36).substring(2, 10)}-copy-${basename}`;
+
+  await s3.copyObject({
+    Bucket: bucket,
+    CopySource: encodeURI(`${bucket}/${sourceKey}`),
+    Key: key
+  }).promise();
+
+  return {
+    key,
+    bucket,
+    url: `https://${bucket}.s3.${awsConfig.region}.amazonaws.com/${key}`
+  };
+}
+
+/**
  * HEAD an object and report existence + size. Used by the stuck-recording
  * sweeper to verify a playable file actually exists before healing a
  * recording's status — stored duration/fileSize fields can't be trusted.

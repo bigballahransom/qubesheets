@@ -22,6 +22,7 @@ import {
   ClipboardCheck,
   Inbox,
   Loader2,
+  Archive,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import LeadFormsUpgradeModal from '@/components/LeadFormsUpgradeModal';
@@ -54,6 +55,7 @@ const settingsItems: SettingsItem[] = [
   { title: 'Box Recommendations', icon: Package, href: '/settings/box-recommendations' },
   { title: 'Box Types', icon: Boxes, href: '/settings/box-types' },
   { title: 'Smart Tags', icon: Tags, href: '/settings/smart-tags' },
+  { title: 'Inventory Stock', icon: Archive, href: '/settings/inventory-stock' },
 
   // Integrations
   { title: 'Link Calendar', icon: CalendarDays, href: '/settings/calendar', sectionLabel: 'Integrations' },

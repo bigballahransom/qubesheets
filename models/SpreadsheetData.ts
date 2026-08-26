@@ -8,6 +8,11 @@ interface ICell {
 export interface IRow {
   id: string;
   cells: ICell;
+  inventoryItemId?: string;
+  quantity?: number;
+  itemType?: string;
+  ai_generated?: boolean;
+  goingQuantity?: number;
 }
 
 export interface IColumn {
@@ -39,6 +44,14 @@ const RowSchema: Schema = new Schema(
   {
     id: { type: String, required: true },
     cells: { type: Map, of: String, default: {} },
+    // Link + metadata written alongside AI-generated rows. Must be declared
+    // (strict schema) or they are silently stripped — which historically
+    // left rows unlinked to their InventoryItem documents.
+    inventoryItemId: { type: String },
+    quantity: { type: Number },
+    itemType: { type: String },
+    ai_generated: { type: Boolean },
+    goingQuantity: { type: Number },
   },
   { _id: false }
 );

@@ -3435,6 +3435,61 @@ useEffect(() => {
       console.warn('Branding fetch failed; continuing without it:', e);
     }
 
+    // "Scene" variant: fetch the AI-selected room photos up front. Any
+    // failure degrades to the plain PDF (rooms just render without strips).
+    const normRoomKey = (s) => String(s || '').trim().toLowerCase();
+    let roomPhotosMap = null;
+    let roomPhotoGroups = [];
+    const usedPhotoRooms = new Set();
+    if (opts.includeRoomPhotos && currentProject?._id) {
+      try {
+        const r = await fetch(`/api/projects/${currentProject._id}/room-photos`);
+        if (r.ok) {
+          const data = await r.json();
+          roomPhotoGroups = Array.isArray(data.rooms) ? data.rooms : [];
+          // Wash every photo through a canvas: ffmpeg's MJPEG output uses
+          // header markers jsPDF's JPEG parser misreads (it reported frames
+          // as 1281×1, collapsing the strips to 1px slivers). The browser
+          // decodes them fine, so re-encoding via canvas yields a
+          // standards-clean JPEG + trustworthy dimensions.
+          await Promise.all(
+            roomPhotoGroups.flatMap((g) => (g.photos || []).map((p) =>
+              new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                  try {
+                    const c = document.createElement('canvas');
+                    c.width = img.naturalWidth;
+                    c.height = img.naturalHeight;
+                    c.getContext('2d').drawImage(img, 0, 0);
+                    p.dataUrl = c.toDataURL('image/jpeg', 0.82);
+                    p.pxWidth = c.width;
+                    p.pxHeight = c.height;
+                  } catch (err) {
+                    p.pxWidth = 0; // drawRoomPhotos skips it
+                  }
+                  resolve();
+                };
+                img.onerror = () => {
+                  p.pxWidth = 0;
+                  resolve();
+                };
+                img.src = p.dataUrl;
+              })
+            ))
+          );
+          roomPhotoGroups = roomPhotoGroups
+            .map((g) => ({ ...g, photos: (g.photos || []).filter((p) => p.pxWidth > 0) }))
+            .filter((g) => g.photos.length > 0);
+          if (roomPhotoGroups.length > 0) {
+            roomPhotosMap = new Map(roomPhotoGroups.map((g) => [normRoomKey(g.room), g.photos]));
+          }
+        }
+      } catch (e) {
+        console.warn('Room photos fetch failed; Scene PDF continues without photos:', e);
+      }
+    }
+
     // Loads a logo source (data URL or remote URL) and returns its data URL +
     // natural dimensions so jsPDF can embed it without distortion.
     const loadLogo = async (src) => {
@@ -3850,6 +3905,43 @@ useEffect(() => {
       currentY += bannerH + 1;
     };
 
+    // "Scene": draws up to 5 AI-selected photos for a room as a thumbnail
+    // strip under the room's tables. Each room's photos draw at most once
+    // (tag grouping can render the same room in several sections). Photos
+    // aspect-fit into uniform cells; individual embed failures skip that
+    // photo only.
+    const drawRoomPhotos = (room) => {
+      if (!roomPhotosMap) return;
+      const key = normRoomKey(room);
+      if (usedPhotoRooms.has(key)) return;
+      const photos = (roomPhotosMap.get(key) || []).slice(0, 5);
+      if (photos.length === 0) return;
+      usedPhotoRooms.add(key);
+      const gap = 2;
+      const cellW = (totalWidth - gap * 4) / 5;
+      const cellH = cellW * 0.75;
+      if (currentY + cellH + 5 > pageHeight - bottomMargin) {
+        doc.addPage();
+        currentY = topMargin;
+      }
+      photos.forEach((p, idx) => {
+        try {
+          // Dimensions come from the canvas wash above — do NOT use
+          // doc.getImageProperties here (jsPDF misparses ffmpeg JPEG headers).
+          if (!p.pxWidth || !p.pxHeight) return;
+          const scale = Math.min(cellW / p.pxWidth, cellH / p.pxHeight);
+          const w = p.pxWidth * scale;
+          const h = p.pxHeight * scale;
+          const x = marginX + idx * (cellW + gap) + (cellW - w) / 2;
+          const y = currentY + (cellH - h) / 2;
+          doc.addImage(p.dataUrl, 'JPEG', x, y, w, h);
+        } catch (e) {
+          console.warn('Scene photo embed failed (skipping one):', e?.message);
+        }
+      });
+      currentY += cellH + 3;
+    };
+
     // Resolves the banner/summary palette for a tag. The untagged "-" section
     // falls back to the neutral slate surface so it doesn't visually compete
     // with real tags.
@@ -4183,6 +4275,7 @@ useEffect(() => {
         drawSubTable('Items', itemsForRoom, sectionTint.items, redrawBanners);
         drawSubTable('Packed Boxes', packedForRoom, sectionTint.packed, redrawBanners);
         drawSubTable('Recommended Boxes', recommendedForRoom, sectionTint.recommended, redrawBanners);
+        drawRoomPhotos(room);
       });
     };
 
@@ -4270,6 +4363,17 @@ useEffect(() => {
       renderTagsCombined(effectiveRows);
     } else {
       renderRoomsCombined(effectiveRows);
+    }
+
+    // "Scene": photo groups whose room matched no rendered section (the user
+    // renamed rooms since analysis) get their own trailing sections — photos
+    // are never silently dropped.
+    if (roomPhotosMap) {
+      const orphanGroups = roomPhotoGroups.filter((g) => !usedPhotoRooms.has(normRoomKey(g.room)));
+      orphanGroups.forEach((g) => {
+        drawRoomBanner(`${g.room} — walkthrough photos`);
+        drawRoomPhotos(g.room);
+      });
     }
 
     // Helper function to render box summary table
@@ -4638,7 +4742,7 @@ useEffect(() => {
       }
 
       const safeName = (currentProject?.name || 'inventory').replace(/[^a-z0-9-_\s]/gi, '').trim() || 'inventory';
-      const fileName = `${safeName}-${new Date().toISOString().split('T')[0]}.pdf`;
+      const fileName = `${safeName}-${new Date().toISOString().split('T')[0]}${opts.includeRoomPhotos ? '-scene' : ''}.pdf`;
       return fileName;
     };
 
@@ -4649,6 +4753,13 @@ useEffect(() => {
   // Existing menubar action: build the PDF and save it locally.
   const handleDownloadProject = async () => {
     const { doc, fileName } = await buildProjectPdfDoc();
+    doc.save(fileName);
+  };
+
+  // "Scene": the same PDF with the AI-selected walkthrough photos rendered
+  // under each room's section.
+  const handleDownloadScene = async () => {
+    const { doc, fileName } = await buildProjectPdfDoc({ includeRoomPhotos: true });
     doc.save(fileName);
   };
 
@@ -5182,7 +5293,11 @@ const ProcessingNotification = () => {
             <MenubarSeparator />
             <MenubarItem onClick={() => handleDownloadProject()}>
               <Download size={16} className="mr-1" />
-              Download
+              PDF
+            </MenubarItem>
+            <MenubarItem onClick={() => handleDownloadScene()}>
+              <Download size={16} className="mr-1" />
+              Scene PDF
             </MenubarItem>
             <MenubarSeparator />
             <MenubarItem onClick={() => setIsDuplicateModalOpen(true)}>

@@ -9,6 +9,11 @@
 // {{BOX_TYPES_LIST}} placeholder that getBoxRecommendationPrompt() fills in
 // from the org's saved boxTypes (or the canonical defaults).
 //
+// 2026-08-24: the whole scale shifted one notch leaner after orgs reported
+// box counts coming in too high. Level 1 is a new ultra-lean prompt, Level 2
+// is the former Competitive text, Level 3 is the former Balanced text, and
+// the former Padded prompt is retired (commented out at the bottom).
+//
 // BOX_REC_CONFIG_SYNC — when editing this file, also edit the three
 // Railway service copies at:
 //   railway-call-service/box-recommendation-config.js
@@ -19,12 +24,62 @@ import { DEFAULT_BOX_TYPES, renderBoxTypesList, type BoxType } from './defaultBo
 
 export type BoxRecommendationLevel = 1 | 2 | 3;
 
-// Level 1 — Competitive. Leaner-than-Balanced estimate. Parallel structure
-// to BALANCED_PROMPT below, but every closed-storage assumption biases
-// toward "lightly full" and every baseline range is roughly halved. Same
-// box types, rules, and picture-box coverage — the cost-control lever is
-// quantity, not category.
-const COMPETITIVE_PROMPT = `3. BOX RECOMMENDATIONS (boxes_needed) — estimate the packing supplies the crew needs to bring. Be lean and competitive: customers compare quotes side-by-side and an inflated box count can lose the bid. Recommend only what visible inventory clearly justifies; don't pad closed-storage assumptions.
+// Level 1 — Competitive. Ultra-lean: only boxes that visible inventory
+// clearly justifies, quarter-full assumption for closed storage, and the
+// per-piece baselines are ceilings rather than targets. Picture-box
+// coverage stays mandatory but groups flat pieces aggressively.
+const COMPETITIVE_PROMPT = `3. BOX RECOMMENDATIONS (boxes_needed) — estimate the packing supplies the crew needs to bring. Be as lean as defensible: recommend ONLY boxes that items you can actually SEE clearly justify. When a line item is in doubt, leave it out — a crew can grab extra boxes on move day, but an inflated box count loses the bid.
+
+   ## HOW TO ESTIMATE STORAGE CONTENTS
+   - Count loose items you can SEE on desks, tables, counters, open shelves, and inside any OPEN drawers / cabinets / closets.
+   - For CLOSED storage you can't see into: assume the contents are MINIMAL — about a quarter full on average. The per-piece baselines below are CEILINGS, not targets — round DOWN when contents are unknown, and prefer zero over a guess for small pieces.
+   - If you can SEE storage is empty or sparsely filled, recommend zero boxes for that piece.
+   - If you can SEE storage is clearly stuffed full, you may go up to the ceiling — never above it.
+   - If the customer has already PACKED boxes (visible in packed_boxes for that area), skip the recommendation for that storage entirely — that work is already done.
+   - Do NOT recommend any boxes for items in furniture_items, packed_boxes, or the "NEVER inventory" list. Those are handled separately.
+
+   ## ARTWORK / PICTURES / WALL MIRRORS — ALWAYS PICTURE BOXES (never furniture)
+   - EVERY framed picture, photo, print, poster, painting, and standard wall mirror needs a Picture Box, but pack them tight: a Picture Box holds several flat items, so group same-size pieces and recommend one box per GROUP, not one per piece.
+   - These are NOT inventoried as furniture. They go here, in boxes_needed, with box_type set to "Picture Box".
+   - The only exception is OVERSIZED wall art that physically won't fit in a Picture Box (over ~4 ft × 3 ft) — that one goes in furniture_items.
+   - Scan walls deliberately for art; it's the most commonly missed category. (Picture boxes are NOT a cost-control lever — don't skip artwork, just group it efficiently.)
+
+   ## BASELINE CEILINGS PER STORAGE PIECE (calibrated to a quarter full; these are maximums — round DOWN when storage is closed)
+   - Dresser (6 drawers): 1-2 Medium Boxes
+   - Nightstand (2 drawers): 0-1 Small Boxes
+   - Desk (3 drawers): 1 Small Box
+   - Filing cabinet (4 drawers): 1-2 Book Boxes
+   - China cabinet: 1 Dish Pack
+   - Bookshelf (5 shelves): 1-2 Book Boxes (only count shelves you can SEE have books; a clearly decorative/empty shelf is zero)
+   - Entertainment center: 1 Medium Box
+   - Kitchen cabinets: 1 Dish Pack for visibly stocked dish/glassware cabinets, 1 Medium Box per visibly stocked dry-goods cabinet
+   - Bathroom vanity: 1 Small Box
+   - Closet: 1 Wardrobe Box for visible hanging clothes, 1 Medium Box for visible folded items
+
+   ## VISIBLE LOOSE ITEMS (count what you actually see — consolidate aggressively into as few boxes as possible)
+   - Office desk items: keyboards, mice, monitor cables, desk lamps, office supplies, papers, files
+   - Living room items: remotes, books, DVDs, games, decorations, photo frames
+   - Kitchen counter items: small appliances, utensils, dish towels, food items
+   - Bathroom items: toiletries, medicines, towels, bathroom accessories
+
+   ## SANITY CHECK BEFORE RETURNING
+   - Rough benchmarks (very lean): a 1-bedroom apartment is around 10-18 boxes, a 3-bedroom 2-bath home is around 25-40 boxes, a 4+ bedroom larger home is around 45-70 boxes.
+   - If your total is above these ranges, cut line items you cannot point to visible inventory for — closed-storage guesses go first.
+   - If your total is well below the range, double-check picture boxes (artwork) and wardrobe boxes for visible hanging clothes — everything else stays lean.
+
+   ## BOX TYPES — USE EXACT NAMES AND CAPACITIES
+{{BOX_TYPES_LIST}}
+
+   BOX-RECS RULES:
+   1. Use ONLY these exact box type names (no variations, no plurals). If contents don't fit any listed type perfectly, use the CLOSEST listed type — NEVER invent a box type name that is not in the list above.
+   2. capacity_cuft MUST match the value listed above.
+   3. Never exceed 50 lbs per box — use smaller boxes for heavy items.
+   4. Combine same-type same-room recommendations into ONE entry — e.g. if the office needs 2 Medium Boxes for desk drawers + 1 Medium Box for the shelf, output ONE row of Medium Box × 3 in the office, not multiple rows.
+   5. boxes_needed is the ONLY place these recommendations go. Do NOT also list them as furniture or packed_boxes.`;
+
+// Level 2 — Balanced (default). Lightly-filled (~one-third) closed-storage
+// assumption with lean baselines.
+const BALANCED_PROMPT = `3. BOX RECOMMENDATIONS (boxes_needed) — estimate the packing supplies the crew needs to bring. Be lean and competitive: customers compare quotes side-by-side and an inflated box count can lose the bid. Recommend only what visible inventory clearly justifies; don't pad closed-storage assumptions.
 
    ## HOW TO ESTIMATE STORAGE CONTENTS
    - Count loose items you can SEE on desks, tables, counters, open shelves, and inside any OPEN drawers / cabinets / closets.
@@ -67,16 +122,15 @@ const COMPETITIVE_PROMPT = `3. BOX RECOMMENDATIONS (boxes_needed) — estimate t
 {{BOX_TYPES_LIST}}
 
    BOX-RECS RULES:
-   1. Use ONLY these exact box type names (no variations, no plurals).
+   1. Use ONLY these exact box type names (no variations, no plurals). If contents don't fit any listed type perfectly, use the CLOSEST listed type — NEVER invent a box type name that is not in the list above.
    2. capacity_cuft MUST match the value listed above.
    3. Never exceed 50 lbs per box — use smaller boxes for heavy items.
    4. Combine same-type same-room recommendations into ONE entry — e.g. if the office needs 2 Medium Boxes for desk drawers + 1 Medium Box for the shelf, output ONE row of Medium Box × 3 in the office, not multiple rows.
    5. boxes_needed is the ONLY place these recommendations go. Do NOT also list them as furniture or packed_boxes.`;
 
-// Level 2 — Balanced. Mirrors the current Railway baseline prompt in
-// call-segment-processor.js (lines 362-416). Captured here so the runtime
-// swap can be data-driven without grepping the live worker.
-const BALANCED_PROMPT = `3. BOX RECOMMENDATIONS (boxes_needed) — estimate the packing supplies the crew needs to bring. Be realistic: don't worst-case it, but don't shortchange the crew either. Customers and crews both lose when the estimate is too low.
+// Level 3 — Padded. Half-to-mostly-full closed-storage assumption; the
+// generous end of the scale.
+const PADDED_PROMPT = `3. BOX RECOMMENDATIONS (boxes_needed) — estimate the packing supplies the crew needs to bring. Be realistic: don't worst-case it, but don't shortchange the crew either. Customers and crews both lose when the estimate is too low.
 
    ## HOW TO ESTIMATE STORAGE CONTENTS
    - Count loose items you can SEE on desks, tables, counters, open shelves, and inside any OPEN drawers / cabinets / closets.
@@ -119,16 +173,17 @@ const BALANCED_PROMPT = `3. BOX RECOMMENDATIONS (boxes_needed) — estimate the 
 {{BOX_TYPES_LIST}}
 
    BOX-RECS RULES:
-   1. Use ONLY these exact box type names (no variations, no plurals).
+   1. Use ONLY these exact box type names (no variations, no plurals). If contents don't fit any listed type perfectly, use the CLOSEST listed type — NEVER invent a box type name that is not in the list above.
    2. capacity_cuft MUST match the value listed above.
    3. Never exceed 50 lbs per box — use smaller boxes for heavy items.
    4. Combine same-type same-room recommendations into ONE entry — e.g. if the office needs 2 Medium Boxes for desk drawers + 1 Medium Box for the shelf, output ONE row of Medium Box × 3 in the office, not multiple rows.
    5. boxes_needed is the ONLY place these recommendations go. Do NOT also list them as furniture or packed_boxes.`;
 
-// Level 3 — Padded. Adds a buffer on top of the inventory so the crew
-// rarely runs short. Assumes closed storage is full and biases upward on
-// every per-piece baseline range.
-const PADDED_PROMPT = `3. CALCULATE BOXES NEEDED for all loose/unpacked items:
+// Retired 2026-08-24 — the old "assume everything is full" Padded prompt.
+// It produced the inflated counts orgs complained about. Kept for reference;
+// re-enable only by slotting it back into BOX_RECOMMENDATION_PROMPTS.
+/*
+const LEGACY_PADDED_PROMPT = `3. CALCULATE BOXES NEEDED for all loose/unpacked items:
    Group similar items and determine optimal box distribution.
 
    IMPORTANT: All small items visible on desks, tables, counters, shelves belong HERE (not in furniture_items):
@@ -156,7 +211,7 @@ const PADDED_PROMPT = `3. CALCULATE BOXES NEEDED for all loose/unpacked items:
 {{BOX_TYPES_LIST}}
 
    CRITICAL BOX REQUIREMENTS:
-   1. Use ONLY these exact box type names in quotes (no variations, no plurals)
+   1. Use ONLY these exact box type names in quotes (no variations, no plurals). If contents don't fit any listed type perfectly, use the CLOSEST listed type — NEVER invent a box type name that is not in the list above
    2. Use ONLY these exact capacity values (do NOT modify or estimate different capacities)
    3. capacity_cuft MUST match the exact value listed above
    4. Never exceed 50 lbs per box - use smaller boxes for heavy items
@@ -172,6 +227,7 @@ const PADDED_PROMPT = `3. CALCULATE BOXES NEEDED for all loose/unpacked items:
    - Garage shelving: estimate Medium/Large Boxes based on visible contents
    - Bookshelves: estimate Book Boxes based on number of books visible
    - Entertainment centers: estimate Medium Boxes for media, cables, games`;
+*/
 
 export const BOX_RECOMMENDATION_PROMPTS: Record<BoxRecommendationLevel, string> = {
   1: COMPETITIVE_PROMPT,
