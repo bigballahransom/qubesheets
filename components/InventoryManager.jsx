@@ -1938,8 +1938,11 @@ useEffect(() => {
 
   // Handle cuft/weight updates from Spreadsheet
   // newWeight is optional - if null, only cuft is updated (used in custom mode or when keeping current weight)
+  // `newCuft === null` means weight-only (the Weight modal); `newWeight ===
+  // null` means cuft-only. At least one must be provided.
   const handleCuftWeightUpdate = useCallback(async (inventoryItemId, newCuft, newWeight = null) => {
-    console.log(`🔄 Updating inventory item ${inventoryItemId} cuft to ${newCuft}${newWeight !== null ? `, weight to ${newWeight}` : ' (weight unchanged)'}`);
+    if (newCuft === null && newWeight === null) return;
+    console.log(`🔄 Updating inventory item ${inventoryItemId}${newCuft !== null ? ` cuft to ${newCuft}` : ''}${newWeight !== null ? ` weight to ${newWeight}` : ''}`);
 
     // First, update the local state immediately for instant UI feedback
     setInventoryItems(prev => {
@@ -1947,7 +1950,7 @@ useEffect(() => {
         if (item._id === inventoryItemId) {
           return {
             ...item,
-            cuft: newCuft,
+            ...(newCuft !== null && { cuft: newCuft }),
             ...(newWeight !== null && { weight: newWeight })
           };
         }
@@ -1966,8 +1969,11 @@ useEffect(() => {
 
     // Then, persist the change to the server
     try {
-      // Build payload - only include weight if provided
-      const payload = { cuft: newCuft };
+      // Build payload from whichever fields were provided
+      const payload = {};
+      if (newCuft !== null) {
+        payload.cuft = newCuft;
+      }
       if (newWeight !== null) {
         payload.weight = newWeight;
       }
@@ -1989,7 +1995,7 @@ useEffect(() => {
           const updated = await response.json();
           if (updated && updated._id) mergeUpdatedItem(updated);
         } catch {}
-        console.log(`✅ Successfully persisted cuft ${newCuft}${newWeight !== null ? ` and weight ${newWeight}` : ''} for item ${inventoryItemId}`);
+        console.log(`✅ Successfully persisted${newCuft !== null ? ` cuft ${newCuft}` : ''}${newWeight !== null ? ` weight ${newWeight}` : ''} for item ${inventoryItemId}`);
       }
     } catch (error) {
       console.error('Error persisting cuft/weight update:', error);

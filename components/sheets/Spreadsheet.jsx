@@ -440,6 +440,11 @@ export default function Spreadsheet({
   const [weightMode, setWeightMode] = useState('total'); // 'total' or 'perUnit' for Weight display
   const [pboDropdownOpen, setPboDropdownOpen] = useState(false); // For bulk PBO/CP dropdown
   const [cuftModal, setCuftModal] = useState({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
+  // Direct weight editing, independent of cuft (long-standing customer ask —
+  // weight used to be reachable only through the cuft modal's proportional
+  // adjust). Hidden in weightMode 'custom', where weight is derived from
+  // cuft × multiplier and a direct edit would not stick.
+  const [weightModal, setWeightModal] = useState({ isOpen: false, rowId: null, value: '', row: null });
 
   // Edit-item dialog (name + special handling) — opened from the ℹ badge on
   // a row with instructions, or the hover-visible pencil when it has none.
@@ -2095,10 +2100,31 @@ export default function Spreadsheet({
       );
     }
 
-    // Handle Weight (col5) display based on weightMode
-    if (colId === 'col5' && weightMode === 'perUnit' && row) {
-      const displayValue = row.perUnitWeight !== undefined ? row.perUnitWeight.toFixed(1) : value;
-      return <span className="p-2 text-gray-600">{displayValue}</span>;
+    // Handle Weight (col5) display with edit icon — direct weight editing,
+    // independent of cuft. Hidden in weightConfig 'custom' mode, where
+    // weight is derived from cuft × multiplier and a direct edit would be
+    // recomputed away (edit cuft instead).
+    if (colId === 'col5' && row) {
+      const perUnitValue = row.perUnitWeight !== undefined ? row.perUnitWeight : parseFloat(value) || 0;
+      const displayValue = weightMode === 'perUnit' ? perUnitValue.toFixed(1) : value;
+      const canEditWeight = weightConfig?.weightMode !== 'custom' && row.inventoryItemId;
+      return (
+        <div className="group flex items-center gap-1 p-2 h-full">
+          <span className="text-gray-600">{displayValue}</span>
+          {canEditWeight && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setWeightModal({ isOpen: true, rowId, value: perUnitValue.toString(), row });
+              }}
+              className="opacity-100 md:opacity-0 md:group-hover:opacity-100 p-0.5 hover:bg-gray-200 rounded transition-opacity ml-auto"
+              title="Edit Weight"
+            >
+              <Pencil size={14} className="text-gray-500" />
+            </button>
+          )}
+        </div>
+      );
     }
 
     // Tags column (col8) — modern popover-based picker. Handles its own
@@ -2696,7 +2722,7 @@ export default function Spreadsheet({
         }
         return <span className="block truncate">{value}</span>;
     }
-  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, setRows, onRowsChange, setSaveStatus, cuftMode, weightMode, handleCountInputChange]);
+  }, [activeCell, editingCellContent, handleCellChange, handleCellBlur, handleKeyDown, getCompanyIcon, rows, setRows, onRowsChange, setSaveStatus, cuftMode, weightMode, weightConfig, handleCountInputChange]);
   
   // Render loading state
   if (isLoading) {
@@ -4245,6 +4271,103 @@ export default function Spreadsheet({
                   }
 
                   setCuftModal({ isOpen: false, rowId: null, value: '', row: null, adjustWeight: true });
+                }}
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Weight Modal — weight only, cuft untouched */}
+      <Dialog
+        open={weightModal.isOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWeightModal({ isOpen: false, rowId: null, value: '', row: null });
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{weightModal.row?.cells?.col2 || 'Item'}</DialogTitle>
+            <DialogDescription>
+              Edit the weight for this item — cubic feet stays unchanged
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="weight-value" className="text-sm font-medium text-gray-700">
+                Weight per item (lbs)
+              </label>
+              <input
+                id="weight-value"
+                type="number"
+                step="0.1"
+                value={weightModal.value || ''}
+                onChange={(e) => setWeightModal(prev => ({ ...prev, value: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                autoFocus
+              />
+            </div>
+
+            {/* Preview */}
+            <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Quantity</span>
+                <span className="font-medium">{weightModal.row?.quantity || parseInt(weightModal.row?.cells?.col3) || 1}</span>
+              </div>
+              <div className="flex justify-between text-sm border-t pt-1">
+                <span className="text-gray-500">Cuft per item (unchanged)</span>
+                <span className="font-medium">{(weightModal.row?.perUnitCuft ?? 0).toFixed(1)}</span>
+              </div>
+              <div className="flex justify-between text-sm border-t pt-1">
+                <span className="text-gray-500">Total Weight</span>
+                <span className="font-medium text-blue-600">
+                  {((parseFloat(weightModal.value) || 0) * (weightModal.row?.quantity || parseInt(weightModal.row?.cells?.col3) || 1)).toFixed(1)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => {
+                  setWeightModal({ isOpen: false, rowId: null, value: '', row: null });
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const newPerUnitWeight = parseFloat(weightModal.value) || 0;
+                  const quantity = weightModal.row?.quantity || parseInt(weightModal.row?.cells?.col3) || 1;
+                  const newTotalWeight = newPerUnitWeight * quantity;
+
+                  // Update local state immediately for UI feedback
+                  setRows(prevRows => prevRows.map(r => {
+                    if (r.id === weightModal.rowId) {
+                      return {
+                        ...r,
+                        perUnitWeight: newPerUnitWeight,
+                        cells: {
+                          ...r.cells,
+                          col5: newTotalWeight.toString()
+                        }
+                      };
+                    }
+                    return r;
+                  }));
+
+                  // Persist weight only — cuft passes as null and is left out
+                  // of the PATCH payload entirely.
+                  if (onCuftWeightUpdate && weightModal.row?.inventoryItemId) {
+                    onCuftWeightUpdate(weightModal.row.inventoryItemId, null, newPerUnitWeight);
+                  }
+
+                  setWeightModal({ isOpen: false, rowId: null, value: '', row: null });
                 }}
                 className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
               >
