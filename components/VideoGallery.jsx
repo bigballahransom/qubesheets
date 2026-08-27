@@ -107,12 +107,21 @@ const VideoCard = memo(({
     ? (video.isWalkthrough ? 'On-Site Walkthrough' : 'Self-Serve Recording')
     : video.originalName;
 
-  // Analysis stuck in 'processing' with no update for 45+ min means the worker
-  // died mid-job (there is no retry/sweeper on the pipeline) — offer a rerun.
+  // Analysis stuck in 'processing' (or an uploaded video stuck 'pending' in the
+  // queue) with no update for 45+ min means the worker died mid-job (there is no
+  // retry/sweeper on the pipeline) — offer a rerun.
+  const analysisStatus = video.analysisResult?.status;
   const isStalledProcessing =
-    video.analysisResult?.status === 'processing' &&
+    (analysisStatus === 'processing' || (!isSelfServe && analysisStatus === 'pending')) &&
     Date.now() - new Date(video.updatedAt || video.createdAt).getTime() > 45 * 60 * 1000;
-  const canReprocess = isSelfServe && !isRecordingFailed && (video.analysisResult?.status === 'failed' || isStalledProcessing);
+  // Rerun parity with the Virtual Calls tab: completed and failed analyses can
+  // always be rerun; in-flight ones only once stalled. Uploaded Video docs rerun
+  // through the video-service pipeline, self-serve recordings through the call
+  // pipeline (see handleReprocess).
+  const reprocessableStatus = analysisStatus === 'completed' || analysisStatus === 'failed' || isStalledProcessing;
+  const canReprocess = isSelfServe
+    ? (!isRecordingFailed && reprocessableStatus)
+    : (!!video.s3RawFile?.key && reprocessableStatus);
 
   // Load video thumbnail on mount
   useEffect(() => {
@@ -1028,7 +1037,12 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   const handleReprocess = async (video) => {
     try {
       toast('Starting analysis rerun...');
-      const response = await fetch(`/api/projects/${projectId}/video-recordings/${video._id}/reprocess`, {
+      // Self-serve recordings live in the VideoRecording collection (call
+      // pipeline); uploaded videos in the Video collection (video pipeline).
+      const endpoint = video._type === 'self_serve_recording'
+        ? `/api/projects/${projectId}/video-recordings/${video._id}/reprocess`
+        : `/api/projects/${projectId}/videos/${video._id}/reprocess`;
+      const response = await fetch(endpoint, {
         method: 'POST'
       });
 

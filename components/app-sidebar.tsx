@@ -32,8 +32,10 @@ import {
   ArchiveRestore,
   MoreHorizontal,
   UserPlus,
-  ShieldCheck
+  ShieldCheck,
+  Sparkles
 } from 'lucide-react';
+import { LATEST_UPDATES_VERSION, UPDATES_SEEN_STORAGE_KEY } from '@/lib/updatesLog';
 import { toast } from 'sonner';
 import { Sidebar } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
@@ -134,6 +136,9 @@ export function AppSidebar() {
   // loaded client-side), so there's no hydration mismatch to cause.
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(readStoredFilter);
   const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
+  // Unread dot on "What's New" — computed in an effect (not initial state) so
+  // the server render matches the first client render.
+  const [hasUnseenUpdates, setHasUnseenUpdates] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const scrollRestoredRef = useRef(false);
@@ -159,6 +164,23 @@ export function AppSidebar() {
       fetchProjects();
     }
   }, [isLoaded, userId]);
+
+  // "What's New" unread dot: show until this device has viewed the latest
+  // updates version; visiting /updates marks it seen.
+  useEffect(() => {
+    try {
+      if (pathname === '/updates') {
+        localStorage.setItem(UPDATES_SEEN_STORAGE_KEY, LATEST_UPDATES_VERSION);
+        setHasUnseenUpdates(false);
+      } else {
+        setHasUnseenUpdates(
+          localStorage.getItem(UPDATES_SEEN_STORAGE_KEY) !== LATEST_UPDATES_VERSION
+        );
+      }
+    } catch {
+      // localStorage unavailable (private mode etc.) — just skip the dot
+    }
+  }, [pathname]);
 
   // Fetch organization members for the assign menu (non-CRM orgs only)
   useEffect(() => {
@@ -894,6 +916,23 @@ export function AppSidebar() {
             <span className="text-sm font-medium">Dashboard</span>
           </button>
         )}
+
+        {/* What's New — product updates changelog */}
+        <button
+          onClick={() => router.push('/updates')}
+          className={`flex items-center gap-2 w-full p-3 text-gray-700 transition-colors cursor-pointer hover:bg-gray-100 active:bg-gray-200 ${
+            pathname === '/updates' ? 'bg-gray-100' : ''
+          }`}
+        >
+          <Sparkles className="w-4 h-4 flex-shrink-0 text-blue-500" />
+          <span className="text-sm font-medium">What&apos;s New</span>
+          {hasUnseenUpdates && (
+            <span
+              className="ml-auto w-2 h-2 rounded-full bg-blue-500 flex-shrink-0"
+              aria-label="New updates available"
+            />
+          )}
+        </button>
 
         {/* Settings Section */}
         <SettingsSection />
