@@ -65,6 +65,19 @@ const SmartMovingIntegrationSchema = new mongoose.Schema({
     default: true
   },
 
+  // Include media vault links (view + upload) in the crew notes during inventory sync
+  syncVaultLinksOnSync: {
+    type: Boolean,
+    default: true
+  },
+
+  // Include AI walkthrough summaries (summary, packing notes, customer statements
+  // from video/virtual walkthroughs) in the internal notes during inventory sync
+  syncAiSummariesOnSync: {
+    type: Boolean,
+    default: true
+  },
+
   // Which SmartMoving webhook records create projects. The opportunity-created
   // webhook fires for both new leads (opportunity-status 0) and new
   // opportunities (status 3); some teams only want one or the other.

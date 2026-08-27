@@ -4,7 +4,11 @@ import Project from '@/models/Project';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import CrewReviewLink from '@/models/CrewReviewLink';
+import VaultShareLink from '@/models/VaultShareLink';
+import CustomerUpload from '@/models/CustomerUpload';
 import InventoryNote from '@/models/InventoryNote';
+import VideoRecording from '@/models/VideoRecording';
+import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import { IInventoryItem } from '@/models/InventoryItem';
 import { logActivity } from '@/lib/activity-logger';
 import crypto from 'crypto';
@@ -385,7 +389,11 @@ export async function syncInventoryToSmartMoving(
             projectId,
             smartMovingOpportunityId,
             smartMovingIntegration.smartMovingApiKey,
-            smartMovingIntegration.smartMovingClientId
+            smartMovingIntegration.smartMovingClientId,
+            {
+              includeVaultLinks: smartMovingIntegration.syncVaultLinksOnSync !== false,
+              includeAiSummaries: smartMovingIntegration.syncAiSummariesOnSync !== false
+            }
           );
           if (notesResult.success) {
             console.log(`✅ [SMARTMOVING-SYNC] Notes synced to opportunity (${notesResult.notesSynced} notes, ${notesResult.jobsUpdated} jobs updated)`);
@@ -569,6 +577,77 @@ async function getOrCreateActiveCrewReviewLink(projectId: string) {
   return CrewReviewLink.create(linkData);
 }
 
+async function getProjectOwner(projectId: string) {
+  const project = await Project.findById(projectId).select('userId organizationId').lean<{ userId: string; organizationId?: string }>();
+  if (!project) {
+    throw new Error(`Project ${projectId} not found - cannot auto-generate vault link`);
+  }
+  return project;
+}
+
+/**
+ * Returns the active vault share link (read-only /vault-review gallery) for a project,
+ * auto-creating one if none exists. Idempotent like the manual
+ * /api/projects/[projectId]/vault-share-link route — one permanent link per project,
+ * never rotated, with userId/organizationId sourced from the Project since the sync
+ * flow has no auth context.
+ */
+async function getOrCreateVaultShareLink(projectId: string) {
+  const existing = await VaultShareLink.findOne({ projectId, isActive: true });
+  if (existing) return existing;
+
+  const project = await getProjectOwner(projectId);
+
+  const linkData: any = {
+    projectId,
+    userId: project.userId,
+    shareToken: crypto.randomBytes(32).toString('hex'),
+    isActive: true,
+  };
+  if (project.organizationId) {
+    linkData.organizationId = project.organizationId;
+  }
+  return VaultShareLink.create(linkData);
+}
+
+/**
+ * Returns the active vault capture link (/customer-upload with purpose 'vault') for a
+ * project, auto-creating one if none exists. Mirrors the manual
+ * /api/projects/[projectId]/vault-link route, including the vaultLinkTracking stamp
+ * on the Project so the UI reflects the auto-created link.
+ */
+async function getOrCreateVaultCaptureLink(projectId: string) {
+  const existing = await CustomerUpload.findOne({ projectId, purpose: 'vault', isActive: true });
+  if (existing) return existing;
+
+  const project = await getProjectOwner(projectId);
+
+  const uploadToken = crypto.randomBytes(32).toString('hex');
+  const linkData: any = {
+    projectId,
+    userId: project.userId,
+    // Display-only; provenance is the purpose field
+    customerName: 'Media Vault',
+    uploadToken,
+    isActive: true,
+    purpose: 'vault',
+    uploadMode: 'both',
+  };
+  if (project.organizationId) {
+    linkData.organizationId = project.organizationId;
+  }
+  const link = await CustomerUpload.create(linkData);
+
+  await Project.findByIdAndUpdate(projectId, {
+    $set: {
+      'vaultLinkTracking.uploadToken': uploadToken,
+      'vaultLinkTracking.createdAt': new Date()
+    }
+  });
+
+  return link;
+}
+
 /**
  * Syncs the crew review link to SmartMoving's Job Notes "Crew Notes" field
  * This updates the crewNotes field for ALL jobs in the opportunity
@@ -651,6 +730,60 @@ export async function syncCrewReviewLinkToSmartMoving(
   }
 }
 
+/**
+ * Builds a text block of AI walkthrough analysis for all of a project's completed
+ * video/virtual-call recordings: per-recording AI summary, packing notes, and
+ * customer statements (transcript highlights). Vault reference media is excluded,
+ * matching the recordings surfaced in the app's Notes tab. Returns '' when the
+ * project has no analyzed recordings.
+ */
+async function buildAiSummariesContent(projectId: string): Promise<string> {
+  const recordings = await VideoRecording.find({
+    projectId,
+    status: 'completed',
+    purpose: { $ne: 'vault' }
+  }).sort({ createdAt: 1 }).lean<any[]>();
+
+  const sections: string[] = [];
+
+  for (const rec of recordings) {
+    const segments = await CallAnalysisSegment.find({
+      videoRecordingId: rec._id,
+      status: 'completed'
+    }).sort({ segmentIndex: 1 }).select('rawAnalysis.summary rawAnalysis.packing_notes rawAnalysis.transcript_highlights').lean<any[]>();
+
+    // Prefer the aggregated fields stamped at consolidation; fall back to combining
+    // the per-segment analysis (the live pipeline), then to legacy summary fields.
+    const segmentSummaries = segments.map(seg => seg.rawAnalysis?.summary).filter(Boolean).join('\n\n');
+    const segmentPackingNotes = segments.map(seg => seg.rawAnalysis?.packing_notes).filter(Boolean).join('\n\n');
+    const summary = rec.segmentSummaries || segmentSummaries ||
+      rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary || '';
+    const packingNotes = rec.packingNotes || segmentPackingNotes;
+    const highlights = segments.flatMap(seg => seg.rawAnalysis?.transcript_highlights || []);
+
+    if (!summary && !packingNotes && highlights.length === 0) continue;
+
+    const recordedOn = rec.createdAt
+      ? new Date(rec.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : '';
+    const parts: string[] = [`=== AI Walkthrough Summary${recordedOn ? ` (${recordedOn})` : ''} ===`];
+    if (summary) parts.push(summary);
+    if (packingNotes) parts.push(`Packing Notes:\n${packingNotes}`);
+    if (highlights.length > 0) {
+      const statements = highlights
+        .map((h: any) => {
+          const meta = [h.timestamp, h.related_item ? `Re: ${h.related_item}` : ''].filter(Boolean).join(' - ');
+          return `- "${h.text}"${meta ? ` (${meta})` : ''}`;
+        })
+        .join('\n');
+      parts.push(`Customer Statements:\n${statements}`);
+    }
+    sections.push(parts.join('\n\n'));
+  }
+
+  return sections.join('\n\n');
+}
+
 // Mapping from QubeSheets note category to SmartMoving note type
 const noteCategoryMapping: Record<string, 'internal' | 'crew' | 'customer'> = {
   'general': 'internal',
@@ -731,7 +864,8 @@ export async function syncNotesToSmartMoving(
   projectId: string,
   opportunityId: string,
   apiKey: string,
-  clientId: string
+  clientId: string,
+  options?: { includeVaultLinks?: boolean; includeAiSummaries?: boolean }
 ): Promise<{ success: boolean; jobsUpdated?: number; notesSynced?: number; error?: string }> {
   console.log(`📝 [SMARTMOVING-NOTES-SYNC] Starting notes sync for project ${projectId}`);
 
@@ -791,8 +925,24 @@ export async function syncNotesToSmartMoving(
       return sections.join('\n\n');
     };
 
-    const internalNotesContent = buildNotesContent(groupedNotes.internal);
+    let internalNotesContent = buildNotesContent(groupedNotes.internal);
     const customerNotesContent = buildNotesContent(groupedNotes.customer);
+
+    // Append AI walkthrough summaries to internal notes, unless disabled in the
+    // integration settings. A summary-build failure must not break the
+    // notes/inventory sync — omit the section and keep going.
+    if (options?.includeAiSummaries !== false) {
+      try {
+        const aiSummariesContent = await buildAiSummariesContent(projectId);
+        if (aiSummariesContent) {
+          internalNotesContent = internalNotesContent
+            ? `${internalNotesContent}\n\n${aiSummariesContent}`
+            : aiSummariesContent;
+        }
+      } catch (aiError) {
+        console.error(`⚠️ [SMARTMOVING-NOTES-SYNC] Failed to build AI walkthrough summaries, omitting from internal notes:`, aiError);
+      }
+    }
 
     // For crew notes, also include the crew review link
     let crewNotesContent = buildNotesContent(groupedNotes.crew);
@@ -802,11 +952,28 @@ export async function syncNotesToSmartMoving(
 
     const crewReviewUrl = `${getBaseUrl()}/crew-review/${crewReviewLink.reviewToken}`;
 
-    // Prepend crew review link to crew notes
+    const linkLines = [`Crew Review Link: ${crewReviewUrl}`];
+
+    // Media Vault links (auto-generated if none exist), unless disabled in the
+    // integration settings. A vault-link failure must not break the
+    // notes/inventory sync — omit the vault lines and keep going.
+    if (options?.includeVaultLinks !== false) {
+      try {
+        const vaultShareLink = await getOrCreateVaultShareLink(projectId);
+        linkLines.push(`Media Vault (view): ${getBaseUrl()}/vault-review/${vaultShareLink.shareToken}`);
+        const vaultCaptureLink = await getOrCreateVaultCaptureLink(projectId);
+        linkLines.push(`Media Vault (upload): ${getBaseUrl()}/customer-upload/${vaultCaptureLink.uploadToken}`);
+      } catch (vaultError) {
+        console.error(`⚠️ [SMARTMOVING-NOTES-SYNC] Failed to get media vault links, omitting from crew notes:`, vaultError);
+      }
+    }
+
+    // Prepend crew review + media vault links to crew notes
+    const linksBlock = linkLines.join('\n');
     if (crewNotesContent) {
-      crewNotesContent = `Crew Review Link: ${crewReviewUrl}\n\n${crewNotesContent}`;
+      crewNotesContent = `${linksBlock}\n\n${crewNotesContent}`;
     } else {
-      crewNotesContent = `Crew Review Link: ${crewReviewUrl}`;
+      crewNotesContent = linksBlock;
     }
 
     // Fetch jobs for the opportunity

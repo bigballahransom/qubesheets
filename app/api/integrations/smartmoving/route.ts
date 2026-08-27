@@ -57,6 +57,8 @@ export async function GET() {
         hasApiKey: !!integration.smartMovingApiKey,
         sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false, // default true
+        syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false, // default true
+        syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false, // default true
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt,
@@ -89,7 +91,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate, syncCrewLinkOnSync, webhookRecordFilter } = body;
+    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, webhookRecordFilter } = body;
 
     if (!smartMovingClientId || !smartMovingApiKey) {
       return NextResponse.json(
@@ -108,6 +110,8 @@ export async function POST(request: Request) {
       smartMovingApiKey: smartMovingApiKey.trim(),
       sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
       syncCrewLinkOnSync: syncCrewLinkOnSync !== false, // default true
+      syncVaultLinksOnSync: syncVaultLinksOnSync !== false, // default true
+      syncAiSummariesOnSync: syncAiSummariesOnSync !== false, // default true
       webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter)
     };
 
@@ -159,6 +163,8 @@ export async function POST(request: Request) {
         hasApiKey: !!integration.smartMovingApiKey,
         sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
+        syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false,
+        syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false,
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt
@@ -189,7 +195,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { sendUploadLinkOnCreate, syncCrewLinkOnSync, webhookRecordFilter } = body;
+    const { sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, webhookRecordFilter } = body;
 
     await connectMongoDB();
 
@@ -200,6 +206,8 @@ export async function PATCH(request: Request) {
         $set: {
           sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
           syncCrewLinkOnSync: syncCrewLinkOnSync !== false,
+          syncVaultLinksOnSync: syncVaultLinksOnSync !== false,
+          syncAiSummariesOnSync: syncAiSummariesOnSync !== false,
           webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter),
           userId // Track who updated it
         }
@@ -224,6 +232,8 @@ export async function PATCH(request: Request) {
         hasApiKey: !!integration.smartMovingApiKey,
         sendUploadLinkOnCreate: integration.sendUploadLinkOnCreate || false,
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
+        syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false,
+        syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false,
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         updatedAt: integration.updatedAt
       }

@@ -23,6 +23,8 @@ export default function IntegrationsPage() {
   const [hasExistingIntegration, setHasExistingIntegration] = useState(false);
   const [sendUploadLinkOnCreate, setSendUploadLinkOnCreate] = useState(false);
   const [syncCrewLinkOnSync, setSyncCrewLinkOnSync] = useState(true);
+  const [syncVaultLinksOnSync, setSyncVaultLinksOnSync] = useState(true);
+  const [syncAiSummariesOnSync, setSyncAiSummariesOnSync] = useState(true);
   const [webhookRecordFilter, setWebhookRecordFilter] = useState('opportunities_and_leads');
 
   // Chariot integration state
@@ -65,6 +67,8 @@ export default function IntegrationsPage() {
           setSmartMovingClientId(data.integration.smartMovingClientId);
           setSendUploadLinkOnCreate(data.integration.sendUploadLinkOnCreate || false);
           setSyncCrewLinkOnSync(data.integration.syncCrewLinkOnSync !== false);
+          setSyncVaultLinksOnSync(data.integration.syncVaultLinksOnSync !== false);
+          setSyncAiSummariesOnSync(data.integration.syncAiSummariesOnSync !== false);
           setWebhookRecordFilter(data.integration.webhookRecordFilter || 'opportunities_and_leads');
           // API key is not returned for security, just show that it exists
           if (data.integration.hasApiKey) {
@@ -141,6 +145,8 @@ export default function IntegrationsPage() {
             smartMovingApiKey,
             sendUploadLinkOnCreate,
             syncCrewLinkOnSync,
+            syncVaultLinksOnSync,
+            syncAiSummariesOnSync,
             webhookRecordFilter,
           }),
         });
@@ -162,6 +168,8 @@ export default function IntegrationsPage() {
           body: JSON.stringify({
             sendUploadLinkOnCreate,
             syncCrewLinkOnSync,
+            syncVaultLinksOnSync,
+            syncAiSummariesOnSync,
             webhookRecordFilter,
           }),
         });
@@ -708,6 +716,52 @@ export default function IntegrationsPage() {
                               </label>
                               <p className="text-xs text-gray-600 mt-1">
                                 Automatically add the crew review link to the Crew Notes field in SmartMoving when syncing inventory.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sync Media Vault Links Option */}
+                      {hasExistingIntegration && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              id="sync-vault-links-on-sync"
+                              checked={syncVaultLinksOnSync}
+                              onChange={(e) => setSyncVaultLinksOnSync(e.target.checked)}
+                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <label htmlFor="sync-vault-links-on-sync" className="text-sm font-medium text-gray-900 cursor-pointer">
+                                Sync media vault links to job notes
+                              </label>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Automatically add the media vault view and upload links to the Crew Notes field in SmartMoving when syncing inventory.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sync AI Walkthrough Summaries Option */}
+                      {hasExistingIntegration && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              id="sync-ai-summaries-on-sync"
+                              checked={syncAiSummariesOnSync}
+                              onChange={(e) => setSyncAiSummariesOnSync(e.target.checked)}
+                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <label htmlFor="sync-ai-summaries-on-sync" className="text-sm font-medium text-gray-900 cursor-pointer">
+                                Sync AI walkthrough summaries to job notes
+                              </label>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Automatically add the AI summary, packing notes, and customer statements from video walkthroughs to the Internal Notes field in SmartMoving when syncing inventory.
                               </p>
                             </div>
                           </div>
