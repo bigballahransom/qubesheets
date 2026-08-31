@@ -23,7 +23,7 @@ import {
   FocusLayout,
   CarouselLayout,
 } from '@livekit/components-react';
-import { Track, LocalVideoTrack, RemoteVideoTrack, createLocalVideoTrack, ConnectionState, facingModeFromLocalTrack } from 'livekit-client';
+import { Track, LocalVideoTrack, RemoteVideoTrack, createLocalVideoTrack, ConnectionState, DisconnectReason, facingModeFromLocalTrack } from 'livekit-client';
 import '@livekit/components-styles';
 import { 
   Camera, 
@@ -87,6 +87,7 @@ const gridMembershipKey = (tracks) =>
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 import VideoCallNotes from '../VideoCallNotes';
 import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimizedRoomOptions } from '@/lib/webrtc-compatibility';
+import { reportClientError } from '@/lib/client-error-reporting';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
@@ -608,7 +609,7 @@ function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
 }
 
-const CustomerView = React.memo(({ onCallEnd, roomId }) => {
+const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
   const [showControls, setShowControls] = useState(true);
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants().filter(
@@ -616,6 +617,10 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
   );
   const connectionState = useConnectionState();
   const { needsManualRecovery: mediaNeedsRecovery, failedLabel: mediaFailedLabel, recover: recoverMedia } = useMediaRecovery();
+
+  // Watchdog: the Connecting/Reconnecting spinner must not run forever. After
+  // 30s of continuous connecting, offer a retry instead of spinning.
+  const [connectingTimedOut, setConnectingTimedOut] = useState(false);
 
   // Custom control states
   const [isMicEnabled, setIsMicEnabled] = useState(true);
@@ -625,6 +630,15 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
 
   // Show loading screen while connecting
   const isConnecting = connectionState === ConnectionState.Connecting || connectionState === ConnectionState.Reconnecting;
+
+  useEffect(() => {
+    if (!isConnecting) {
+      setConnectingTimedOut(false);
+      return;
+    }
+    const t = setTimeout(() => setConnectingTimedOut(true), 30000);
+    return () => clearTimeout(t);
+  }, [isConnecting]);
 
   // Detect mobile device immediately via user agent (no useEffect delay)
   const isMobileDevice = useMemo(() => {
@@ -788,9 +802,31 @@ const CustomerView = React.memo(({ onCallEnd, roomId }) => {
         </div>
 
         <div className={`p-8 rounded-3xl text-center max-w-md ${glassStyle} z-10`}>
-          <Loader2 className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
-          <h3 className="text-2xl font-bold text-white mb-2">Connecting...</h3>
-          <p className="text-white/70">Setting up your video call</p>
+          {connectingTimedOut ? (
+            <>
+              <AlertCircle className="w-12 h-12 text-amber-300 mx-auto mb-4" />
+              <h3 className="text-2xl font-bold text-white mb-2">Having trouble connecting</h3>
+              <p className="text-white/70 mb-5">
+                This is taking longer than it should. Check your connection and try again.
+              </p>
+              <button
+                onClick={() => {
+                  setConnectingTimedOut(false);
+                  onRetryConnection?.();
+                }}
+                className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-semibold transition-colors flex items-center gap-2 mx-auto"
+              >
+                <RotateCcw className="w-5 h-5" />
+                Try again
+              </button>
+            </>
+          ) : (
+            <>
+              <Loader2 className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
+              <h3 className="text-2xl font-bold text-white mb-2">Connecting...</h3>
+              <p className="text-white/70">Setting up your video call</p>
+            </>
+          )}
         </div>
       </div>
     );
@@ -1983,6 +2019,10 @@ export default function VideoCallInventory({
           if (cancelled) return;
           console.warn(`Token fetch attempt ${attempt}/${maxAttempts} failed:`, error);
           if (attempt === maxAttempts) {
+            reportClientError({
+              message: `LiveKit token fetch failed after ${maxAttempts} attempts (room=${roomId}, agent=${isAgentUser}): ${error?.message || error}`,
+              source: 'video-call:token-fetch',
+            });
             toast.error('Failed to connect to video call');
             setIsConnecting(false);
             return;
@@ -2000,11 +2040,82 @@ export default function VideoCallInventory({
   // Save items to inventory
   // Items are now saved automatically via Railway system - no manual save needed
 
-  const handleDisconnect = useCallback(() => {
+  // ---- Rejoin-in-place on unexpected disconnect ----
+  // A dropped connection used to fire onDisconnected → navigate away (agent to
+  // the project page, customer to /call-complete). The agent would then start
+  // a brand-new room, orphaning the link the customer was texted. Instead:
+  // stay on this page, remount LiveKitRoom (same token — TTL is 4h) with
+  // backoff, and only give up into a manual Rejoin screen.
+  const MAX_AUTO_REJOINS = 3;
+  const [reconnectPhase, setReconnectPhase] = useState(null); // null | 'reconnecting' | 'failed'
+  const reconnectPhaseRef = useRef(null);
+  reconnectPhaseRef.current = reconnectPhase;
+  const [roomMountKey, setRoomMountKey] = useState(0);
+  const rejoinAttemptsRef = useRef(0);
+  const intentionalLeaveRef = useRef(false);
+  const rejoinTimerRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(rejoinTimerRef.current), []);
+
+  const scheduleRejoin = useCallback(() => {
+    rejoinAttemptsRef.current += 1;
+    if (rejoinAttemptsRef.current > MAX_AUTO_REJOINS) {
+      setReconnectPhase('failed');
+      return;
+    }
+    setReconnectPhase('reconnecting');
+    const delay = Math.min(1000 * 2 ** (rejoinAttemptsRef.current - 1), 5000);
+    clearTimeout(rejoinTimerRef.current);
+    rejoinTimerRef.current = setTimeout(() => {
+      setRoomMountKey((k) => k + 1);
+    }, delay);
+  }, []);
+
+  const handleManualRejoin = useCallback(() => {
+    rejoinAttemptsRef.current = 0;
+    setReconnectPhase('reconnecting');
+    setRoomMountKey((k) => k + 1);
+  }, []);
+
+  // Views call this for user-initiated Leave/End so the disconnect that
+  // follows isn't mistaken for a network drop.
+  const handleIntentionalCallEnd = useCallback(() => {
+    intentionalLeaveRef.current = true;
     if (onCallEnd) {
       onCallEnd();
     }
   }, [onCallEnd]);
+
+  const handleDisconnect = useCallback(
+    (reason) => {
+      // Reasons that genuinely end the call: our own leave, the agent deleting
+      // the room (End Call for everyone), the room closing after everyone left,
+      // being removed, or this identity joining from another tab.
+      const callOver =
+        intentionalLeaveRef.current ||
+        reason === DisconnectReason.CLIENT_INITIATED ||
+        reason === DisconnectReason.ROOM_DELETED ||
+        reason === DisconnectReason.ROOM_CLOSED ||
+        reason === DisconnectReason.PARTICIPANT_REMOVED ||
+        reason === DisconnectReason.DUPLICATE_IDENTITY;
+
+      if (callOver) {
+        if (onCallEnd) {
+          onCallEnd();
+        }
+        return;
+      }
+
+      // Network drop / signal close / server hiccup — rejoin in place.
+      console.warn(`LiveKit disconnected unexpectedly (reason=${reason}) — attempting rejoin`);
+      reportClientError({
+        message: `LiveKit unexpected disconnect (reason=${reason}, room=${roomId}, agent=${isCurrentUserAgent}, rejoinAttempt=${rejoinAttemptsRef.current + 1})`,
+        source: 'video-call:unexpected-disconnect',
+      });
+      scheduleRejoin();
+    },
+    [onCallEnd, scheduleRejoin, roomId, isCurrentUserAgent]
+  );
 
   // Get device info for Android/compatibility optimizations
   const deviceInfo = useMemo(() => getDeviceInfo(), []);
@@ -2118,8 +2229,15 @@ export default function VideoCallInventory({
       dynacast: true,
       autoSubscribe: true,
       disconnectOnPageLeave: true,
+      // Bounded: give up after ~8 attempts (~60s) so a wedged connection
+      // surfaces as a Disconnected event (→ our rejoin-in-place flow) instead
+      // of spinning "Reconnecting…" forever. Returning null stops retrying.
       reconnectPolicy: {
-        nextRetryDelayInMs: (context) => Math.min((context.retryCount || 0) * 2000, 10000)
+        nextRetryDelayInMs: (context) => {
+          const attempt = context.retryCount || 0;
+          if (attempt >= 8) return null;
+          return Math.min(attempt * 2000, 10000);
+        }
       },
       videoCaptureDefaults: {
         facingMode,
@@ -2201,8 +2319,51 @@ export default function VideoCallInventory({
     );
   }
 
+  // Auto-rejoin exhausted — manual choice, but never silently navigate away.
+  if (reconnectPhase === 'failed') {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="bg-white/10 backdrop-blur-xl border border-white/20 p-8 rounded-2xl text-center max-w-md">
+          <AlertCircle className="w-12 h-12 text-amber-400 mx-auto mb-4" />
+          <h3 className="text-2xl font-bold text-white mb-2">Connection lost</h3>
+          <p className="text-white/70 mb-6">
+            We couldn&apos;t reconnect you automatically. Check your internet connection and
+            rejoin — the call is still open.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={handleManualRejoin}
+              className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
+            >
+              <RotateCcw className="w-5 h-5" />
+              Rejoin call
+            </button>
+            <button
+              onClick={handleIntentionalCallEnd}
+              className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl font-semibold transition-colors"
+            >
+              Leave call
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 overflow-hidden">
+      {/* Reconnect overlay: shown while we remount the room after an
+          unexpected disconnect. Sits above the (re)connecting call UI. */}
+      {reconnectPhase === 'reconnecting' && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-slate-900/90 backdrop-blur-sm">
+          <div className="text-center">
+            <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-white" />
+            <h3 className="text-xl font-bold text-white mb-1">Connection lost</h3>
+            <p className="text-white/70">Rejoining the call…</p>
+          </div>
+        </div>
+      )}
+
       {/* Custom CSS for better desktop video layout */}
       <style jsx>{`
         @media (min-width: 768px) {
@@ -2223,6 +2384,7 @@ export default function VideoCallInventory({
       `}</style>
       
       <LiveKitRoom
+        key={roomMountKey}
         video={customerSettings?.videoEnabled ?? true}
         audio={customerSettings?.audioEnabled ?? true}
         token={token}
@@ -2244,7 +2406,21 @@ export default function VideoCallInventory({
             return;
           }
 
+          // A rejoin attempt whose connect fails outright emits onError but no
+          // onDisconnected — keep the rejoin state machine moving so the
+          // overlay can't hang forever.
+          if (reconnectPhaseRef.current === 'reconnecting') {
+            console.warn('Rejoin attempt failed to connect:', errorMsg);
+            scheduleRejoin();
+            return;
+          }
+
           console.error('LiveKit room error:', errorMsg);
+          reportClientError({
+            message: `LiveKit room error (room=${roomId}, agent=${isCurrentUserAgent}): ${errorMsg}`,
+            stack: error?.stack,
+            source: 'video-call:livekit-error',
+          });
 
           // Skip permission errors - handled by onMediaDeviceFailure
           if (errorMsg.toLowerCase().includes('permission') ||
@@ -2271,6 +2447,9 @@ export default function VideoCallInventory({
         onConnected={() => {
           console.log('✅ Successfully connected to LiveKit room');
           connectionSucceeded.current = true;
+          // A successful (re)connect resets the rejoin state machine.
+          rejoinAttemptsRef.current = 0;
+          setReconnectPhase(null);
           // Clear any pending error timeouts
           pendingErrors.current.forEach(clearTimeout);
           pendingErrors.current = [];
@@ -2297,7 +2476,9 @@ export default function VideoCallInventory({
         {/* Apply background effects if settings provided */}
         {backgroundSettings && <BackgroundApplier backgroundSettings={backgroundSettings} />}
 
-        {/* Render different views based on participant type */}
+        {/* Render different views based on participant type. Views get the
+            intentional-leave wrapper so user-initiated Leave/End is never
+            mistaken for a network drop by the rejoin logic. */}
         {isCurrentUserAgent ? (
           <AgentView
             projectId={projectId}
@@ -2305,10 +2486,10 @@ export default function VideoCallInventory({
             setCurrentRoom={setCurrentRoom}
             participantName={participantName}
             roomId={roomId}
-            onCallEnd={onCallEnd}
+            onCallEnd={handleIntentionalCallEnd}
           />
         ) : (
-          <CustomerView onCallEnd={onCallEnd} roomId={roomId} />
+          <CustomerView onCallEnd={handleIntentionalCallEnd} roomId={roomId} onRetryConnection={handleManualRejoin} />
         )}
       </LiveKitRoom>
     </div>

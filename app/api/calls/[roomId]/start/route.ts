@@ -15,8 +15,11 @@ import Project from '@/models/Project';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 
 const PRESENCE_WINDOW_MS = 10 * 1000;
-const EMPTY_TIMEOUT_S = 180;
-const DEPARTURE_TIMEOUT_S = 180;
+// 60s (was 180): rejoin-in-place reconnects into a still-open room well within
+// this window, and a shorter tail means abandoned rooms stop recording empty
+// grid ~2 minutes sooner.
+const EMPTY_TIMEOUT_S = 60;
+const DEPARTURE_TIMEOUT_S = 60;
 
 const roomServiceClient = new RoomServiceClient(
   process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || '',

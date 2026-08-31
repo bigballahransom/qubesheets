@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/stuck-recording-sweeper",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/smartmoving-auto-sync",
+      "schedule": "*/2 * * * *"
     }
   ]
 }

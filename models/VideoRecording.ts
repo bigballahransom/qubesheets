@@ -166,7 +166,9 @@ const VideoRecordingSchema: Schema = new Schema(
     status: {
       type: String,
       required: true,
-      enum: ['waiting', 'starting', 'recording', 'processing', 'completed', 'failed', 'partial'],
+      // 'discarded': sub-30s room composite from an abandoned connection
+      // attempt — retained (doc + S3) but hidden everywhere and never analyzed.
+      enum: ['waiting', 'starting', 'recording', 'processing', 'completed', 'failed', 'partial', 'discarded'],
       default: 'waiting'
     },
     // Auto-recovery fields for egress disconnection

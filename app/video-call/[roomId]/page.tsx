@@ -26,6 +26,12 @@ interface PresenceState {
   isScheduled: boolean;
   scheduledFor: string | null;
   scheduledStatus: string | null;
+  // Cross-room reconciliation (split-room healing): the newest room for this
+  // project with an actively-present agent, and a room where the customer is
+  // waiting without an agent.
+  activeRoomId: string | null;
+  customerWaitingElsewhereRoomId: string | null;
+  agentWentStale: boolean;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -41,6 +47,9 @@ const DEFAULT_PRESENCE: PresenceState = {
   isScheduled: false,
   scheduledFor: null,
   scheduledStatus: null,
+  activeRoomId: null,
+  customerWaitingElsewhereRoomId: null,
+  agentWentStale: false,
 };
 
 export default function VideoCallPage() {
@@ -157,7 +166,11 @@ export default function VideoCallPage() {
   useEffect(() => {
     if (isValidating || validationError) return;
     if (presence.callStatus === 'live' && (isAgent ? agentEntered : customerReady)) return;
-    if (presence.callStatus === 'ended') return;
+    // Note: polling continues on an ended room for both sides — the customer's
+    // next poll redirects them once the agent opens a fresh room, and the
+    // agent's ended screen can surface "Join your customer" the moment the
+    // customer appears in another lobby. Cross-room lookups only match
+    // lobby/live rooms, so heartbeats on an ended room pollute nothing.
     if (!isAgent && presence.isScheduled && presence.scheduledFor) {
       const expired = Date.now() - new Date(presence.scheduledFor).getTime() > NO_SHOW_GRACE_MS;
       if (expired && !presence.agentPresent) return;
@@ -187,6 +200,9 @@ export default function VideoCallPage() {
           agentDisplayName: data.agentDisplayName ?? prev.agentDisplayName,
           customerDisplayName: data.customerDisplayName ?? prev.customerDisplayName,
           startedAt: data.startedAt ?? prev.startedAt,
+          activeRoomId: data.activeRoomId ?? null,
+          customerWaitingElsewhereRoomId: data.customerWaitingElsewhereRoomId ?? null,
+          agentWentStale: !!data.agentWentStale,
         }));
       } catch (e) {
         // Network blip — next tick will retry.
@@ -209,6 +225,9 @@ export default function VideoCallPage() {
           isScheduled: !!data.isScheduled,
           scheduledFor: data.scheduledFor ?? null,
           scheduledStatus: data.scheduledStatus ?? null,
+          activeRoomId: data.activeRoomId ?? null,
+          customerWaitingElsewhereRoomId: data.customerWaitingElsewhereRoomId ?? null,
+          agentWentStale: !!data.agentWentStale,
         });
       } catch {}
     };
@@ -235,6 +254,90 @@ export default function VideoCallPage() {
     legacyParticipantName,
     projectId,
   ]);
+
+  // Build a same-role URL for a different room of this project (used by
+  // split-room healing below).
+  const buildRoomUrl = useCallback(
+    (targetRoomId: string) => {
+      const qs = new URLSearchParams();
+      if (projectId) qs.set('projectId', projectId);
+      if (isAgent) {
+        qs.set('isAgent', 'true');
+      } else {
+        qs.set('name', legacyParticipantName);
+      }
+      return `/video-call/${targetRoomId}?${qs.toString()}`;
+    },
+    [projectId, isAgent, legacyParticipantName]
+  );
+
+  // Split-room healing (customer side): if this lobby has no active agent but
+  // another room for this project does, the customer is on a stale link (each
+  // "Start Virtual Call" click and each scheduled call mints its own roomId).
+  // Follow the agent. Guard: one redirect per target per mount, never while
+  // this room's own agent is fresh, never mid-join.
+  const redirectedToRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isAgent) return;
+    if (customerReady && presence.callStatus === 'live') return; // entering this room's call
+    const target = presence.activeRoomId;
+    if (!target || target === roomId) return;
+    if (presence.agentPresent && presence.callStatus !== 'ended') return;
+    if (redirectedToRef.current === target) return;
+    redirectedToRef.current = target;
+    router.replace(buildRoomUrl(target));
+  }, [
+    isAgent,
+    customerReady,
+    presence.callStatus,
+    presence.activeRoomId,
+    presence.agentPresent,
+    roomId,
+    router,
+    buildRoomUrl,
+  ]);
+
+  // Keep presence fresh while in the live call (slow heartbeat, fire-and-forget).
+  // Without this, heartbeats stop the moment a participant enters the call, so
+  // a live room would look abandoned to the cross-room lookup and a customer
+  // who drops and reopens an old link could never find their way back.
+  useEffect(() => {
+    const inCall =
+      presence.callStatus === 'live' && (isAgent ? agentEntered : customerReady);
+    if (isValidating || validationError || !inCall) return;
+    const beat = () => {
+      fetch(`/api/calls/${roomId}/presence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          side: isAgent ? 'agent' : 'customer',
+          displayName: isAgent ? agentDisplayName || undefined : legacyParticipantName,
+          projectId: projectId || undefined,
+        }),
+      }).catch(() => {});
+    };
+    beat();
+    const interval = setInterval(beat, 10000);
+    return () => clearInterval(interval);
+  }, [
+    presence.callStatus,
+    isAgent,
+    agentEntered,
+    customerReady,
+    isValidating,
+    validationError,
+    roomId,
+    agentDisplayName,
+    legacyParticipantName,
+    projectId,
+  ]);
+
+  const handleSwitchRoom = useCallback(
+    (targetRoomId: string) => {
+      router.replace(buildRoomUrl(targetRoomId));
+    },
+    [router, buildRoomUrl]
+  );
 
   const handleAgentStart = useCallback(
     async (name: string, bgSettings?: BackgroundSettings) => {
@@ -383,6 +486,41 @@ export default function VideoCallPage() {
   const customerShouldEnter = !isAgent && callIsLive && customerReady;
   const shouldEnterCall = agentShouldEnter || customerShouldEnter;
 
+  // Agent opening a dead room used to see "Waiting for customer" forever —
+  // indistinguishable from a no-show. Say it ended, and if the customer is
+  // actually sitting in another lobby for this project, offer to join them.
+  if (isAgent && presence.callStatus === 'ended') {
+    const waitingRoom = presence.customerWaitingElsewhereRoomId || presence.activeRoomId;
+    return (
+      <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="bg-white/10 backdrop-blur-xl border border-white/20 p-8 rounded-2xl text-center max-w-md">
+          <h2 className="text-2xl font-bold text-white mb-2">This call has ended</h2>
+          <p className="text-white/70 mb-6">
+            {waitingRoom
+              ? `${presence.customerDisplayName || 'Your customer'} is waiting in a newer call room.`
+              : 'You can start a new call from the project page.'}
+          </p>
+          <div className="flex flex-col gap-3">
+            {waitingRoom && (
+              <button
+                onClick={() => handleSwitchRoom(waitingRoom)}
+                className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-xl font-semibold transition-colors"
+              >
+                Join your customer
+              </button>
+            )}
+            <button
+              onClick={() => router.push(projectId ? `/projects/${projectId}` : '/projects')}
+              className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl font-semibold transition-colors"
+            >
+              Back to project
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Render an intermediate loader for ~500ms when transitioning from a PreJoin
   // into VideoCallInventory. This unmounts the PreJoin first, letting
   // useAndroidCompatibleVideoTrack's cleanup release the camera before
@@ -452,6 +590,8 @@ export default function VideoCallPage() {
         customerDisplayName={presence.customerDisplayName || legacyParticipantName}
         expectedCustomerName={presence.customerDisplayName || legacyParticipantName}
         onNudgeCustomer={handleNudgeCustomer}
+        customerWaitingElsewhereRoomId={presence.customerWaitingElsewhereRoomId}
+        onSwitchRoom={handleSwitchRoom}
       />
     );
   }
@@ -472,6 +612,7 @@ export default function VideoCallPage() {
       isScheduled={presence.isScheduled}
       noShowExpired={noShowExpired}
       onReadyChange={handleCustomerReadyChange}
+      agentSteppedAway={presence.agentWentStale}
     />
   );
 }

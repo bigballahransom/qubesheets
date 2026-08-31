@@ -530,6 +530,25 @@ async function handleEgressEnded(event: WebhookEvent) {
 
     console.log('💾 Updating recording with S3 key:', s3Key);
   }
+
+  // Junk gate: a failed connection attempt (participants join, bail within
+  // seconds, agent restarts in a fresh room) still produces a "completed"
+  // recording of connecting screens/empty grid. Mark it discarded — hidden
+  // from project media and crew review, no AI analysis — but keep the doc and
+  // S3 object so it's reversible. Mid-call Stop & Process segments are exempt:
+  // the concat flow needs them regardless of length.
+  const JUNK_RECORDING_MAX_S = 30;
+  if (
+    updateData.status === 'completed' &&
+    typeof updateData.duration === 'number' &&
+    updateData.duration < JUNK_RECORDING_MAX_S &&
+    !existingRecording.midCallProcessedAt
+  ) {
+    console.log(
+      `🗑️ Room composite is ${updateData.duration}s (<${JUNK_RECORDING_MAX_S}s) — marking discarded (abandoned attempt), skipping AI analysis`
+    );
+    updateData.status = 'discarded';
+  }
   
   const updateResult = await VideoRecording.findOneAndUpdate(
     { egressId: event.egressInfo.egressId },

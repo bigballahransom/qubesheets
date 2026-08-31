@@ -49,6 +49,7 @@ export async function GET(
     const callRecordingFilter = {
       projectId,
       source: { $ne: 'self_serve' },
+      status: { $ne: 'discarded' },
       s3Key: { $exists: true, $nin: [null, ''] },
       ...notVault,
       ...orgFilter,

@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-08-27';
+export const LATEST_UPDATES_VERSION = '2026-08-31';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -57,6 +57,27 @@ export const updates: MonthGroup[] = [
   {
     month: 'August 2026',
     entries: [
+      {
+        tag: 'Fixed',
+        icon: Video,
+        title: 'Video calls find your customer automatically',
+        description:
+          'No more "both waiting for each other": if your customer opens an older call link, they are now moved into your current waiting room automatically, and you\'ll see a one-tap button if they\'re waiting somewhere else. Dropped connections now rejoin the same call in place instead of kicking anyone out, and abandoned connection attempts no longer leave junk recordings on the project.',
+      },
+      {
+        tag: 'New',
+        icon: Link2,
+        title: 'SmartMoving stays in sync automatically',
+        description:
+          'Linked projects now re-sync to SmartMoving on their own about a minute after inventory changes — no more pressing sync after every edit. You can turn this off per company in Settings → Integrations.',
+      },
+      {
+        tag: 'Improved',
+        icon: Link2,
+        title: 'Faster, more dependable SmartMoving syncing',
+        description:
+          'Re-syncs now send only what changed instead of rewriting the whole estimate, so they finish in seconds — even on very large jobs — and automatically recover from busy moments. Syncs also tell you exactly how many items made it across, and your monthly SmartMoving API usage is visible in Settings → Integrations.',
+      },
       {
         tag: 'New',
         icon: Scale,

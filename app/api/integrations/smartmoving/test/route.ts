@@ -1,3 +1,4 @@
+import { smFetch } from '@/lib/smartmoving/smFetch';
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 
@@ -57,7 +58,7 @@ async function getAllCustomers(apiKey: string, clientId: string, fromServiceDate
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
-      const response = await fetch(url.toString(), {
+      const response = await smFetch(url.toString(), {
         method: 'GET',
         headers: {
           'Cache-Control': 'no-cache',
@@ -244,7 +245,7 @@ async function getAllLeads(apiKey: string, clientId: string, fromServiceDate: st
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
-      const response = await fetch(url.toString(), {
+      const response = await smFetch(url.toString(), {
         method: 'GET',
         headers: {
           'Cache-Control': 'no-cache',

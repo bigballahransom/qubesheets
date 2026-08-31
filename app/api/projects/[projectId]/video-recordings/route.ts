@@ -68,9 +68,12 @@ export async function GET(
       purpose: { $ne: 'vault' }
     };
 
-    // Filter by status if provided
+    // Filter by status if provided. Discarded recordings (sub-30s abandoned
+    // connection attempts) are hidden even from status=all.
     if (status && status !== 'all') {
       matchCriteria.status = status;
+    } else {
+      matchCriteria.status = { $ne: 'discarded' };
     }
 
     // Filter by source if provided (e.g., source=self_serve)

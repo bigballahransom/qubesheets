@@ -77,6 +77,9 @@ const CallPresenceSchema: Schema = new Schema(
 );
 
 CallPresenceSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Cross-room reconciliation: "find the active room for this project" lookups
+// in the presence endpoint (split-room lobby healing).
+CallPresenceSchema.index({ projectId: 1, callStatus: 1, agentLastSeen: -1 });
 
 export default mongoose.models.CallPresence ||
   mongoose.model<ICallPresence>('CallPresence', CallPresenceSchema);

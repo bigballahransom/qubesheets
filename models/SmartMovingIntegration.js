@@ -85,6 +85,31 @@ const SmartMovingIntegrationSchema = new mongoose.Schema({
     type: String,
     enum: ['opportunities_and_leads', 'opportunities_only', 'leads_only'],
     default: 'opportunities_and_leads'
+  },
+
+  // Automatically re-sync linked projects to SmartMoving shortly after their
+  // inventory changes (debounced cron), keeping estimates 1:1 with QubeSheets.
+  autoSyncOnChange: {
+    type: Boolean,
+    default: true
+  },
+
+  // Item categories the auto-sync sends (same choices as the manual sync UI)
+  autoSyncOption: {
+    type: String,
+    enum: ['items_only', 'items_and_existing', 'all'],
+    default: 'items_only'
+  },
+
+  // Per-org sync lease (see lib/smartmoving/syncLock.ts) — epoch ms until
+  // which an in-flight sync holds exclusivity; token identifies the holder.
+  syncLockUntil: {
+    type: Number,
+    required: false
+  },
+  syncLockToken: {
+    type: String,
+    required: false
   }
 }, {
   timestamps: true // Automatically manage createdAt and updatedAt

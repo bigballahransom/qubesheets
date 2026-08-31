@@ -28,6 +28,9 @@ interface CustomerPreJoinProps {
   isScheduled: boolean;
   noShowExpired: boolean;
   onReadyChange?: (ready: boolean) => void;
+  // The agent was in this lobby but their heartbeat went quiet — likely off
+  // starting a fresh room; the presence poll will auto-redirect us there.
+  agentSteppedAway?: boolean;
 }
 
 function detectBrowser(): 'chrome' | 'safari' | 'firefox' | 'edge' | 'other' {
@@ -62,6 +65,7 @@ export default function CustomerPreJoin({
   isScheduled,
   noShowExpired,
   onReadyChange,
+  agentSteppedAway = false,
 }: CustomerPreJoinProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [micPermission, setMicPermission] = useState<PermissionState>('unknown');
@@ -401,6 +405,14 @@ export default function CustomerPreJoin({
                     <CheckCircle2 className="w-5 h-5 text-emerald-300 flex-shrink-0" />
                     <span>
                       <span className="font-semibold">{agentDisplayName || 'Your consultant'}</span> has joined. Waiting for them to start the meeting…
+                    </span>
+                  </>
+                ) : agentSteppedAway ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+                    <span>
+                      Your consultant stepped away for a moment — hang tight, we&apos;ll
+                      connect you automatically.
                     </span>
                   </>
                 ) : (

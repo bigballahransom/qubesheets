@@ -40,6 +40,10 @@ interface AgentPreJoinProps {
   customerDisplayName?: string | null;
   expectedCustomerName?: string;
   onNudgeCustomer?: () => Promise<void>;
+  // Split-room healing: the customer is waiting in a different room for this
+  // project (they followed an older texted link). Offer a one-click switch.
+  customerWaitingElsewhereRoomId?: string | null;
+  onSwitchRoom?: (roomId: string) => void;
 }
 
 // Preset backgrounds
@@ -56,6 +60,8 @@ export default function AgentPreJoin({
   customerDisplayName,
   expectedCustomerName,
   onNudgeCustomer,
+  customerWaitingElsewhereRoomId,
+  onSwitchRoom,
 }: AgentPreJoinProps) {
   const [isNudging, setIsNudging] = useState(false);
   const [nudgedAt, setNudgedAt] = useState<number | null>(null);
@@ -734,6 +740,17 @@ export default function AgentPreJoin({
               </>
             )}
           </button>
+
+          {/* Customer stuck on an older link in a different room */}
+          {!customerPresent && customerWaitingElsewhereRoomId && onSwitchRoom && (
+            <button
+              onClick={() => onSwitchRoom(customerWaitingElsewhereRoomId)}
+              className="w-full py-3 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-100 rounded-xl font-semibold text-sm transition-colors"
+            >
+              {customerDisplayName || expectedCustomerName || 'Your customer'} is waiting in a
+              different call room — tap to join them
+            </button>
+          )}
 
           {/* Nudge customer text */}
           {!customerPresent && onNudgeCustomer && (
