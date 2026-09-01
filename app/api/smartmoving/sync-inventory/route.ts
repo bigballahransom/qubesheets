@@ -5,10 +5,6 @@ import connectMongoDB from '@/lib/mongodb';
 import InventoryItem from '@/models/InventoryItem';
 import Project from '@/models/Project';
 
-// Diff syncs finish in seconds, but a first-time sync of a huge project
-// plus rate-limit retries needs headroom.
-export const maxDuration = 120;
-
 export async function POST(request: NextRequest) {
   try {
     console.log('🔄 [SMARTMOVING-SYNC-API] SmartMoving inventory sync API called');

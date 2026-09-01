@@ -1,4 +1,3 @@
-import { smFetch } from '@/lib/smartmoving/smFetch';
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
@@ -14,14 +13,11 @@ import {
   searchCustomersByPhone,
   getOpportunitiesByCustomerId,
   getMostRecentOpportunity,
+  clearOpportunityInventory,
   ConvertLeadRequest,
   SmartMovingLead,
   SmartMovingCustomerOpportunity
 } from '@/lib/smartmoving-inventory-sync';
-
-// Diff syncs finish in seconds, but a first-time sync of a huge project
-// plus rate-limit retries needs headroom.
-export const maxDuration = 120;
 
 const SMARTMOVING_BASE_URL = 'https://api-public.smartmoving.com/v1/api';
 
@@ -36,7 +32,7 @@ async function fetchFromSmartMoving(
   const url = `${SMARTMOVING_BASE_URL}${endpoint}`;
 
   try {
-    const response = await smFetch(url, {
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'x-api-key': apiKey,
@@ -173,10 +169,19 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // No wipe needed: syncInventoryToSmartMoving diffs against the live
-      // estimate and converges it (updates/creates/deletes only the deltas),
-      // which replaces the old clear-then-re-add flow at a fraction of the
-      // API calls and with no duplicate-on-partial-failure window.
+      // Clear ALL existing inventory from SmartMoving before re-syncing
+      // Don't pass a target room ID - clear all rooms since we sync by location
+      console.log(`🧹 [SYNC-FROM-LEAD] Clearing existing inventory from all rooms before re-sync...`);
+      const clearResult = await clearOpportunityInventory(
+        project.metadata.smartMovingOpportunityId,
+        integration.smartMovingApiKey,
+        integration.smartMovingClientId
+        // No targetRoomId - clear all rooms
+      );
+
+      if (clearResult.deletedCount > 0) {
+        console.log(`🧹 [SYNC-FROM-LEAD] Cleared ${clearResult.deletedCount} existing items from ${clearResult.roomIds.length} rooms`);
+      }
 
       // Sync inventory to the existing opportunity
       const allInventoryItems = await InventoryItem.find({ projectId });
@@ -198,12 +203,13 @@ export async function POST(request: NextRequest) {
         return true;
       });
 
-      console.log(`📦 [SYNC-FROM-LEAD] Re-syncing ${inventoryItems.length} items to existing opportunity (diff against live estimate)`);
+      console.log(`📦 [SYNC-FROM-LEAD] Re-syncing ${inventoryItems.length} items to existing opportunity (grouped by location)`);
 
-      // Always run — an empty filtered list still needs to converge the
-      // estimate to empty (mirror semantics, same end state the old
-      // clear-then-add flow produced).
-      const inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
+      let inventorySyncResult: { success: boolean; syncedCount: number; roomId?: string; error?: string } = { success: true, syncedCount: 0 };
+      if (inventoryItems.length > 0) {
+        // Sync items - they will be grouped by location and synced to corresponding rooms
+        inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
+      }
 
       // Update sync timestamp
       await Project.findByIdAndUpdate(projectId, {
@@ -213,16 +219,15 @@ export async function POST(request: NextRequest) {
       });
 
       return NextResponse.json({
-        success: inventorySyncResult.success,
-        message: inventorySyncResult.success
-          ? 'Successfully synced inventory to SmartMoving'
-          : inventorySyncResult.error || 'Sync failed',
+        success: true,
+        message: 'Successfully synced inventory to SmartMoving',
         opportunityId: project.metadata.smartMovingOpportunityId,
         leadName: project.customerName || project.name,
         inventorySynced: inventorySyncResult.success,
         inventoryCount: inventorySyncResult.syncedCount,
         inventoryError: inventorySyncResult.error,
-        isResync: true
+        isResync: true,
+        clearedCount: clearResult.deletedCount
       });
     }
 
@@ -343,7 +348,7 @@ export async function POST(request: NextRequest) {
 
       // Fetch the specific lead details
       const leadDetailsUrl = `https://api-public.smartmoving.com/v1/api/leads/${targetId}`;
-      const leadResponse = await smFetch(leadDetailsUrl, {
+      const leadResponse = await fetch(leadDetailsUrl, {
         method: 'GET',
         headers: {
           'x-api-key': smartMovingApiKey,

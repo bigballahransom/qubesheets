@@ -6,7 +6,6 @@ import {
   fetchReferralSources,
   pickDefaultReferralSource,
 } from '@/lib/smartmoving/referenceData';
-import { getMonthlyUsage } from '@/lib/smartmoving/apiUsage';
 
 const WEBHOOK_RECORD_FILTERS = [
   'opportunities_and_leads',
@@ -48,10 +47,6 @@ export async function GET() {
       });
     }
 
-    // Monthly API usage (SmartMoving has a monthly call quota but no usage
-    // headers, so we surface our own counter)
-    const apiUsage = await getMonthlyUsage(integration.smartMovingApiKey);
-
     // Return integration without the API key for security
     return NextResponse.json({
       exists: true,
@@ -64,9 +59,7 @@ export async function GET() {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false, // default true
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false, // default true
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false, // default true
-        autoSyncOnChange: integration.autoSyncOnChange !== false, // default true
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
-        apiUsage,
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt,
         lastUpdatedBy: integration.userId // Show who last updated it
@@ -98,7 +91,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, autoSyncOnChange, webhookRecordFilter } = body;
+    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, webhookRecordFilter } = body;
 
     if (!smartMovingClientId || !smartMovingApiKey) {
       return NextResponse.json(
@@ -119,7 +112,6 @@ export async function POST(request: Request) {
       syncCrewLinkOnSync: syncCrewLinkOnSync !== false, // default true
       syncVaultLinksOnSync: syncVaultLinksOnSync !== false, // default true
       syncAiSummariesOnSync: syncAiSummariesOnSync !== false, // default true
-      autoSyncOnChange: autoSyncOnChange !== false, // default true
       webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter)
     };
 
@@ -203,7 +195,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, autoSyncOnChange, webhookRecordFilter } = body;
+    const { sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, webhookRecordFilter } = body;
 
     await connectMongoDB();
 
@@ -216,7 +208,6 @@ export async function PATCH(request: Request) {
           syncCrewLinkOnSync: syncCrewLinkOnSync !== false,
           syncVaultLinksOnSync: syncVaultLinksOnSync !== false,
           syncAiSummariesOnSync: syncAiSummariesOnSync !== false,
-          autoSyncOnChange: autoSyncOnChange !== false,
           webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter),
           userId // Track who updated it
         }
@@ -243,7 +234,6 @@ export async function PATCH(request: Request) {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false,
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false,
-        autoSyncOnChange: integration.autoSyncOnChange !== false,
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         updatedAt: integration.updatedAt
       }

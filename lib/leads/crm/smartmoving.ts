@@ -1,5 +1,4 @@
 // lib/leads/crm/smartmoving.ts
-import { smFetch } from '@/lib/smartmoving/smFetch';
 import connectMongoDB from '@/lib/mongodb';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
 import {
@@ -66,7 +65,7 @@ async function postLead(
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await smFetch(SMARTMOVING_LEADS_URL, {
+    response = await fetch(SMARTMOVING_LEADS_URL, {
       method: 'POST',
       headers: {
         'x-api-key': apiKey,

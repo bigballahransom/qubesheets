@@ -1,4 +1,3 @@
-import { smFetch } from '@/lib/smartmoving/smFetch';
 import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
@@ -461,9 +460,10 @@ async function fetchSmartMovingOpportunity(
   try {
     const url = `https://api-public.smartmoving.com/v1/api/opportunities/${opportunityId}`;
     console.log(`Fetching SmartMoving opportunity: ${url}`);
-    console.log('Using stored SmartMoving credentials');
+    console.log(`Using API key: ${apiKey.substring(0, 10)}...`);
+    console.log(`Using Client ID: ${clientId.substring(0, 10)}...`);
     
-    const response = await smFetch(url, {
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'x-api-key': apiKey,
@@ -504,7 +504,7 @@ async function fetchSmartMovingLead(
     const url = `https://api-public.smartmoving.com/v1/api/leads/${leadId}`;
     console.log(`Fetching SmartMoving lead: ${url}`);
 
-    const response = await smFetch(url, {
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'x-api-key': apiKey,

@@ -66,20 +66,6 @@ export const updates: MonthGroup[] = [
       },
       {
         tag: 'New',
-        icon: Link2,
-        title: 'SmartMoving stays in sync automatically',
-        description:
-          'Linked projects now re-sync to SmartMoving on their own about a minute after inventory changes — no more pressing sync after every edit. You can turn this off per company in Settings → Integrations.',
-      },
-      {
-        tag: 'Improved',
-        icon: Link2,
-        title: 'Faster, more dependable SmartMoving syncing',
-        description:
-          'Re-syncs now send only what changed instead of rewriting the whole estimate, so they finish in seconds — even on very large jobs — and automatically recover from busy moments. Syncs also tell you exactly how many items made it across, and your monthly SmartMoving API usage is visible in Settings → Integrations.',
-      },
-      {
-        tag: 'New',
         icon: Scale,
         title: 'Edit weights right on the inventory sheet',
         description:

@@ -1,4 +1,3 @@
-import { smFetch } from '@/lib/smartmoving/smFetch';
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
@@ -64,7 +63,7 @@ export async function POST(request: NextRequest) {
     }
 
     const url = `${SMARTMOVING_BASE_URL}/premium/opportunities/${opportunityId}/attachments`;
-    const smRes = await smFetch(url, {
+    const smRes = await fetch(url, {
       method: 'POST',
       headers: {
         'x-api-key': integration.smartMovingApiKey,

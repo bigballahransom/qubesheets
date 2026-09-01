@@ -1,5 +1,4 @@
 // lib/smartmoving/referenceData.ts
-import { smFetch } from '@/lib/smartmoving/smFetch';
 //
 // Shared helpers for pulling SmartMoving reference data (currently just
 // referral sources). Kept separate from the sync/lead adapters so both the
@@ -25,7 +24,7 @@ export async function fetchReferralSources(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await smFetch(`${SMARTMOVING_BASE_URL}/referral-sources`, {
+    const response = await fetch(`${SMARTMOVING_BASE_URL}/referral-sources`, {
       method: 'GET',
       headers: {
         'x-api-key': apiKey,

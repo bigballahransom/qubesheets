@@ -25,8 +25,6 @@ export default function IntegrationsPage() {
   const [syncCrewLinkOnSync, setSyncCrewLinkOnSync] = useState(true);
   const [syncVaultLinksOnSync, setSyncVaultLinksOnSync] = useState(true);
   const [syncAiSummariesOnSync, setSyncAiSummariesOnSync] = useState(true);
-  const [autoSyncOnChange, setAutoSyncOnChange] = useState(true);
-  const [smApiUsage, setSmApiUsage] = useState<{ month: string; calls: number; throttled: number } | null>(null);
   const [webhookRecordFilter, setWebhookRecordFilter] = useState('opportunities_and_leads');
 
   // Chariot integration state
@@ -71,8 +69,6 @@ export default function IntegrationsPage() {
           setSyncCrewLinkOnSync(data.integration.syncCrewLinkOnSync !== false);
           setSyncVaultLinksOnSync(data.integration.syncVaultLinksOnSync !== false);
           setSyncAiSummariesOnSync(data.integration.syncAiSummariesOnSync !== false);
-          setAutoSyncOnChange(data.integration.autoSyncOnChange !== false);
-          setSmApiUsage(data.integration.apiUsage || null);
           setWebhookRecordFilter(data.integration.webhookRecordFilter || 'opportunities_and_leads');
           // API key is not returned for security, just show that it exists
           if (data.integration.hasApiKey) {
@@ -151,7 +147,6 @@ export default function IntegrationsPage() {
             syncCrewLinkOnSync,
             syncVaultLinksOnSync,
             syncAiSummariesOnSync,
-            autoSyncOnChange,
             webhookRecordFilter,
           }),
         });
@@ -175,7 +170,6 @@ export default function IntegrationsPage() {
             syncCrewLinkOnSync,
             syncVaultLinksOnSync,
             syncAiSummariesOnSync,
-            autoSyncOnChange,
             webhookRecordFilter,
           }),
         });
@@ -772,38 +766,6 @@ export default function IntegrationsPage() {
                             </div>
                           </div>
                         </div>
-                      )}
-
-                      {/* Auto-sync inventory changes */}
-                      {hasExistingIntegration && (
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              id="auto-sync-on-change"
-                              checked={autoSyncOnChange}
-                              onChange={(e) => setAutoSyncOnChange(e.target.checked)}
-                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <div>
-                              <label htmlFor="auto-sync-on-change" className="text-sm font-medium text-gray-900 cursor-pointer">
-                                Keep SmartMoving in sync automatically
-                              </label>
-                              <p className="text-xs text-gray-600 mt-1">
-                                When inventory changes on a linked project, re-sync it to SmartMoving automatically about a minute after the last edit — no need to press sync. Only projects that have been synced at least once are kept up to date.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Monthly API usage */}
-                      {hasExistingIntegration && smApiUsage && (
-                        <p className="text-xs text-gray-500 px-1">
-                          SmartMoving API usage this month: {smApiUsage.calls.toLocaleString()} calls
-                          {smApiUsage.throttled > 0 && ` (${smApiUsage.throttled.toLocaleString()} rate-limited)`}
-                          {' '}— SmartMoving allows 125,000/month on the Premium API tier.
-                        </p>
                       )}
                     </div>
                   )}

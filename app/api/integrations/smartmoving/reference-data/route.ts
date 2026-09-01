@@ -1,4 +1,3 @@
-import { smFetch } from '@/lib/smartmoving/smFetch';
 import { NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
@@ -17,7 +16,7 @@ async function fetchFromSmartMoving(
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const response = await smFetch(url, {
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'x-api-key': apiKey,
