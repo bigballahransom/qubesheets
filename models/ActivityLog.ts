@@ -110,6 +110,8 @@ const ActivityLogSchema: Schema = new Schema(
 ActivityLogSchema.index({ projectId: 1, createdAt: -1 });
 ActivityLogSchema.index({ projectId: 1, activityType: 1, createdAt: -1 });
 ActivityLogSchema.index({ projectId: 1, userId: 1, createdAt: -1 });
+ActivityLogSchema.index({ organizationId: 1, createdAt: -1 });
+ActivityLogSchema.index({ organizationId: 1, activityType: 1, createdAt: -1 });
 
 export default mongoose.models.ActivityLog || 
   mongoose.model<IActivityLog>('ActivityLog', ActivityLogSchema);

@@ -135,6 +135,7 @@ const VideoSchema = new mongoose.Schema({
 VideoSchema.index({ projectId: 1, createdAt: -1 });
 VideoSchema.index({ userId: 1 });
 VideoSchema.index({ organizationId: 1 });
+VideoSchema.index({ organizationId: 1, createdAt: -1 });
 VideoSchema.index({ source: 1 });
 
 export default mongoose.models.Video || mongoose.model('Video', VideoSchema);

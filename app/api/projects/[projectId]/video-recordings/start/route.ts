@@ -50,6 +50,7 @@ export async function POST(
         projectId,
         roomId,
         status: 'starting',
+        captureType: 'virtual',
         s3Key: `recordings/${roomId}/pending.mp4`,
         startedAt: new Date(),
         participants: [],

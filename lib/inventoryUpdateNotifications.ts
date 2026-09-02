@@ -63,7 +63,7 @@ export interface SendInventoryUpdateResult {
  *
  * Source of truth: `app/projects/page.jsx:46-47` and `components/app-sidebar.tsx:166-167`.
  */
-const SYNTHETIC_USER_IDS = new Set([
+export const SYNTHETIC_USER_IDS = new Set([
   'api-created',
   'smartmoving-webhook',
   'global-self-survey-link',

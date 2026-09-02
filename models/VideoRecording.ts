@@ -125,6 +125,10 @@ export interface IVideoRecording extends Document {
   // Self-serve recording fields
   selfServeSessionId?: string; // Link to SelfServeRecordingSession.sessionId
   source?: 'livekit' | 'self_serve' | 'video_call'; // Recording source type
+  // How the footage was captured, written at create time. Historical docs
+  // lack this — dashboard aggregations fall back to a source/roomId heuristic
+  // (see lib/dashboard-capture.ts). 'on_site' = admin/manual upload.
+  captureType?: 'virtual' | 'self_serve' | 'on_site';
   // 'inventory' (default) = survey recording. 'vault' = Media Vault reference
   // recording — webhook sets status straight to 'completed' with no AI
   // analysis until the user explicitly runs "Process inventory".
@@ -380,6 +384,10 @@ const VideoRecordingSchema: Schema = new Schema(
       type: String,
       enum: ['livekit', 'self_serve', 'video_call']
     },
+    captureType: {
+      type: String,
+      enum: ['virtual', 'self_serve', 'on_site']
+    },
     purpose: {
       type: String,
       enum: ['inventory', 'vault'],
@@ -418,6 +426,9 @@ VideoRecordingSchema.index(
     name: 'unique_active_recording_per_room'
   }
 );
+
+// For org-wide time-range dashboard queries
+VideoRecordingSchema.index({ organizationId: 1, createdAt: -1 });
 
 // Add a method to get formatted duration
 VideoRecordingSchema.methods.getFormattedDuration = function(): string {

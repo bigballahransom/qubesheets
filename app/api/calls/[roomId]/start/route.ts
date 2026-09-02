@@ -111,6 +111,7 @@ export async function POST(
     organizationId: (project as any).organizationId,
     roomId,
     status: 'starting',
+    captureType: 'virtual',
     s3Key,
     startedAt: new Date(),
     participants: [],

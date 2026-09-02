@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/auth-helpers';
-import { clerkClient } from '@clerk/nextjs/server';
+import { listOrgMembers } from '@/lib/external-org-members';
 
 // GET /api/organizations/members - Get all members of the current organization
 export async function GET(request: NextRequest) {
@@ -18,19 +18,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const clerk = await clerkClient();
-    const membershipList = await clerk.organizations.getOrganizationMembershipList({
-      organizationId: authContext.organizationId,
-      limit: 100,
-    });
-
-    const members = membershipList.data.map((membership) => ({
-      userId: membership.publicUserData?.userId,
-      firstName: membership.publicUserData?.firstName || '',
-      lastName: membership.publicUserData?.lastName || '',
-      imageUrl: membership.publicUserData?.imageUrl || '',
-      identifier: membership.publicUserData?.identifier || '',
-      role: membership.role,
+    const members = (await listOrgMembers(authContext.organizationId)).map((m) => ({
+      userId: m.userId,
+      firstName: m.firstName,
+      lastName: m.lastName,
+      imageUrl: m.imageUrl,
+      identifier: m.email,
+      role: m.role,
     }));
 
     return NextResponse.json(members);

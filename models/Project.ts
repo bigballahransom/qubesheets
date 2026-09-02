@@ -228,5 +228,8 @@ const ProjectSchema: Schema = new Schema(
   { timestamps: true }
 );
 
+// For org-wide time-range dashboard queries
+ProjectSchema.index({ organizationId: 1, createdAt: -1 });
+
 export default mongoose.models.Project || mongoose.model<IProject>('Project', ProjectSchema);
 

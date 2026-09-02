@@ -233,6 +233,7 @@ const SelfServeRecordingSessionSchema: Schema = new Schema(
 SelfServeRecordingSessionSchema.index({ uploadToken: 1, status: 1 });
 SelfServeRecordingSessionSchema.index({ projectId: 1, createdAt: -1 });
 SelfServeRecordingSessionSchema.index({ customerUploadId: 1, createdAt: -1 });
+SelfServeRecordingSessionSchema.index({ organizationId: 1, createdAt: -1 });
 
 // Helper method to get formatted duration
 SelfServeRecordingSessionSchema.methods.getFormattedDuration = function(): string {

@@ -117,4 +117,7 @@ ImageSchema.pre('save', function(next) {
   next();
 });
 
+// For org-wide time-range dashboard queries
+ImageSchema.index({ organizationId: 1, purpose: 1, createdAt: -1 });
+
 export default mongoose.models.Image || mongoose.model<IImage>('Image', ImageSchema);

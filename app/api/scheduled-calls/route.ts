@@ -4,6 +4,7 @@ import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import { generateJoinUrl } from '@/lib/video-call-tokens';
+import { listOrgMembers } from '@/lib/external-org-members';
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,32 +39,49 @@ export async function GET(request: NextRequest) {
       .sort({ scheduledFor: 1 })
       .lean();
 
-    // Get unique user IDs to fetch agent info
-    const uniqueUserIds = [...new Set(scheduledCalls.map((call: any) => call.userId))];
-
-    // Fetch user info from Clerk
-    const clerk = await clerkClient();
+    // Build the agent map from one org-membership call instead of one
+    // clerk.users.getUser per distinct agent.
     const userMap: Record<string, { id: string; name: string; email: string }> = {};
 
-    await Promise.all(
-      uniqueUserIds.map(async (userId) => {
-        try {
-          const user = await clerk.users.getUser(userId);
-          const email = user.emailAddresses[0]?.emailAddress || '';
-          const hasName = !!user.firstName;
-          const name = hasName
-            ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`
-            : email || 'Unknown';
-          userMap[userId] = {
-            id: userId,
-            name,
-            email: hasName ? email : '', // Only include email separately if they have a name
-          };
-        } catch (error) {
-          userMap[userId] = { id: userId, name: 'Unknown', email: '' };
-        }
-      })
-    );
+    if (authContext.organizationId) {
+      const members = await listOrgMembers(authContext.organizationId);
+      for (const m of members) {
+        const hasName = !!m.firstName;
+        userMap[m.userId] = {
+          id: m.userId,
+          name: hasName ? m.name : m.email || 'Unknown',
+          email: hasName ? m.email : '', // Only include email separately if they have a name
+        };
+      }
+    }
+
+    // Fall back to per-user lookups for anyone not covered by the membership
+    // list: personal accounts, and calls created by since-removed members.
+    const uncoveredUserIds = [...new Set(scheduledCalls.map((call: any) => call.userId))]
+      .filter((userId) => userId && !userMap[userId]);
+
+    if (uncoveredUserIds.length > 0) {
+      const clerk = await clerkClient();
+      await Promise.all(
+        uncoveredUserIds.map(async (userId) => {
+          try {
+            const user = await clerk.users.getUser(userId);
+            const email = user.emailAddresses[0]?.emailAddress || '';
+            const hasName = !!user.firstName;
+            const name = hasName
+              ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`
+              : email || 'Unknown';
+            userMap[userId] = {
+              id: userId,
+              name,
+              email: hasName ? email : '',
+            };
+          } catch (error) {
+            userMap[userId] = { id: userId, name: 'Unknown', email: '' };
+          }
+        })
+      );
+    }
 
     // Generate join URLs and add agent info for each call
     const callsWithLinks = scheduledCalls.map((call: any) => {
@@ -81,7 +99,8 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // Also return unique agents for filtering
+    // All known agents (full org roster for org accounts), so the agent filter
+    // stays stable even when a month has no calls for someone.
     const agents = Object.values(userMap);
 
     return NextResponse.json({ calls: callsWithLinks, agents });

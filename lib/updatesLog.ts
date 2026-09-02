@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-08-31';
+export const LATEST_UPDATES_VERSION = '2026-09-02';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -54,6 +54,18 @@ export interface MonthGroup {
 }
 
 export const updates: MonthGroup[] = [
+  {
+    month: 'September 2026',
+    entries: [
+      {
+        tag: 'New',
+        icon: LayoutGrid,
+        title: 'A real dashboard for your whole operation',
+        description:
+          'The Dashboard now opens on My Stuff — your scheduled calls plus recent activity on your projects — with new tabs for company-wide numbers: an Overview with surveys, calls, and cubic feet captured; a Survey Pipeline that shows where projects stall between "link sent" and "signed off"; and an Activity tab breaking down virtual calls, self-serve surveys, on-site uploads, and photos by rep. If you use embedded lead forms, a Leads tab tracks views, submissions, and where visitors drop off. Everything filters by date range and rep.',
+      },
+    ],
+  },
   {
     month: 'August 2026',
     entries: [

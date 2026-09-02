@@ -13,6 +13,7 @@ export interface ExternalOrgMember {
   firstName: string;
   lastName: string;
   name: string;
+  imageUrl: string;
   role: string;
 }
 
@@ -36,6 +37,7 @@ export async function listOrgMembers(organizationId: string): Promise<ExternalOr
         firstName,
         lastName,
         name: fullName || u.identifier || 'Team member',
+        imageUrl: u.imageUrl || '',
         role: m.role,
       };
     });

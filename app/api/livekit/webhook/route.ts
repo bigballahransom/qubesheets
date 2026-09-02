@@ -1087,6 +1087,7 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           egressId: egressId,
           status: isVault ? 'completed' : 'processing',
           source: 'self_serve',
+          captureType: 'self_serve',
           purpose: isVault ? 'vault' : 'inventory',
           // Vault annotations typed on the recorder's completion screen may
           // already be waiting on the session — carry them over.
@@ -1232,6 +1233,7 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           egressId: egressId,
           status: isVault ? 'completed' : 'processing',
           source: 'self_serve',
+          captureType: 'self_serve',
           purpose: isVault ? 'vault' : 'inventory',
           ...(isVault && session.vaultLabel ? { label: session.vaultLabel } : {}),
           ...(isVault && session.vaultDescription ? { mediaDescription: session.vaultDescription } : {}),
@@ -1353,6 +1355,7 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           status: 'failed',
           error: 'No video captured — the recording ended before any footage was uploaded',
           source: 'self_serve',
+          captureType: 'self_serve',
           selfServeSessionId: session.sessionId,
           s3Key: session.s3Key,
           startedAt: session.startedAt || new Date(),

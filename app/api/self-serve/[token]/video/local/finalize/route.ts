@@ -149,6 +149,7 @@ export async function POST(
       roomId: `self-serve-local-${sessionId}`,
       status: isVault ? 'completed' : 'processing',
       source: 'self_serve',
+      captureType: 'self_serve',
       purpose: isVault ? 'vault' : 'inventory',
       ...(isVault && session?.vaultLabel ? { label: session.vaultLabel } : {}),
       ...(isVault && session?.vaultDescription ? { mediaDescription: session.vaultDescription } : {}),

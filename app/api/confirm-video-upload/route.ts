@@ -206,6 +206,7 @@ export async function POST(request: NextRequest) {
         // The Videos tab, stream, delete, and reprocess endpoints all key
         // self-serve recordings off source: 'self_serve'.
         source: 'self_serve',
+        captureType: 'on_site',
         purpose: isVault ? 'vault' : 'inventory',
         ...(metadata.label ? { label: String(metadata.label).slice(0, 200) } : {}),
         ...(metadata.description ? { mediaDescription: String(metadata.description).slice(0, 1000) } : {}),

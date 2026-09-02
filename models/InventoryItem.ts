@@ -216,5 +216,8 @@ const InventoryItemSchema: Schema = new Schema(
   { timestamps: true }
 );
 
+// For org-wide time-range dashboard queries
+InventoryItemSchema.index({ organizationId: 1, createdAt: -1 });
+
 export default mongoose.models.InventoryItem || 
   mongoose.model<IInventoryItem>('InventoryItem', InventoryItemSchema);
