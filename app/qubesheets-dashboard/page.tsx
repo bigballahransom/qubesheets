@@ -16,9 +16,10 @@ import MyStuffTab from '@/components/dashboard/tabs/MyStuffTab';
 import PipelineTab from '@/components/dashboard/tabs/PipelineTab';
 import ActivityTab from '@/components/dashboard/tabs/ActivityTab';
 import LeadsTab from '@/components/dashboard/tabs/LeadsTab';
+import VaultTab from '@/components/dashboard/tabs/VaultTab';
 
 // 'overview' renders the Activity view (capture types, survey mix, by-rep)
-const TABS = ['my-stuff', 'overview', 'pipeline', 'leads'] as const;
+const TABS = ['my-stuff', 'overview', 'pipeline', 'vault', 'leads'] as const;
 type DashboardTab = (typeof TABS)[number];
 
 function isDashboardTab(value: string | null): value is DashboardTab {
@@ -114,8 +115,9 @@ function DashboardHeader({ tab }: { tab: DashboardTab }) {
         <p className="text-sm text-gray-500 mt-1">Welcome back! Here's what's happening today.</p>
       </div>
       <div className="flex items-center gap-3 flex-wrap">
-        {/* My Stuff has its own per-widget filters that default to the viewer */}
-        {tab !== 'my-stuff' && <RepFilter value={rep} onChange={setRep} />}
+        {/* My Stuff has its own per-widget filters that default to the viewer;
+            vault captures come from crew links and aren't rep-attributed */}
+        {tab !== 'my-stuff' && tab !== 'vault' && <RepFilter value={rep} onChange={setRep} />}
         <DateRangeControl />
       </div>
     </div>
@@ -139,6 +141,7 @@ function DashboardTabs({ tab, onTabChange }: { tab: DashboardTab; onTabChange: (
         <TabsTrigger value="my-stuff">My Stuff</TabsTrigger>
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="pipeline">Survey Pipeline</TabsTrigger>
+        <TabsTrigger value="vault">Media Vault</TabsTrigger>
         {leadsEnabled && <TabsTrigger value="leads">Leads</TabsTrigger>}
       </TabsList>
       <TabsContent value="my-stuff">
@@ -153,6 +156,9 @@ function DashboardTabs({ tab, onTabChange }: { tab: DashboardTab; onTabChange: (
       </TabsContent>
       <TabsContent value="pipeline">
         <PipelineTab />
+      </TabsContent>
+      <TabsContent value="vault">
+        <VaultTab />
       </TabsContent>
       {leadsEnabled && (
         <TabsContent value="leads">

@@ -233,6 +233,17 @@ export default function InventoryManager({ initialProject = null, onProjectRefre
   const [errorKind, setErrorKind] = useState(null); // 'auth' | 'network' | 'server' | 'unknown' | null
   const [savingStatus, setSavingStatus] = useState('idle'); // 'idle', 'saving', 'saved', 'error'
   const [activeTab, setActiveTab] = useState('inventory'); // 'inventory', 'images'
+
+  // Deep-link support: /projects/[id]?tab=vault (dashboard Media Vault tab
+  // links here). Read on mount rather than useSearchParams to avoid needing
+  // a Suspense boundary; no hydration mismatch since it runs post-hydration.
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get('tab');
+    const validTabs = ['inventory', 'boxes', 'images', 'videos', 'videocalls', 'notes', 'vault'];
+    if (requestedTab && validTabs.includes(requestedTab)) {
+      setActiveTab(requestedTab);
+    }
+  }, []);
   const [imageGalleryKey, setImageGalleryKey] = useState(0); // Force re-render of image gallery
   const [videoGalleryKey, setVideoGalleryKey] = useState(0); // Force re-render of video gallery
   const [videoRecordingsKey, setVideoRecordingsKey] = useState(0); // Force re-render of video recordings tab

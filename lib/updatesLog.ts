@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-09-02';
+export const LATEST_UPDATES_VERSION = '2026-09-08';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -57,6 +57,13 @@ export const updates: MonthGroup[] = [
   {
     month: 'September 2026',
     entries: [
+      {
+        tag: 'New',
+        icon: ShieldCheck,
+        title: 'Track crew vault captures from the Dashboard',
+        description:
+          'The Dashboard has a new Media Vault tab that shows every job that received vault media — crew walk-ins, walk-outs, and damage documentation — in one place, so the office can see what got covered without opening each job. You get totals for the period, a job-by-job breakdown with the latest capture time and labels, and a feed of the newest photos and videos. Click any job to jump straight to its Vault tab.',
+      },
       {
         tag: 'New',
         icon: LayoutGrid,
