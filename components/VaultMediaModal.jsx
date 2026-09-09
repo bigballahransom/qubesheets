@@ -8,15 +8,21 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  X, ChevronLeft, ChevronRight, Loader2, Send, MessageSquare, CornerDownRight
+  X, ChevronLeft, ChevronRight, Loader2, Send, MessageSquare, CornerDownRight, Link2, Clock
 } from 'lucide-react';
 import { toast } from 'sonner';
 import SafeIcon from '@/components/icons/SafeIcon';
+import { copyMediaShareLink } from '@/lib/mediaShareClient';
 
 const formatDate = (d) =>
   new Date(d).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
   });
+
+const formatTimestamp = (seconds) => {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
 
 export default function VaultMediaModal({
   projectId,
@@ -30,8 +36,46 @@ export default function VaultMediaModal({
   const [comments, setComments] = useState(null);
   const [draft, setDraft] = useState('');
   const [replyTo, setReplyTo] = useState(null); // top-level comment being replied to
+  const [anchorSeconds, setAnchorSeconds] = useState(null); // video timestamp anchor
+  // User removed the auto-captured anchor — don't re-add while composing
+  const [anchorDismissed, setAnchorDismissed] = useState(false);
   const [posting, setPosting] = useState(false);
   const inputRef = useRef(null);
+  const videoRef = useRef(null);
+
+  const isVideoItem = item?.mediaType === 'video';
+  const captureAnchor = () => {
+    const t = videoRef.current?.currentTime;
+    if (typeof t === 'number' && isFinite(t) && t >= 0) {
+      setAnchorSeconds(Math.round(t * 10) / 10);
+      setAnchorDismissed(false);
+    }
+  };
+
+  // Starting a comment pauses the video and pins the comment to wherever
+  // the playhead is — unless the user already removed the anchor.
+  const handleComposerFocus = () => {
+    if (!isVideoItem) return;
+    videoRef.current?.pause?.();
+    if (anchorSeconds === null && !anchorDismissed) {
+      captureAnchor();
+    }
+  };
+  const seekTo = (seconds) => {
+    const el = videoRef.current;
+    if (!el) return;
+    const apply = () => {
+      el.currentTime = seconds;
+      el.play?.()?.catch?.(() => {});
+    };
+    // Apply immediately (browsers keep it as the pending start position) and
+    // again once metadata loads — pre-metadata seeks are otherwise unreliable.
+    apply();
+    if (el.readyState === 0) {
+      el.addEventListener('loadedmetadata', apply, { once: true });
+      el.load?.();
+    }
+  };
 
   const itemKey = item ? `${item.kind}-${item.id}` : null;
 
@@ -57,6 +101,8 @@ export default function VaultMediaModal({
     fetchComments();
     setDraft('');
     setReplyTo(null);
+    setAnchorSeconds(null);
+    setAnchorDismissed(false);
   }, [fetchComments]);
 
   // Arrow-key navigation + Escape, scoped to the modal's lifetime
@@ -90,6 +136,7 @@ export default function VaultMediaModal({
           id: item.id,
           text,
           ...(replyTo ? { parentId: replyTo.id } : {}),
+          ...(anchorSeconds !== null ? { timestampSeconds: anchorSeconds } : {}),
         }),
       });
       if (!res.ok) {
@@ -100,6 +147,8 @@ export default function VaultMediaModal({
       setComments((prev) => [...(prev || []), result.comment]);
       setDraft('');
       setReplyTo(null);
+      setAnchorSeconds(null);
+      setAnchorDismissed(false);
       onCommentAdded?.(itemKey);
     } catch (err) {
       toast.error(err.message || 'Failed to post comment');
@@ -120,6 +169,16 @@ export default function VaultMediaModal({
           <span className="px-1.5 py-0.5 text-[10px] font-medium text-amber-700 bg-amber-100 rounded-full">
             Guest
           </span>
+        )}
+        {typeof c.timestampSeconds === 'number' && (
+          <button
+            onClick={() => seekTo(c.timestampSeconds)}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded cursor-pointer transition-colors"
+            title="Jump to this moment"
+          >
+            <Clock size={10} />
+            {formatTimestamp(c.timestampSeconds)}
+          </button>
         )}
         <span className="text-xs font-normal text-slate-400">{formatDate(c.createdAt)}</span>
       </p>
@@ -157,12 +216,30 @@ export default function VaultMediaModal({
               </span>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 hover:bg-gray-100 rounded-md cursor-pointer transition-colors"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button
+              onClick={async () => {
+                try {
+                  await copyMediaShareLink(projectId, item.kind, item.id);
+                  toast.success(
+                    `Share link copied — anyone with it can view this ${item.mediaType === 'video' ? 'video' : 'photo'} and comment`
+                  );
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Failed to create share link');
+                }
+              }}
+              className="p-1.5 hover:bg-gray-100 rounded-md cursor-pointer transition-colors"
+              title="Copy share link"
+            >
+              <Link2 size={18} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 hover:bg-gray-100 rounded-md cursor-pointer transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Body: media + comments */}
@@ -172,6 +249,7 @@ export default function VaultMediaModal({
             {item.mediaType === 'video' ? (
               <video
                 key={itemKey}
+                ref={videoRef}
                 src={item.streamUrl}
                 controls
                 preload="metadata"
@@ -255,15 +333,44 @@ export default function VaultMediaModal({
                   </button>
                 </div>
               )}
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
+                {isVideoItem && (
+                  anchorSeconds !== null ? (
+                    <button
+                      onClick={() => {
+                        setAnchorSeconds(null);
+                        setAnchorDismissed(true);
+                      }}
+                      className="flex items-center gap-1 px-2 py-2 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg cursor-pointer flex-shrink-0 transition-colors"
+                      title="Remove timestamp"
+                    >
+                      <Clock size={12} />
+                      {formatTimestamp(anchorSeconds)}
+                      <X size={11} />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={captureAnchor}
+                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer flex-shrink-0 transition-colors"
+                      title="Comment at current video time"
+                    >
+                      <Clock size={15} />
+                    </button>
+                  )
+                )}
                 <input
                   ref={inputRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
+                  onFocus={handleComposerFocus}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') postComment();
                   }}
-                  placeholder={replyTo ? 'Write a reply...' : 'Write a comment...'}
+                  placeholder={
+                    anchorSeconds !== null
+                      ? `${replyTo ? 'Reply' : 'Comment'} at ${formatTimestamp(anchorSeconds)}...`
+                      : replyTo ? 'Write a reply...' : 'Write a comment...'
+                  }
                   className="flex-1 min-w-0 text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-slate-400 outline-none"
                 />
                 <button

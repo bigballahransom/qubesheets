@@ -373,12 +373,19 @@ export async function syncInventoryToChariot(
       return true;
     });
 
+    // Zero items is allowed when there are notes / a crew link to send:
+    // no-inventory jobs (e.g. designer accounts) still get a notes-only
+    // inventory record so the crew sees the review link in Chariot. Only
+    // bail when there is genuinely nothing to say.
     if (itemsToSync.length === 0) {
-      return {
-        success: false,
-        syncedCount: 0,
-        error: 'No items to sync (after applying the selected sync option)',
-      };
+      const notesBlobForEmpty = await buildChariotNotesBlob(projectId).catch(() => '');
+      if (!notesBlobForEmpty) {
+        return {
+          success: false,
+          syncedCount: 0,
+          error: 'No items to sync (after applying the selected sync option)',
+        };
+      }
     }
 
     const inventory_items = itemsToSync.map((item) =>

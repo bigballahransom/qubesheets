@@ -81,20 +81,11 @@ export async function POST(request: NextRequest) {
     
     console.log(`✅ [SMARTMOVING-SYNC-API] Project has SmartMoving integration: ${project.metadata.smartMovingOpportunityId}`);
     
-    // Get all inventory items for the project
+    // Get all inventory items for the project. Zero items still proceeds:
+    // the sync lib posts notes + crew/vault links to job notes even when the
+    // project has no inventory (e.g. designer accounts).
     const inventoryItems = await InventoryItem.find({ projectId });
-    
-    if (inventoryItems.length === 0) {
-      console.log(`⚠️ [SMARTMOVING-SYNC-API] No inventory items found for project ${projectId}`);
-      return NextResponse.json(
-        { 
-          success: true, 
-          message: 'No inventory items to sync',
-          syncedCount: 0 
-        }
-      );
-    }
-    
+
     console.log(`📦 [SMARTMOVING-SYNC-API] Found ${inventoryItems.length} inventory items to sync`);
     
     // Perform the SmartMoving sync

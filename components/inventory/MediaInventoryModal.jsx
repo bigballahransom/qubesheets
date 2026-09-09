@@ -27,9 +27,14 @@
 // swap between side-by-side and top-bottom; the choice is persisted in
 // localStorage per media kind.
 //
-// Optional Tabs:
-//   - When `notesSlot` is provided, the watch content is wrapped in Tabs
-//     with a "Watch" and "Notes" tab. When it's null, the tabs disappear.
+// Secondary-pane tabs (Inventory | Notes | Comments):
+//   The media (+ extras/analysis) is ALWAYS visible. The tabs only swap the
+//   secondary pane — the right panel in side-by-side, the bottom panel in
+//   top-bottom, the section below the media in the stack. Inventory is the
+//   items column; Notes renders `notesSlot` (tab hidden when not passed);
+//   Comments is the shared MediaCommentsPanel (hidden when the media has no
+//   id). Video comments support playback-position anchors via
+//   `media.videoRef`.
 //
 // The items column (accordion + RoomItemsTable + stock picker) is always
 // the shared `MediaInventoryItemsColumn`. Any feature the caller doesn't
@@ -50,10 +55,11 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from '@/components/ui/resizable';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import MediaInventoryItemsColumn from '@/components/inventory/MediaInventoryItemsColumn';
+import MediaCommentsPanel from '@/components/inventory/MediaCommentsPanel';
 import { useAutoSeekOnInitialItem } from '@/lib/hooks/useAutoSeekOnInitialItem';
 import { useLocalStoragePreference } from '@/lib/hooks/useLocalStoragePreference';
 import { cn } from '@/lib/utils';
@@ -165,9 +171,9 @@ function LayoutToggle({ value, onChange }) {
  * @param {React.ReactNode=} p.analysisSlot     Analysis / description
  *                                              blocks (typically only the
  *                                              gallery modals).
- * @param {React.ReactNode=} p.notesSlot        Notes tab content. When
- *                                              provided, the watch content
- *                                              is wrapped in Tabs.
+ * @param {React.ReactNode=} p.notesSlot        Notes tab content, shown in
+ *                                              the secondary pane's Notes
+ *                                              tab. Tab hidden when omitted.
  *
  * @param {object=} p.navigation            Project-wide media prev/next
  *                                              navigation (from
@@ -308,6 +314,115 @@ export default function MediaInventoryModal({
     />
   );
 
+  // ─── Secondary-pane tabs (Inventory | Notes | Comments) ──────────
+  // The media stays visible in every layout; these tabs only swap the
+  // secondary pane. Comments map the modal's media kind onto the comment
+  // kinds ('video-recording' → 'recording'); video comments get playback
+  // anchors wired to the caller's videoRef.
+  const commentsKind =
+    media?.kind === 'video-recording' ? 'recording'
+    : media?.kind === 'video' ? 'video'
+    : media?.kind === 'image' ? 'image'
+    : media?.sourceKey === 'sourceVideoRecordingId' ? 'recording'
+    : media?.sourceKey === 'sourceVideoId' ? 'video'
+    : media?.sourceKey === 'sourceImageId' ? 'image'
+    : null;
+  const showComments = !!(projectId && media?.id && commentsKind);
+  const commentsIsVideo = commentsKind === 'recording' || commentsKind === 'video';
+  const getPlayerTime = commentsIsVideo && media?.videoRef
+    ? () => {
+        const el = media.videoRef?.current;
+        return el && isFinite(el.currentTime) ? el.currentTime : null;
+      }
+    : null;
+  const seekPlayerTo = commentsIsVideo && media?.videoRef
+    ? (seconds) => {
+        const el = media.videoRef?.current;
+        if (!el) return;
+        const apply = () => {
+          el.currentTime = seconds;
+          el.play?.()?.catch?.(() => {});
+        };
+        // Apply immediately (browsers keep it as the pending start position)
+        // and again once metadata loads — pre-metadata seeks are unreliable.
+        apply();
+        if (el.readyState === 0) {
+          el.addEventListener('loadedmetadata', apply, { once: true });
+          el.load?.();
+        }
+      }
+    : null;
+
+  const [activePane, setActivePane] = useState('inventory');
+  // New media → back to Inventory so the pane always matches the item
+  useEffect(() => {
+    setActivePane('inventory');
+  }, [media?.id]);
+  const effectivePane =
+    activePane === 'notes' && notesSlot ? 'notes'
+    : activePane === 'comments' && showComments ? 'comments'
+    : 'inventory';
+  const paneCount = 1 + (notesSlot ? 1 : 0) + (showComments ? 1 : 0);
+
+  const pausePlayer = commentsIsVideo && media?.videoRef
+    ? () => media.videoRef?.current?.pause?.()
+    : null;
+
+  const commentsPanel = showComments ? (
+    <MediaCommentsPanel
+      projectId={projectId}
+      mediaKind={commentsKind}
+      mediaId={media.id}
+      getCurrentTime={getPlayerTime}
+      onSeekTo={seekPlayerTo}
+      onPause={pausePlayer}
+    />
+  ) : null;
+
+  const paneTabsBar = paneCount > 1 ? (
+    <Tabs value={effectivePane} onValueChange={setActivePane} className="w-full">
+      <TabsList className={cn('grid w-full', paneCount === 3 ? 'grid-cols-3' : 'grid-cols-2')}>
+        <TabsTrigger value="inventory">Inventory</TabsTrigger>
+        {notesSlot && <TabsTrigger value="notes">Notes</TabsTrigger>}
+        {showComments && <TabsTrigger value="comments">Comments</TabsTrigger>}
+      </TabsList>
+    </Tabs>
+  ) : null;
+
+  // The secondary pane as it renders inside a fixed-height resizable panel:
+  // tab bar pinned on top, active pane scrolling underneath. The comments
+  // panel manages its own scroll + pinned composer, so it gets the raw
+  // flex slot instead of an overflow wrapper.
+  const panelPane = (
+    <div className="h-full flex flex-col min-h-0 bg-background">
+      {paneTabsBar && <div className="px-3 pt-3 shrink-0">{paneTabsBar}</div>}
+      {effectivePane === 'inventory' && (
+        <div className="flex-1 min-h-0 overflow-y-auto p-3">{itemsColumn}</div>
+      )}
+      {effectivePane === 'notes' && (
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">{notesSlot}</div>
+      )}
+      {effectivePane === 'comments' && (
+        <div className="flex-1 min-h-0">{commentsPanel}</div>
+      )}
+    </div>
+  );
+
+  // Stack (mobile / plain-stack callers): same tabs inline in the flow.
+  // Comments get a bounded height so the composer stays reachable.
+  const stackPane = (
+    <div className="space-y-3 min-w-0">
+      {paneTabsBar}
+      {effectivePane === 'inventory' && itemsColumn}
+      {/* notesSlot content is often h-full (built for the panel layouts) —
+          give it a real height in the inline stack flow */}
+      {effectivePane === 'notes' && <div className="min-h-[320px]">{notesSlot}</div>}
+      {effectivePane === 'comments' && (
+        <div className="h-[420px] border rounded-lg overflow-hidden">{commentsPanel}</div>
+      )}
+    </div>
+  );
+
   // ─── Layout selection ────────────────────────────────────────────
   // Callers pass a `desktopLayout` hint. If it's a resizable value
   // ('side-by-side' | 'panels' [legacy] | 'top-bottom'), the user can
@@ -413,9 +528,7 @@ export default function MediaInventoryModal({
       </ResizablePanel>
       <ResizableHandle withHandle onPointerDown={handleResizeStart} />
       <ResizablePanel id="sbs-items" defaultSize="50%" minSize="30%">
-        <div className={cn(panelInner, 'p-3')}>
-          {itemsColumn}
-        </div>
+        {panelPane}
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -460,9 +573,7 @@ export default function MediaInventoryModal({
       </ResizablePanel>
       <ResizableHandle withHandle onPointerDown={handleResizeStart} />
       <ResizablePanel id="tb-items" defaultSize="40%" minSize="20%">
-        <div className={cn(panelInner, 'p-3')}>
-          {itemsColumn}
-        </div>
+        {panelPane}
       </ResizablePanel>
     </ResizablePanelGroup>
   );
@@ -475,7 +586,7 @@ export default function MediaInventoryModal({
     }>
       {mediaSlot}
       {extrasSlot}
-      {itemsColumn}
+      {stackPane}
       {analysisSlot}
     </div>
   );
@@ -516,11 +627,9 @@ export default function MediaInventoryModal({
       }`
     : 'w-[95vw] sm:max-w-5xl md:max-w-6xl lg:max-w-7xl xl:max-w-[1600px] 2xl:max-w-[1800px] max-h-[95vh] overflow-y-auto overflow-x-hidden';
 
-  const showLayoutToggle = isResizable && isDesktop;
-  // The toggle lives next to the tab list when tabs are shown, and in
-  // the header otherwise, so it's always visible without duplicating.
-  const showToggleInHeader = showLayoutToggle && !notesSlot;
-  const showToggleInTabsRow = showLayoutToggle && !!notesSlot;
+  // The secondary-pane tabs replaced the old whole-modal Watch/Notes tabs,
+  // so the layout toggle always lives in the header now.
+  const showToggleInHeader = isResizable && isDesktop;
   const headerHasContent = headerTitle || headerSubtitle || showToggleInHeader;
 
   const outsideHandlers = {
@@ -634,27 +743,7 @@ export default function MediaInventoryModal({
             </div>
           }
         >
-          {notesSlot ? (
-            <Tabs defaultValue="watch" className="w-full flex-1 flex flex-col min-h-0">
-              <div className="flex items-center gap-2 shrink-0">
-                <TabsList className="grid flex-1 grid-cols-2">
-                  <TabsTrigger value="watch">Watch</TabsTrigger>
-                  <TabsTrigger value="notes">Notes</TabsTrigger>
-                </TabsList>
-                {showToggleInTabsRow && (
-                  <LayoutToggle value={activeLayout} onChange={setPreferredLayout} />
-                )}
-              </div>
-              <TabsContent value="watch" className="mt-4 flex-1 min-h-0">
-                {watchContent}
-              </TabsContent>
-              <TabsContent value="notes" className="mt-4 flex-1 min-h-0">
-                {notesSlot}
-              </TabsContent>
-            </Tabs>
-          ) : (
-            watchContent
-          )}
+          {watchContent}
         </ErrorBoundary>
       </DialogContent>
     </Dialog>

@@ -96,23 +96,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Zero items is NOT an error here: the sync lib still sends the crew
+    // summary + crew review link comment for no-inventory jobs (e.g. designer
+    // accounts) and only errors when there's nothing to send at all.
     const inventoryItems = await InventoryItem.find({ projectId });
-    if (inventoryItems.length === 0) {
-      return NextResponse.json(
-        { error: 'No inventory items found to sync' },
-        { status: 400 }
-      );
-    }
-    // Pre-filter mirrors the sync lib's filter (MoveRight has no not-moving
-    // field, so not-going items are always excluded). Keeps the empty-payload
-    // error message accurate.
     const candidateItems = inventoryItems.filter((item) => item.going !== 'not going');
-    if (candidateItems.length === 0) {
-      return NextResponse.json(
-        { error: 'No items marked as going to sync' },
-        { status: 400 }
-      );
-    }
 
     const syncResult = await syncInventoryToMoveright(
       projectId,
@@ -134,7 +122,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Successfully synced ${syncResult.syncedCount} items to MoveRight`,
+      message: syncResult.syncedCount > 0
+        ? `Successfully synced ${syncResult.syncedCount} items to MoveRight`
+        : 'No inventory items — synced notes and crew link to MoveRight',
       syncDetails: {
         projectId,
         jobId,

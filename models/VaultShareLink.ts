@@ -10,6 +10,11 @@ export interface IVaultShareLink extends Document {
   userId: string;
   organizationId?: string;
   shareToken: string;
+  // Optional single-item scope: when set, the link opens ONE media item
+  // (any purpose — vault or survey) instead of the whole vault gallery.
+  // One active link per media item, minted idempotently.
+  mediaKind?: 'image' | 'video' | 'recording';
+  mediaId?: string;
   isActive: boolean;
   accessCount: number;
   lastAccessedAt?: Date;
@@ -41,6 +46,15 @@ const VaultShareLinkSchema: Schema = new Schema(
       unique: true,
       index: true,
     },
+    mediaKind: {
+      type: String,
+      enum: ['image', 'video', 'recording'],
+      required: false,
+    },
+    mediaId: {
+      type: String,
+      required: false,
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -59,6 +73,7 @@ const VaultShareLinkSchema: Schema = new Schema(
 );
 
 VaultShareLinkSchema.index({ projectId: 1, isActive: 1 });
+VaultShareLinkSchema.index({ projectId: 1, mediaKind: 1, mediaId: 1, isActive: 1 });
 
 export default mongoose.models.VaultShareLink ||
   mongoose.model<IVaultShareLink>('VaultShareLink', VaultShareLinkSchema);

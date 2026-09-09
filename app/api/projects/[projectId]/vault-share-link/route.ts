@@ -7,6 +7,7 @@ import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import VaultShareLink from '@/models/VaultShareLink';
+import { logActivity } from '@/lib/activity-logger';
 import crypto from 'crypto';
 
 const getBaseUrl = () => {
@@ -43,7 +44,9 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const existingLink = await VaultShareLink.findOne({ projectId, isActive: true });
+    // mediaKind $exists:false excludes single-item share links — this route
+    // manages the whole-gallery link only
+    const existingLink = await VaultShareLink.findOne({ projectId, isActive: true, mediaKind: { $exists: false } });
     if (!existingLink) {
       return NextResponse.json({ exists: false });
     }
@@ -74,7 +77,7 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const existingLink = await VaultShareLink.findOne({ projectId, isActive: true });
+    const existingLink = await VaultShareLink.findOne({ projectId, isActive: true, mediaKind: { $exists: false } });
     if (existingLink) {
       return NextResponse.json({ ...linkResponse(existingLink), created: false });
     }
@@ -86,6 +89,19 @@ export async function POST(
       shareToken: crypto.randomBytes(32).toString('hex'),
       isActive: true,
     });
+
+    // Only the first mint logs — the link is permanent and idempotent
+    logActivity({
+      projectId,
+      userId,
+      organizationId: authContext.isPersonalAccount ? undefined : (authContext.organizationId ?? undefined),
+      activityType: 'share_link_created',
+      action: 'created',
+      details: {
+        mediaName: 'the Media Vault gallery',
+        linkUrl: `${getBaseUrl()}/vault-review/${link.shareToken}`,
+      },
+    }).catch(() => {});
 
     return NextResponse.json({ ...linkResponse(link), created: true });
   } catch (error) {

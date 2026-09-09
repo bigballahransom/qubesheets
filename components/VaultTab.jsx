@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Loader2, RefreshCw, Pencil, Check, X, QrCode, Sparkles, Film, ImageIcon, FolderInput, Search, Folder, Share2, MessageSquare, MoreVertical, Maximize2, Upload, Trash2
+  Loader2, RefreshCw, Pencil, Check, X, QrCode, Sparkles, Film, ImageIcon, FolderInput, Search, Folder, Share2, MessageSquare, MoreVertical, Maximize2, Upload, Trash2, Link2
 } from 'lucide-react';
 import SafeIcon from '@/components/icons/SafeIcon';
 import VaultMediaModal from '@/components/VaultMediaModal';
@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
+import { copyMediaShareLink } from '@/lib/mediaShareClient';
 import { Button } from '@/components/ui/button';
 
 const formatDuration = (seconds) => {
@@ -106,6 +107,20 @@ export default function VaultTab({ projectId, onOpenVaultLink }) {
       toast.error('Failed to create share link');
     } finally {
       setSharing(false);
+    }
+  };
+
+  // Single-item share link: mint (or reuse) the permanent public link for
+  // just this photo/video and copy it — for texting a vendor one damage video
+  // without handing over the whole vault.
+  const shareItem = async (item) => {
+    try {
+      await copyMediaShareLink(projectId, item.kind, item.id);
+      toast.success(
+        `Share link copied — anyone with it can view this ${item.mediaType === 'video' ? 'video' : 'photo'} and comment`
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create share link');
     }
   };
 
@@ -316,6 +331,13 @@ export default function VaultTab({ projectId, onOpenVaultLink }) {
                     >
                       <Maximize2 size={14} className="mr-2" />
                       Open
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => shareItem(item)}
+                      className="cursor-pointer"
+                    >
+                      <Link2 size={14} className="mr-2" />
+                      Copy share link
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => openMoveDialog(item)}

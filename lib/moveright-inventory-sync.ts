@@ -757,23 +757,20 @@ export async function syncInventoryToMoveright(
       return true;
     });
 
-    if (itemsToSync.length === 0) {
-      return {
-        success: false,
-        syncedCount: 0,
-        error: 'No items to sync (after applying the selected sync option)',
-      };
-    }
+    // Zero items still syncs notes: no-inventory jobs (e.g. designer accounts)
+    // get the crew summary + comment with the crew review link. The inventory
+    // field is only included when there ARE items — never push an empty list,
+    // which would wholesale-replace whatever inventory the job already has.
+    const hasItems = itemsToSync.length > 0;
 
-    const { value: inventoryValue } = buildInventoryFieldValue(itemsToSync, weightConfig);
-
-    const updateJob: Record<string, unknown> = {
-      jobId,
-      fields: {
+    const updateJob: Record<string, unknown> = { jobId };
+    if (hasItems) {
+      const { value: inventoryValue } = buildInventoryFieldValue(itemsToSync, weightConfig);
+      updateJob.fields = {
         fields: [{ fieldName: 'jobs.inventory', value: inventoryValue }],
         objectLabel: 'Job',
-      },
-    };
+      };
+    }
 
     // Crew summary is opt-out because updateJobs replaces it wholesale.
     if (integration.syncCrewSummaryOnSync !== false) {
@@ -792,46 +789,63 @@ export async function syncInventoryToMoveright(
       }
     }
 
-    const mutation = `mutation updateJob($updateJobs: [UpdateJobInput]!) {
-      updateJobs(updateJobs: $updateJobs) {
-        isSuccess
-        jobs {
-          id
+    // With no items and no crew summary to send, updateJobs would be a no-op;
+    // skip it but still fall through to the one-time comment below. If the
+    // comment was also already posted, there is genuinely nothing to sync.
+    const hasJobUpdate = hasItems || updateJob.crewSummary !== undefined;
+    const commentAlreadyPosted = !!project.metadata?.moverightSync?.commentPostedAt;
+    if (!hasJobUpdate && commentAlreadyPosted) {
+      return {
+        success: false,
+        syncedCount: 0,
+        error: 'No items to sync (after applying the selected sync option)',
+      };
+    }
+
+    if (hasJobUpdate) {
+      const mutation = `mutation updateJob($updateJobs: [UpdateJobInput]!) {
+        updateJobs(updateJobs: $updateJobs) {
+          isSuccess
+          jobs {
+            id
+          }
         }
-      }
-    }`;
+      }`;
 
-    console.log(
-      `📤 [MOVERIGHT-SYNC] updateJobs → job ${jobId} with ${itemsToSync.length} items`
-    );
+      console.log(
+        `📤 [MOVERIGHT-SYNC] updateJobs → job ${jobId} with ${itemsToSync.length} items${
+          hasItems ? '' : ' (notes-only sync)'
+        }`
+      );
 
-    const result = await moverightGraphql(
-      integration,
-      mutation,
-      { updateJobs: updateJob },
-      REQUEST_TIMEOUT_MS
-    );
+      const result = await moverightGraphql(
+        integration,
+        mutation,
+        { updateJobs: updateJob },
+        REQUEST_TIMEOUT_MS
+      );
 
-    const isSuccess = result.ok && result.data?.updateJobs?.isSuccess !== false;
-    if (!isSuccess) {
-      const errMsg =
-        result.error ||
-        'MoveRight updateJobs returned isSuccess: false — the job may not accept inventory updates in its current stage';
-      console.error(`❌ [MOVERIGHT-SYNC] ${errMsg}`);
-      await MoverightIntegration.findByIdAndUpdate(integration._id, {
-        $push: {
-          syncHistory: {
-            projectId,
-            jobId,
-            jobCode,
-            syncedAt: new Date(),
-            itemCount: 0,
-            success: false,
-            error: errMsg,
+      const isSuccess = result.ok && result.data?.updateJobs?.isSuccess !== false;
+      if (!isSuccess) {
+        const errMsg =
+          result.error ||
+          'MoveRight updateJobs returned isSuccess: false — the job may not accept inventory updates in its current stage';
+        console.error(`❌ [MOVERIGHT-SYNC] ${errMsg}`);
+        await MoverightIntegration.findByIdAndUpdate(integration._id, {
+          $push: {
+            syncHistory: {
+              projectId,
+              jobId,
+              jobCode,
+              syncedAt: new Date(),
+              itemCount: 0,
+              success: false,
+              error: errMsg,
+            },
           },
-        },
-      });
-      return { success: false, syncedCount: 0, error: errMsg };
+        });
+        return { success: false, syncedCount: 0, error: errMsg };
+      }
     }
 
     // One-time comment linking the job back to the live Qube Sheets inventory

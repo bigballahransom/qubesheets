@@ -23,7 +23,8 @@ import { sendNotificationEmail } from '@/lib/emailNotifications';
 export type InventoryUpdateSource =
   | 'photo-session'
   | 'self-serve-recording'
-  | 'vault-media';
+  | 'vault-media'
+  | 'media-comment';
 
 export interface SendInventoryUpdateOptions {
   /** Mongo ObjectId (string) of the project that just received content. */
@@ -35,8 +36,13 @@ export interface SendInventoryUpdateOptions {
   source?: InventoryUpdateSource;
   /** Which NotificationSettings toggle gates this event. Defaults to the
    *  inventory-update toggle; Media Vault events pass
-   *  'enableVaultMediaUpdates' (scoped by 'vaultMediaNotificationScope'). */
-  settingKey?: 'enableInventoryUpdates' | 'enableVaultMediaUpdates';
+   *  'enableVaultMediaUpdates' (scoped by 'vaultMediaNotificationScope'),
+   *  comment events pass 'enableMediaCommentUpdates'
+   *  (scoped by 'mediaCommentNotificationScope'). */
+  settingKey?: 'enableInventoryUpdates' | 'enableVaultMediaUpdates' | 'enableMediaCommentUpdates';
+  /** Skip this recipient entirely — used so the person who posted a comment
+   *  isn't notified about their own comment. */
+  excludeUserId?: string;
 }
 
 export interface SendInventoryUpdateResult {
@@ -118,7 +124,8 @@ export async function sendInventoryUpdateNotification({
   projectId,
   body,
   source,
-  settingKey = 'enableInventoryUpdates'
+  settingKey = 'enableInventoryUpdates',
+  excludeUserId
 }: SendInventoryUpdateOptions): Promise<SendInventoryUpdateResult> {
   const result: SendInventoryUpdateResult = {
     candidates: 0,
@@ -158,10 +165,14 @@ export async function sendInventoryUpdateNotification({
     const scopeKey =
       settingKey === 'enableVaultMediaUpdates'
         ? 'vaultMediaNotificationScope'
+        : settingKey === 'enableMediaCommentUpdates'
+        ? 'mediaCommentNotificationScope'
         : 'notificationScope';
     const emailKey =
       settingKey === 'enableVaultMediaUpdates'
         ? 'enableVaultMediaEmails'
+        : settingKey === 'enableMediaCommentUpdates'
+        ? 'enableMediaCommentEmails'
         : 'enableInventoryUpdateEmails';
 
     const candidates = await NotificationSettings.find(baseQuery)
@@ -169,8 +180,10 @@ export async function sendInventoryUpdateNotification({
       .lean();
     result.candidates = candidates.length;
 
-    // Filter by scope.
+    // Filter by scope (and drop the acting user — nobody needs an SMS about
+    // their own comment).
     const matched = candidates.filter((c: any) => {
+      if (excludeUserId && c.userId === excludeUserId) return false;
       const scope = (c[scopeKey] as 'all' | 'unassigned-and-mine' | 'mine') || 'all';
       return projectMatchesScope(project as any, c.userId, scope);
     });
@@ -203,11 +216,19 @@ export async function sendInventoryUpdateNotification({
     // iOS Safari auto-detects the link).
     const projectUrl = buildProjectUrl(String(projectId));
     const fullBody = `${body}\n${projectUrl}`;
-    const isVaultEvent = settingKey === 'enableVaultMediaUpdates';
-    const emailSubject = isVaultEvent
-      ? `Vault media added — ${(project as any).name || 'Qube Sheets'}`
-      : `Inventory updated — ${(project as any).name || 'Qube Sheets'}`;
-    const emailHeading = isVaultEvent ? 'New vault media' : 'Inventory updated';
+    const projectName = (project as any).name || 'Qube Sheets';
+    const emailSubject =
+      settingKey === 'enableVaultMediaUpdates'
+        ? `Vault media added — ${projectName}`
+        : settingKey === 'enableMediaCommentUpdates'
+        ? `New comment — ${projectName}`
+        : `Inventory updated — ${projectName}`;
+    const emailHeading =
+      settingKey === 'enableVaultMediaUpdates'
+        ? 'New vault media'
+        : settingKey === 'enableMediaCommentUpdates'
+        ? 'New media comment'
+        : 'Inventory updated';
 
     await Promise.all([
       ...phones.map(async (phone) => {

@@ -34,6 +34,12 @@ export interface INotificationSettings extends Document {
   enableVaultMediaUpdates: boolean;
   vaultMediaNotificationScope: 'all' | 'unassigned-and-mine' | 'mine';
 
+  // Media comment notifications — fired when someone comments on a photo or
+  // video (guest replies through share links, or teammates in the media
+  // viewers; the commenter themselves is excluded). Same scope semantics.
+  enableMediaCommentUpdates: boolean;
+  mediaCommentNotificationScope: 'all' | 'unassigned-and-mine' | 'mine';
+
   // Email channel (SendGrid, from notifications@qubesheets.com) — additive
   // per event type on top of SMS. One shared address per user per org, same
   // pattern as phoneNumber. The event's master toggle + scope still gate
@@ -41,6 +47,7 @@ export interface INotificationSettings extends Document {
   enableInventoryUpdateEmails: boolean;
   enableReviewSignedEmails: boolean;
   enableVaultMediaEmails: boolean;
+  enableMediaCommentEmails: boolean;
   notificationEmail?: string;
 
   phoneNumber?: string; // Formatted as +1XXXXXXXXXX for Twilio
@@ -89,6 +96,15 @@ const NotificationSettingsSchema: Schema = new Schema(
       enum: ['all', 'unassigned-and-mine', 'mine'],
       default: 'all'
     },
+    enableMediaCommentUpdates: {
+      type: Boolean,
+      default: false
+    },
+    mediaCommentNotificationScope: {
+      type: String,
+      enum: ['all', 'unassigned-and-mine', 'mine'],
+      default: 'all'
+    },
     enableInventoryUpdateEmails: {
       type: Boolean,
       default: false
@@ -98,6 +114,10 @@ const NotificationSettingsSchema: Schema = new Schema(
       default: false
     },
     enableVaultMediaEmails: {
+      type: Boolean,
+      default: false
+    },
+    enableMediaCommentEmails: {
       type: Boolean,
       default: false
     },

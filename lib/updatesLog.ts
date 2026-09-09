@@ -20,6 +20,7 @@
  */
 import {
   Zap,
+  Bell,
   Package,
   Video,
   Camera,
@@ -57,6 +58,34 @@ export const updates: MonthGroup[] = [
   {
     month: 'September 2026',
     entries: [
+      {
+        tag: 'New',
+        icon: Bell,
+        title: 'Get notified when someone comments on your media',
+        description:
+          'A new Media Comment Notifications section in Settings → Notifications sends you a text and/or email whenever someone comments on a photo or video — including guest replies through share links, like a vendor approving a damage claim. Same controls as your other alerts: pick which projects, and your own comments never notify you. Comments and share-link creation now also show up in each project\'s activity log, so there\'s a full paper trail of who said what and when.',
+      },
+      {
+        tag: 'New',
+        icon: Camera,
+        title: 'Comments on every photo and video — with video timestamps',
+        description:
+          'The media viewers on the Images, Videos, and Virtual Calls tabs now keep your media on screen at all times, with Inventory, Notes, and Comments tabs beside it. Your team can discuss any photo or video right where it lives, and replies from people you\'ve shared links with land in the same thread. On videos, starting a comment pauses playback and pins it to that exact moment automatically ("Comment at 0:42") — anyone reading it can tap the timestamp to jump straight there, including on shared links. Cards show a comment count so you can spot new activity at a glance.',
+      },
+      {
+        tag: 'New',
+        icon: Link2,
+        title: 'Share a single photo or video with anyone',
+        description:
+          'Every photo and video now has a "Copy share link" option in its three-dot menu — on the Vault, Images, Videos, and Virtual Calls tabs. The link opens just that one item on a branded page (no login needed) where the viewer can watch, see the details, and leave comments. Perfect for texting a damage video to a vendor for a refund claim, showing a crew member where something is, or pasting hand-picked items into notes — without sharing the whole vault.',
+      },
+      {
+        tag: 'Fixed',
+        icon: Link2,
+        title: 'Crew links sync to your CRM even without an inventory',
+        description:
+          'Syncing a job with no inventory items (like a designer account or notes-only job) to SmartMoving, Chariot, or MoveRight now still posts the crew review and media vault links into the job notes. Before, those links only went across when the job had at least one inventory item.',
+      },
       {
         tag: 'New',
         icon: ShieldCheck,

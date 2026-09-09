@@ -9,6 +9,7 @@ import MediaComment from '@/models/MediaComment';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
+import { recordMediaCommentEvent } from '@/lib/mediaCommentEvents';
 
 export async function POST(
   request: NextRequest,
@@ -18,12 +19,13 @@ export async function POST(
     await connectMongoDB();
     const { token } = await params;
 
-    const shareLink = await VaultShareLink.findOne({ shareToken: token, isActive: true });
+    // .lean() so single-item scope fields survive a stale compiled model
+    const shareLink: any = await VaultShareLink.findOne({ shareToken: token, isActive: true }).lean();
     if (!shareLink) {
       return NextResponse.json({ error: 'Invalid or expired link' }, { status: 404 });
     }
 
-    const { mediaKind, mediaId, authorName, text } = await request.json();
+    const { mediaKind, mediaId, authorName, text, timestampSeconds } = await request.json();
 
     const cleanName = String(authorName || '').trim().slice(0, 80);
     const cleanText = String(text || '').trim().slice(0, 2000);
@@ -34,18 +36,28 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid media kind' }, { status: 400 });
     }
 
-    // The media item must be vault media on THIS link's project
     const projectId = shareLink.projectId;
-    let exists = false;
-    if (mediaKind === 'video') {
-      exists = !!(await Video.exists({ _id: mediaId, projectId, purpose: 'vault' }));
-    } else if (mediaKind === 'image') {
-      exists = !!(await Image.exists({ _id: mediaId, projectId, purpose: 'vault' }));
+    const isSingleItemLink = !!(shareLink.mediaKind && shareLink.mediaId);
+    if (isSingleItemLink) {
+      // A single-item link can only comment on ITS item (which may be survey
+      // media, so no purpose filter — the mint route already verified it
+      // belongs to this project)
+      if (mediaKind !== shareLink.mediaKind || String(mediaId) !== String(shareLink.mediaId)) {
+        return NextResponse.json({ error: 'Media not found' }, { status: 404 });
+      }
     } else {
-      exists = !!(await VideoRecording.exists({ _id: mediaId, projectId: projectId.toString(), purpose: 'vault' }));
-    }
-    if (!exists) {
-      return NextResponse.json({ error: 'Media not found' }, { status: 404 });
+      // Gallery link: the media item must be vault media on THIS link's project
+      let exists = false;
+      if (mediaKind === 'video') {
+        exists = !!(await Video.exists({ _id: mediaId, projectId, purpose: 'vault' }));
+      } else if (mediaKind === 'image') {
+        exists = !!(await Image.exists({ _id: mediaId, projectId, purpose: 'vault' }));
+      } else {
+        exists = !!(await VideoRecording.exists({ _id: mediaId, projectId: projectId.toString(), purpose: 'vault' }));
+      }
+      if (!exists) {
+        return NextResponse.json({ error: 'Media not found' }, { status: 404 });
+      }
     }
 
     // Light rate limit: max 30 comments per token per hour
@@ -61,25 +73,52 @@ export async function POST(
       );
     }
 
-    const comment = await MediaComment.create({
-      projectId,
+    // Playback-position anchor — videos only, never images
+    const cleanTimestamp =
+      mediaKind !== 'image' && typeof timestampSeconds === 'number' && timestampSeconds >= 0
+        ? Math.round(timestampSeconds * 10) / 10
+        : undefined;
+
+    // Raw insert so timestampSeconds survives a stale compiled model
+    const now = new Date();
+    const doc: any = {
+      projectId: shareLink.projectId,
+      ...(shareLink.organizationId ? { organizationId: shareLink.organizationId } : {}),
+      mediaKind,
+      mediaId: String(mediaId),
+      authorName: cleanName,
+      text: cleanText,
+      source: 'external',
+      ...(cleanTimestamp !== undefined ? { timestampSeconds: cleanTimestamp } : {}),
+      shareToken: token,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const inserted = await MediaComment.collection.insertOne(doc);
+
+    // Activity log + team notification — fire-and-forget so a telemetry
+    // hiccup never fails the guest's post
+    recordMediaCommentEvent({
+      projectId: String(projectId),
       organizationId: shareLink.organizationId,
       mediaKind,
       mediaId: String(mediaId),
       authorName: cleanName,
       text: cleanText,
       source: 'external',
-      shareToken: token,
-    });
+      timestampSeconds: cleanTimestamp,
+    }).catch(() => {});
 
     return NextResponse.json({
       success: true,
       comment: {
-        id: String(comment._id),
-        authorName: comment.authorName,
-        text: comment.text,
-        source: comment.source,
-        createdAt: comment.createdAt,
+        id: String(inserted.insertedId),
+        authorName: doc.authorName,
+        text: doc.text,
+        source: doc.source,
+        timestampSeconds: cleanTimestamp ?? null,
+        parentId: null,
+        createdAt: doc.createdAt,
       },
     });
   } catch (error) {

@@ -179,9 +179,38 @@ export async function syncInventoryToSmartMoving(
 
     console.log(`🔍 [SMARTMOVING-SYNC] Filtered ${itemsToSync.length} eligible items from ${inventoryItems.length} total`);
 
+    // Notes sync (crew review link + vault links + QubeSheets notes) runs on
+    // BOTH the normal path and the zero-item path: jobs that legitimately have
+    // no inventory (e.g. designer accounts) still need the links posted into
+    // the SmartMoving job notes.
+    const runNotesSync = async () => {
+      if (smartMovingIntegration.syncCrewLinkOnSync === false) return;
+      try {
+        const notesResult = await syncNotesToSmartMoving(
+          projectId,
+          smartMovingOpportunityId,
+          smartMovingIntegration.smartMovingApiKey,
+          smartMovingIntegration.smartMovingClientId,
+          {
+            includeVaultLinks: smartMovingIntegration.syncVaultLinksOnSync !== false,
+            includeAiSummaries: smartMovingIntegration.syncAiSummariesOnSync !== false
+          }
+        );
+        if (notesResult.success) {
+          console.log(`✅ [SMARTMOVING-SYNC] Notes synced to opportunity (${notesResult.notesSynced} notes, ${notesResult.jobsUpdated} jobs updated)`);
+        } else if (notesResult.error) {
+          console.error(`❌ [SMARTMOVING-SYNC] Failed to sync notes: ${notesResult.error}`);
+        }
+      } catch (notesError) {
+        // Don't fail the entire sync if notes sync fails
+        console.error(`❌ [SMARTMOVING-SYNC] Notes sync error (non-fatal):`, notesError);
+      }
+    };
+
     if (itemsToSync.length === 0) {
       console.log(`⚠️ [SMARTMOVING-SYNC] No valid items to sync to SmartMoving for project ${projectId}`);
       console.log(`🔍 [SMARTMOVING-SYNC] Filtering results: ${inventoryItems.length} input items, 0 passed filters`);
+      await runNotesSync();
       return { success: true, syncedCount: 0 };
     }
 
@@ -382,29 +411,8 @@ export async function syncInventoryToSmartMoving(
       });
 
       // Sync notes to SmartMoving job notes (if enabled)
-      // This includes: crew review link + all QubeSheets notes grouped by category
-      if (smartMovingIntegration.syncCrewLinkOnSync !== false) {
-        try {
-          const notesResult = await syncNotesToSmartMoving(
-            projectId,
-            smartMovingOpportunityId,
-            smartMovingIntegration.smartMovingApiKey,
-            smartMovingIntegration.smartMovingClientId,
-            {
-              includeVaultLinks: smartMovingIntegration.syncVaultLinksOnSync !== false,
-              includeAiSummaries: smartMovingIntegration.syncAiSummariesOnSync !== false
-            }
-          );
-          if (notesResult.success) {
-            console.log(`✅ [SMARTMOVING-SYNC] Notes synced to opportunity (${notesResult.notesSynced} notes, ${notesResult.jobsUpdated} jobs updated)`);
-          } else if (notesResult.error) {
-            console.error(`❌ [SMARTMOVING-SYNC] Failed to sync notes: ${notesResult.error}`);
-          }
-        } catch (notesError) {
-          // Don't fail the entire sync if notes sync fails
-          console.error(`❌ [SMARTMOVING-SYNC] Notes sync error (non-fatal):`, notesError);
-        }
-      }
+      // This includes: crew review link + vault links + all QubeSheets notes
+      await runNotesSync();
 
       return { success: true, syncedCount, roomId: firstRoomId || undefined };
     } else {
@@ -593,7 +601,9 @@ async function getProjectOwner(projectId: string) {
  * flow has no auth context.
  */
 async function getOrCreateVaultShareLink(projectId: string) {
-  const existing = await VaultShareLink.findOne({ projectId, isActive: true });
+  // mediaKind $exists:false excludes single-item share links — this must
+  // return the whole-gallery link only
+  const existing = await VaultShareLink.findOne({ projectId, isActive: true, mediaKind: { $exists: false } });
   if (existing) return existing;
 
   const project = await getProjectOwner(projectId);

@@ -1,10 +1,13 @@
 // app/api/projects/[projectId]/vault-media/comments/route.ts
-// Internal (authed) comments on a vault media item — the team-side
+// Internal (authed) comments on ANY project media item (vault and survey —
+// the path says vault-media for historical reasons) — the team-side
 // counterpart of the public /api/vault-review/[token]/comments endpoint.
 // GET  ?kind=&id=          → full comment thread for one item
-// POST {kind,id,text,parentId?} → add a comment/reply as the signed-in user
+// POST {kind,id,text,parentId?,timestampSeconds?} → add a comment/reply as
+// the signed-in user; timestampSeconds anchors a video comment to a
+// playback position.
 // Both internal and external (share-page) comments live in MediaComment and
-// render in one thread on both surfaces.
+// render in one thread on every surface.
 import { NextRequest, NextResponse } from 'next/server';
 import { currentUser } from '@clerk/nextjs/server';
 import connectMongoDB from '@/lib/mongodb';
@@ -14,6 +17,7 @@ import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
+import { recordMediaCommentEvent } from '@/lib/mediaCommentEvents';
 
 const VALID_KINDS = ['video', 'image', 'recording'];
 
@@ -22,6 +26,7 @@ const serialize = (c: any) => ({
   authorName: c.authorName,
   text: c.text,
   source: c.source,
+  timestampSeconds: typeof c.timestampSeconds === 'number' ? c.timestampSeconds : null,
   parentId: c.parentId || null,
   createdAt: c.createdAt,
 });
@@ -84,7 +89,7 @@ export async function POST(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const { kind, id, text, parentId } = await request.json();
+    const { kind, id, text, parentId, timestampSeconds } = await request.json();
     const cleanText = String(text || '').trim().slice(0, 2000);
     if (!cleanText) {
       return NextResponse.json({ error: 'Comment text is required' }, { status: 400 });
@@ -93,18 +98,25 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid media kind' }, { status: 400 });
     }
 
-    // The media item must be vault media on this project
+    // The media item must belong to this project (any purpose — survey media
+    // is commentable from the detail modals too)
     let exists = false;
     if (kind === 'video') {
-      exists = !!(await Video.exists({ _id: id, projectId, purpose: 'vault' }));
+      exists = !!(await Video.exists({ _id: id, projectId }));
     } else if (kind === 'image') {
-      exists = !!(await Image.exists({ _id: id, projectId, purpose: 'vault' }));
+      exists = !!(await Image.exists({ _id: id, projectId }));
     } else {
-      exists = !!(await VideoRecording.exists({ _id: id, projectId: String(projectId), purpose: 'vault' }));
+      exists = !!(await VideoRecording.exists({ _id: id, projectId: String(projectId) }));
     }
     if (!exists) {
       return NextResponse.json({ error: 'Media not found' }, { status: 404 });
     }
+
+    // Playback-position anchor — videos only, never images
+    const cleanTimestamp =
+      kind !== 'image' && typeof timestampSeconds === 'number' && timestampSeconds >= 0
+        ? Math.round(timestampSeconds * 10) / 10
+        : undefined;
 
     // Replies attach to a top-level comment on the SAME media item; nesting
     // stays one level deep (a reply to a reply re-parents to the top).
@@ -130,18 +142,43 @@ export async function POST(
       user?.emailAddresses?.[0]?.emailAddress ||
       'Team member';
 
-    const comment = await MediaComment.create({
-      projectId,
-      organizationId: authContext.isPersonalAccount ? undefined : authContext.organizationId,
+    // Raw insert (not MediaComment.create) so timestampSeconds survives a
+    // dev server whose model was compiled before the field existed
+    // (recurring schema-cache gotcha).
+    const now = new Date();
+    const doc: any = {
+      projectId: project._id,
+      ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId }),
       mediaKind: kind,
       mediaId: String(id),
       authorName: authorName.slice(0, 80),
       text: cleanText,
       source: 'internal',
+      ...(cleanTimestamp !== undefined ? { timestampSeconds: cleanTimestamp } : {}),
       ...(cleanParentId ? { parentId: cleanParentId } : {}),
-    });
+      createdAt: now,
+      updatedAt: now,
+    };
+    const inserted = await MediaComment.collection.insertOne(doc);
 
-    return NextResponse.json({ success: true, comment: serialize(comment) });
+    // Activity log + team notification (excluding the commenter) —
+    // fire-and-forget so a telemetry hiccup never fails the post
+    recordMediaCommentEvent({
+      projectId,
+      organizationId: authContext.isPersonalAccount ? undefined : (authContext.organizationId ?? undefined),
+      mediaKind: kind,
+      mediaId: String(id),
+      authorName: authorName.slice(0, 80),
+      text: cleanText,
+      source: 'internal',
+      timestampSeconds: cleanTimestamp,
+      actorUserId: authContext.userId,
+    }).catch(() => {});
+
+    return NextResponse.json({
+      success: true,
+      comment: serialize({ ...doc, _id: inserted.insertedId }),
+    });
   } catch (error) {
     console.error('Error creating vault media comment:', error);
     return NextResponse.json({ error: 'Failed to post comment' }, { status: 500 });

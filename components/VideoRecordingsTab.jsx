@@ -19,8 +19,11 @@ import {
   Package,
   Target,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  Link2,
+  MessageSquare
 } from 'lucide-react';
+import { copyMediaShareLink } from '@/lib/mediaShareClient';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import {
@@ -134,6 +137,21 @@ const VideoRecordingsTab = ({
       totalDuration: Math.round(totalDuration / 60) // Convert to minutes
     };
   }, [recordings]);
+
+  // Comment counts per media item ("kind-id" → n) for the row badges.
+  // Refetched when the detail modal opens/closes so new comments show up.
+  const [commentCounts, setCommentCounts] = useState({});
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/media-comment-counts`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && !cancelled) setCommentCounts(d.counts || {});
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId, isModalOpen]);
 
   const handleOpenModal = (recording) => {
     setSelectedRecording(recording);
@@ -760,6 +778,12 @@ const VideoRecordingsTab = ({
                     <h3 className="text-sm font-semibold text-gray-900 truncate">
                       {formatMeetingName(recording.participants)}
                     </h3>
+                    {(commentCounts[`recording-${recording._id}`] || 0) > 0 && (
+                      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs flex-shrink-0">
+                        <MessageSquare size={11} />
+                        {commentCounts[`recording-${recording._id}`]}
+                      </span>
+                    )}
                     {(() => {
                       const midCallState = getMidCallState(recording);
                       const isLiveCall =
@@ -891,6 +915,20 @@ const VideoRecordingsTab = ({
                         >
                           <Download className="w-4 h-4 mr-2" />
                           Download
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={async () => {
+                            setOpenDropdownId(null);
+                            try {
+                              await copyMediaShareLink(projectId, 'recording', recording._id);
+                              toast.success('Share link copied — anyone with it can view this video and comment');
+                            } catch (error) {
+                              toast.error(error instanceof Error ? error.message : 'Failed to create share link');
+                            }
+                          }}
+                        >
+                          <Link2 className="w-4 h-4 mr-2" />
+                          Copy share link
                         </DropdownMenuItem>
                         {/* Rerun Analysis - for completed recordings */}
                         <DropdownMenuItem

@@ -23,8 +23,11 @@ import {
   RotateCcw,
   RotateCw,
   RefreshCw,
-  Plus
+  Plus,
+  Link2,
+  MessageSquare
 } from 'lucide-react';
+import { copyMediaShareLink } from '@/lib/mediaShareClient';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -90,8 +93,10 @@ const VideoCard = memo(({
   onDownload,
   onDelete,
   onReprocess,
+  onShare,
   onLoadStreamUrl,
-  onStopPlaying
+  onStopPlaying,
+  commentCount = 0
 }) => {
   const [thumbnailLoaded, setThumbnailLoaded] = useState(false);
   const [showVideoPreview, setShowVideoPreview] = useState(false);
@@ -164,6 +169,10 @@ const VideoCard = memo(({
                   <Download size={16} className="mr-2" />
                   Download
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onShare(video)}>
+                  <Link2 size={16} className="mr-2" />
+                  Copy share link
+                </DropdownMenuItem>
               </>
             )}
             {canReprocess && (
@@ -185,6 +194,12 @@ const VideoCard = memo(({
 
       {/* Video Preview Area */}
       <div className="aspect-video bg-gray-100 flex items-center justify-center relative">
+        {commentCount > 0 && (
+          <div className="absolute top-2 left-2 z-20 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-black/60 text-white text-xs pointer-events-none">
+            <MessageSquare size={11} />
+            {commentCount}
+          </div>
+        )}
         {isRecordingFailed ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-2">
             <VideoIcon className="w-12 h-12 text-gray-300" />
@@ -389,6 +404,7 @@ const VideoCard = memo(({
   if (prevProps.video.updatedAt !== nextProps.video.updatedAt) return false;
   if (prevProps.isPlaying !== nextProps.isPlaying) return false;
   if (prevProps.streamUrl !== nextProps.streamUrl) return false;
+  if (prevProps.commentCount !== nextProps.commentCount) return false;
 
   // Deep compare videoInventory
   const prevInv = prevProps.videoInventory || [];
@@ -947,6 +963,37 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
     }
   };
 
+  // Comment counts per media item ("kind-id" → n) for the card badges.
+  // Refetched when the detail modal opens/closes so new comments show up.
+  const [commentCounts, setCommentCounts] = useState({});
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/media-comment-counts`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && !cancelled) setCommentCounts(d.counts || {});
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId, selectedVideo]);
+
+  // Mint (or reuse) the permanent public share link for one video and copy it.
+  // Self-serve/walkthrough recordings are VideoRecording docs → kind 'recording';
+  // uploaded videos are Video docs → kind 'video'.
+  const handleShare = async (video) => {
+    try {
+      await copyMediaShareLink(
+        projectId,
+        video._type === 'self_serve_recording' ? 'recording' : 'video',
+        video._id
+      );
+      toast.success('Share link copied — anyone with it can view this video and comment');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create share link');
+    }
+  };
+
   const handleDownload = async (video) => {
     // Add operation state to prevent polling interference
     addOperation('isDownloading', video._id);
@@ -1438,8 +1485,10 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
             onDownload={handleDownload}
             onDelete={handleDelete}
             onReprocess={handleReprocess}
+            onShare={handleShare}
             onLoadStreamUrl={getStreamUrl}
             onStopPlaying={() => setPlayingVideoId(null)}
+            commentCount={commentCounts[`${video._type === 'self_serve_recording' ? 'recording' : 'video'}-${video._id}`] || 0}
           />
         ))}
       </div>
@@ -1498,6 +1547,7 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
           },
           sourceKey: 'sourceVideoId',
           chapters: modalChapters,
+          videoRef: modalVideoRef,
         }}
         headerTitle={
           <span className="flex items-center gap-2">

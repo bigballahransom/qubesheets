@@ -46,9 +46,12 @@ export async function GET(request: NextRequest) {
         reviewSignedNotificationScope: 'all',
         enableVaultMediaUpdates: false,
         vaultMediaNotificationScope: 'all',
+        enableMediaCommentUpdates: false,
+        mediaCommentNotificationScope: 'all',
         enableInventoryUpdateEmails: false,
         enableReviewSignedEmails: false,
         enableVaultMediaEmails: false,
+        enableMediaCommentEmails: false,
         notificationEmail: null,
         phoneNumber: null
       });
@@ -61,9 +64,12 @@ export async function GET(request: NextRequest) {
       reviewSignedNotificationScope: settings.reviewSignedNotificationScope || 'all',
       enableVaultMediaUpdates: settings.enableVaultMediaUpdates || false,
       vaultMediaNotificationScope: settings.vaultMediaNotificationScope || 'all',
+      enableMediaCommentUpdates: settings.enableMediaCommentUpdates || false,
+      mediaCommentNotificationScope: settings.mediaCommentNotificationScope || 'all',
       enableInventoryUpdateEmails: settings.enableInventoryUpdateEmails || false,
       enableReviewSignedEmails: settings.enableReviewSignedEmails || false,
       enableVaultMediaEmails: settings.enableVaultMediaEmails || false,
+      enableMediaCommentEmails: settings.enableMediaCommentEmails || false,
       notificationEmail: settings.notificationEmail || null,
       phoneNumber: settings.phoneNumber
     });
@@ -142,6 +148,16 @@ export async function POST(request: NextRequest) {
       ? incomingVaultScope
       : 'all';
 
+    const incomingCommentScope =
+      typeof data.mediaCommentNotificationScope === 'string'
+        ? data.mediaCommentNotificationScope
+        : 'all';
+    const mediaCommentNotificationScope = (allowedScopes as readonly string[]).includes(
+      incomingCommentScope
+    )
+      ? incomingCommentScope
+      : 'all';
+
     // Validate email when provided
     let cleanEmail: string | null = null;
     if (data.notificationEmail && String(data.notificationEmail).trim()) {
@@ -163,9 +179,12 @@ export async function POST(request: NextRequest) {
       reviewSignedNotificationScope,
       enableVaultMediaUpdates: Boolean(data.enableVaultMediaUpdates),
       vaultMediaNotificationScope,
+      enableMediaCommentUpdates: Boolean(data.enableMediaCommentUpdates),
+      mediaCommentNotificationScope,
       enableInventoryUpdateEmails: Boolean(data.enableInventoryUpdateEmails),
       enableReviewSignedEmails: Boolean(data.enableReviewSignedEmails),
       enableVaultMediaEmails: Boolean(data.enableVaultMediaEmails),
+      enableMediaCommentEmails: Boolean(data.enableMediaCommentEmails),
       notificationEmail: cleanEmail,
       phoneNumber: formattedPhoneNumber
     };
@@ -202,9 +221,12 @@ export async function POST(request: NextRequest) {
       reviewSignedNotificationScope: settings.reviewSignedNotificationScope || 'all',
       enableVaultMediaUpdates: settings.enableVaultMediaUpdates || false,
       vaultMediaNotificationScope: settings.vaultMediaNotificationScope || 'all',
+      enableMediaCommentUpdates: settings.enableMediaCommentUpdates || false,
+      mediaCommentNotificationScope: settings.mediaCommentNotificationScope || 'all',
       enableInventoryUpdateEmails: settings.enableInventoryUpdateEmails || false,
       enableReviewSignedEmails: settings.enableReviewSignedEmails || false,
       enableVaultMediaEmails: settings.enableVaultMediaEmails || false,
+      enableMediaCommentEmails: settings.enableMediaCommentEmails || false,
       notificationEmail: settings.notificationEmail || null,
       phoneNumber: settings.phoneNumber
     }, { status: 200 });

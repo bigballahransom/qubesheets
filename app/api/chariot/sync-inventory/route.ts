@@ -107,25 +107,13 @@ export async function POST(request: NextRequest) {
 
     const phoneMatched = !!validation.phoneNumberMatches;
 
+    // Zero items is NOT an error here: the sync lib still pushes a notes-only
+    // record (project notes + crew review link) for no-inventory jobs
+    // (e.g. designer accounts) and only errors when there's nothing to send.
     const inventoryItems = await InventoryItem.find({ projectId });
-    if (inventoryItems.length === 0) {
-      return NextResponse.json(
-        { error: 'No inventory items found to sync' },
-        { status: 400 }
-      );
-    }
-    // Pre-filter mirrors the sync lib's filter: drop not-going items unless
-    // the caller opted in to including them. Keeps the empty-payload error
-    // message accurate.
     const candidateItems = includeNotGoing
       ? inventoryItems
       : inventoryItems.filter((item) => item.going !== 'not going');
-    if (candidateItems.length === 0) {
-      return NextResponse.json(
-        { error: 'No items marked as going to sync' },
-        { status: 400 }
-      );
-    }
 
     const syncResult = await syncInventoryToChariot(
       projectId,
@@ -147,7 +135,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Successfully synced ${syncResult.syncedCount} items to Chariot`,
+      message: syncResult.syncedCount > 0
+        ? `Successfully synced ${syncResult.syncedCount} items to Chariot`
+        : 'No inventory items — synced notes and crew link to Chariot',
       syncDetails: {
         projectId,
         jobId,

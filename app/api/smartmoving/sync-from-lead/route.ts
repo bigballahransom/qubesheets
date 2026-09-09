@@ -205,11 +205,10 @@ export async function POST(request: NextRequest) {
 
       console.log(`📦 [SYNC-FROM-LEAD] Re-syncing ${inventoryItems.length} items to existing opportunity (grouped by location)`);
 
-      let inventorySyncResult: { success: boolean; syncedCount: number; roomId?: string; error?: string } = { success: true, syncedCount: 0 };
-      if (inventoryItems.length > 0) {
-        // Sync items - they will be grouped by location and synced to corresponding rooms
-        inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
-      }
+      // Sync items - they will be grouped by location and synced to corresponding
+      // rooms. Always called, even with zero items: the lib still posts notes +
+      // crew/vault links to job notes for no-inventory jobs (e.g. designer accounts).
+      const inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
 
       // Update sync timestamp
       await Project.findByIdAndUpdate(projectId, {
@@ -660,19 +659,18 @@ export async function POST(request: NextRequest) {
 
     console.log(`📦 [SYNC-FROM-LEAD] Filtered ${inventoryItems.length} items from ${allInventoryItems.length} total`);
 
-    let inventorySyncResult: { success: boolean; syncedCount: number; roomId?: string; error?: string } = { success: true, syncedCount: 0 };
-    if (inventoryItems.length > 0) {
-      inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
+    // Always called, even with zero items: the lib still posts notes +
+    // crew/vault links to job notes for no-inventory jobs (e.g. designer accounts).
+    const inventorySyncResult = await syncInventoryToSmartMoving(projectId, inventoryItems);
 
-      // Store the room ID for future re-syncs
-      if (inventorySyncResult.roomId) {
-        console.log(`📌 [SYNC-FROM-LEAD] Storing room ID in project metadata: ${inventorySyncResult.roomId}`);
-        await Project.findByIdAndUpdate(projectId, {
-          $set: {
-            'metadata.smartMovingRoomId': inventorySyncResult.roomId
-          }
-        });
-      }
+    // Store the room ID for future re-syncs
+    if (inventorySyncResult.roomId) {
+      console.log(`📌 [SYNC-FROM-LEAD] Storing room ID in project metadata: ${inventorySyncResult.roomId}`);
+      await Project.findByIdAndUpdate(projectId, {
+        $set: {
+          'metadata.smartMovingRoomId': inventorySyncResult.roomId
+        }
+      });
     }
 
     console.log(`✅ [SYNC-FROM-LEAD] Sync complete!`);

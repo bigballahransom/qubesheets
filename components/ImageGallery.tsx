@@ -18,8 +18,11 @@ import {
   Video,
   Play,
   Copy,
-  Plus
+  Plus,
+  Link2,
+  MessageSquare
 } from 'lucide-react';
+import { copyMediaShareLink } from '@/lib/mediaShareClient';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -455,6 +458,33 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
   };
 
   // Download media item
+  // Comment counts per media item ("kind-id" → n) for the card badges.
+  // Refetched when the detail modal opens/closes so new comments show up.
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/media-comment-counts`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && !cancelled) setCommentCounts(d.counts || {});
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId, selectedItem]);
+
+  // Mint (or reuse) the permanent public share link for one item and copy it
+  const handleShareItem = async (item: MediaItem) => {
+    try {
+      await copyMediaShareLink(projectId, isVideo(item) ? 'video' : 'image', item._id);
+      toast.success(
+        `Share link copied — anyone with it can view this ${isVideo(item) ? 'video' : 'photo'} and comment`
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create share link');
+    }
+  };
+
   const handleDownloadItem = async (item: MediaItem) => {
     try {
       if (isVideo(item)) {
@@ -634,6 +664,12 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
           {mediaItems.map((item) => (
             <Card key={item._id} className="group hover:shadow-lg transition-shadow overflow-hidden p-0">
               <div className="relative aspect-video bg-gray-100 overflow-hidden rounded-t-lg">
+                {(commentCounts[`${isVideo(item) ? 'video' : 'image'}-${item._id}`] || 0) > 0 && (
+                  <div className="absolute top-2 left-2 z-20 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-black/60 text-white text-xs pointer-events-none">
+                    <MessageSquare size={11} />
+                    {commentCounts[`${isVideo(item) ? 'video' : 'image'}-${item._id}`]}
+                  </div>
+                )}
                   {/* Loading spinner */}
                   <div className="loading-spinner absolute inset-0 flex items-center justify-center bg-gray-100">
                     <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
@@ -742,6 +778,10 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
                         <DropdownMenuItem onClick={() => handleDownloadItem(item)}>
                           <Download size={16} className="mr-2" />
                           Download
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleShareItem(item)}>
+                          <Link2 size={16} className="mr-2" />
+                          Copy share link
                         </DropdownMenuItem>
                         <DropdownMenuItem 
                           onClick={() => handleDeleteItem(item)}

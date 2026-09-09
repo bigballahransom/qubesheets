@@ -35,7 +35,9 @@ export async function GET(
     await connectMongoDB();
     const { token } = await params;
 
-    const shareLink = await VaultShareLink.findOne({ shareToken: token, isActive: true });
+    // .lean() so the single-item scope fields (mediaKind/mediaId) survive even
+    // when the running server compiled the model before those fields existed
+    const shareLink: any = await VaultShareLink.findOne({ shareToken: token, isActive: true }).lean();
     if (!shareLink) {
       return NextResponse.json({ error: 'Invalid or expired link' }, { status: 404 });
     }
@@ -52,6 +54,100 @@ export async function GET(
     ).catch(() => {});
 
     const projectId = shareLink.projectId;
+
+    const brandingQuery = () =>
+      (project as any).organizationId
+        ? Branding.findOne({ organizationId: (project as any).organizationId }).lean()
+        : Branding.findOne({ userId: (project as any).userId }).lean();
+
+    // Single-item link: return just that one media item (any purpose — survey
+    // media is shareable too) with its comment thread.
+    if (shareLink.mediaKind && shareLink.mediaId) {
+      const kind = shareLink.mediaKind as 'image' | 'video' | 'recording';
+      const mediaId = String(shareLink.mediaId);
+
+      let doc: any = null;
+      if (kind === 'image') {
+        doc = await Image.findOne({ _id: mediaId, projectId })
+          .select('originalName label mediaDescription s3RawFile createdAt')
+          .lean();
+      } else if (kind === 'video') {
+        doc = await Video.findOne({ _id: mediaId, projectId })
+          .select('originalName label mediaDescription duration s3RawFile createdAt')
+          .lean();
+      } else {
+        doc = await VideoRecording.findOne({ _id: mediaId, projectId: projectId.toString() })
+          .select('label mediaDescription duration s3Key participants createdAt')
+          .lean();
+      }
+      if (!doc) {
+        // Media was deleted → the link dies with it
+        return NextResponse.json({ error: 'Invalid or expired link' }, { status: 404 });
+      }
+
+      const [itemComments, branding] = await Promise.all([
+        MediaComment.find({ projectId, mediaKind: kind, mediaId })
+          .select('mediaKind mediaId authorName text source timestampSeconds parentId createdAt')
+          .sort({ createdAt: 1 })
+          .lean(),
+        brandingQuery(),
+      ]);
+
+      const item =
+        kind === 'image'
+          ? {
+              kind,
+              id: mediaId,
+              name: doc.originalName || 'Photo',
+              label: doc.label || null,
+              description: doc.mediaDescription || null,
+              duration: 0,
+              createdAt: doc.createdAt,
+              mediaType: 'image' as const,
+              mediaUrl: signOrNull(doc.s3RawFile?.key),
+            }
+          : {
+              kind,
+              id: mediaId,
+              name:
+                kind === 'recording'
+                  ? doc.participants?.find((p: any) => p.type === 'customer')?.name || 'Recorded video'
+                  : doc.originalName || 'Video',
+              label: doc.label || null,
+              description: doc.mediaDescription || null,
+              duration: doc.duration || 0,
+              createdAt: doc.createdAt,
+              mediaType: 'video' as const,
+              mediaUrl: signOrNull(kind === 'recording' ? doc.s3Key : doc.s3RawFile?.key),
+            };
+
+      return NextResponse.json({
+        isValid: true,
+        scope: 'single',
+        projectName: (project as any).name,
+        branding: branding
+          ? {
+              companyName: (branding as any).companyName,
+              companyLogo: (branding as any).companyLogo,
+            }
+          : null,
+        items: [
+          {
+            ...item,
+            comments: (itemComments as any[]).map((c) => ({
+              id: String(c._id),
+              authorName: c.authorName,
+              text: c.text,
+              source: c.source,
+              timestampSeconds: typeof c.timestampSeconds === 'number' ? c.timestampSeconds : null,
+              parentId: c.parentId || null,
+              createdAt: c.createdAt,
+            })),
+          },
+        ],
+        total: 1,
+      });
+    }
 
     const [videos, images, recordings, comments, branding] = await Promise.all([
       Video.find({ projectId, purpose: 'vault' })
@@ -71,12 +167,10 @@ export async function GET(
         .sort({ createdAt: -1 })
         .lean(),
       MediaComment.find({ projectId })
-        .select('mediaKind mediaId authorName text source parentId createdAt')
+        .select('mediaKind mediaId authorName text source timestampSeconds parentId createdAt')
         .sort({ createdAt: 1 })
         .lean(),
-      (project as any).organizationId
-        ? Branding.findOne({ organizationId: (project as any).organizationId }).lean()
-        : Branding.findOne({ userId: (project as any).userId }).lean(),
+      brandingQuery(),
     ]);
 
     const commentsByMedia = new Map<string, any[]>();
@@ -88,6 +182,7 @@ export async function GET(
         authorName: c.authorName,
         text: c.text,
         source: c.source,
+        timestampSeconds: typeof c.timestampSeconds === 'number' ? c.timestampSeconds : null,
         parentId: c.parentId || null,
         createdAt: c.createdAt,
       });
@@ -136,6 +231,7 @@ export async function GET(
 
     return NextResponse.json({
       isValid: true,
+      scope: 'gallery',
       projectName: (project as any).name,
       branding: branding
         ? {

@@ -34,7 +34,7 @@ interface ActivityLogProps {
 
 interface Activity {
   _id: string;
-  activityType: 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'review_link_signed' | 'crew_link_shared';
+  activityType: 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'review_link_signed' | 'crew_link_shared' | 'media_comment' | 'share_link_created';
   action: string;
   details: {
     fileName?: string;
@@ -56,6 +56,11 @@ interface Activity {
     scheduledFor?: string;
     timezone?: string;
     previousScheduledFor?: string;
+    mediaKind?: 'image' | 'video' | 'recording';
+    mediaName?: string;
+    commentText?: string;
+    commentSource?: 'internal' | 'external';
+    timestampSeconds?: number;
   };
   createdAt: string;
   user: {
@@ -127,6 +132,10 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return <PenTool className="w-4 h-4 text-emerald-600" />;
       case 'crew_link_shared':
         return <Users className="w-4 h-4 text-cyan-600" />;
+      case 'media_comment':
+        return <MessageSquare className="w-4 h-4 text-blue-600" />;
+      case 'share_link_created':
+        return <ExternalLink className="w-4 h-4 text-indigo-600" />;
       case 'video_call_scheduled':
         if (activity.action === 'cancelled') {
           return <CalendarX className="w-4 h-4 text-red-600" />;
@@ -229,6 +238,41 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return (
           <span>
             <strong>{userName}</strong> generated crew review link
+          </span>
+        );
+
+      case 'media_comment': {
+        // External guests aren't Clerk users — their typed name lives in
+        // details.userName
+        const commenter =
+          activity.details.commentSource === 'external'
+            ? activity.details.userName || 'Guest'
+            : activity.details.userName || userName;
+        const ts =
+          typeof activity.details.timestampSeconds === 'number'
+            ? ` at ${Math.floor(activity.details.timestampSeconds / 60)}:${String(Math.floor(activity.details.timestampSeconds % 60)).padStart(2, '0')}`
+            : '';
+        return (
+          <span>
+            <strong>{commenter}</strong>
+            {activity.details.commentSource === 'external' && (
+              <span className="ml-1 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 bg-amber-100 rounded-full">
+                Guest
+              </span>
+            )}{' '}
+            commented on <span className="font-medium">{activity.details.mediaName || 'media'}</span>{ts}
+            {activity.details.commentText && (
+              <span className="text-gray-500"> — “{activity.details.commentText}”</span>
+            )}
+          </span>
+        );
+      }
+
+      case 'share_link_created':
+        return (
+          <span>
+            <strong>{userName}</strong> created a share link for
+            <span className="font-medium"> {activity.details.mediaName || 'media'}</span>
           </span>
         );
 

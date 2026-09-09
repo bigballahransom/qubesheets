@@ -1,8 +1,9 @@
 // models/MediaComment.ts
-// Comments on Media Vault items. External viewers leave them through the
-// vault-review share page (authorName typed free-form, source 'external');
-// org users can reply from the Vault tab (source 'internal'). Comments are
-// per media item, keyed by (mediaKind, mediaId).
+// Comments on any project media item (vault AND survey — photos, uploaded
+// videos, call/walkthrough recordings). External viewers leave them through
+// the vault-review share pages (authorName typed free-form, source
+// 'external'); org users comment from the Vault tab and the media detail
+// modals (source 'internal'). Keyed by (mediaKind, mediaId).
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IMediaComment extends Document {
@@ -14,6 +15,9 @@ export interface IMediaComment extends Document {
   authorName: string;
   text: string;
   source: 'external' | 'internal';
+  // For video/recording comments: playback position (seconds) the comment
+  // refers to. Rendered as a clickable chip that seeks the player.
+  timestampSeconds?: number;
   // One-level threading: set to the top-level comment this replies to
   parentId?: string;
   // Share token the external comment arrived through (audit/revocation)
@@ -59,6 +63,11 @@ const MediaCommentSchema: Schema = new Schema(
       type: String,
       enum: ['external', 'internal'],
       default: 'external',
+    },
+    timestampSeconds: {
+      type: Number,
+      required: false,
+      min: 0,
     },
     parentId: {
       type: String,

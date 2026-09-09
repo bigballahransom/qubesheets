@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUser, useOrganization } from '@clerk/nextjs';
-import { Bell, Phone, PenTool, Mail } from 'lucide-react';
+import { Bell, Phone, PenTool, Mail, MessageSquare } from 'lucide-react';
 import SafeIcon from '@/components/icons/SafeIcon';
 import { Input } from '@/components/ui/input';
 import { SettingsPageShell } from '@/components/SettingsPageShell';
@@ -46,11 +46,14 @@ export default function NotificationsPage() {
   const [reviewSignedNotificationScope, setReviewSignedNotificationScope] = useState<'all' | 'unassigned-and-mine' | 'mine'>('all');
   const [enableVaultMediaUpdates, setEnableVaultMediaUpdates] = useState(false);
   const [vaultMediaNotificationScope, setVaultMediaNotificationScope] = useState<'all' | 'unassigned-and-mine' | 'mine'>('all');
+  const [enableMediaCommentUpdates, setEnableMediaCommentUpdates] = useState(false);
+  const [mediaCommentNotificationScope, setMediaCommentNotificationScope] = useState<'all' | 'unassigned-and-mine' | 'mine'>('all');
   // Email channel — one shared address, opted in per event type
   const [notificationEmail, setNotificationEmail] = useState('');
   const [enableInventoryUpdateEmails, setEnableInventoryUpdateEmails] = useState(false);
   const [enableReviewSignedEmails, setEnableReviewSignedEmails] = useState(false);
   const [enableVaultMediaEmails, setEnableVaultMediaEmails] = useState(false);
+  const [enableMediaCommentEmails, setEnableMediaCommentEmails] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
 
   const [enableCustomerFollowUps, setEnableCustomerFollowUps] = useState(false);
@@ -86,10 +89,13 @@ export default function NotificationsPage() {
         setReviewSignedNotificationScope(settings.reviewSignedNotificationScope || 'all');
         setEnableVaultMediaUpdates(settings.enableVaultMediaUpdates || false);
         setVaultMediaNotificationScope(settings.vaultMediaNotificationScope || 'all');
+        setEnableMediaCommentUpdates(settings.enableMediaCommentUpdates || false);
+        setMediaCommentNotificationScope(settings.mediaCommentNotificationScope || 'all');
         setNotificationEmail(settings.notificationEmail || '');
         setEnableInventoryUpdateEmails(settings.enableInventoryUpdateEmails || false);
         setEnableReviewSignedEmails(settings.enableReviewSignedEmails || false);
         setEnableVaultMediaEmails(settings.enableVaultMediaEmails || false);
+        setEnableMediaCommentEmails(settings.enableMediaCommentEmails || false);
         setPhoneNumber(formatPhoneForDisplay(settings.phoneNumber || ''));
       } else {
         setEnableInventoryUpdates(false);
@@ -125,6 +131,7 @@ export default function NotificationsPage() {
       enableInventoryUpdates && !hasPhone && !(enableInventoryUpdateEmails && hasEmail) && 'Inventory Updates',
       enableReviewSignedUpdates && !hasPhone && !(enableReviewSignedEmails && hasEmail) && 'Review Signed',
       enableVaultMediaUpdates && !hasPhone && !(enableVaultMediaEmails && hasEmail) && 'Media Vault',
+      enableMediaCommentUpdates && !hasPhone && !(enableMediaCommentEmails && hasEmail) && 'Media Comments',
     ].filter(Boolean);
     if (channelGap.length > 0) {
       toast.error(
@@ -146,10 +153,13 @@ export default function NotificationsPage() {
             reviewSignedNotificationScope,
             enableVaultMediaUpdates,
             vaultMediaNotificationScope,
+            enableMediaCommentUpdates,
+            mediaCommentNotificationScope,
             notificationEmail: notificationEmail.trim() || null,
             enableInventoryUpdateEmails,
             enableReviewSignedEmails,
             enableVaultMediaEmails,
+            enableMediaCommentEmails,
             phoneNumber: phoneNumber.trim() || null
           })
         });
@@ -570,6 +580,112 @@ export default function NotificationsPage() {
                   </p>
                 </div>
                 {renderEmailChannel(enableVaultMediaEmails, setEnableVaultMediaEmails)}
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* Media Comment Notifications — Personal */}
+        <section className="rounded-xl border border-gray-200 bg-white shadow-sm p-6">
+          <div className="flex items-start justify-between mb-4 gap-3">
+            <div>
+              <h2 className="text-lg font-medium flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-blue-600" />
+                Media Comment Notifications
+              </h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Just for you — other org members configure their own.
+              </p>
+            </div>
+            <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 text-xs font-medium">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Personal
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="flex-1 pr-4">
+                <h3 className="font-medium">Enable Comment Alerts</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Get notified when someone comments on a photo or video — guest replies
+                  through share links and teammate comments alike. Your own comments never
+                  notify you.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableMediaCommentUpdates}
+                  onChange={(e) => {
+                    setEnableMediaCommentUpdates(e.target.checked);
+                    setHasUnsavedChanges(true);
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+
+            {enableMediaCommentUpdates && (
+              <>
+                <div className="pt-4 border-t">
+                  <label className="block text-sm font-medium mb-2">Which projects?</label>
+                  <div className="space-y-2">
+                    {([
+                      { value: 'all', title: 'All projects', desc: 'Notify on every project in the org (default).' },
+                      {
+                        value: 'unassigned-and-mine',
+                        title: 'Unassigned projects and my projects',
+                        desc: 'Projects assigned to or created by me, plus projects from automated sources (Smart Moving, API, the global links) that haven\'t been assigned yet.'
+                      },
+                      { value: 'mine', title: 'My projects only', desc: 'Only projects assigned to me, or projects I created if no one else is assigned.' }
+                    ] as const).map((opt) => (
+                      <label
+                        key={opt.value}
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          mediaCommentNotificationScope === opt.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300 bg-white'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="mediaCommentNotificationScope"
+                          value={opt.value}
+                          checked={mediaCommentNotificationScope === opt.value}
+                          onChange={() => {
+                            setMediaCommentNotificationScope(opt.value);
+                            setHasUnsavedChanges(true);
+                          }}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{opt.title}</div>
+                          <div className="text-xs text-gray-600 mt-0.5">{opt.desc}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <label className="block text-sm font-medium mb-2">
+                    Phone Number
+                  </label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      type="tel"
+                      value={phoneNumber}
+                      onChange={handlePhoneChange}
+                      placeholder="(555) 123-4567"
+                      className="pl-10"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    US phone number for SMS alerts — shared with your other personal notifications. Leave blank to use email only.
+                  </p>
+                </div>
+                {renderEmailChannel(enableMediaCommentEmails, setEnableMediaCommentEmails)}
               </>
             )}
           </div>

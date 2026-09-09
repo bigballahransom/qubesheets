@@ -7,10 +7,10 @@
 // short-lived signed S3 URLs minted by the validate endpoint.
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import {
-  Loader2, Building2, MessageSquare, Send, ChevronDown, ChevronUp, Film, ImageIcon
+  Loader2, Building2, MessageSquare, Send, ChevronDown, ChevronUp, Film, ImageIcon, Clock, X
 } from 'lucide-react';
 import Logo from '../../../public/logo';
 import SafeIcon from '@/components/icons/SafeIcon';
@@ -20,6 +20,7 @@ interface VaultComment {
   authorName: string;
   text: string;
   source: 'external' | 'internal';
+  timestampSeconds?: number | null;
   createdAt: string;
 }
 
@@ -38,6 +39,9 @@ interface VaultItem {
 
 interface VaultData {
   isValid: boolean;
+  // 'single' = link scoped to one media item (focused layout, comments open);
+  // 'gallery' (or absent, older responses) = the whole vault gallery
+  scope?: 'single' | 'gallery';
   projectName: string;
   branding: { companyName: string; companyLogo?: string } | null;
   items: VaultItem[];
@@ -55,6 +59,11 @@ const formatDuration = (seconds: number) => {
   return `${m}:${String(s).padStart(2, '0')}`;
 };
 
+const formatTimestamp = (seconds: number) => {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
 export default function VaultReviewPage() {
   const params = useParams();
   const token = params?.token as string;
@@ -66,7 +75,66 @@ export default function VaultReviewPage() {
   // Commenter name persists across items for the session
   const [authorName, setAuthorName] = useState('');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  // Per-item video timestamp anchor for the next comment (videos only)
+  const [anchors, setAnchors] = useState<Record<string, number>>({});
+  // Items whose auto-captured anchor the user removed — don't re-add while
+  // they compose that comment
+  const [dismissedAnchors, setDismissedAnchors] = useState<Set<string>>(new Set());
   const [posting, setPosting] = useState<string | null>(null);
+  // One <video> element per video item so timestamp chips can seek it
+  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+
+  const captureAnchor = (itemKey: string) => {
+    const el = videoRefs.current[itemKey];
+    const t = el?.currentTime;
+    if (typeof t === 'number' && isFinite(t) && t >= 0) {
+      setAnchors((prev) => ({ ...prev, [itemKey]: Math.round(t * 10) / 10 }));
+      setDismissedAnchors((prev) => {
+        const next = new Set(prev);
+        next.delete(itemKey);
+        return next;
+      });
+    }
+  };
+  const clearAnchor = (itemKey: string, dismissed = false) => {
+    setAnchors((prev) => {
+      const next = { ...prev };
+      delete next[itemKey];
+      return next;
+    });
+    setDismissedAnchors((prev) => {
+      const next = new Set(prev);
+      if (dismissed) next.add(itemKey);
+      else next.delete(itemKey);
+      return next;
+    });
+  };
+
+  // Starting a comment on a video pauses it and pins the comment to
+  // wherever the playhead is — unless the user removed the anchor.
+  const handleComposerFocus = (item: VaultItem) => {
+    if (item.mediaType !== 'video') return;
+    const itemKey = `${item.kind}-${item.id}`;
+    videoRefs.current[itemKey]?.pause?.();
+    if (typeof anchors[itemKey] !== 'number' && !dismissedAnchors.has(itemKey)) {
+      captureAnchor(itemKey);
+    }
+  };
+  const seekTo = (itemKey: string, seconds: number) => {
+    const el = videoRefs.current[itemKey];
+    if (!el) return;
+    const apply = () => {
+      el.currentTime = seconds;
+      el.play?.()?.catch?.(() => {});
+    };
+    // Apply immediately (browsers keep it as the pending start position) and
+    // again once metadata loads — pre-metadata seeks are otherwise unreliable.
+    apply();
+    if (el.readyState === 0) {
+      el.addEventListener('loadedmetadata', apply, { once: true });
+      el.load?.();
+    }
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -75,7 +143,12 @@ export default function VaultReviewPage() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'This link is invalid or no longer active.');
       }
-      setData(await res.json());
+      const payload: VaultData = await res.json();
+      setData(payload);
+      // Single-item links open straight into the conversation
+      if (payload.scope === 'single' && payload.items[0]) {
+        setOpenComments(new Set([`${payload.items[0].kind}-${payload.items[0].id}`]));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
@@ -107,6 +180,7 @@ export default function VaultReviewPage() {
 
     setPosting(itemKey);
     try {
+      const anchor = anchors[itemKey];
       const res = await fetch(`/api/vault-review/${token}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -115,6 +189,7 @@ export default function VaultReviewPage() {
           mediaId: item.id,
           authorName: name,
           text,
+          ...(typeof anchor === 'number' ? { timestampSeconds: anchor } : {}),
         }),
       });
       if (!res.ok) {
@@ -135,6 +210,7 @@ export default function VaultReviewPage() {
           : prev
       );
       setDrafts((prev) => ({ ...prev, [itemKey]: '' }));
+      clearAnchor(itemKey);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to post comment');
     } finally {
@@ -186,20 +262,20 @@ export default function VaultReviewPage() {
             </p>
             <p className="text-sm text-slate-500 flex items-center gap-1">
               <SafeIcon size={13} />
-              Media Vault — {data.projectName}
+              {data.scope === 'single' ? 'Shared media' : 'Media Vault'} — {data.projectName}
             </p>
           </div>
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-8">
+      <div className={`${data.scope === 'single' ? 'max-w-3xl' : 'max-w-5xl'} mx-auto px-3 py-4 sm:px-4 sm:py-8`}>
         {data.items.length === 0 ? (
           <div className="bg-white rounded-2xl shadow border border-slate-200 p-10 text-center">
             <SafeIcon className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-600">No media has been added yet. Check back soon.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div className={`grid grid-cols-1 ${data.scope === 'single' ? '' : 'sm:grid-cols-2'} gap-6`}>
             {data.items.map((item) => {
               const itemKey = `${item.kind}-${item.id}`;
               const commentsOpen = openComments.has(itemKey);
@@ -208,21 +284,42 @@ export default function VaultReviewPage() {
                   key={itemKey}
                   className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm flex flex-col"
                 >
-                  <div className="bg-slate-900 aspect-video flex items-center justify-center">
+                  {/* Media sizing: the single-item view lets the media keep its
+                      own aspect ratio but caps it to the viewport (portrait
+                      crew videos would otherwise render thousands of pixels
+                      tall); gallery cards keep a fixed 16:9 window with the
+                      media letterboxed inside (absolute, so a portrait video
+                      can never stretch the aspect-ratio box). */}
+                  <div
+                    className={
+                      data.scope === 'single'
+                        ? 'bg-slate-900 flex items-center justify-center min-h-[180px]'
+                        : 'bg-slate-900 aspect-video relative overflow-hidden flex items-center justify-center'
+                    }
+                  >
                     {item.mediaUrl ? (
                       item.mediaType === 'video' ? (
                         <video
+                          ref={(el) => { videoRefs.current[itemKey] = el; }}
                           src={item.mediaUrl}
                           controls
                           preload="metadata"
-                          className="w-full h-full object-contain"
+                          className={
+                            data.scope === 'single'
+                              ? 'w-auto max-w-full max-h-[62vh] sm:max-h-[68vh] object-contain'
+                              : 'absolute inset-0 w-full h-full object-contain'
+                          }
                         />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={item.mediaUrl}
                           alt={item.label || item.name}
-                          className="w-full h-full object-contain"
+                          className={
+                            data.scope === 'single'
+                              ? 'w-auto max-w-full max-h-[62vh] sm:max-h-[68vh] object-contain'
+                              : 'absolute inset-0 w-full h-full object-contain'
+                          }
                         />
                       )
                     ) : item.mediaType === 'video' ? (
@@ -264,9 +361,19 @@ export default function VaultReviewPage() {
                       <div className="border-t border-slate-100 pt-3 space-y-3">
                         {item.comments.map((c) => (
                           <div key={c.id} className="text-sm">
-                            <p className="font-medium text-slate-700">
+                            <p className="font-medium text-slate-700 flex items-center gap-2 flex-wrap">
                               {c.authorName}
-                              <span className="ml-2 text-xs font-normal text-slate-400">
+                              {typeof c.timestampSeconds === 'number' && (
+                                <button
+                                  onClick={() => seekTo(itemKey, c.timestampSeconds!)}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded cursor-pointer transition-colors"
+                                  title="Jump to this moment"
+                                >
+                                  <Clock size={10} />
+                                  {formatTimestamp(c.timestampSeconds)}
+                                </button>
+                              )}
+                              <span className="text-xs font-normal text-slate-400">
                                 {formatDate(c.createdAt)}
                               </span>
                             </p>
@@ -281,8 +388,30 @@ export default function VaultReviewPage() {
                             placeholder="Your name"
                             className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-slate-400 outline-none"
                           />
-                          <div className="flex gap-2">
+                          <div className="flex items-center gap-2">
+                            {item.mediaType === 'video' && (
+                              typeof anchors[itemKey] === 'number' ? (
+                                <button
+                                  onClick={() => clearAnchor(itemKey, true)}
+                                  className="flex items-center gap-1 px-2 py-2 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg cursor-pointer flex-shrink-0 transition-colors"
+                                  title="Remove timestamp"
+                                >
+                                  <Clock size={12} />
+                                  {formatTimestamp(anchors[itemKey])}
+                                  <X size={11} />
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => captureAnchor(itemKey)}
+                                  className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer flex-shrink-0 transition-colors"
+                                  title="Comment at current video time"
+                                >
+                                  <Clock size={15} />
+                                </button>
+                              )
+                            )}
                             <input
+                              onFocus={() => handleComposerFocus(item)}
                               value={drafts[itemKey] || ''}
                               onChange={(e) =>
                                 setDrafts((prev) => ({ ...prev, [itemKey]: e.target.value }))
@@ -290,7 +419,11 @@ export default function VaultReviewPage() {
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') postComment(item);
                               }}
-                              placeholder="Write a comment..."
+                              placeholder={
+                                typeof anchors[itemKey] === 'number'
+                                  ? `Comment at ${formatTimestamp(anchors[itemKey])}...`
+                                  : 'Write a comment...'
+                              }
                               className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-slate-400 outline-none"
                             />
                             <button
