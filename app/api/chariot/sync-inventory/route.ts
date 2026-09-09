@@ -9,6 +9,7 @@ import {
   type ChariotSyncOption,
 } from '@/lib/chariot-inventory-sync';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
+import { isItemGoing, GOING_ITEMS_QUERY } from '@/lib/goingQuantity';
 
 // Chariot's inventory endpoint is transactional (docs: "Transaction Safety")
 // and routinely takes 30-60s for 200+ item payloads. Override Vercel's 60s
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
     const inventoryItems = await InventoryItem.find({ projectId });
     const candidateItems = includeNotGoing
       ? inventoryItems
-      : inventoryItems.filter((item) => item.going !== 'not going');
+      : inventoryItems.filter((item) => isItemGoing(item));
 
     const syncResult = await syncInventoryToChariot(
       projectId,
@@ -184,21 +185,21 @@ export async function GET(request: NextRequest) {
     const totalItems = await InventoryItem.countDocuments({ projectId });
     const goingItems = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
     });
     const itemsCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $nin: ['packed_box', 'existing_box', 'boxes_needed'] },
     });
     const existingBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $in: ['packed_box', 'existing_box'] },
     });
     const recommendedBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: 'boxes_needed',
     });
 

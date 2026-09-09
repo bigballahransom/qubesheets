@@ -25,6 +25,7 @@ import MoverbaseIntegration, {
   moverbaseAuthHeader,
 } from '@/models/MoverbaseIntegration';
 import { IInventoryItem } from '@/models/InventoryItem';
+import { effectiveGoingQuantity, isItemGoing } from '@/lib/goingQuantity';
 import { logActivity } from '@/lib/activity-logger';
 
 // Inventory PUTs get a long window (route maxDuration is 90s); job validation
@@ -203,9 +204,10 @@ export async function syncInventoryToMoverbase(
 
     // Filter items by sync option. CP/PBO/Crated labels are display prefixes
     // only and must not affect filtering. Moverbase items have no not-moving
-    // field, so "not going" items are always excluded.
+    // field, so "not going" items are always excluded. Shared effective
+    // semantics (goingQuantity first, string fallback).
     const itemsToSync = inventoryItems.filter((item) => {
-      if (item.going === 'not going') return false;
+      if (!isItemGoing(item)) return false;
       const itemType = item.itemType || 'regular_item';
       const isExistingBox = itemType === 'packed_box' || itemType === 'existing_box';
       const isRecommendedBox = itemType === 'boxes_needed';
@@ -377,7 +379,7 @@ function transformItemToMoverbaseLine(
   item: IInventoryItem,
   unitsSystem: 'IMPERIAL' | 'METRIC'
 ): MoverbaseItemLine {
-  const qty = item.goingQuantity || item.quantity || 1;
+  const qty = effectiveGoingQuantity(item);
 
   // Database stores per-unit cuft; Moverbase's `size` is also per-unit
   // (verified: line total = size × qty, computed server-side).
@@ -415,7 +417,7 @@ function transformItemToMoverbaseLine(
 
 function generateItemsHash(items: IInventoryItem[]): string {
   const itemsString = items
-    .map((item) => `${item._id}-${item.goingQuantity || item.quantity}`)
+    .map((item) => `${item._id}-${effectiveGoingQuantity(item)}`)
     .sort()
     .join('|');
 

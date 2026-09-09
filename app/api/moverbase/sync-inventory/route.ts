@@ -9,6 +9,7 @@ import {
   type MoverbaseSyncOption,
 } from '@/lib/moverbase-inventory-sync';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
+import { isItemGoing, GOING_ITEMS_QUERY } from '@/lib/goingQuantity';
 
 // Large jobs can take a while; override Vercel's 60s default. The sync lib
 // aborts at 85s (5s earlier) so we return a clean error string instead of a
@@ -101,7 +102,7 @@ export async function POST(request: NextRequest) {
     // Pre-filter mirrors the sync lib's filter (Moverbase has no not-moving
     // field, so not-going items are always excluded). Keeps the empty-payload
     // error message accurate.
-    const candidateItems = inventoryItems.filter((item) => item.going !== 'not going');
+    const candidateItems = inventoryItems.filter((item) => isItemGoing(item));
     if (candidateItems.length === 0) {
       return NextResponse.json(
         { error: 'No items marked as going to sync' },
@@ -176,21 +177,21 @@ export async function GET(request: NextRequest) {
     const totalItems = await InventoryItem.countDocuments({ projectId });
     const goingItems = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
     });
     const itemsCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $nin: ['packed_box', 'existing_box', 'boxes_needed'] },
     });
     const existingBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $in: ['packed_box', 'existing_box'] },
     });
     const recommendedBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: 'boxes_needed',
     });
 

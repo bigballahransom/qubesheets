@@ -26,10 +26,14 @@ interface AddLiveItemsRequest {
   items: LiveInventoryItem[];
 }
 
-// Helper to convert items to spreadsheet rows
+// Helper to convert items to spreadsheet rows. Items must be the CREATED docs
+// (post-insertMany) so each row carries its inventoryItemId — unlinked rows
+// can never be reconciled against deleted items and end up as permanent blank
+// rows in the sheet.
 function convertItemsToSpreadsheetRows(items: any[]): any[] {
   return items.map(item => ({
     id: `live-${item._id || Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+    ...(item._id ? { inventoryItemId: item._id.toString() } : {}),
     cells: {
       col1: item.location || item.room || 'Unknown',
       col2: item.name,

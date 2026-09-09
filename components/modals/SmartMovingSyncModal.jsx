@@ -148,6 +148,10 @@ export default function SmartMovingSyncModal({
         return 'SmartMoving integration is not configured. Please set it up in Settings > Integrations.';
       case 'customer_creation_failed':
         return result.message || 'Failed to create customer in SmartMoving. Please try again.';
+      case 'sync_in_progress':
+        return result.message || 'A SmartMoving sync is already running for this project. Give it a minute to finish, then try again.';
+      case 'shared_opportunity':
+        return result.message || 'Another project is already linked to this SmartMoving opportunity. Unlink one of them first.';
       default:
         return result.message || 'An unexpected error occurred.';
     }
@@ -521,6 +525,39 @@ export default function SmartMovingSyncModal({
                   </div>
                 )}
               </div>
+
+              {/* Post-sync verification: what SmartMoving actually shows now,
+                  read back from their API — the 1:1 guarantee, made visible */}
+              {result.verification && (
+                result.verification.matches ? (
+                  <div className="flex items-start gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-green-700">
+                      Verified: SmartMoving now shows{' '}
+                      <span className="font-medium">{result.verification.smItemCount} items</span>
+                      {result.verification.smVolume !== null && (
+                        <> · <span className="font-medium">{result.verification.smVolume.toLocaleString()} cuft</span></>
+                      )}
+                      {result.verification.smWeight !== null && (
+                        <> · <span className="font-medium">{result.verification.smWeight.toLocaleString()} lbs</span></>
+                      )}
+                      {' '}— matches Qube Sheets exactly.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <AlertTriangle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-red-700">
+                      Verification mismatch: SmartMoving shows{' '}
+                      <span className="font-medium">{result.verification.smItemCount} items
+                      {result.verification.smVolume !== null ? ` / ${result.verification.smVolume.toLocaleString()} cuft` : ''}</span>{' '}
+                      but Qube Sheets expects{' '}
+                      <span className="font-medium">{result.verification.expectedItemCount} items / {result.verification.expectedVolume.toLocaleString()} cuft</span>.
+                      Run the sync again — if it persists, contact support.
+                    </p>
+                  </div>
+                )
+              )}
 
               {result.inventoryError && (
                 <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">

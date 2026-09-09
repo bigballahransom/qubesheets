@@ -5,6 +5,7 @@ import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import { syncInventoryToSupermove } from '@/lib/supermove-inventory-sync';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
+import { isItemGoing, GOING_ITEMS_QUERY } from '@/lib/goingQuantity';
 
 // POST /api/supermove/sync-inventory - Sync inventory to Supermove
 export async function POST(request: NextRequest) {
@@ -114,10 +115,8 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Filter to only items that are going
-    const goingItems = inventoryItems.filter(item => 
-      item.going !== 'not going'
-    );
+    // Filter to only items that are going (shared effective semantics)
+    const goingItems = inventoryItems.filter(item => isItemGoing(item));
     
     if (goingItems.length === 0) {
       return NextResponse.json(
@@ -213,25 +212,25 @@ export async function GET(request: NextRequest) {
     const totalItems = await InventoryItem.countDocuments({ projectId });
     const goingItems = await InventoryItem.countDocuments({ 
       projectId, 
-      going: { $ne: 'not going' }
+      ...GOING_ITEMS_QUERY
     });
     
     // Get breakdown by item type for going items
     const itemsOnlyCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $nin: ['packed_box', 'existing_box', 'boxes_needed'] }
     });
     
     const existingBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $in: ['packed_box', 'existing_box'] }
     });
     
     const recommendedBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: 'boxes_needed'
     });
     

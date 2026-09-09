@@ -9,6 +9,7 @@ import {
   type MoverightSyncOption,
 } from '@/lib/moveright-inventory-sync';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
+import { isItemGoing, GOING_ITEMS_QUERY } from '@/lib/goingQuantity';
 
 // Large jobs can take a while; override Vercel's 60s default. The sync lib
 // aborts at 85s (5s earlier) so we return a clean error string instead of a
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
     // summary + crew review link comment for no-inventory jobs (e.g. designer
     // accounts) and only errors when there's nothing to send at all.
     const inventoryItems = await InventoryItem.find({ projectId });
-    const candidateItems = inventoryItems.filter((item) => item.going !== 'not going');
+    const candidateItems = inventoryItems.filter((item) => isItemGoing(item));
 
     const syncResult = await syncInventoryToMoveright(
       projectId,
@@ -175,21 +176,21 @@ export async function GET(request: NextRequest) {
     const totalItems = await InventoryItem.countDocuments({ projectId });
     const goingItems = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
     });
     const itemsCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $nin: ['packed_box', 'existing_box', 'boxes_needed'] },
     });
     const existingBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: { $in: ['packed_box', 'existing_box'] },
     });
     const recommendedBoxesCount = await InventoryItem.countDocuments({
       projectId,
-      going: { $ne: 'not going' },
+      ...GOING_ITEMS_QUERY,
       itemType: 'boxes_needed',
     });
 

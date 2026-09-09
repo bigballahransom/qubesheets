@@ -143,8 +143,9 @@ export async function POST(
     const createdItems = await InventoryItem.insertMany(inventoryItems);
     console.log(`   ✅ Created ${createdItems.length} inventory items in database`);
 
-    // Update spreadsheet
-    await updateSpreadsheet(recording, inventoryItems);
+    // Update spreadsheet with the created docs (not the pre-insert array) so
+    // rows get stamped with each item's _id
+    await updateSpreadsheet(recording, createdItems);
 
     // Mark recording as completed
     await VideoRecording.findByIdAndUpdate(videoRecordingId, {
@@ -210,11 +211,15 @@ async function updateSpreadsheet(recording: any, items: any[]) {
       return;
     }
 
-    // Map items to spreadsheet rows
+    // Map items to spreadsheet rows. Items must be the CREATED docs
+    // (post-insertMany) so each row carries its inventoryItemId — unlinked
+    // rows can never be reconciled against deleted items and end up as
+    // permanent blank rows in the sheet.
     // Column mapping: col1=location, col2=name, col3=quantity, col4=cuft, col5=weight,
     // col6=going, col7=PBO/CP (added by InventoryManager migration), col8=tags
     const newRows = items.map(item => ({
       id: uuidv4(),
+      ...(item._id ? { inventoryItemId: item._id.toString() } : {}),
       cells: {
         col1: item.location || '',
         col2: item.name || '',

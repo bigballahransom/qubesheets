@@ -18,6 +18,7 @@ import Project from '@/models/Project';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import ChariotIntegration, { chariotApiBaseUrl } from '@/models/ChariotIntegration';
 import { IInventoryItem } from '@/models/InventoryItem';
+import { effectiveGoingQuantity, isItemGoing } from '@/lib/goingQuantity';
 import InventoryNote from '@/models/InventoryNote';
 import CrewReviewLink from '@/models/CrewReviewLink';
 import { logActivity } from '@/lib/activity-logger';
@@ -360,7 +361,8 @@ export async function syncInventoryToChariot(
     // item TYPES (regular vs box vs recommended box); the going-state filter
     // is orthogonal and controlled by `includeNotGoing`.
     const itemsToSync = inventoryItems.filter((item) => {
-      if (item.going === 'not going' && !includeNotGoing) return false;
+      // Shared effective semantics (goingQuantity first, string fallback)
+      if (!isItemGoing(item) && !includeNotGoing) return false;
       const itemType = item.itemType || 'regular_item';
       const isExistingBox = itemType === 'packed_box' || itemType === 'existing_box';
       const isRecommendedBox = itemType === 'boxes_needed';
@@ -646,12 +648,12 @@ function transformItemToChariot(
   // of the item, we surface the difference in not_moving_quantity so Chariot's
   // UI shows the full picture.
   const total = item.quantity || 1;
-  const isNotGoing = item.going === 'not going';
   // For not-going items we send quantity:0 + not_moving_quantity:total so
   // Chariot's preview shows the line with everything marked as staying. For
   // partials we ship the going count and the remainder as not_moving_quantity.
-  // For fully-going items we just ship the count.
-  const going = isNotGoing ? 0 : item.goingQuantity ?? total;
+  // For fully-going items we just ship the count. Shared effective semantics
+  // (goingQuantity first) so contradictory docs match what the sheet shows.
+  const going = effectiveGoingQuantity(item);
   const notMoving = Math.max(0, total - going);
   const quantity = going;
 
@@ -724,7 +726,7 @@ function extractInventoryId(parsed: any): string | number | undefined {
 
 function generateItemsHash(items: IInventoryItem[]): string {
   const itemsString = items
-    .map((item) => `${item._id}-${item.goingQuantity || item.quantity}`)
+    .map((item) => `${item._id}-${effectiveGoingQuantity(item)}`)
     .sort()
     .join('|');
   let hash = 0;

@@ -14,8 +14,12 @@ function generateId(): string {
   return `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
 }
 
-// Convert inventory items to spreadsheet rows
+// Convert inventory items to spreadsheet rows. Items must be the CREATED docs
+// (post-insertMany) so each row carries its inventoryItemId — unlinked rows
+// can never be reconciled against deleted items and end up as permanent blank
+// rows in the sheet.
 function convertItemsToSpreadsheetRows(items: Array<{
+  _id?: mongoose.Types.ObjectId;
   name: string;
   location: string;
   quantity: number;
@@ -25,6 +29,7 @@ function convertItemsToSpreadsheetRows(items: Array<{
 }>) {
   return items.map(item => ({
     id: generateId(),
+    ...(item._id ? { inventoryItemId: item._id.toString() } : {}),
     cells: {
       col1: item.location || '',
       col2: item.name || '',
@@ -199,7 +204,11 @@ export async function POST(
         { id: 'col5', name: 'Weight', type: 'url' },
       ];
 
-      const spreadsheetItems = itemsToCreate.map(item => ({
+      // Build rows from the CREATED docs so each row carries the item's _id.
+      // (If insertMany failed, createdItems is empty and no rows are added —
+      // rows without a backing item would just render blank.)
+      const spreadsheetItems = createdItems.map((item: any) => ({
+        _id: item._id,
         name: item.name,
         location: item.location,
         quantity: item.quantity,

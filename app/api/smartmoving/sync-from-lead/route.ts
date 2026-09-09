@@ -4,6 +4,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
+import { isItemGoing } from '@/lib/goingQuantity';
 import {
   fetchSmartMovingLeads,
   findLeadByPhone,
@@ -13,13 +14,17 @@ import {
   searchCustomersByPhone,
   getOpportunitiesByCustomerId,
   getMostRecentOpportunity,
-  clearOpportunityInventory,
   ConvertLeadRequest,
   SmartMovingLead,
   SmartMovingCustomerOpportunity
 } from '@/lib/smartmoving-inventory-sync';
 
 const SMARTMOVING_BASE_URL = 'https://api-public.smartmoving.com/v1/api';
+
+// Large jobs legitimately take minutes: the mirror sync paces itself under
+// SmartMoving's ~120 req/min rate limit. The old default timeout killed big
+// syncs mid-flight, leaving SmartMoving half-mutated.
+export const maxDuration = 300;
 
 /**
  * Helper to fetch a single endpoint from SmartMoving
@@ -104,6 +109,9 @@ async function fetchSmartMovingReferenceData(apiKey: string, clientId: string) {
  * 3. Syncing inventory to the new opportunity
  */
 export async function POST(request: NextRequest) {
+  // Set once the per-project sync lock is held, so the finally block knows
+  // to release it no matter which return path fires.
+  let lockedProjectId: string | null = null;
   try {
     const { userId, orgId } = await auth();
 
@@ -149,10 +157,69 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // One sync at a time per project. A second click while a sync is running
+    // would interleave deletes and adds and corrupt SmartMoving totals.
+    // Stale expiry sits just above maxDuration (300s): if Vercel kills a
+    // mega-sync at the deadline, the finally-block release may not run, and
+    // the user must be able to retry as soon as the old run is provably dead.
+    const lockCutoff = new Date(Date.now() - 5.5 * 60 * 1000);
+    const lockAcquired = await Project.findOneAndUpdate(
+      {
+        _id: projectId,
+        organizationId: orgId,
+        $or: [
+          { 'metadata.smartMovingSyncLockedAt': { $exists: false } },
+          { 'metadata.smartMovingSyncLockedAt': null },
+          { 'metadata.smartMovingSyncLockedAt': { $lt: lockCutoff } },
+        ],
+      },
+      { $set: { 'metadata.smartMovingSyncLockedAt': new Date() } }
+    );
+    if (!lockAcquired) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'sync_in_progress',
+          message: 'A SmartMoving sync is already running for this project. Give it a minute to finish, then try again.',
+        },
+        { status: 409 }
+      );
+    }
+    lockedProjectId = projectId;
+
     // Check if project already has an opportunity ID
     // If user provided a new targetType/targetId, they want to change the linked project - proceed with new selection
     // Otherwise, just sync inventory to the existing linked opportunity
     const isChangingSelection = targetType && targetId;
+
+    // Refuse to sync when another QBS project is linked to the SAME SmartMoving
+    // opportunity — each sync mirrors its own project onto the opportunity, so
+    // two linked projects wipe each other's items back and forth (root cause #3
+    // of the 2026-09-01 incident, and a source of "totals keep changing").
+    const guardOpportunityId =
+      !isChangingSelection && project.metadata?.smartMovingOpportunityId
+        ? project.metadata.smartMovingOpportunityId
+        : targetType === 'opportunity' && targetId
+          ? targetId
+          : null;
+    if (guardOpportunityId) {
+      const conflictingProject = await Project.findOne({
+        _id: { $ne: projectId },
+        organizationId: orgId,
+        'metadata.smartMovingOpportunityId': guardOpportunityId,
+      }).select('name').lean();
+      if (conflictingProject) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'shared_opportunity',
+            message: `Another project ("${(conflictingProject as any).name}") is already linked to this SmartMoving opportunity. Two projects syncing to one opportunity overwrite each other — unlink one of them first.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     if (project.metadata?.smartMovingOpportunityId && !isChangingSelection) {
       console.log(`🔄 [SYNC-FROM-LEAD] Project already linked to opportunity ${project.metadata.smartMovingOpportunityId}, syncing inventory only`);
 
@@ -169,28 +236,19 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Clear ALL existing inventory from SmartMoving before re-syncing
-      // Don't pass a target room ID - clear all rooms since we sync by location
-      console.log(`🧹 [SYNC-FROM-LEAD] Clearing existing inventory from all rooms before re-sync...`);
-      const clearResult = await clearOpportunityInventory(
-        project.metadata.smartMovingOpportunityId,
-        integration.smartMovingApiKey,
-        integration.smartMovingClientId
-        // No targetRoomId - clear all rooms
-      );
-
-      if (clearResult.deletedCount > 0) {
-        console.log(`🧹 [SYNC-FROM-LEAD] Cleared ${clearResult.deletedCount} existing items from ${clearResult.roomIds.length} rooms`);
-      }
-
-      // Sync inventory to the existing opportunity
+      // No blind pre-wipe here anymore: the sync lib mirrors Qube Sheets onto
+      // SmartMoving itself (per-room diff + verify + repair), so rooms that
+      // haven't changed cost zero API calls and a rate-limited delete can
+      // never leave duplicates behind.
       const allInventoryItems = await InventoryItem.find({ projectId });
 
       // Filter inventory based on syncOption.
       // Sync option controls which item categories are sent; the CP/PBO/Crated labels
       // are display prefixes only and must not affect filtering.
+      // Going-ness uses the shared effective semantics (goingQuantity first),
+      // never the raw going string — contradictory docs must sync as shown.
       const inventoryItems = allInventoryItems.filter((item: any) => {
-        if (item.going === 'not going') return false;
+        if (!isItemGoing(item)) return false;
         const itemType = item.itemType || 'regular_item';
         const isExistingBox = itemType === 'packed_box' || itemType === 'existing_box';
         const isRecommendedBox = itemType === 'boxes_needed';
@@ -226,7 +284,8 @@ export async function POST(request: NextRequest) {
         inventoryCount: inventorySyncResult.syncedCount,
         inventoryError: inventorySyncResult.error,
         isResync: true,
-        clearedCount: clearResult.deletedCount
+        clearedCount: inventorySyncResult.removedCount || 0,
+        verification: inventorySyncResult.verification || null
       });
     }
 
@@ -611,6 +670,24 @@ export async function POST(request: NextRequest) {
 
     // 8. Update project with the opportunity ID, customer ID, and quote number
     console.log(`✅ [SYNC-FROM-LEAD] Updating project with opportunity ID: ${opportunityId}, quote number: ${quoteNumber}`);
+    // Same shared-opportunity guard for opportunities resolved mid-flow
+    // (phone-match → most recent opportunity path)
+    const lateConflict = await Project.findOne({
+      _id: { $ne: projectId },
+      organizationId: orgId,
+      'metadata.smartMovingOpportunityId': opportunityId,
+    }).select('name').lean();
+    if (lateConflict) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'shared_opportunity',
+          message: `Another project ("${(lateConflict as any).name}") is already linked to this SmartMoving opportunity. Two projects syncing to one opportunity overwrite each other — unlink one of them first.`,
+        },
+        { status: 409 }
+      );
+    }
+
     const metadataUpdate: Record<string, any> = {
       'metadata.smartMovingOpportunityId': opportunityId,
       'metadata.smartMovingLeadId': leadId,
@@ -630,8 +707,9 @@ export async function POST(request: NextRequest) {
     // Sync option controls which item categories are sent; the CP/PBO/Crated labels
     // are display prefixes only and must not affect filtering.
     const inventoryItems = allInventoryItems.filter((item: any) => {
-      // Only include items that are going
-      if (item.going === 'not going') {
+      // Only include items that are going (shared effective semantics —
+      // goingQuantity first, never the raw going string)
+      if (!isItemGoing(item)) {
         return false;
       }
 
@@ -686,7 +764,8 @@ export async function POST(request: NextRequest) {
       usedExistingOpportunity, // True if we used an existing opportunity (vs converting a lead)
       inventorySynced: inventorySyncResult.success,
       inventoryCount: inventorySyncResult.syncedCount,
-      inventoryError: inventorySyncResult.error
+      inventoryError: inventorySyncResult.error,
+      verification: inventorySyncResult.verification || null
     });
 
   } catch (error) {
@@ -699,6 +778,14 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     );
+  } finally {
+    // Release the per-project sync lock on every exit path
+    if (lockedProjectId) {
+      await Project.updateOne(
+        { _id: lockedProjectId },
+        { $unset: { 'metadata.smartMovingSyncLockedAt': '' } }
+      ).catch(() => {});
+    }
   }
 }
 

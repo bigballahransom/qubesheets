@@ -4,6 +4,7 @@ import Project from '@/models/Project';
 import SupermoveIntegration from '@/models/SupermoveIntegration';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import { IInventoryItem } from '@/models/InventoryItem';
+import { effectiveGoingQuantity, isItemGoing } from '@/lib/goingQuantity';
 import { logActivity } from '@/lib/activity-logger';
 
 interface WeightConfig {
@@ -134,11 +135,10 @@ export async function syncInventoryToSupermove(
     // are display prefixes only and must not affect filtering.
     console.log(`🔍 [SUPERMOVE-SYNC] Filtering items for sync eligibility with option: ${syncOptions}`);
     const itemsToSync = inventoryItems.filter(item => {
-      // Only include items that are going
-      const isGoing = item.going !== 'not going';
-
-      if (!isGoing) {
-        console.log(`⏭️ [SUPERMOVE-SYNC] Skipping item ${item.name}: not going (going: ${item.going})`);
+      // Only include items that are going (shared effective semantics —
+      // goingQuantity first, never the raw going string)
+      if (!isItemGoing(item)) {
+        console.log(`⏭️ [SUPERMOVE-SYNC] Skipping item ${item.name}: not going (effectiveGoingQty: ${effectiveGoingQuantity(item)})`);
         return false;
       }
 
@@ -161,7 +161,7 @@ export async function syncInventoryToSupermove(
       }
       // 'all' option includes everything that's going
 
-      console.log(`✅ [SUPERMOVE-SYNC] Including item ${item.name}: ${itemType} with quantity ${item.goingQuantity || item.quantity}`);
+      console.log(`✅ [SUPERMOVE-SYNC] Including item ${item.name}: ${itemType} with quantity ${effectiveGoingQuantity(item)}`);
       return true;
     });
     
@@ -428,8 +428,8 @@ function normalizeRoomName(roomName: string): string {
  * Transforms QubeSheets item to Supermove format
  */
 function transformItemToSupermove(item: IInventoryItem, weightConfig: WeightConfig): SupermoveInventoryItem {
-  // Use going quantity if available, otherwise use total quantity
-  const takeCount = item.goingQuantity || item.quantity || 1;
+  // Shared effective-going semantics — goingQuantity 0 stays 0
+  const takeCount = effectiveGoingQuantity(item);
 
   // Database stores per-unit values
   const unitVolume = item.cuft || 0;
@@ -470,7 +470,7 @@ function transformItemToSupermove(item: IInventoryItem, weightConfig: WeightConf
  */
 function generateItemsHash(items: IInventoryItem[]): string {
   const itemsString = items
-    .map(item => `${item._id}-${item.goingQuantity || item.quantity}`)
+    .map(item => `${item._id}-${effectiveGoingQuantity(item)}`)
     .sort()
     .join('|');
   

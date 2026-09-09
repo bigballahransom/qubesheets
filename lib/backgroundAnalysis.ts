@@ -110,10 +110,14 @@ function generateBoxRecommendation(
   };
 }
 
-// Function to convert inventory items to spreadsheet rows
+// Function to convert inventory items to spreadsheet rows. Items must be the
+// CREATED docs (post-insertMany) so each row carries its inventoryItemId —
+// unlinked rows can never be reconciled against deleted items and end up as
+// permanent blank rows in the sheet.
 function convertItemsToSpreadsheetRows(items: any[]): any[] {
   return items.map(item => ({
     id: generateId(),
+    ...(item._id ? { inventoryItemId: item._id.toString() } : {}),
     cells: {
       col1: item.location || '',
       col2: item.name || '',
@@ -453,8 +457,9 @@ Focus on clearly identifiable objects that would typically be included in a hous
           createdItems = await InventoryItem.insertMany(itemsToCreate);
           console.log(`💾 Created ${createdItems.length} inventory items`);
 
-          // Update spreadsheet with new items
-          await updateSpreadsheetWithNewItems(projectId, userId, organizationId, enhancedItems);
+          // Update spreadsheet with the created docs (not enhancedItems) so
+          // rows get stamped with each item's _id
+          await updateSpreadsheetWithNewItems(projectId, userId, organizationId, createdItems);
         }
 
         // Update project timestamp

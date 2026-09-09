@@ -5,6 +5,7 @@ import Image from '@/models/Image';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import CustomerUpload from '@/models/CustomerUpload';
+import SpreadsheetData from '@/models/SpreadsheetData';
 import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpers';
 
 // GET /api/projects/:projectId/images/:imageId - Get a specific image (with binary data) or all images
@@ -220,15 +221,29 @@ export async function DELETE(
       const filter = getProjectFilter(authContext, projectId);
       
       try {
-        // First, delete all associated inventory items
-        const inventoryDeleteResult = await InventoryItem.deleteMany({
+        // First, delete all associated inventory items, capturing ids so their
+        // spreadsheet rows can be pulled too — otherwise the sheet keeps
+        // orphaned rows that render blank.
+        const inventoryFilter = {
           sourceImageId: { $ne: null },
           projectId: projectId,
           ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
-        }).maxTimeMS(30000); // 30 second timeout for bulk delete
-        
+        };
+        const doomedItems = await InventoryItem.find(inventoryFilter, { _id: 1 }).maxTimeMS(30000).lean();
+        const doomedIds = doomedItems.map((d: any) => d._id.toString());
+
+        const inventoryDeleteResult = await InventoryItem.deleteMany(inventoryFilter).maxTimeMS(30000); // 30 second timeout for bulk delete
+
         console.log(`🗑️ Deleted ${inventoryDeleteResult.deletedCount} associated inventory items`);
-        
+
+        if (doomedIds.length > 0) {
+          const pulled = await SpreadsheetData.updateMany(
+            { projectId },
+            { $pull: { rows: { inventoryItemId: { $in: doomedIds } } } } as any
+          );
+          console.log(`🗑️ Pulled spreadsheet rows for ${doomedIds.length} item(s) (${pulled.modifiedCount} sheet(s))`);
+        }
+
         // Then delete all images
         const imageDeleteResult = await Image.deleteMany(filter).maxTimeMS(30000);
         
@@ -314,11 +329,20 @@ export async function DELETE(
     if (associatedInventoryItems.length > 0) {
       await Promise.race([
         InventoryItem.deleteMany(inventoryFilter).maxTimeMS(15000), // 15 second MongoDB timeout
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Inventory deletion timeout')), 20000)
         )
       ]);
       console.log(`✅ Deleted ${associatedInventoryItems.length} associated inventory items`);
+
+      // Pull the deleted items' spreadsheet rows so the sheet doesn't keep
+      // orphaned rows that render blank.
+      const doomedIds = associatedInventoryItems.map((item: any) => item._id.toString());
+      const pulled = await SpreadsheetData.updateMany(
+        { projectId },
+        { $pull: { rows: { inventoryItemId: { $in: doomedIds } } } } as any
+      );
+      console.log(`🗑️ Pulled spreadsheet rows for ${doomedIds.length} item(s) (${pulled.modifiedCount} sheet(s))`);
     }
     
     // Delete the image with timeout protection

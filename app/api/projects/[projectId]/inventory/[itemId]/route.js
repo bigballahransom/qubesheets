@@ -88,47 +88,31 @@ export async function PATCH(
       }
     }
     
-    // Handle migration and validation for goingQuantity
-    let needCurrentQuantity = false;
-    if (data.goingQuantity !== undefined || data.going !== undefined) {
-      // Check if we need to fetch the current item
-      if (data.quantity === undefined && (data.goingQuantity !== undefined || data.going === 'going')) {
-        needCurrentQuantity = true;
-      }
-    }
-    
-    // Prepare the update operation
-    const updateOps = { $set: data };
-    
-    // Use a single findOneAndUpdate with validation
-    const updateOptions = {
-      new: true,
-      runValidators: true
-    };
-    
-    // If we need current quantity, use a more complex update
-    if (needCurrentQuantity) {
-      // Get current item in a single operation with update
+    // Keep `going` and `goingQuantity` consistent on EVERY write that touches
+    // either (or quantity). The old code only reconciled on some payload
+    // shapes, which left contradictory items (going:'not going' with
+    // goingQuantity:2) — the UI renders from goingQuantity while the CRM
+    // syncs filter on the going string, so the sheet and SmartMoving would
+    // permanently disagree about those items.
+    if (data.goingQuantity !== undefined || data.going !== undefined || data.quantity !== undefined) {
       const currentItem = await InventoryItem.findOne(
         getProjectFilter(authContext, projectId, { _id: itemId })
       );
-      
+
       if (!currentItem) {
         return NextResponse.json({ error: 'Item not found' }, { status: 404 });
       }
-      
+
       const quantity = data.quantity !== undefined ? data.quantity : (currentItem.quantity || 1);
-      
-      // Validate goingQuantity
+
       if (data.goingQuantity !== undefined) {
+        // goingQuantity wins: derive the going string from it
         if (data.goingQuantity < 0 || data.goingQuantity > quantity) {
           return NextResponse.json(
             { error: `goingQuantity must be between 0 and ${quantity}` },
             { status: 400 }
           );
         }
-        
-        // Update the going field based on goingQuantity
         if (data.goingQuantity === 0) {
           data.going = 'not going';
         } else if (data.goingQuantity === quantity) {
@@ -136,14 +120,33 @@ export async function PATCH(
         } else {
           data.going = 'partial';
         }
-      } else if (data.going !== undefined && data.goingQuantity === undefined) {
+      } else if (data.going !== undefined) {
+        // going string provided alone: derive goingQuantity
         if (data.going === 'going') {
           data.goingQuantity = quantity;
         } else if (data.going === 'not going') {
           data.goingQuantity = 0;
         }
+      } else {
+        // Only quantity changed: clamp any existing goingQuantity into the
+        // new range and keep the going string truthful
+        const existingGoingQty = typeof currentItem.goingQuantity === 'number'
+          ? currentItem.goingQuantity
+          : (currentItem.going === 'not going' ? 0 : quantity);
+        const clamped = Math.max(0, Math.min(quantity, existingGoingQty));
+        data.goingQuantity = clamped;
+        data.going = clamped === 0 ? 'not going' : clamped === quantity ? 'going' : 'partial';
       }
     }
+
+    // Prepare the update operation
+    const updateOps = { $set: data };
+
+    // Use a single findOneAndUpdate with validation
+    const updateOptions = {
+      new: true,
+      runValidators: true
+    };
     
     // Perform the update with project timestamp update in a single transaction
     const session = await mongoose.startSession();

@@ -8,7 +8,19 @@ import CustomerUpload from '@/models/CustomerUpload';
 import Project from '@/models/Project';
 import InventoryItem from '@/models/InventoryItem';
 import CallAnalysisSegment from '@/models/CallAnalysisSegment';
+import SpreadsheetData from '@/models/SpreadsheetData';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
+
+// Pull the deleted items' spreadsheet rows so the sheet doesn't keep orphaned
+// rows that render blank.
+async function pullSpreadsheetRows(projectId: string, doomedIds: string[]) {
+  if (doomedIds.length === 0) return;
+  const pulled = await SpreadsheetData.updateMany(
+    { projectId },
+    { $pull: { rows: { inventoryItemId: { $in: doomedIds } } } } as any
+  );
+  console.log(`🗑️ Pulled spreadsheet rows for ${doomedIds.length} item(s) (${pulled.modifiedCount} sheet(s))`);
+}
 
 // GET /api/projects/:projectId/videos/:videoId - Get specific video file or all videos
 export async function GET(
@@ -402,13 +414,18 @@ export async function DELETE(
       };
       
       try {
-        // First, delete all associated inventory items
-        const inventoryDeleteResult = await InventoryItem.deleteMany({
+        // First, delete all associated inventory items, capturing ids so their
+        // spreadsheet rows can be pulled at the end.
+        const videoInventoryFilter = {
           sourceVideoId: { $ne: null },
           projectId: projectId,
           ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
-        }).maxTimeMS(30000); // 30 second timeout for bulk delete
-        
+        };
+        const doomedIds: string[] = (await InventoryItem.find(videoInventoryFilter, { _id: 1 }).maxTimeMS(30000).lean())
+          .map((d: any) => d._id.toString());
+
+        const inventoryDeleteResult = await InventoryItem.deleteMany(videoInventoryFilter).maxTimeMS(30000); // 30 second timeout for bulk delete
+
         console.log(`🗑️ Deleted ${inventoryDeleteResult.deletedCount} associated inventory items`);
         
         // Then delete all videos
@@ -435,11 +452,16 @@ export async function DELETE(
 
         if (selfServeIds.length > 0) {
           // Delete inventory items linked to self-serve recordings
-          const selfServeInventoryResult = await InventoryItem.deleteMany({
+          const selfServeInventoryFilter = {
             sourceVideoRecordingId: { $in: selfServeIds },
             projectId: projectId,
             ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
-          }).maxTimeMS(30000);
+          };
+          doomedIds.push(
+            ...(await InventoryItem.find(selfServeInventoryFilter, { _id: 1 }).maxTimeMS(30000).lean())
+              .map((d: any) => d._id.toString())
+          );
+          const selfServeInventoryResult = await InventoryItem.deleteMany(selfServeInventoryFilter).maxTimeMS(30000);
           selfServeInventoryDeleted = selfServeInventoryResult.deletedCount;
           console.log(`🗑️ Deleted ${selfServeInventoryDeleted} inventory items for self-serve recordings`);
 
@@ -464,6 +486,8 @@ export async function DELETE(
           selfServeSessionsDeleted = sessionsResult.deletedCount;
           console.log(`🗑️ Deleted ${selfServeSessionsDeleted} SelfServeRecordingSessions`);
         }
+
+        await pullSpreadsheetRows(projectId, doomedIds);
 
         return NextResponse.json({
           success: true,
@@ -529,13 +553,19 @@ export async function DELETE(
         createdAt: selfServeRecording.createdAt
       });
 
-      // Delete associated inventory items (using sourceVideoRecordingId)
-      const inventoryDeleteResult = await InventoryItem.deleteMany({
+      // Delete associated inventory items (using sourceVideoRecordingId),
+      // capturing ids first so their spreadsheet rows can be pulled too
+      const selfServeItemFilter = {
         sourceVideoRecordingId: videoId,
         projectId: projectId,
         ...(authContext.isPersonalAccount ? {} : { organizationId: authContext.organizationId })
-      }).maxTimeMS(15000);
+      };
+      const selfServeDoomedIds = (await InventoryItem.find(selfServeItemFilter, { _id: 1 }).maxTimeMS(15000).lean())
+        .map((d: any) => d._id.toString());
+      const inventoryDeleteResult = await InventoryItem.deleteMany(selfServeItemFilter).maxTimeMS(15000);
       console.log(`🗑️ Deleted ${inventoryDeleteResult.deletedCount} inventory items for self-serve recording`);
+
+      await pullSpreadsheetRows(projectId, selfServeDoomedIds);
 
       // Delete associated CallAnalysisSegments
       const segmentDeleteResult = await CallAnalysisSegment.deleteMany({
@@ -608,8 +638,13 @@ export async function DELETE(
         )
       ]);
       console.log(`✅ Deleted ${associatedInventoryItems.length} associated inventory items`);
+
+      await pullSpreadsheetRows(
+        projectId,
+        associatedInventoryItems.map((item: any) => item._id.toString())
+      );
     }
-    
+
     // Note: Cloudinary storage no longer used - files are stored in S3
     
     // Delete from MongoDB with timeout protection

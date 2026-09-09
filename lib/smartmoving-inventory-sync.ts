@@ -10,6 +10,7 @@ import InventoryNote from '@/models/InventoryNote';
 import VideoRecording from '@/models/VideoRecording';
 import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import { IInventoryItem } from '@/models/InventoryItem';
+import { effectiveGoingQuantity } from '@/lib/goingQuantity';
 import { logActivity } from '@/lib/activity-logger';
 import crypto from 'crypto';
 
@@ -41,17 +42,145 @@ interface SmartMovingInventoryResponse {
 }
 
 const SMARTMOVING_BEDROOM_ROOM_ID = 'ff6564a6-38d7-4d87-8f1a-acc601150721';
-const BATCH_SIZE = 25; // Send items in batches of 25
+// SmartMoving's batch POST accepts up to 100 items (verified live 2026-08-31:
+// explicit 400 above 100). Bigger batches = 4× fewer requests than the old 25.
+const BATCH_SIZE = 100;
+
+// ─── Rate-limit-aware transport ──────────────────────────────────────────────
+// SmartMoving enforces ~120 requests/minute (measured 2026-08-31). The old
+// sync fired deletes at ~6/sec, so any project past ~100 items blew the limit
+// mid-wipe, the failed deletes were silently skipped, and the re-add landed on
+// top of the leftovers — the "2,000 cuft in QS, 6,000 in SM" reports. Every
+// inventory-mutating call now goes through smRequest: paced under the limit,
+// with 429/5xx retries that honor Retry-After.
+const SM_MIN_REQUEST_INTERVAL_MS = 550; // ~109/min, safely under the 120/min cap
+let smLastRequestAt = 0;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function smRequest(
+  url: string,
+  init: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  let lastResponse: Response | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const wait = smLastRequestAt + SM_MIN_REQUEST_INTERVAL_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    smLastRequestAt = Date.now();
+
+    const response = await fetch(url, init);
+    if (response.status !== 429 && response.status < 500) {
+      return response;
+    }
+    lastResponse = response;
+    if (attempt < maxRetries) {
+      const retryAfter = parseInt(response.headers.get('retry-after') || '0', 10);
+      const backoffMs = Math.max(retryAfter * 1000, 2000 * (attempt + 1));
+      console.warn(
+        `⏳ [SMARTMOVING-RATE] ${response.status} on ${init.method || 'GET'} — retrying in ${backoffMs}ms (attempt ${attempt + 1}/${maxRetries})`
+      );
+      await sleep(backoffMs);
+    }
+  }
+  return lastResponse as Response;
+}
 
 /**
- * Syncs inventory items from QubeSheets to SmartMoving
- * This function is designed to never throw errors that would break core functionality
+ * Deletes an entire SM inventory room (and its items) in ONE request — the
+ * fast path for clearing a dirty room. As of 2026-08-31 live testing this
+ * endpoint 404s (SmartMoving's public API has no room delete), so the first
+ * probe flips the support flag and everything falls back to paced per-item
+ * deletes. Kept because it self-enables the moment SmartMoving ships it;
+ * cost is one probe request per server instance.
+ */
+let smRoomDeleteSupported: boolean | null = null;
+async function deleteInventoryRoom(
+  opportunityId: string,
+  roomId: string,
+  apiKey: string,
+  clientId: string
+): Promise<{ success: boolean; unsupported?: boolean }> {
+  const url = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory/rooms/${roomId}`;
+  const response = await smRequest(url, {
+    method: 'DELETE',
+    headers: { 'x-api-key': apiKey, 'Ocp-Apim-Subscription-Key': clientId },
+  });
+  if (response.ok) return { success: true };
+  if ([400, 404, 405, 501].includes(response.status)) {
+    return { success: false, unsupported: true };
+  }
+  const text = await response.text().catch(() => '');
+  console.warn(`⚠️ [SMARTMOVING-ROOM-DELETE] ${response.status} deleting room ${roomId}: ${text.slice(0, 200)}`);
+  return { success: false };
+}
+
+// Multiset fingerprint of one SM/desired item — used to decide whether a room
+// already matches Qube Sheets exactly (skip it: zero API calls). SM responses
+// that omit volume/weight hash to '?' and simply never match, which degrades
+// to a full room replace — correct, just less efficient.
+const round2 = (n: unknown) =>
+  typeof n === 'number' && isFinite(n) ? Math.round(n * 100) / 100 : null;
+function itemFingerprint(item: { name?: string; quantity?: number; volume?: unknown; weight?: unknown }): string {
+  return [
+    (item.name || '').trim(),
+    item.quantity ?? '?',
+    round2(item.volume) ?? '?',
+    round2(item.weight) ?? '?',
+  ].join('|');
+}
+function multisetOf(items: any[]): Map<string, number> {
+  const set = new Map<string, number>();
+  for (const item of items) {
+    const key = itemFingerprint(item);
+    set.set(key, (set.get(key) || 0) + 1);
+  }
+  return set;
+}
+function multisetsEqual(a: Map<string, number>, b: Map<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [key, count] of a) {
+    if (b.get(key) !== count) return false;
+  }
+  return true;
+}
+
+export interface SmartMovingSyncVerification {
+  /** Items (lines × quantity) SmartMoving reports after the sync. */
+  smItemCount: number;
+  /** What Qube Sheets says SmartMoving should contain. */
+  expectedItemCount: number;
+  /** Σ(volume × qty) on the SM side — null when the API omits volume. */
+  smVolume: number | null;
+  expectedVolume: number;
+  smWeight: number | null;
+  expectedWeight: number;
+  /** True when counts match and totals (where available) agree within 1 unit. */
+  matches: boolean;
+}
+
+/**
+ * Syncs inventory items from QubeSheets to SmartMoving by MIRRORING: after a
+ * successful sync, SmartMoving's inventory equals Qube Sheets' exactly.
+ * Per-room diffing means untouched rooms cost zero API calls; dirty rooms are
+ * cleared (room-delete fast path, per-item fallback) and re-added; a
+ * verification pass re-reads SmartMoving and repairs one time before
+ * reporting honest match/mismatch numbers.
+ * Only ever invoked from user-triggered sync routes — nothing calls this
+ * automatically. Designed to never throw.
  */
 export async function syncInventoryToSmartMoving(
   projectId: string,
   inventoryItems: IInventoryItem[],
   existingRoomId?: string // Optional room ID to reuse (for re-syncs)
-): Promise<{ success: boolean; syncedCount: number; roomId?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  syncedCount: number;
+  removedCount?: number;
+  roomId?: string;
+  error?: string;
+  verification?: SmartMovingSyncVerification;
+}> {
   const startTime = Date.now();
   let syncedCount = 0;
   
@@ -167,14 +296,15 @@ export async function syncInventoryToSmartMoving(
     
     // 3. Filter inventory items for SmartMoving
     console.log(`🔍 [SMARTMOVING-SYNC] Filtering items for sync eligibility`);
+    // Shared effective-going semantics (lib/goingQuantity.ts): goingQuantity
+    // is the source of truth when present — exactly what the sheet displays.
     const itemsToSync = inventoryItems.filter(item => {
       const hasName = !!item.name;
-      const isGoing = item.going !== 'not going';
-      const hasQuantity = (item.quantity || 1) > 0;
+      const hasQuantity = effectiveGoingQuantity(item) > 0;
 
-      console.log(`🔍 [SMARTMOVING-SYNC] Item "${item.name}": hasName=${hasName}, isGoing=${isGoing}, hasQuantity=${hasQuantity}, location=${item.location || 'none'}`);
+      console.log(`🔍 [SMARTMOVING-SYNC] Item "${item.name}": hasName=${hasName}, effectiveGoingQty=${effectiveGoingQuantity(item)}, location=${item.location || 'none'}`);
 
-      return hasName && isGoing && hasQuantity;
+      return hasName && hasQuantity;
     });
 
     console.log(`🔍 [SMARTMOVING-SYNC] Filtered ${itemsToSync.length} eligible items from ${inventoryItems.length} total`);
@@ -229,18 +359,7 @@ export async function syncInventoryToSmartMoving(
       console.log(`   - ${loc}: ${items.length} items`);
     }
 
-    // 5. Get existing rooms from SmartMoving
-    console.log(`🔍 [SMARTMOVING-SYNC] Getting existing rooms from opportunity ${smartMovingOpportunityId}`);
-    const existingRoomsResult = await getExistingRooms(
-      smartMovingOpportunityId,
-      smartMovingIntegration.smartMovingApiKey,
-      smartMovingIntegration.smartMovingClientId
-    );
-
-    const existingRooms = existingRoomsResult.success ? existingRoomsResult.rooms || [] : [];
-    console.log(`🔍 [SMARTMOVING-SYNC] Found ${existingRooms.length} existing rooms:`, existingRooms.map((r: any) => r.name));
-
-    // 6. Get default room type for creating new rooms
+    // 5. Get default room type for creating new rooms
     let defaultRoomTypeId: string | null = null;
     const roomTypeResult = await getDefaultRoomType(
       smartMovingIntegration.smartMovingApiKey,
@@ -253,15 +372,14 @@ export async function syncInventoryToSmartMoving(
       console.log(`⚠️ [SMARTMOVING-SYNC] Could not get default room type: ${roomTypeResult.error}`);
     }
 
-    // 7. Sync items to each location's room
-    let totalSyncedCount = 0;
-    let lastError = '';
-    const roomIds: Record<string, string> = {}; // Track room IDs by location
+    // 6. Room IDs by location (filled in by the mirror passes below)
+    const roomIds: Record<string, string> = {};
 
     // Helper function to map items to SmartMoving format
     const mapItemsToSmartMovingFormat = (items: typeof itemsToSync): SmartMovingInventoryItem[] => {
       return items.map(item => {
-        const quantity = item.goingQuantity || item.quantity || 1;
+        // Same effective-going semantics as the filter above
+        const quantity = effectiveGoingQuantity(item);
         const perItemVolume = Math.round((item.cuft || 0) * 100) / 100;
         const rawWeight = weightConfig.weightMode === 'custom'
           ? (item.cuft || 0) * weightConfig.customWeightMultiplier
@@ -296,147 +414,289 @@ export async function syncInventoryToSmartMoving(
       });
     };
 
+    // ── Mirror: make SmartMoving equal Qube Sheets, exactly ─────────────
+    const apiKey = smartMovingIntegration.smartMovingApiKey;
+    const clientId = smartMovingIntegration.smartMovingClientId;
+
+    // Desired state per location, in SM item format
+    const desiredByLocation = new Map<string, SmartMovingInventoryItem[]>();
     for (const [location, locationItems] of itemsByLocation) {
-      console.log(`\n🏠 [SMARTMOVING-SYNC] Processing location: "${location}" (${locationItems.length} items)`);
-
-      // Find existing room with this name
-      let roomId = existingRooms.find((r: any) => r.name === location)?.id;
-
-      if (roomId) {
-        console.log(`✅ [SMARTMOVING-SYNC] Found existing room for "${location}": ${roomId}`);
-      } else if (defaultRoomTypeId) {
-        // Create new room with location name
-        console.log(`🏗️ [SMARTMOVING-SYNC] Creating new room for "${location}"...`);
-        const roomResult = await createRoomWithRoomType(
-          smartMovingOpportunityId,
-          defaultRoomTypeId,
-          location,
-          smartMovingIntegration.smartMovingApiKey,
-          smartMovingIntegration.smartMovingClientId
-        );
-
-        if (roomResult.success && roomResult.roomId) {
-          roomId = roomResult.roomId;
-          console.log(`✅ [SMARTMOVING-SYNC] Created room for "${location}": ${roomId}`);
-        } else {
-          console.error(`❌ [SMARTMOVING-SYNC] Failed to create room for "${location}": ${roomResult.error}`);
-          lastError = roomResult.error || 'Failed to create room';
-          continue; // Skip this location
-        }
-      } else {
-        console.error(`❌ [SMARTMOVING-SYNC] Cannot create room for "${location}" - no room type available`);
-        lastError = 'No room type available';
-        continue;
-      }
-
-      // Track room ID
-      roomIds[location] = roomId;
-
-      // Map items for this location
-      const mappedItems = mapItemsToSmartMovingFormat(locationItems);
-      console.log(`📦 [SMARTMOVING-SYNC] Mapped ${mappedItems.length} items for "${location}"`);
-
-      // Sync items to this room in batches
-      const batches: SmartMovingInventoryItem[][] = [];
-      for (let i = 0; i < mappedItems.length; i += BATCH_SIZE) {
-        batches.push(mappedItems.slice(i, i + BATCH_SIZE));
-      }
-
-      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        const batch = batches[batchIndex];
-        console.log(`🔄 [SMARTMOVING-SYNC] Syncing batch ${batchIndex + 1}/${batches.length} for "${location}" (${batch.length} items)`);
-
-        const batchResult = await syncToSmartMovingAPI(
-          smartMovingOpportunityId,
-          batch,
-          smartMovingIntegration.smartMovingApiKey,
-          smartMovingIntegration.smartMovingClientId,
-          roomId
-        );
-
-        if (batchResult.success) {
-          totalSyncedCount += batchResult.syncedCount;
-          console.log(`✅ [SMARTMOVING-SYNC] Batch completed for "${location}": ${batchResult.syncedCount} items synced`);
-        } else {
-          console.error(`❌ [SMARTMOVING-SYNC] Batch failed for "${location}": ${batchResult.error}`);
-          lastError = batchResult.error || 'Batch sync failed';
-        }
-
-        // Small delay between batches
-        if (batchIndex < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-
-      // Small delay between locations
-      await new Promise(resolve => setTimeout(resolve, 500));
+      desiredByLocation.set(location, mapItemsToSmartMovingFormat(locationItems));
     }
 
-    console.log(`\n✅ [SMARTMOVING-SYNC] Sync complete. Total items synced: ${totalSyncedCount}`);
-    console.log(`📍 [SMARTMOVING-SYNC] Room IDs by location:`, roomIds);
+    // What SmartMoving MUST total when we're done
+    let expectedItemCount = 0;
+    let expectedVolume = 0;
+    let expectedWeight = 0;
+    for (const items of desiredByLocation.values()) {
+      for (const it of items) {
+        expectedItemCount += it.quantity;
+        expectedVolume += it.volume * it.quantity;
+        expectedWeight += it.weight * it.quantity;
+      }
+    }
+    expectedVolume = Math.round(expectedVolume * 100) / 100;
+    expectedWeight = Math.round(expectedWeight * 100) / 100;
 
-    const syncResult = {
-      success: totalSyncedCount > 0,
-      syncedCount: totalSyncedCount,
-      error: totalSyncedCount === 0 ? (lastError || 'No items synced') : undefined
+    const roomItemsOf = (room: any): any[] => room.items || room.inventoryItems || [];
+
+    // Plan: which rooms need touching. Rooms whose contents already match
+    // Qube Sheets exactly cost ZERO further API calls — a resync after a
+    // one-room edit only rewrites that one room.
+    interface MirrorPlan {
+      replaceRooms: Array<{ room: any; location: string; desired: SmartMovingInventoryItem[] }>;
+      extraneousRooms: any[]; // SM rooms with items whose location no longer exists in QS
+      missingLocations: Array<{ location: string; desired: SmartMovingInventoryItem[] }>;
+      cleanRooms: number;
+    }
+    const buildPlan = (smRooms: any[]): MirrorPlan => {
+      const pending = new Map(desiredByLocation);
+      const plan: MirrorPlan = { replaceRooms: [], extraneousRooms: [], missingLocations: [], cleanRooms: 0 };
+      for (const room of smRooms) {
+        const desired = pending.get(room.name);
+        if (desired) {
+          pending.delete(room.name);
+          roomIds[room.name] = room.id;
+          if (multisetsEqual(multisetOf(roomItemsOf(room)), multisetOf(desired))) {
+            plan.cleanRooms++;
+          } else {
+            plan.replaceRooms.push({ room, location: room.name, desired });
+          }
+        } else if (roomItemsOf(room).length > 0) {
+          plan.extraneousRooms.push(room);
+        }
+      }
+      for (const [location, desired] of pending) {
+        plan.missingLocations.push({ location, desired });
+      }
+      return plan;
+    };
+    const isPlanEmpty = (plan: MirrorPlan) =>
+      plan.replaceRooms.length === 0 && plan.extraneousRooms.length === 0 && plan.missingLocations.length === 0;
+
+    let totalSyncedCount = 0;
+    let removedCount = 0;
+    const errors: string[] = [];
+
+    // Clear one room's items. Fast path: one room-DELETE nukes the room and
+    // its contents (feature-detected once); fallback: paced per-item deletes.
+    // allowRoomDelete=false forces the per-item path — used when the room must
+    // survive because we have no room type to recreate it with.
+    const clearRoom = async (room: any, allowRoomDelete = true): Promise<{ roomGone: boolean }> => {
+      const items = roomItemsOf(room);
+      if (items.length === 0) return { roomGone: false };
+      if (allowRoomDelete && smRoomDeleteSupported !== false) {
+        const del = await deleteInventoryRoom(smartMovingOpportunityId, room.id, apiKey, clientId);
+        if (del.success) {
+          smRoomDeleteSupported = true;
+          removedCount += items.length;
+          console.log(`🗑️ [SMARTMOVING-MIRROR] Deleted room "${room.name}" (${items.length} items, 1 request)`);
+          return { roomGone: true };
+        }
+        if (del.unsupported) {
+          smRoomDeleteSupported = false;
+          console.log(`ℹ️ [SMARTMOVING-MIRROR] Room-delete endpoint unsupported — using per-item deletes`);
+        }
+      }
+      for (const item of items) {
+        const res = await deleteInventoryItem(smartMovingOpportunityId, room.id, item.id, apiKey, clientId);
+        if (res.success) {
+          removedCount++;
+        } else {
+          errors.push(`delete "${item.name || item.id}" in ${room.name}: ${res.error}`);
+        }
+      }
+      return { roomGone: false };
     };
 
-    // For backwards compatibility, return the first room ID
-    const firstRoomId = Object.values(roomIds)[0];
-    
-    console.log(`🔍 [SMARTMOVING-SYNC] API call result:`, {
-      success: syncResult.success,
-      syncedCount: syncResult.syncedCount,
-      error: syncResult.error
-    });
-    
-    if (syncResult.success) {
-      syncedCount = syncResult.syncedCount;
-      console.log(`✅ [SMARTMOVING-SYNC] Successfully synced ${syncedCount} items to SmartMoving for project ${projectId}`);
-      
-      // Log successful sync activity
-      await logActivity({
-        projectId,
-        userId: 'system',
-        activityType: 'inventory_update',
-        action: 'smartmoving_inventory_sync',
-        details: {
-          itemsCount: syncedCount
-        },
-        metadata: {
-          success: true,
-          smartMovingOpportunityId,
-          duration: Date.now() - startTime
+    // Add a location's items in batches; a failed batch retries once.
+    const addItemsToRoom = async (roomId: string, location: string, mappedItems: SmartMovingInventoryItem[]) => {
+      for (let i = 0; i < mappedItems.length; i += BATCH_SIZE) {
+        const batch = mappedItems.slice(i, i + BATCH_SIZE);
+        let batchResult = await syncToSmartMovingAPI(smartMovingOpportunityId, batch, apiKey, clientId, roomId);
+        if (!batchResult.success) {
+          console.warn(`🔁 [SMARTMOVING-MIRROR] Batch failed for "${location}" — retrying once: ${batchResult.error}`);
+          await sleep(1500);
+          batchResult = await syncToSmartMovingAPI(smartMovingOpportunityId, batch, apiKey, clientId, roomId);
         }
-      });
+        if (batchResult.success) {
+          totalSyncedCount += batch.length;
+        } else {
+          errors.push(`add batch to ${location}: ${batchResult.error}`);
+        }
+      }
+    };
 
+    const applyPlan = async (plan: MirrorPlan) => {
+      // Rooms whose location was deleted in Qube Sheets → remove contents
+      for (const room of plan.extraneousRooms) {
+        console.log(`🗑️ [SMARTMOVING-MIRROR] "${room.name}" no longer exists in Qube Sheets — clearing`);
+        await clearRoom(room);
+      }
+      // Rooms whose contents changed → clear then re-add. Room-delete is only
+      // allowed when we can recreate the room afterward.
+      for (const { room, location, desired } of plan.replaceRooms) {
+        console.log(`🔄 [SMARTMOVING-MIRROR] Replacing "${location}" (${roomItemsOf(room).length} SM items → ${desired.length} QS lines)`);
+        const { roomGone } = await clearRoom(room, !!defaultRoomTypeId);
+        let roomId = room.id;
+        if (roomGone) {
+          if (!defaultRoomTypeId) { errors.push(`recreate ${location}: no room type available`); continue; }
+          const recreated = await createRoomWithRoomType(smartMovingOpportunityId, defaultRoomTypeId, location, apiKey, clientId);
+          if (!recreated.success || !recreated.roomId) { errors.push(`recreate ${location}: ${recreated.error}`); continue; }
+          roomId = recreated.roomId;
+          roomIds[location] = roomId;
+        }
+        await addItemsToRoom(roomId, location, desired);
+      }
+      // Locations with no SM room yet → create + add
+      for (const { location, desired } of plan.missingLocations) {
+        if (!defaultRoomTypeId) { errors.push(`create ${location}: no room type available`); continue; }
+        console.log(`🏗️ [SMARTMOVING-MIRROR] Creating room "${location}" (${desired.length} QS lines)`);
+        const created = await createRoomWithRoomType(smartMovingOpportunityId, defaultRoomTypeId, location, apiKey, clientId);
+        if (!created.success || !created.roomId) { errors.push(`create ${location}: ${created.error}`); continue; }
+        roomIds[location] = created.roomId;
+        await addItemsToRoom(created.roomId, location, desired);
+      }
+    };
+
+    // Pass 1: read, plan, apply
+    let read = await getExistingRooms(smartMovingOpportunityId, apiKey, clientId);
+    if (!read.success) {
+      const msg = `Could not read SmartMoving inventory — sync aborted before changing anything: ${read.error}`;
+      console.error(`❌ [SMARTMOVING-MIRROR] ${msg}`);
+      return { success: false, syncedCount: 0, error: msg };
+    }
+    let plan = buildPlan(read.rooms || []);
+    console.log(
+      `📋 [SMARTMOVING-MIRROR] Plan: ${plan.cleanRooms} rooms already in sync, ` +
+      `${plan.replaceRooms.length} to replace, ${plan.missingLocations.length} to create, ` +
+      `${plan.extraneousRooms.length} to clear`
+    );
+    if (!isPlanEmpty(plan)) {
+      await applyPlan(plan);
+
+      // SmartMoving's reads lag writes by a few seconds (observed live
+      // 2026-09-09: a verification read immediately after a batch POST saw
+      // the room as empty, and the repair pass double-added its items). Let
+      // the write settle before reading back.
+      await sleep(3000);
+      read = await getExistingRooms(smartMovingOpportunityId, apiKey, clientId);
+      if (read.success) {
+        plan = buildPlan(read.rooms || []);
+        if (!isPlanEmpty(plan)) {
+          // Apparent drift can still be read lag. CONFIRM with a second read
+          // after a longer settle before mutating anything — a phantom-empty
+          // room must never trigger a duplicate re-add.
+          console.warn(
+            `⏳ [SMARTMOVING-MIRROR] Verification read shows drift (${plan.replaceRooms.length} replace, ` +
+            `${plan.missingLocations.length} missing, ${plan.extraneousRooms.length} extraneous) — confirming after settle...`
+          );
+          await sleep(5000);
+          read = await getExistingRooms(smartMovingOpportunityId, apiKey, clientId);
+          if (read.success) {
+            plan = buildPlan(read.rooms || []);
+            if (!isPlanEmpty(plan)) {
+              console.warn(
+                `🔧 [SMARTMOVING-MIRROR] Drift confirmed after settle (${plan.replaceRooms.length} replace, ` +
+                `${plan.missingLocations.length} missing, ${plan.extraneousRooms.length} extraneous) — repair pass`
+              );
+              await applyPlan(plan);
+              await sleep(3000);
+              read = await getExistingRooms(smartMovingOpportunityId, apiKey, clientId);
+            } else {
+              console.log(`✅ [SMARTMOVING-MIRROR] Drift was read lag — state is clean`);
+            }
+          }
+        }
+      }
+    }
+
+    // ── Verification: what does SmartMoving actually show now? ──────────
+    let verification: SmartMovingSyncVerification | undefined;
+    if (read.success) {
+      let smUnits = 0;
+      let smLines = 0;
+      let quantityKnown = true;
+      let smVolume: number | null = 0;
+      let smWeight: number | null = 0;
+      for (const room of read.rooms || []) {
+        for (const item of roomItemsOf(room)) {
+          smLines++;
+          if (typeof item.quantity !== 'number') quantityKnown = false;
+          const qty = typeof item.quantity === 'number' ? item.quantity : 1;
+          smUnits += qty;
+          if (smVolume !== null) {
+            smVolume = typeof item.volume === 'number' ? Math.round((smVolume + item.volume * qty) * 100) / 100 : null;
+          }
+          if (smWeight !== null) {
+            smWeight = typeof item.weight === 'number' ? Math.round((smWeight + item.weight * qty) * 100) / 100 : null;
+          }
+        }
+      }
+      // If SmartMoving's GET omits per-item quantity, unit counts can't be
+      // trusted — compare line counts instead so we never report a false
+      // mismatch (or a false match) on missing data.
+      const expectedLineCount = Array.from(desiredByLocation.values()).reduce((a, arr) => a + arr.length, 0);
+      const smItemCount = quantityKnown ? smUnits : smLines;
+      const expectedCountForMatch = quantityKnown ? expectedItemCount : expectedLineCount;
+      verification = {
+        smItemCount,
+        expectedItemCount: expectedCountForMatch,
+        smVolume,
+        expectedVolume,
+        smWeight,
+        expectedWeight,
+        matches:
+          smItemCount === expectedCountForMatch &&
+          (smVolume === null || Math.abs(smVolume - expectedVolume) <= 1) &&
+          (smWeight === null || Math.abs(smWeight - expectedWeight) <= 1),
+      };
+      console.log(
+        `🔎 [SMARTMOVING-MIRROR] Verification: SM ${smItemCount} items / ${smVolume ?? '?'} cuft / ${smWeight ?? '?'} lbs ` +
+        `vs QS ${expectedItemCount} items / ${expectedVolume} cuft / ${expectedWeight} lbs → ${verification.matches ? 'MATCH ✅' : 'MISMATCH ❌'}`
+      );
+    }
+
+    const succeeded = verification ? verification.matches : errors.length === 0;
+    const errorSummary = errors.length > 0 ? errors.slice(0, 3).join('; ') : undefined;
+    const finalError = succeeded
+      ? undefined
+      : verification && !verification.matches
+        ? `SmartMoving shows ${verification.smItemCount} items${verification.smVolume !== null ? ` / ${verification.smVolume} cuft` : ''} but Qube Sheets expects ${verification.expectedItemCount} items / ${verification.expectedVolume} cuft. ${errorSummary || 'Re-run the sync.'}`
+        : errorSummary || 'Sync incomplete';
+
+    syncedCount = expectedItemCount;
+    const firstRoomId = Object.values(roomIds)[0];
+
+    await logActivity({
+      projectId,
+      userId: 'system',
+      activityType: 'inventory_update',
+      action: 'smartmoving_inventory_sync',
+      details: { itemsCount: itemsToSync.length },
+      metadata: {
+        success: succeeded,
+        smartMovingOpportunityId,
+        duration: Date.now() - startTime,
+        removedCount,
+        addedCount: totalSyncedCount,
+        verification,
+        ...(errorSummary ? { errors: errorSummary } : {})
+      }
+    });
+
+    if (succeeded) {
+      console.log(`✅ [SMARTMOVING-MIRROR] Verified mirror for project ${projectId} in ${Date.now() - startTime}ms`);
       // Sync notes to SmartMoving job notes (if enabled)
       // This includes: crew review link + vault links + all QubeSheets notes
       await runNotesSync();
-
-      return { success: true, syncedCount, roomId: firstRoomId || undefined };
-    } else {
-      console.error(`❌ SmartMoving API sync failed for project ${projectId}:`, syncResult.error);
-      
-      // Log failed sync activity
-      await logActivity({
-        projectId,
-        userId: 'system',
-        activityType: 'inventory_update',
-        action: 'smartmoving_inventory_sync',
-        details: {
-          itemsCount: itemsToSync.length
-        },
-        metadata: {
-          success: false,
-          error: syncResult.error,
-          smartMovingOpportunityId,
-          duration: Date.now() - startTime
-        }
-      });
-      
-      return { success: false, syncedCount: 0, error: syncResult.error };
+      return { success: true, syncedCount, removedCount, roomId: firstRoomId || undefined, verification };
     }
+
+    console.error(`❌ [SMARTMOVING-MIRROR] Sync did not verify for project ${projectId}: ${finalError}`);
+    // Notes still sync — links in job notes shouldn't be hostage to an item mismatch
+    await runNotesSync();
+    return { success: false, syncedCount: totalSyncedCount, removedCount, error: finalError, verification };
     
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown sync error';
@@ -1060,7 +1320,7 @@ async function getExistingRooms(
     const inventoryUrl = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/inventory`;
     console.log(`🔍 [SMARTMOVING-EXISTING-ROOMS] Fetching from: ${inventoryUrl}`);
 
-    const response = await fetch(inventoryUrl, {
+    const response = await smRequest(inventoryUrl, {
       method: 'GET',
       headers: {
         'x-api-key': apiKey,
@@ -1118,7 +1378,7 @@ async function deleteInventoryItem(
 
     console.log(`🗑️ [SMARTMOVING-DELETE] Deleting item ${itemId} from room ${roomId}`);
 
-    const response = await fetch(url, {
+    const response = await smRequest(url, {
       method: 'DELETE',
       headers: {
         'x-api-key': apiKey,
@@ -1470,7 +1730,7 @@ async function createRoomWithRoomType(
     const createUrl = `https://api-public.smartmoving.com/v1/api/premium/opportunities/${opportunityId}/rooms`;
     console.log(`🌐 [SMARTMOVING-SIMPLE-CREATE] Creating room at: ${createUrl}`);
     
-    const response = await fetch(createUrl, {
+    const response = await smRequest(createUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1479,7 +1739,7 @@ async function createRoomWithRoomType(
       },
       body: JSON.stringify(roomData)
     });
-    
+
     console.log(`📡 [SMARTMOVING-SIMPLE-CREATE] Room creation response: ${response.status} ${response.statusText}`);
     
     if (!response.ok) {
@@ -1621,8 +1881,8 @@ async function syncToSmartMovingAPI(
   });
   
   try {
-    console.log(`🚀 [SMARTMOVING-API] Sending POST request to SmartMoving (no timeout)`);
-    const response = await fetch(url, {
+    console.log(`🚀 [SMARTMOVING-API] Sending POST request to SmartMoving`);
+    const response = await smRequest(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

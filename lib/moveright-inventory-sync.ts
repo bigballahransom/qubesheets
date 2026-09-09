@@ -33,6 +33,7 @@ import MoverightIntegration, {
 import { IInventoryItem } from '@/models/InventoryItem';
 import InventoryNote from '@/models/InventoryNote';
 import CrewReviewLink from '@/models/CrewReviewLink';
+import { effectiveGoingQuantity, isItemGoing } from '@/lib/goingQuantity';
 import { logActivity } from '@/lib/activity-logger';
 
 // Inventory pushes get a long window (route maxDuration is 90s); job search /
@@ -489,7 +490,7 @@ function transformItemToMoverightItem(
   item: IInventoryItem,
   weightConfig: WeightConfig
 ): MoverightInventoryItem {
-  const qty = item.goingQuantity || item.quantity || 1;
+  const qty = effectiveGoingQuantity(item);
 
   // Database stores PER-UNIT cuft/weight; MoveRight's item volume/weight are
   // also per-unit with quantity separate (see file header).
@@ -742,9 +743,10 @@ export async function syncInventoryToMoveright(
 
     // Filter items by sync option. CP/PBO/Crated labels are display prefixes
     // only and must not affect filtering. MoveRight's inventory schema has no
-    // not-moving concept, so "not going" items are always excluded.
+    // not-moving concept, so "not going" items are always excluded. Shared
+    // effective semantics (goingQuantity first, string fallback).
     const itemsToSync = inventoryItems.filter((item) => {
-      if (item.going === 'not going') return false;
+      if (!isItemGoing(item)) return false;
       const itemType = item.itemType || 'regular_item';
       const isExistingBox = itemType === 'packed_box' || itemType === 'existing_box';
       const isRecommendedBox = itemType === 'boxes_needed';
@@ -955,7 +957,7 @@ export async function syncInventoryToMoveright(
 
 function generateItemsHash(items: IInventoryItem[]): string {
   const itemsString = items
-    .map((item) => `${item._id}-${item.goingQuantity || item.quantity}`)
+    .map((item) => `${item._id}-${effectiveGoingQuantity(item)}`)
     .sort()
     .join('|');
 

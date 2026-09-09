@@ -59,6 +59,13 @@ export const updates: MonthGroup[] = [
     month: 'September 2026',
     entries: [
       {
+        tag: 'Improved',
+        icon: Zap,
+        title: 'SmartMoving sync is now verified 1-to-1',
+        description:
+          'Syncing to SmartMoving now mirrors your Qube Sheets inventory exactly, no matter the job size. Rooms that haven\'t changed are left untouched (much faster re-syncs), changed rooms are replaced cleanly, and after every sync we read SmartMoving back and confirm the item count, cubic feet, and weight match — you\'ll see "Verified — matches Qube Sheets exactly" right in the sync window, or a clear warning if anything is off. Large jobs no longer time out or leave duplicate items behind, and two people can\'t accidentally run overlapping syncs on the same job. Nothing syncs unless you click Sync.',
+      },
+      {
         tag: 'New',
         icon: Bell,
         title: 'Get notified when someone comments on your media',
