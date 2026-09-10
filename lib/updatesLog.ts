@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-09-08';
+export const LATEST_UPDATES_VERSION = '2026-09-10';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -58,6 +58,13 @@ export const updates: MonthGroup[] = [
   {
     month: 'September 2026',
     entries: [
+      {
+        tag: 'Improved',
+        icon: Link2,
+        title: 'New projects can take over a SmartMoving job link',
+        description:
+          'If a SmartMoving opportunity was already linked to an older Qube Sheets project (say, a repeat customer or a re-survey), syncing a new project to it no longer gets blocked. The new project simply takes over the link and the old project is unlinked automatically — you\'ll see a note in the sync window telling you which project it took over from. Only one project stays linked at a time, so your SmartMoving inventory always reflects the project you synced most recently.',
+      },
       {
         tag: 'Improved',
         icon: Zap,

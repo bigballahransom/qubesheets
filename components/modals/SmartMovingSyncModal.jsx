@@ -526,6 +526,19 @@ export default function SmartMovingSyncModal({
                 )}
               </div>
 
+              {/* This project took over the opportunity link from another project —
+                  the old project was unlinked so the two can't overwrite each other */}
+              {result.takenOverFrom?.length > 0 && (
+                <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-amber-700">
+                    This SmartMoving opportunity was previously linked to{' '}
+                    <span className="font-medium">{result.takenOverFrom.join(', ')}</span>.
+                    That project has been unlinked — this project now controls the sync.
+                  </p>
+                </div>
+              )}
+
               {/* Post-sync verification: what SmartMoving actually shows now,
                   read back from their API — the 1:1 guarantee, made visible */}
               {result.verification && (

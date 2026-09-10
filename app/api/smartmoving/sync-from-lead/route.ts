@@ -192,10 +192,37 @@ export async function POST(request: NextRequest) {
     // Otherwise, just sync inventory to the existing linked opportunity
     const isChangingSelection = targetType && targetId;
 
-    // Refuse to sync when another QBS project is linked to the SAME SmartMoving
-    // opportunity — each sync mirrors its own project onto the opportunity, so
-    // two linked projects wipe each other's items back and forth (root cause #3
-    // of the 2026-09-01 incident, and a source of "totals keep changing").
+    // When another QBS project is linked to the SAME SmartMoving opportunity,
+    // transfer the link instead of blocking: each sync mirrors its own project
+    // onto the opportunity, so two projects must never STAY linked at once
+    // (root cause #3 of the 2026-09-01 incident, and a source of "totals keep
+    // changing"). The project syncing now takes over and the old one is fully
+    // unlinked, so it can no longer overwrite — most recent sync wins.
+    let takenOverFrom: string[] = [];
+    const takeOverOpportunityLink = async (opportunityIdToClaim: string) => {
+      const conflicting = await Project.find({
+        _id: { $ne: projectId },
+        organizationId: orgId,
+        'metadata.smartMovingOpportunityId': opportunityIdToClaim,
+      }).select('name').lean();
+      if (conflicting.length === 0) return;
+      await Project.updateMany(
+        { _id: { $in: conflicting.map((p: any) => p._id) } },
+        {
+          $unset: {
+            'metadata.smartMovingOpportunityId': '',
+            'metadata.smartMovingLeadId': '',
+            'metadata.smartMovingCustomerId': '',
+            'metadata.smartMovingQuoteNumber': '',
+            'metadata.smartMovingRoomId': '',
+            'metadata.smartMovingSyncedAt': '',
+          },
+        }
+      );
+      takenOverFrom = conflicting.map((p: any) => p.name);
+      console.log(`🔁 [SYNC-FROM-LEAD] Unlinked ${takenOverFrom.map(n => `"${n}"`).join(', ')} from opportunity ${opportunityIdToClaim} — this project now owns the sync`);
+    };
+
     const guardOpportunityId =
       !isChangingSelection && project.metadata?.smartMovingOpportunityId
         ? project.metadata.smartMovingOpportunityId
@@ -203,21 +230,7 @@ export async function POST(request: NextRequest) {
           ? targetId
           : null;
     if (guardOpportunityId) {
-      const conflictingProject = await Project.findOne({
-        _id: { $ne: projectId },
-        organizationId: orgId,
-        'metadata.smartMovingOpportunityId': guardOpportunityId,
-      }).select('name').lean();
-      if (conflictingProject) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'shared_opportunity',
-            message: `Another project ("${(conflictingProject as any).name}") is already linked to this SmartMoving opportunity. Two projects syncing to one opportunity overwrite each other — unlink one of them first.`,
-          },
-          { status: 409 }
-        );
-      }
+      await takeOverOpportunityLink(guardOpportunityId);
     }
 
     if (project.metadata?.smartMovingOpportunityId && !isChangingSelection) {
@@ -285,6 +298,7 @@ export async function POST(request: NextRequest) {
         inventoryError: inventorySyncResult.error,
         isResync: true,
         clearedCount: inventorySyncResult.removedCount || 0,
+        takenOverFrom,
         verification: inventorySyncResult.verification || null
       });
     }
@@ -670,23 +684,9 @@ export async function POST(request: NextRequest) {
 
     // 8. Update project with the opportunity ID, customer ID, and quote number
     console.log(`✅ [SYNC-FROM-LEAD] Updating project with opportunity ID: ${opportunityId}, quote number: ${quoteNumber}`);
-    // Same shared-opportunity guard for opportunities resolved mid-flow
+    // Same link-takeover for opportunities resolved mid-flow
     // (phone-match → most recent opportunity path)
-    const lateConflict = await Project.findOne({
-      _id: { $ne: projectId },
-      organizationId: orgId,
-      'metadata.smartMovingOpportunityId': opportunityId,
-    }).select('name').lean();
-    if (lateConflict) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'shared_opportunity',
-          message: `Another project ("${(lateConflict as any).name}") is already linked to this SmartMoving opportunity. Two projects syncing to one opportunity overwrite each other — unlink one of them first.`,
-        },
-        { status: 409 }
-      );
-    }
+    await takeOverOpportunityLink(opportunityId);
 
     const metadataUpdate: Record<string, any> = {
       'metadata.smartMovingOpportunityId': opportunityId,
@@ -765,6 +765,7 @@ export async function POST(request: NextRequest) {
       inventorySynced: inventorySyncResult.success,
       inventoryCount: inventorySyncResult.syncedCount,
       inventoryError: inventorySyncResult.error,
+      takenOverFrom,
       verification: inventorySyncResult.verification || null
     });
 
