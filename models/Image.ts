@@ -20,6 +20,10 @@ export interface IImage extends Document {
   // Longer free-text notes on vault media (kept separate from `description`,
   // which carries upload-provenance strings)
   mediaDescription?: string;
+  // Custom vault upload form answers (org-defined fields, e.g. "Employee
+  // name", "Job number"). Labels are denormalized at capture time so display
+  // survives later edits to the org's form config.
+  vaultFormValues?: Array<{ fieldId: string; label: string; value: string }>;
   processingStatus?: 'queued' | 'processing' | 'completed' | 'failed' | 'skipped';
   analysisResult?: {
     summary: string;
@@ -87,6 +91,17 @@ const ImageSchema: Schema = new Schema(
     purpose: { type: String, enum: ['inventory', 'vault'], default: 'inventory', index: true },
     label: { type: String, required: false },
     mediaDescription: { type: String, required: false },
+    vaultFormValues: {
+      type: [
+        {
+          _id: false,
+          fieldId: { type: String, required: true },
+          label: { type: String, required: true },
+          value: { type: String, required: true },
+        },
+      ],
+      default: undefined,
+    },
     processingStatus: { type: String, enum: ['queued', 'processing', 'completed', 'failed', 'skipped'], default: 'queued' },
     analysisResult: {
       summary: { type: String },

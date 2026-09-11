@@ -17,6 +17,7 @@ import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
 import SelfServeRecordingSession from '@/models/SelfServeRecordingSession';
+import { sanitizeVaultFormValues } from '@/lib/vaultUploadForm';
 
 export async function POST(
   request: NextRequest,
@@ -35,12 +36,13 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid link' }, { status: 401 });
     }
 
-    const { kind, id, label, description } = await request.json();
+    const { kind, id, label, description, vaultFormValues } = await request.json();
     const cleanLabel =
       typeof label === 'string' ? label.trim().slice(0, 200) : undefined;
     const cleanDescription =
       typeof description === 'string' ? description.trim().slice(0, 1000) : undefined;
-    if (cleanLabel === undefined && cleanDescription === undefined) {
+    const cleanFormValues = sanitizeVaultFormValues(vaultFormValues);
+    if (cleanLabel === undefined && cleanDescription === undefined && cleanFormValues === undefined) {
       return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
     }
     if (!id) {
@@ -48,9 +50,10 @@ export async function POST(
     }
 
     const projectId = customerUpload.projectId;
-    const set: Record<string, string> = {};
+    const set: Record<string, unknown> = {};
     if (cleanLabel !== undefined) set.label = cleanLabel;
     if (cleanDescription !== undefined) set.mediaDescription = cleanDescription;
+    if (cleanFormValues !== undefined) set.vaultFormValues = cleanFormValues;
 
     if (kind === 'image') {
       const updated = await Image.findOneAndUpdate(
@@ -72,9 +75,10 @@ export async function POST(
       // LiveKit recording — annotate by sessionId. Store on the session
       // (webhook copies at recording creation) and patch the recording too
       // in case the webhook already ran.
-      const sessionSet: Record<string, string> = {};
+      const sessionSet: Record<string, unknown> = {};
       if (cleanLabel !== undefined) sessionSet.vaultLabel = cleanLabel;
       if (cleanDescription !== undefined) sessionSet.vaultDescription = cleanDescription;
+      if (cleanFormValues !== undefined) sessionSet.vaultFormValues = cleanFormValues;
       const session = await SelfServeRecordingSession.findOneAndUpdate(
         { sessionId: String(id), customerUploadId: customerUpload._id },
         { $set: sessionSet }
@@ -86,6 +90,21 @@ export async function POST(
         { selfServeSessionId: String(id), purpose: 'vault' },
         { $set: set }
       );
+      // Photos snapped during this recording inherit the form answers (but
+      // NOT the title/description — each snap keeps its own per-photo label,
+      // e.g. "Crew photo 0:11"). Snaps always finish before the completion
+      // screen where this annotate fires, so no ordering race.
+      if (cleanFormValues !== undefined) {
+        await Image.updateMany(
+          {
+            projectId,
+            purpose: 'vault',
+            'metadata.uploadToken': token,
+            'metadata.selfServeSessionId': String(id),
+          },
+          { $set: { vaultFormValues: cleanFormValues } }
+        );
+      }
     } else {
       return NextResponse.json({ error: 'Invalid kind' }, { status: 400 });
     }

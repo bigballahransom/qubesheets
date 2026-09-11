@@ -137,6 +137,9 @@ export interface IVideoRecording extends Document {
   label?: string;
   // Longer free-text notes on vault media
   mediaDescription?: string;
+  // Custom vault upload form answers (org-defined fields, e.g. "Employee
+  // name", "Job number"). Labels denormalized at capture time.
+  vaultFormValues?: Array<{ fieldId: string; label: string; value: string }>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -399,6 +402,17 @@ const VideoRecordingSchema: Schema = new Schema(
     },
     mediaDescription: {
       type: String
+    },
+    vaultFormValues: {
+      type: [
+        {
+          _id: false,
+          fieldId: { type: String, required: true },
+          label: { type: String, required: true },
+          value: { type: String, required: true }
+        }
+      ],
+      default: undefined
     }
   },
   {

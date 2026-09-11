@@ -8,6 +8,8 @@ import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
 import Project from '@/models/Project';
+import VaultShareLink from '@/models/VaultShareLink';
+import MediaComment from '@/models/MediaComment';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 
 export async function POST(
@@ -74,7 +76,20 @@ export async function POST(
       return NextResponse.json({ error: 'Media not found' }, { status: 404 });
     }
 
+    // Share links and comments follow the media. Single-item share links are
+    // permanent URLs the org may have already texted to customers — leaving
+    // them pointed at the source project makes them die with "Invalid or
+    // expired link". Raw collection for VaultShareLink so mediaKind/mediaId
+    // in the filter survive a stale compiled model (schema-cache gotcha).
     await Promise.all([
+      VaultShareLink.collection.updateMany(
+        { projectId: sourceProject._id, mediaKind: kind, mediaId: String(id) },
+        { $set: { projectId: targetProject._id, updatedAt: new Date() } }
+      ),
+      MediaComment.updateMany(
+        { projectId: sourceProject._id, mediaKind: kind, mediaId: String(id) },
+        { $set: { projectId: targetProject._id } }
+      ),
       Project.findByIdAndUpdate(projectId, { updatedAt: new Date() }),
       Project.findByIdAndUpdate(targetProjectId, { updatedAt: new Date() }),
     ]);

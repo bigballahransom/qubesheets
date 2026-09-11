@@ -28,6 +28,8 @@ interface VaultItem {
   mediaType: 'video' | 'image';
   createdAt: Date;
   s3Key: string | null;
+  // Org-defined upload-form answers ("Employee name: Nica", "Job: 65503")
+  formValues: Array<{ fieldId: string; label: string; value: string }>;
 }
 
 export async function GET(request: NextRequest) {
@@ -48,11 +50,11 @@ export async function GET(request: NextRequest) {
 
     const [videos, images, recordings, prevVideos, prevImages, prevRecordings] = await Promise.all([
       Video.find({ ...orgFilter, purpose: 'vault', createdAt: inRange })
-        .select('projectId originalName label mediaDescription s3RawFile.key createdAt')
+        .select('projectId originalName label mediaDescription vaultFormValues s3RawFile.key createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       Image.find({ ...orgFilter, purpose: 'vault', createdAt: inRange })
-        .select('projectId originalName label mediaDescription s3RawFile.key createdAt')
+        .select('projectId originalName label mediaDescription vaultFormValues s3RawFile.key createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       VideoRecording.find({
@@ -61,7 +63,7 @@ export async function GET(request: NextRequest) {
         createdAt: inRange,
         s3Key: { $exists: true, $nin: [null, ''] },
       })
-        .select('projectId label mediaDescription s3Key participants createdAt')
+        .select('projectId label mediaDescription vaultFormValues s3Key participants createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       Video.countDocuments({ ...orgFilter, purpose: 'vault', createdAt: inPrev }),
@@ -85,6 +87,7 @@ export async function GET(request: NextRequest) {
         mediaType: 'video',
         createdAt: v.createdAt,
         s3Key: v.s3RawFile?.key || null,
+        formValues: v.vaultFormValues || [],
       })),
       ...images.map((img: any): VaultItem => ({
         kind: 'image',
@@ -96,6 +99,7 @@ export async function GET(request: NextRequest) {
         mediaType: 'image',
         createdAt: img.createdAt,
         s3Key: img.s3RawFile?.key || null,
+        formValues: img.vaultFormValues || [],
       })),
       ...recordings.map((r: any): VaultItem => ({
         kind: 'recording',
@@ -109,6 +113,7 @@ export async function GET(request: NextRequest) {
         mediaType: 'video',
         createdAt: r.createdAt,
         s3Key: r.s3Key || null,
+        formValues: r.vaultFormValues || [],
       })),
     ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -126,8 +131,15 @@ export async function GET(request: NextRequest) {
       }
       if (item.mediaType === 'image') entry.photos += 1;
       else entry.videos += 1;
-      if (item.label && entry.labels.length < 3 && !entry.labels.includes(item.label)) {
-        entry.labels.push(item.label);
+      // Sample details: the label plus any upload-form answers, as one line
+      const detail = [
+        item.label,
+        ...item.formValues.map((e) => `${e.label}: ${e.value}`),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      if (detail && entry.labels.length < 3 && !entry.labels.includes(detail)) {
+        entry.labels.push(detail);
       }
     }
 
@@ -184,6 +196,7 @@ export async function GET(request: NextRequest) {
         mediaType: item.mediaType,
         createdAt: item.createdAt,
         streamUrl,
+        formValues: item.formValues,
       };
     });
 

@@ -229,6 +229,14 @@ export default function VaultMediaModal({
             <span className="text-xs text-slate-400 flex-shrink-0">
               {index + 1} of {items.length}
             </span>
+            {item.vaultFormValues?.length > 0 && (
+              <span
+                className="text-xs text-slate-500 truncate hidden sm:inline flex-shrink-0"
+                title={item.vaultFormValues.map((e) => `${e.label}: ${e.value}`).join(' · ')}
+              >
+                {item.vaultFormValues.map((e) => `${e.label}: ${e.value}`).join(' · ')}
+              </span>
+            )}
             {item.description && (
               <span className="text-xs text-slate-500 truncate hidden md:inline" title={item.description}>
                 — {item.description}

@@ -100,6 +100,19 @@ const VideoSchema = new mongoose.Schema({
     type: String,
     required: false
   },
+  // Custom vault upload form answers (org-defined fields, e.g. "Employee
+  // name", "Job number"). Labels denormalized at capture time.
+  vaultFormValues: {
+    type: [
+      {
+        _id: false,
+        fieldId: { type: String, required: true },
+        label: { type: String, required: true },
+        value: { type: String, required: true }
+      }
+    ],
+    default: undefined
+  },
   processingStatus: {
     type: String,
     enum: ['queued', 'processing', 'completed', 'failed', 'skipped'],

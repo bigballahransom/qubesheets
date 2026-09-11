@@ -34,6 +34,13 @@ interface UploadValidation {
   // True for Media Vault capture links — reference-only messaging, no
   // inventory-processing UI.
   isVault?: boolean;
+  // Vault details-sheet form config — the org's ordered field list
+  vaultUploadFormFields?: Array<{
+    fieldId: string;
+    label: string;
+    hint?: string;
+    required: boolean;
+  }>;
   // True when minted as an employee on-site walkthrough — completion CTA
   // redirects back to /projects/{projectId} instead of looping back to the
   // upload choice screen.
@@ -205,6 +212,7 @@ export default function CustomerUploadPage() {
             maxRecordingDuration: data.maxRecordingDuration || 1200,
             isWalkthrough: !!data.isWalkthrough,
             isVault: !!data.isVault,
+            vaultUploadFormFields: data.vaultUploadFormFields || undefined,
             photosEnabled: data.photosEnabled !== false,
             captureEngine: data.captureEngine === 'local' ? 'local' : 'livekit',
             scheduleCallSubmissionId: data.scheduleCallSubmissionId || null
@@ -744,6 +752,7 @@ export default function CustomerUploadPage() {
         onCancel={() => setViewMode('choice')}
         walkthroughReturnUrl={walkthroughReturnUrl}
         isVault={!!validation.isVault}
+        vaultUploadFormFields={validation.vaultUploadFormFields}
         captureEngine={validation.captureEngine}
       />
 
@@ -763,6 +772,7 @@ export default function CustomerUploadPage() {
         onUploadMore={() => setViewMode('choice')}
         walkthroughReturnUrl={walkthroughReturnUrl}
         isVault={!!validation.isVault}
+        vaultUploadFormFields={validation.vaultUploadFormFields}
       />
     );
   }

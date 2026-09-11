@@ -8,6 +8,7 @@ import CustomerUpload from '@/models/CustomerUpload';
 // VideoRecordingSession removed - now using LiveKit Egress (server-side) recording only
 import { sendVideoProcessingMessage } from '@/lib/sqsUtils';
 import { getS3SignedUrl } from '@/lib/s3Upload';
+import { sanitizeVaultFormValues } from '@/lib/vaultUploadForm';
 import AWS from 'aws-sdk';
 
 // Initialize AWS S3 client
@@ -210,6 +211,10 @@ export async function POST(request: NextRequest) {
         purpose: isVault ? 'vault' : 'inventory',
         ...(metadata.label ? { label: String(metadata.label).slice(0, 200) } : {}),
         ...(metadata.description ? { mediaDescription: String(metadata.description).slice(0, 1000) } : {}),
+        ...(() => {
+          const v = sanitizeVaultFormValues(metadata.vaultFormValues);
+          return v ? { vaultFormValues: v } : {};
+        })(),
         // The Videos tab card title comes from the customer participant name.
         participants: [{
           identity: 'admin-upload',
@@ -333,6 +338,10 @@ export async function POST(request: NextRequest) {
       purpose: isVault ? 'vault' : 'inventory',
       ...(metadata.label ? { label: String(metadata.label).slice(0, 200) } : {}),
       ...(metadata.description ? { mediaDescription: String(metadata.description).slice(0, 1000) } : {}),
+      ...(() => {
+        const v = sanitizeVaultFormValues(metadata.vaultFormValues);
+        return v ? { vaultFormValues: v } : {};
+      })(),
       processingStatus: isVault ? 'skipped' : 'queued',
       analysisResult: isVault ? {
         status: 'skipped',

@@ -6,7 +6,7 @@
 // metadata.purpose 'vault' (the same admin path recordings use).
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { X, Upload, Film, ImageIcon, Loader2, CheckCircle2, AlertCircle, Trash2, Camera } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -42,12 +42,56 @@ const getVideoDuration = (file) =>
     video.src = url;
   });
 
+// Org-configurable upload form (Settings → Media Vault). Defaults mirror
+// the server's DEFAULT_VAULT_UPLOAD_FORM_FIELDS. fieldIds 'title' and
+// 'description' are built-ins rendered per file; every other field is a
+// custom batch-level field (typed once, stamped on every file).
+const DEFAULT_FORM_FIELDS = [
+  { fieldId: 'title', label: 'Title', hint: 'Short label shown on the vault card', required: false },
+  { fieldId: 'description', label: 'Description', hint: 'Condition notes, contents, context', required: false },
+];
+
 export default function VaultUploadModal({ isOpen, onClose, projectId, onUploaded }) {
   // Each entry: { id, file, label, status: 'pending'|'uploading'|'done'|'error', error }
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef(null);
+
+  // Org upload form config + batch-level answers for its custom fields —
+  // one crew member uploads a batch for one job, so these apply to every
+  // file in it.
+  const [formFields, setFormFields] = useState(DEFAULT_FORM_FIELDS);
+  const [customValues, setCustomValues] = useState({});
+  const [showErrors, setShowErrors] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetch('/api/settings/vault-upload-fields')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (Array.isArray(d?.vaultUploadFormFields) && !cancelled) {
+          setFormFields(d.vaultUploadFormFields);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  const titleField = formFields.find((f) => f.fieldId === 'title');
+  const descriptionField = formFields.find((f) => f.fieldId === 'description');
+  const customFields = formFields.filter(
+    (f) => f.fieldId !== 'title' && f.fieldId !== 'description'
+  );
+  // Answers for the batch's custom fields as { fieldId, label, value } —
+  // labels denormalized so display survives later form-config edits.
+  const customEntries = () =>
+    customFields
+      .map((f) => ({ fieldId: f.fieldId, label: f.label, value: (customValues[f.fieldId] || '').trim() }))
+      .filter((e) => e.value);
 
   const addFiles = useCallback((fileList) => {
     const accepted = [];
@@ -73,6 +117,8 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
     form.append('file', entry.file);
     if (entry.label.trim()) form.append('label', entry.label.trim());
     if (entry.description.trim()) form.append('description', entry.description.trim());
+    const entries = customEntries();
+    if (entries.length > 0) form.append('vaultFormValues', JSON.stringify(entries));
     const res = await fetch(`/api/projects/${projectId}/vault-media/upload`, {
       method: 'POST',
       body: form,
@@ -103,6 +149,7 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
         purpose: 'vault',
         ...(entry.label.trim() ? { label: entry.label.trim() } : {}),
         ...(entry.description.trim() ? { description: entry.description.trim() } : {}),
+        ...(customEntries().length > 0 ? { vaultFormValues: customEntries() } : {}),
       },
     });
     if (!result.success) {
@@ -110,10 +157,32 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
     }
   };
 
+  // Required-field check across the batch fields and every pending file.
+  const missingRequired = () => {
+    const problems = [];
+    for (const f of customFields) {
+      if (f.required && !(customValues[f.fieldId] || '').trim()) problems.push(f.label);
+    }
+    const pending = files.filter((f) => f.status === 'pending' || f.status === 'error');
+    if (titleField?.required && pending.some((f) => !f.label.trim())) {
+      problems.push(`${titleField.label} on every file`);
+    }
+    if (descriptionField?.required && pending.some((f) => !f.description.trim())) {
+      problems.push(`${descriptionField.label} on every file`);
+    }
+    return problems;
+  };
+
   const uploadAll = async () => {
     if (busy) return;
     const pending = files.filter((f) => f.status === 'pending' || f.status === 'error');
     if (pending.length === 0) return;
+    const problems = missingRequired();
+    if (problems.length > 0) {
+      setShowErrors(true);
+      toast.error(`Required: ${problems.join(', ')}`);
+      return;
+    }
     setBusy(true);
     let ok = 0;
     for (const entry of pending) {
@@ -143,6 +212,8 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
   const handleClose = () => {
     if (busy) return;
     setFiles([]);
+    setCustomValues({});
+    setShowErrors(false);
     onClose();
   };
 
@@ -225,6 +296,34 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
             Images: JPG, PNG, GIF, HEIC, HEIF (max 25MB) • Videos: MP4, MOV, AVI, WebM (max 20 minutes) • Stored for reference, never inventoried
           </p>
 
+          {/* Batch fields (org-defined custom fields) — apply to every file below */}
+          {customFields.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {customFields.map((f) => (
+                <div key={f.fieldId}>
+                  <label className="text-xs font-medium text-slate-600">
+                    {f.label}
+                    {f.required && <span className="text-red-500"> *</span>}
+                  </label>
+                  <input
+                    value={customValues[f.fieldId] || ''}
+                    onChange={(e) =>
+                      setCustomValues((prev) => ({ ...prev, [f.fieldId]: e.target.value }))
+                    }
+                    maxLength={500}
+                    placeholder={f.hint || ''}
+                    disabled={busy}
+                    className={`w-full text-sm border rounded px-2 py-1.5 mt-1 focus:ring-1 focus:ring-slate-400 outline-none ${
+                      showErrors && f.required && !(customValues[f.fieldId] || '').trim()
+                        ? 'border-red-400 bg-red-50'
+                        : 'border-slate-200'
+                    }`}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* File list */}
           {files.length > 0 && (
             <div className="space-y-2">
@@ -248,21 +347,33 @@ export default function VaultUploadModal({ isOpen, onClose, projectId, onUploade
                       <p className="text-xs text-red-600 truncate">{entry.error}</p>
                     ) : (
                       <>
-                        <input
-                          value={entry.label}
-                          onChange={(e) => setEntry(entry.id, { label: e.target.value })}
-                          placeholder="Title (optional) — e.g. Walk-in, Job 65503"
-                          disabled={entry.status === 'uploading'}
-                          className="w-full text-xs border border-slate-200 rounded px-2 py-1 mt-0.5 focus:ring-1 focus:ring-slate-400 outline-none"
-                        />
-                        <textarea
-                          value={entry.description}
-                          onChange={(e) => setEntry(entry.id, { description: e.target.value })}
-                          placeholder="Description (optional) — condition notes, contents, context"
-                          disabled={entry.status === 'uploading'}
-                          rows={2}
-                          className="w-full text-xs border border-slate-200 rounded px-2 py-1 mt-1 focus:ring-1 focus:ring-slate-400 outline-none resize-none"
-                        />
+                        {titleField && (
+                          <input
+                            value={entry.label}
+                            onChange={(e) => setEntry(entry.id, { label: e.target.value })}
+                            placeholder={`${titleField.label} (${titleField.required ? 'required' : 'optional'})${titleField.hint ? ` — ${titleField.hint}` : ''}`}
+                            disabled={entry.status === 'uploading'}
+                            className={`w-full text-xs border rounded px-2 py-1 mt-0.5 focus:ring-1 focus:ring-slate-400 outline-none ${
+                              showErrors && titleField.required && !entry.label.trim()
+                                ? 'border-red-400 bg-red-50'
+                                : 'border-slate-200'
+                            }`}
+                          />
+                        )}
+                        {descriptionField && (
+                          <textarea
+                            value={entry.description}
+                            onChange={(e) => setEntry(entry.id, { description: e.target.value })}
+                            placeholder={`${descriptionField.label} (${descriptionField.required ? 'required' : 'optional'})${descriptionField.hint ? ` — ${descriptionField.hint}` : ''}`}
+                            disabled={entry.status === 'uploading'}
+                            rows={2}
+                            className={`w-full text-xs border rounded px-2 py-1 mt-1 focus:ring-1 focus:ring-slate-400 outline-none resize-none ${
+                              showErrors && descriptionField.required && !entry.description.trim()
+                                ? 'border-red-400 bg-red-50'
+                                : 'border-slate-200'
+                            }`}
+                          />
+                        )}
                       </>
                     )}
                   </div>

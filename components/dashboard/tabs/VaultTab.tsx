@@ -46,6 +46,8 @@ interface VaultData {
     mediaType: 'video' | 'image';
     createdAt: string;
     streamUrl: string | null;
+    // Org-defined upload-form answers ("Employee name: Nica", "Job: 65503")
+    formValues: { fieldId: string; label: string; value: string }[];
   }[];
   recentTruncated: boolean;
 }
@@ -127,7 +129,7 @@ export default function VaultTab() {
                   <th className="py-2 pr-4 font-medium text-right">Photos</th>
                   <th className="py-2 pr-4 font-medium text-right">Videos</th>
                   <th className="py-2 pr-4 font-medium">Latest capture</th>
-                  <th className="py-2 font-medium">Labels</th>
+                  <th className="py-2 font-medium">Details</th>
                 </tr>
               </thead>
               <tbody>
@@ -212,6 +214,14 @@ export default function VaultTab() {
                   <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-600">
                     {item.label || item.name}
                   </p>
+                  {item.formValues?.length > 0 && (
+                    <p
+                      className="text-xs text-slate-600 truncate"
+                      title={item.formValues.map((e) => `${e.label}: ${e.value}`).join(' · ')}
+                    >
+                      {item.formValues.map((e) => `${e.label}: ${e.value}`).join(' · ')}
+                    </p>
+                  )}
                   <p className="text-xs text-gray-500 truncate">{item.projectName}</p>
                   <p className="text-xs text-gray-400 mt-0.5">{formatWhen(item.createdAt)}</p>
                 </div>

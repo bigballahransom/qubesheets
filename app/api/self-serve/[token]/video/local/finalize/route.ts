@@ -153,6 +153,7 @@ export async function POST(
       purpose: isVault ? 'vault' : 'inventory',
       ...(isVault && session?.vaultLabel ? { label: session.vaultLabel } : {}),
       ...(isVault && session?.vaultDescription ? { mediaDescription: session.vaultDescription } : {}),
+      ...(isVault && session?.vaultFormValues?.length ? { vaultFormValues: session?.vaultFormValues } : {}),
       selfServeSessionId: sessionId,
       s3Key,
       customerVideoS3Key: s3Key,

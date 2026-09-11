@@ -80,13 +80,53 @@ export async function GET(
           .select('label mediaDescription duration s3Key participants createdAt')
           .lean();
       }
+
+      // Not under the link's project? The media may have been re-filed to a
+      // sibling project (vault "Move to project") after the link was minted.
+      // These links are permanent URLs already in customers' hands — follow
+      // the media as long as it stayed within the same org/account, and
+      // re-point the link so future comments file to the right project.
+      if (!doc) {
+        const byId: any =
+          kind === 'image'
+            ? await Image.findById(mediaId)
+                .select('originalName label mediaDescription s3RawFile createdAt projectId')
+                .lean()
+            : kind === 'video'
+            ? await Video.findById(mediaId)
+                .select('originalName label mediaDescription duration s3RawFile createdAt projectId')
+                .lean()
+            : await VideoRecording.findById(mediaId)
+                .select('label mediaDescription duration s3Key participants createdAt projectId')
+                .lean();
+        if (byId) {
+          const mediaProject: any = await Project.findById(byId.projectId)
+            .select('organizationId userId')
+            .lean();
+          const sameOwner =
+            mediaProject &&
+            (shareLink.organizationId
+              ? mediaProject.organizationId === shareLink.organizationId
+              : mediaProject.userId === shareLink.userId);
+          if (sameOwner) {
+            doc = byId;
+            VaultShareLink.updateOne(
+              { _id: shareLink._id },
+              { $set: { projectId: mediaProject._id } }
+            ).catch(() => {});
+          }
+        }
+      }
+
       if (!doc) {
         // Media was deleted → the link dies with it
         return NextResponse.json({ error: 'Invalid or expired link' }, { status: 404 });
       }
 
       const [itemComments, branding] = await Promise.all([
-        MediaComment.find({ projectId, mediaKind: kind, mediaId })
+        // No projectId scope: mediaId is globally unique, and the comment
+        // thread must survive the media moving between projects
+        MediaComment.find({ mediaKind: kind, mediaId })
           .select('mediaKind mediaId authorName text source timestampSeconds parentId createdAt')
           .sort({ createdAt: 1 })
           .lean(),

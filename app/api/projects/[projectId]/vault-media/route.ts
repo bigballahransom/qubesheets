@@ -46,11 +46,11 @@ export async function GET(
 
     const [videos, images, recordings] = await Promise.all([
       Video.find({ ...getProjectFilter(authContext, projectId), purpose: 'vault' })
-        .select('originalName label mediaDescription mimeType size duration source s3RawFile createdAt')
+        .select('originalName label mediaDescription vaultFormValues mimeType size duration source s3RawFile createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       Image.find({ ...getProjectFilter(authContext, projectId), purpose: 'vault' })
-        .select('originalName label mediaDescription mimeType size source s3RawFile createdAt')
+        .select('originalName label mediaDescription vaultFormValues mimeType size source s3RawFile createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       // projectId is a string on VideoRecording (not ObjectId)
@@ -60,7 +60,7 @@ export async function GET(
         s3Key: { $exists: true, $nin: [null, ''] },
         ...orgFilter,
       })
-        .select('roomId label mediaDescription duration s3Key source participants createdAt')
+        .select('roomId label mediaDescription vaultFormValues duration s3Key source participants createdAt')
         .sort({ createdAt: -1 })
         .lean(),
     ]);
@@ -87,6 +87,7 @@ export async function GET(
         name: v.originalName || 'Video',
         label: v.label || null,
         description: v.mediaDescription || null,
+        vaultFormValues: v.vaultFormValues || [],
         duration: v.duration || 0,
         createdAt: v.createdAt,
         mediaType: 'video' as const,
@@ -100,6 +101,7 @@ export async function GET(
           'Recorded video',
         label: r.label || null,
         description: r.mediaDescription || null,
+        vaultFormValues: r.vaultFormValues || [],
         duration: r.duration || 0,
         createdAt: r.createdAt,
         mediaType: 'video' as const,
@@ -124,6 +126,7 @@ export async function GET(
           name: img.originalName || 'Photo',
           label: img.label || null,
           description: img.mediaDescription || null,
+          vaultFormValues: img.vaultFormValues || [],
           duration: 0,
           createdAt: img.createdAt,
           mediaType: 'image' as const,

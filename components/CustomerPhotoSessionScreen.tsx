@@ -46,6 +46,15 @@ interface CustomerPhotoSessionScreenProps {
   /** Media Vault capture — uploaded photo tiles become tappable to attach
    *  an optional title + description (saved via vault-annotate). */
   isVault?: boolean;
+  /** Vault upload form config (org setting): custom fields are collected
+   *  once per batch on "I'm Done" and stamped onto every photo in it
+   *  ('title'/'description' built-ins stay on the per-photo details sheet). */
+  vaultUploadFormFields?: Array<{
+    fieldId: string;
+    label: string;
+    hint?: string;
+    required: boolean;
+  }>;
 }
 
 // 'pending'   — picked/captured by the customer, sitting on-device only.
@@ -91,7 +100,8 @@ export function CustomerPhotoSessionScreen({
   companyName,
   onUploadMore,
   walkthroughReturnUrl,
-  isVault
+  isVault,
+  vaultUploadFormFields
 }: CustomerPhotoSessionScreenProps) {
   const router = useRouter();
   // Vault details sheet — the uploaded photo being annotated (null = closed)
@@ -99,6 +109,26 @@ export function CustomerPhotoSessionScreen({
   const [detailTitle, setDetailTitle] = useState('');
   const [detailDesc, setDetailDesc] = useState('');
   const [detailSaving, setDetailSaving] = useState(false);
+
+  // Vault batch fields (org-defined custom fields) — collected once when
+  // "I'm Done" is tapped, sent with every photo upload in the batch. A ref
+  // mirrors the values so the upload pump reads them without re-creating
+  // callbacks.
+  const batchFields = (vaultUploadFormFields || []).filter(
+    (f) => f.fieldId !== 'title' && f.fieldId !== 'description'
+  );
+  const needsBatchPrompt = !!isVault && batchFields.length > 0;
+  const [batchValues, setBatchValues] = useState<Record<string, string>>({});
+  const batchEntriesRef = useRef<Array<{ fieldId: string; label: string; value: string }>>([]);
+  batchEntriesRef.current = batchFields
+    .map((f) => ({ fieldId: f.fieldId, label: f.label, value: (batchValues[f.fieldId] || '').trim() }))
+    .filter((e) => e.value);
+  const [batchSheetOpen, setBatchSheetOpen] = useState(false);
+  const [batchCollected, setBatchCollected] = useState(false);
+  const [batchShowErrors, setBatchShowErrors] = useState(false);
+  const batchRequiredMissing = batchFields.some(
+    (f) => f.required && !(batchValues[f.fieldId] || '').trim()
+  );
 
   // Session id — regenerated when the customer taps "Upload more" after
   // finishing, so each finalize-fire is its own session.
@@ -219,6 +249,9 @@ export function CustomerPhotoSessionScreen({
       const formData = new FormData();
       formData.append('image', photo.file, photo.file.name);
       formData.append('uploadSessionId', uploadSessionId);
+      if (batchEntriesRef.current.length > 0) {
+        formData.append('vaultFormValues', JSON.stringify(batchEntriesRef.current));
+      }
 
       const res = await fetch(`/api/customer-upload/${uploadToken}/upload`, {
         method: 'POST',
@@ -575,7 +608,14 @@ export function CustomerPhotoSessionScreen({
       >
         {doneCount > 0 && (
           <Button
-            onClick={handleDone}
+            onClick={() => {
+              // Vault batches collect the org's upload fields once, up front
+              if (needsBatchPrompt && !batchCollected) {
+                setBatchSheetOpen(true);
+                return;
+              }
+              handleDone();
+            }}
             disabled={isSubmitting}
             size="sm"
             className={cn(
@@ -648,6 +688,57 @@ export function CustomerPhotoSessionScreen({
                 }
               />
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Vault batch sheet — employee name + job/account collected once per
+          batch when "I'm Done" is tapped (org-configurable, may be required) */}
+      {batchSheetOpen && (
+        <div
+          className="absolute inset-0 z-30 bg-black/60 flex items-end"
+          onClick={() => setBatchSheetOpen(false)}
+        >
+          <div
+            className="w-full bg-gray-900 rounded-t-2xl p-4 space-y-3"
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-medium text-white">Before you finish</p>
+            {batchFields.map((f) => (
+              <input
+                key={f.fieldId}
+                value={batchValues[f.fieldId] || ''}
+                onChange={(e) =>
+                  setBatchValues((prev) => ({ ...prev, [f.fieldId]: e.target.value }))
+                }
+                maxLength={500}
+                placeholder={`${f.label}${f.hint ? ` — ${f.hint}` : ''}${f.required ? ' (required)' : ''}`}
+                className={cn(
+                  'w-full text-sm bg-gray-800 border rounded-lg px-3 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none',
+                  batchShowErrors && f.required && !(batchValues[f.fieldId] || '').trim()
+                    ? 'border-red-500'
+                    : 'border-gray-700'
+                )}
+              />
+            ))}
+            {batchShowErrors && batchRequiredMissing && (
+              <p className="text-xs text-red-400">Please fill in the required fields above.</p>
+            )}
+            <Button
+              onClick={() => {
+                if (batchRequiredMissing) {
+                  setBatchShowErrors(true);
+                  return;
+                }
+                setBatchCollected(true);
+                setBatchSheetOpen(false);
+                handleDone();
+              }}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Upload photos
+            </Button>
           </div>
         </div>
       )}

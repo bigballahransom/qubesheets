@@ -403,6 +403,14 @@ export default function VaultTab({ projectId, onOpenVaultLink }) {
                       </button>
                     )}
                     <p className="text-xs text-slate-400 truncate mt-0.5">{item.name}</p>
+                    {item.vaultFormValues?.length > 0 && (
+                      <p
+                        className="text-xs text-slate-600 truncate mt-0.5"
+                        title={item.vaultFormValues.map((e) => `${e.label}: ${e.value}`).join(' · ')}
+                      >
+                        {item.vaultFormValues.map((e) => `${e.label}: ${e.value}`).join(' · ')}
+                      </p>
+                    )}
                     {item.description && (
                       <p className="text-xs text-slate-500 mt-1 line-clamp-2" title={item.description}>
                         {item.description}

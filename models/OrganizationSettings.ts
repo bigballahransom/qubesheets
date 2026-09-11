@@ -66,6 +66,28 @@ const DEFAULT_HOURLY_RATES: IHourlyRates = {
 
 export { DEFAULT_HOURLY_RATES };
 
+// Media Vault upload form — an ordered, org-editable field list (same idea
+// as the website lead form's field config). fieldIds 'title' and
+// 'description' are built-ins that map onto media.label / media.-
+// mediaDescription; every other fieldId is a custom field whose value is
+// stored on the media doc as a { fieldId, label, value } entry. An org that
+// stores an explicit [] has deleted every field (the form disappears);
+// undefined/null means "never configured" → platform defaults.
+export interface IVaultUploadFormField {
+  fieldId: string;
+  label: string;
+  hint?: string;
+  required: boolean;
+}
+export const DEFAULT_VAULT_UPLOAD_FORM_FIELDS: IVaultUploadFormField[] = [
+  { fieldId: 'title', label: 'Title', hint: 'Short label shown on the vault card', required: false },
+  { fieldId: 'description', label: 'Description', hint: 'Condition notes, contents, context', required: false },
+];
+export const resolveVaultUploadFormFields = (
+  stored?: IVaultUploadFormField[] | null
+): IVaultUploadFormField[] =>
+  Array.isArray(stored) ? stored : DEFAULT_VAULT_UPLOAD_FORM_FIELDS;
+
 
 export interface IOrganizationSettings extends Document {
   organizationId: string;
@@ -150,6 +172,11 @@ export interface IOrganizationSettings extends Document {
   photosEnabledWalkthrough?: boolean;
   photosEnabledWebForm?: boolean;
   photosEnabledVault?: boolean;
+
+  // Media Vault upload form — org-editable ordered field list applied on
+  // EVERY vault ingest surface (desktop Add Media modal, crew capture
+  // links' details sheets). See IVaultUploadFormField above.
+  vaultUploadFormFields?: IVaultUploadFormField[];
 
   // Customer Review Link (/inventory-review/[token]) display toggles. Movers
   // that don't want to expose a truck-size recommendation to customers can
@@ -324,6 +351,20 @@ const OrganizationSettingsSchema: Schema = new Schema(
     photosEnabledVault: {
       type: Boolean,
       default: true
+    },
+    // default: undefined is load-bearing — mongoose would otherwise default
+    // arrays to [], which reads as "org deleted all fields" not "unset"
+    vaultUploadFormFields: {
+      type: [
+        {
+          _id: false,
+          fieldId: { type: String, required: true },
+          label: { type: String, required: true },
+          hint: { type: String },
+          required: { type: Boolean, default: false },
+        },
+      ],
+      default: undefined,
     },
     customerReviewShowTruckSize: {
       type: Boolean,

@@ -9,7 +9,7 @@ import CustomerUpload from '@/models/CustomerUpload';
 import Branding from '@/models/Branding';
 import Template from '@/models/Template';
 import ActivityLog from '@/models/ActivityLog';
-import OrganizationSettings from '@/models/OrganizationSettings';
+import OrganizationSettings, { resolveVaultUploadFormFields } from '@/models/OrganizationSettings';
 import LeadSubmission from '@/models/LeadSubmission';
 import { isSchedulingWindowOpen } from '@/lib/leads/scheduling';
 
@@ -99,12 +99,16 @@ export async function GET(
     // Default true when no settings doc exists or the link belongs to a
     // personal account, so existing flows keep working.
     let photosEnabled = true;
+    // Vault links: which details-sheet fields the capture page shows and
+    // which are required before finishing (org-configurable, ordered).
+    let vaultUploadFormFields = resolveVaultUploadFormFields(null);
     if (customerUpload.organizationId) {
       try {
         const orgSettings = await OrganizationSettings.findOne({
           organizationId: customerUpload.organizationId
         });
         if (orgSettings) {
+          vaultUploadFormFields = resolveVaultUploadFormFields(orgSettings.vaultUploadFormFields);
           let flagValue: boolean | undefined;
           if (customerUpload.purpose === 'vault') {
             flagValue = orgSettings.photosEnabledVault;
@@ -240,6 +244,9 @@ export async function GET(
       // True for Media Vault capture links — the page swaps survey copy for
       // reference-only messaging and skips inventory-processing UI.
       isVault: customerUpload.purpose === 'vault',
+
+      // Vault details-sheet form config (ordered org-defined fields)
+      vaultUploadFormFields,
 
       // Org-level photo master switch. Default true; client hides photo
       // capture entirely when this resolves to false.

@@ -83,6 +83,7 @@ export interface ISelfServeRecordingSession extends Document {
   // annotation can happen before OR after the webhook fires.
   vaultLabel?: string;
   vaultDescription?: string;
+  vaultFormValues?: Array<{ fieldId: string; label: string; value: string }>;
 
   // Error tracking
   lastError?: string;
@@ -219,6 +220,17 @@ const SelfServeRecordingSessionSchema: Schema = new Schema(
     analysisError: { type: String },
     vaultLabel: { type: String },
     vaultDescription: { type: String },
+    vaultFormValues: {
+      type: [
+        {
+          _id: false,
+          fieldId: { type: String, required: true },
+          label: { type: String, required: true },
+          value: { type: String, required: true }
+        }
+      ],
+      default: undefined
+    },
 
     // Error tracking
     lastError: { type: String },

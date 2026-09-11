@@ -1093,6 +1093,7 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           // already be waiting on the session — carry them over.
           ...(isVault && session.vaultLabel ? { label: session.vaultLabel } : {}),
           ...(isVault && session.vaultDescription ? { mediaDescription: session.vaultDescription } : {}),
+          ...(isVault && session.vaultFormValues?.length ? { vaultFormValues: session.vaultFormValues } : {}),
           selfServeSessionId: session.sessionId,
           s3Key: finalS3Key,
           startedAt: session.startedAt || new Date(),
@@ -1237,6 +1238,7 @@ async function handleSelfServeEgressEnded(event: WebhookEvent, session: any) {
           purpose: isVault ? 'vault' : 'inventory',
           ...(isVault && session.vaultLabel ? { label: session.vaultLabel } : {}),
           ...(isVault && session.vaultDescription ? { mediaDescription: session.vaultDescription } : {}),
+          ...(isVault && session.vaultFormValues?.length ? { vaultFormValues: session.vaultFormValues } : {}),
           selfServeSessionId: session.sessionId,
           s3Key: session.s3Key,
           startedAt: session.startedAt || new Date(),

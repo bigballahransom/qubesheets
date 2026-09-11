@@ -88,6 +88,15 @@ interface SelfServeRecorderLiveKitProps {
   walkthroughReturnUrl?: string;
   /** Media Vault capture — reference-only copy, no "AI is analyzing" promises. */
   isVault?: boolean;
+  /** Vault details-sheet form config from the link's validate API — the
+   *  org's ordered field list ('title'/'description' are built-ins, the
+   *  rest are custom fields). */
+  vaultUploadFormFields?: Array<{
+    fieldId: string;
+    label: string;
+    hint?: string;
+    required: boolean;
+  }>;
   /** Which recording engine to use (from the upload link's validate API).
    *  'local' — on-device MediaRecorder → IndexedDB → resumable S3 multipart
    *  upload: capture survives dead spots entirely (walkthrough links).
@@ -106,6 +115,7 @@ export function SelfServeRecorderLiveKit({
   companyName,
   walkthroughReturnUrl,
   isVault,
+  vaultUploadFormFields,
   captureEngine
 }: SelfServeRecorderLiveKitProps) {
   const router = useRouter();
@@ -120,12 +130,68 @@ export function SelfServeRecorderLiveKit({
     const requested = param === 'livekit' ? false : (captureEngine === 'local' || param === 'local');
     return requested && SelfServeLocalRecorder.isSupported();
   });
-  // Vault-only: optional title/description typed on the completion screen,
-  // saved to the session via vault-annotate (the webhook copies them onto
-  // the VideoRecording it creates).
+  // Vault-only: details typed on the completion screen, saved to the session
+  // via vault-annotate (the webhook copies them onto the VideoRecording it
+  // creates). Which fields show / are required comes from the org setting.
   const [vaultTitle, setVaultTitle] = useState('');
   const [vaultDesc, setVaultDesc] = useState('');
+  const [vaultCustom, setVaultCustom] = useState<Record<string, string>>({});
   const [vaultSaveState, setVaultSaveState] = useState('idle'); // idle | saving | saved
+  const [vaultShowErrors, setVaultShowErrors] = useState(false);
+  // The org's ordered field list ('title'/'description' built-ins map to
+  // vaultTitle/vaultDesc; the rest are custom fields in vaultCustom)
+  const vaultFormFields = vaultUploadFormFields ?? [
+    { fieldId: 'title', label: 'Title', hint: 'e.g. Walk-in, Job 65503', required: false },
+    { fieldId: 'description', label: 'Description', hint: 'condition notes, contents, context', required: false },
+  ];
+  const vaultFieldValue = (f: { fieldId: string }) =>
+    f.fieldId === 'title' ? vaultTitle : f.fieldId === 'description' ? vaultDesc : vaultCustom[f.fieldId] || '';
+  const vaultRequiredMissing =
+    !!isVault && vaultFormFields.some((f) => f.required && !vaultFieldValue(f).trim());
+  const vaultAnyRequired = !!isVault && vaultFormFields.some((f) => f.required);
+  const vaultAnyValue = vaultFormFields.some((f) => vaultFieldValue(f).trim());
+
+  const saveVaultDetails = async (): Promise<boolean> => {
+    if (!isVault || !sessionId) return true;
+    if (vaultSaveState === 'saving') return false;
+    if (!vaultAnyValue) return true;
+    setVaultSaveState('saving');
+    try {
+      const r = await fetch(`/api/customer-upload/${uploadToken}/vault-annotate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'session',
+          id: sessionId,
+          label: vaultTitle.trim(),
+          description: vaultDesc.trim(),
+          vaultFormValues: vaultFormFields
+            .filter((f) => f.fieldId !== 'title' && f.fieldId !== 'description')
+            .map((f) => ({ fieldId: f.fieldId, label: f.label, value: (vaultCustom[f.fieldId] || '').trim() }))
+            .filter((e) => e.value),
+        }),
+      });
+      setVaultSaveState(r.ok ? 'saved' : 'idle');
+      return r.ok;
+    } catch {
+      setVaultSaveState('idle');
+      return false;
+    }
+  };
+
+  // Leaving the vault completion screen implicitly saves whatever was typed
+  // (best-effort) so filled-but-unsaved details are never lost.
+  const exitVaultCompletion = (proceed: () => void) => {
+    if (isVault && vaultRequiredMissing) {
+      setVaultShowErrors(true);
+      return;
+    }
+    if (isVault && vaultSaveState === 'idle') {
+      saveVaultDetails().finally(proceed);
+      return;
+    }
+    proceed();
+  };
 
   const [videoReady, setVideoReady] = useState(false);
 
@@ -1587,45 +1653,61 @@ export function SelfServeRecorderLiveKit({
             </p>
           )}
 
-          {/* Vault-only: optional title + description for this recording */}
+          {/* Vault-only: details for this recording. Field visibility and
+              required-ness come from the org's Media Vault settings. */}
           {isVault && (
             <div className="w-full bg-gray-800 rounded-lg p-4 mb-6 text-left space-y-2">
-              <p className="text-sm font-medium text-gray-300">Add details (optional)</p>
-              <input
-                value={vaultTitle}
-                onChange={(e) => { setVaultTitle(e.target.value); setVaultSaveState('idle'); }}
-                placeholder="Title — e.g. Walk-in, Job 65503"
-                className="w-full text-sm bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-              <textarea
-                value={vaultDesc}
-                onChange={(e) => { setVaultDesc(e.target.value); setVaultSaveState('idle'); }}
-                placeholder="Description — condition notes, contents, context"
-                rows={2}
-                className="w-full text-sm bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              />
+              <p className="text-sm font-medium text-gray-300">
+                {vaultAnyRequired ? 'Add details' : 'Add details (optional)'}
+              </p>
+              {vaultFormFields.map((f) => {
+                const value = vaultFieldValue(f);
+                const hasError = vaultShowErrors && f.required && !value.trim();
+                const placeholder = `${f.label}${f.hint ? ` — ${f.hint}` : ''}${f.required ? ' (required)' : ''}`;
+                const inputClass = cn(
+                  'w-full text-sm bg-gray-900 border rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none',
+                  hasError ? 'border-red-500' : 'border-gray-700'
+                );
+                const onChange = (raw: string) => {
+                  if (f.fieldId === 'title') setVaultTitle(raw);
+                  else if (f.fieldId === 'description') setVaultDesc(raw);
+                  else setVaultCustom((prev) => ({ ...prev, [f.fieldId]: raw }));
+                  setVaultSaveState('idle');
+                };
+                return f.fieldId === 'description' ? (
+                  <textarea
+                    key={f.fieldId}
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    maxLength={1000}
+                    placeholder={placeholder}
+                    rows={2}
+                    className={cn(inputClass, 'resize-none')}
+                  />
+                ) : (
+                  <input
+                    key={f.fieldId}
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    maxLength={f.fieldId === 'title' ? 200 : 500}
+                    placeholder={placeholder}
+                    className={inputClass}
+                  />
+                );
+              })}
+              {vaultShowErrors && vaultRequiredMissing && (
+                <p className="text-xs text-red-400">Please fill in the required fields above.</p>
+              )}
               <Button
-                onClick={async () => {
-                  if (vaultSaveState === 'saving' || (!vaultTitle.trim() && !vaultDesc.trim())) return;
-                  setVaultSaveState('saving');
-                  try {
-                    const r = await fetch(`/api/customer-upload/${uploadToken}/vault-annotate`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        kind: 'session',
-                        id: sessionId,
-                        label: vaultTitle.trim(),
-                        description: vaultDesc.trim(),
-                      }),
-                    });
-                    setVaultSaveState(r.ok ? 'saved' : 'idle');
-                  } catch {
-                    setVaultSaveState('idle');
+                onClick={() => {
+                  if (vaultRequiredMissing) {
+                    setVaultShowErrors(true);
+                    return;
                   }
+                  saveVaultDetails();
                 }}
                 size="sm"
-                disabled={vaultSaveState === 'saving' || (!vaultTitle.trim() && !vaultDesc.trim())}
+                disabled={vaultSaveState === 'saving' || !vaultAnyValue}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white"
               >
                 {vaultSaveState === 'saving'
@@ -1681,7 +1763,7 @@ export function SelfServeRecorderLiveKit({
           {walkthroughReturnUrl ? (
             <>
               <Button
-                onClick={() => router.push(walkthroughReturnUrl)}
+                onClick={() => exitVaultCompletion(() => router.push(walkthroughReturnUrl))}
                 size="lg"
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white mb-3"
               >
@@ -1689,7 +1771,7 @@ export function SelfServeRecorderLiveKit({
               </Button>
               {onCancel && (
                 <Button
-                  onClick={onCancel}
+                  onClick={() => exitVaultCompletion(onCancel)}
                   variant="outline"
                   size="lg"
                   className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"
@@ -1706,7 +1788,7 @@ export function SelfServeRecorderLiveKit({
               <div className="w-full pt-6 border-t border-gray-800">
                 <p className="text-sm text-gray-400 mb-3">Not finished?</p>
                 <Button
-                  onClick={onCancel}
+                  onClick={() => exitVaultCompletion(onCancel)}
                   variant="outline"
                   size="lg"
                   className="w-full bg-transparent border-gray-700 hover:bg-gray-800 text-white"

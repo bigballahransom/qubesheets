@@ -19,6 +19,7 @@ import { uploadFileToS3 } from '@/lib/s3Upload';
 import { sendImageProcessingMessage, sendVideoProcessingMessage } from '@/lib/sqsUtils';
 import { convertMovToMp4, needsMovConversion } from '@/lib/videoConversion';
 import { logUploadActivity } from '@/lib/activity-logger';
+import { sanitizeVaultFormValues } from '@/lib/vaultUploadForm';
 import sharp from 'sharp';
 
 // Helper function to detect video files server-side - Updated for Gemini API compatibility
@@ -203,6 +204,10 @@ export async function POST(
     const uploadSessionId = typeof uploadSessionIdRaw === 'string' && uploadSessionIdRaw.length > 0
       ? uploadSessionIdRaw
       : undefined;
+    // Custom vault form answers (org-defined fields), sent once per batch by
+    // the capture page and stamped onto every photo/video in it. JSON array
+    // of { fieldId, label, value }.
+    const vaultFormValues = sanitizeVaultFormValues(formData.get('vaultFormValues'));
 
     console.log('📁 File received:', image?.name, 'Size:', image?.size, uploadSessionId ? `(session=${uploadSessionId.slice(0, 8)}…)` : '');
 
@@ -371,6 +376,7 @@ export async function POST(
           source: 'customer_upload',
           purpose: isVault ? 'vault' : 'inventory',
           processingStatus: isVault ? 'skipped' : 'queued',
+          ...(isVault && vaultFormValues ? { vaultFormValues } : {}),
           s3RawFile: {
             key: s3Result.key,
             bucket: s3Result.bucket,
@@ -622,6 +628,7 @@ export async function POST(
         source: 'customer_upload',
         purpose: isVault ? 'vault' : 'inventory',
         processingStatus: isVault ? 'skipped' : 'queued',
+        ...(isVault && vaultFormValues ? { vaultFormValues } : {}),
         // Tag with the customer's batched-upload session if present. The
         // /upload-session/finish endpoint groups photos by this id.
         ...(uploadSessionId ? { uploadSessionId } : {}),

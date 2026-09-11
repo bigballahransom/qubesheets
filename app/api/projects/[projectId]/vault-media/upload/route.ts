@@ -13,6 +13,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import Image from '@/models/Image';
 import { uploadFileToS3 } from '@/lib/s3Upload';
+import { sanitizeVaultFormValues } from '@/lib/vaultUploadForm';
 
 export async function POST(
   request: NextRequest,
@@ -40,6 +41,8 @@ export async function POST(
     const descriptionRaw = formData.get('description');
     const mediaDescription =
       typeof descriptionRaw === 'string' ? descriptionRaw.trim().slice(0, 1000) : '';
+    // Custom vault form answers — JSON array of { fieldId, label, value }
+    const vaultFormValues = sanitizeVaultFormValues(formData.get('vaultFormValues'));
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
@@ -94,6 +97,7 @@ export async function POST(
     };
     if (label) doc.label = label;
     if (mediaDescription) doc.mediaDescription = mediaDescription;
+    if (vaultFormValues) doc.vaultFormValues = vaultFormValues;
     if (!authContext.isPersonalAccount) doc.organizationId = authContext.organizationId;
 
     const inserted = await Image.collection.insertOne(doc);
