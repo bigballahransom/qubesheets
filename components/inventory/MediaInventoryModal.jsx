@@ -218,6 +218,11 @@ export default function MediaInventoryModal({
   extrasSlot,
   analysisSlot,
   notesSlot,
+  // Optional "Photos" pane (call photos snapped during a virtual call).
+  // paneSignal {pane, nonce} lets the caller switch the active pane from
+  // outside (timeline pin click → open the Photos pane).
+  photosSlot = null,
+  paneSignal = null,
 
   navigation = null,
 
@@ -358,11 +363,16 @@ export default function MediaInventoryModal({
   useEffect(() => {
     setActivePane('inventory');
   }, [media?.id]);
+  // Caller-driven pane switch (e.g. clicking a photo pin on the timeline)
+  useEffect(() => {
+    if (paneSignal?.pane) setActivePane(paneSignal.pane);
+  }, [paneSignal?.nonce]);
   const effectivePane =
     activePane === 'notes' && notesSlot ? 'notes'
     : activePane === 'comments' && showComments ? 'comments'
+    : activePane === 'photos' && photosSlot ? 'photos'
     : 'inventory';
-  const paneCount = 1 + (notesSlot ? 1 : 0) + (showComments ? 1 : 0);
+  const paneCount = 1 + (notesSlot ? 1 : 0) + (showComments ? 1 : 0) + (photosSlot ? 1 : 0);
 
   const pausePlayer = commentsIsVideo && media?.videoRef
     ? () => media.videoRef?.current?.pause?.()
@@ -381,9 +391,15 @@ export default function MediaInventoryModal({
 
   const paneTabsBar = paneCount > 1 ? (
     <Tabs value={effectivePane} onValueChange={setActivePane} className="w-full">
-      <TabsList className={cn('grid w-full', paneCount === 3 ? 'grid-cols-3' : 'grid-cols-2')}>
+      <TabsList
+        className={cn(
+          'grid w-full',
+          paneCount === 4 ? 'grid-cols-4' : paneCount === 3 ? 'grid-cols-3' : 'grid-cols-2'
+        )}
+      >
         <TabsTrigger value="inventory">Inventory</TabsTrigger>
         {notesSlot && <TabsTrigger value="notes">Notes</TabsTrigger>}
+        {photosSlot && <TabsTrigger value="photos">Photos</TabsTrigger>}
         {showComments && <TabsTrigger value="comments">Comments</TabsTrigger>}
       </TabsList>
     </Tabs>
@@ -402,6 +418,9 @@ export default function MediaInventoryModal({
       {effectivePane === 'notes' && (
         <div className="flex-1 min-h-0 overflow-y-auto p-4">{notesSlot}</div>
       )}
+      {effectivePane === 'photos' && (
+        <div className="flex-1 min-h-0 overflow-y-auto">{photosSlot}</div>
+      )}
       {effectivePane === 'comments' && (
         <div className="flex-1 min-h-0">{commentsPanel}</div>
       )}
@@ -417,6 +436,7 @@ export default function MediaInventoryModal({
       {/* notesSlot content is often h-full (built for the panel layouts) —
           give it a real height in the inline stack flow */}
       {effectivePane === 'notes' && <div className="min-h-[320px]">{notesSlot}</div>}
+      {effectivePane === 'photos' && <div className="min-h-[320px]">{photosSlot}</div>}
       {effectivePane === 'comments' && (
         <div className="h-[420px] border rounded-lg overflow-hidden">{commentsPanel}</div>
       )}

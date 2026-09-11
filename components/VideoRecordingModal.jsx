@@ -21,7 +21,8 @@ import {
   Quote,
   RotateCcw,
   RotateCw,
-  Plus
+  Plus,
+  Camera
 } from 'lucide-react';
 import VideoChapters, { hasVideoChapters } from './video/VideoChapters';
 import { useVideoChapters, computeOffsetSeconds } from '@/lib/hooks/useVideoChapters';
@@ -34,6 +35,64 @@ import { toast } from 'sonner';
 import VideoCallNotes from './VideoCallNotes';
 import { ToggleGoingBadge } from './ui/ToggleGoingBadge';
 import MediaInventoryModal from '@/components/inventory/MediaInventoryModal';
+import CallPhotosPanel from './video/CallPhotosPanel';
+
+// Timeline marker for a photo the agent snapped during the call. Hover shows
+// an interactive thumbnail popover; clicking either opens the photo in the
+// Photos pane (and seeks). pointerdown must be stopped or the Radix Slider
+// underneath treats the click as a scrub.
+const PhotoPin = ({ photo, leftPercent, timeLabel, onOpen }) => {
+  const [hovered, setHovered] = useState(false);
+  const closeTimerRef = useRef(null);
+  const enter = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    setHovered(true);
+  };
+  const leave = () => {
+    closeTimerRef.current = setTimeout(() => setHovered(false), 150);
+  };
+  return (
+    <div
+      className="absolute -top-4 -translate-x-1/2 z-40"
+      style={{ left: leftPercent }}
+      onMouseEnter={enter}
+      onMouseLeave={leave}
+    >
+      <button
+        type="button"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpen();
+        }}
+        title={photo.label || 'Call photo'}
+        className="w-4 h-4 rounded-full bg-amber-400 border border-white shadow flex items-center justify-center hover:scale-125 transition-transform"
+      >
+        <Camera className="w-2.5 h-2.5 text-black/80" />
+      </button>
+      {hovered && (
+        <div
+          className="absolute bottom-6 left-1/2 -translate-x-1/2 w-44 bg-black/90 rounded-lg p-2 z-50 cursor-pointer"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
+          {photo.streamUrl && (
+            <img
+              src={photo.streamUrl}
+              alt={photo.label || 'Call photo'}
+              className="w-full h-24 object-cover rounded-md mb-1.5"
+            />
+          )}
+          <p className="text-white text-xs font-medium truncate">{photo.label || 'Call photo'}</p>
+          {timeLabel && <p className="text-white/60 text-[10px] mt-0.5">{timeLabel}</p>}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryItems = [], onInventoryUpdate, initialItem = null, onAddStockItem = null, navigation = null }) => {
   const videoRef = useRef(null);
@@ -123,6 +182,66 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
     videoRef.current.currentTime = timeSec;
     setCurrentTime(timeSec);
   };
+
+  // ─── Call photos (snapped by the agent during the call) ──────────
+  // Rendered as pins on the scrub bar + a Photos pane in the secondary tabs.
+  const [callPhotos, setCallPhotos] = useState([]);
+  const [focusPhotoId, setFocusPhotoId] = useState(null);
+  const [paneSignal, setPaneSignal] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen || !projectId || !recording?.roomId) {
+      setCallPhotos([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/call-photos?roomId=${encodeURIComponent(recording.roomId)}`)
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((data) => {
+        if (!cancelled) setCallPhotos(data.items || []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, projectId, recording?.roomId, recording?.source]);
+
+  // Offset of a photo into THIS recording. Prefer the stored
+  // capturedAtSeconds: it comes from the recording's own clock (virtual:
+  // server-computed from startedAt; walkthroughs: the recorder's pause-aware
+  // timer — wall-clock math would drift there). Only recompute from wall
+  // clock when the photo belongs to a DIFFERENT recording doc (virtual-call
+  // egress auto-restart chain).
+  const photoOffset = useCallback(
+    (p) => {
+      const belongsHere =
+        !p.sourceVideoRecordingId || String(p.sourceVideoRecordingId) === String(rec?._id);
+      let off = null;
+      if (belongsHere && p.capturedAtSeconds != null) {
+        off = p.capturedAtSeconds;
+      } else if (p.capturedAt && rec?.startedAt) {
+        off = (new Date(p.capturedAt).getTime() - new Date(rec.startedAt).getTime()) / 1000;
+      } else if (p.capturedAtSeconds != null) {
+        off = p.capturedAtSeconds;
+      }
+      if (off == null) return null;
+      off = Math.max(0, off);
+      if (duration > 0) off = Math.min(off, duration);
+      return off;
+    },
+    [rec, duration]
+  );
+
+  const openPhotoPane = useCallback(
+    (photo) => {
+      const off = photoOffset(photo);
+      if (off != null) seekTo(off);
+      setFocusPhotoId(photo.id);
+      setPaneSignal({ pane: 'photos', nonce: Date.now() });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [photoOffset]
+  );
 
   // Auto-hide controls after inactivity
   const resetControlsTimeout = () => {
@@ -587,6 +706,20 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
                         title={chapter.room}
                       />
                     ))}
+                    {/* Call-photo pins — hover for a preview, click to open in the Photos pane */}
+                    {duration > 0 && callPhotos.map((photo) => {
+                      const off = photoOffset(photo);
+                      if (off == null) return null;
+                      return (
+                        <PhotoPin
+                          key={photo.id}
+                          photo={photo}
+                          leftPercent={`${Math.min(100, (off / duration) * 100)}%`}
+                          timeLabel={formatTime(off)}
+                          onOpen={() => openPhotoPane(photo)}
+                        />
+                      );
+                    })}
                   </div>
 
                   {/* Control Buttons */}
@@ -833,6 +966,21 @@ const VideoRecordingModal = ({ recording, projectId, isOpen, onClose, inventoryI
           />
         </div>
       }
+      photosSlot={
+        callPhotos.length > 0 ? (
+          <CallPhotosPanel
+            projectId={projectId}
+            roomId={recording.roomId}
+            focusPhotoId={focusPhotoId}
+            onPhotoSeek={(photo) => {
+              const off = photoOffset(photo);
+              if (off != null) seekTo(off);
+            }}
+            onPhotosChange={setCallPhotos}
+          />
+        ) : null
+      }
+      paneSignal={paneSignal}
       renderRoomExtras={(room) => (
         getRoomSegments(room).length > 0 ? (
           <button

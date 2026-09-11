@@ -447,3 +447,12 @@
     min-height: 44px;
   }
 }
+/* Call-photo snap flash — brief white blink over a video tile */
+@keyframes snapflash {
+  0% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+.animate-snapflash {
+  animation: snapflash 300ms ease-out forwards;
+}

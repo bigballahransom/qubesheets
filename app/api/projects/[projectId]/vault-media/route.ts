@@ -14,6 +14,14 @@ import { getAuthContext, getOrgFilter, getProjectFilter } from '@/lib/auth-helpe
 import { getS3SignedUrl, deleteS3File } from '@/lib/s3Upload';
 import { sendVideoProcessingMessage, sendImageProcessingMessage } from '@/lib/sqsUtils';
 
+// Image.source → badge kind for photos snapped during recorded sessions
+const CAPTURE_KIND_BY_SOURCE: Record<string, string> = {
+  call_capture: 'call',
+  self_serve_capture: 'self_serve',
+  onsite_capture: 'on_site',
+  vault_capture: 'crew',
+};
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
@@ -96,6 +104,8 @@ export async function GET(
         createdAt: r.createdAt,
         mediaType: 'video' as const,
         streamUrl: signOrNull(r.s3Key),
+        // Lets the viewer fetch photos snapped during this recording
+        roomId: r.roomId || null,
       })),
       ...images.map((img: any) => {
         // Signed URL for S3-backed images; legacy data-only images fall
@@ -118,6 +128,10 @@ export async function GET(
           createdAt: img.createdAt,
           mediaType: 'image' as const,
           streamUrl,
+          // Snapped during a recorded session — drives the per-mode badge
+          // ('call' | 'self_serve' | 'on_site' | 'crew' | null)
+          captureKind: CAPTURE_KIND_BY_SOURCE[img.source as string] || null,
+          isCallPhoto: img.source === 'call_capture',
         };
       }),
     ].sort(

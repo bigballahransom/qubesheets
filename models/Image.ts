@@ -54,6 +54,15 @@ export interface IImage extends Document {
   // Free-form upload metadata; metadata.uploadToken links a customer photo
   // back to its CustomerUpload doc (used to label on-site walkthrough photos).
   metadata?: Record<string, unknown>;
+  // Virtual-call photo linkage — set only when source === 'call_capture'
+  // (agent snapped a customer video feed during a live call). capturedAtSeconds
+  // is the offset from VideoRecording.startedAt of the recording that was
+  // canonical at snap time; capturedAt (wall clock) is the source of truth
+  // when rendering against a different recording doc.
+  roomId?: string;
+  sourceVideoRecordingId?: string;
+  capturedAt?: Date;
+  capturedAtSeconds?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -103,7 +112,13 @@ const ImageSchema: Schema = new Schema(
     uploadSessionId: { type: String, required: false, index: true },
     // Upload provenance + metadata — see interface comment.
     source: { type: String, required: false },
-    metadata: { type: Schema.Types.Mixed, required: false }
+    metadata: { type: Schema.Types.Mixed, required: false },
+    // Virtual-call photo linkage — see interface comment. Writers must use
+    // raw collection inserts (schema-cache trap strips new fields otherwise).
+    roomId: { type: String, required: false, index: true },
+    sourceVideoRecordingId: { type: String, required: false },
+    capturedAt: { type: Date, required: false },
+    capturedAtSeconds: { type: Number, required: false }
   },
   { timestamps: true }
 );

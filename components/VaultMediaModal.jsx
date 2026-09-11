@@ -79,6 +79,25 @@ export default function VaultMediaModal({
 
   const itemKey = item ? `${item.kind}-${item.id}` : null;
 
+  // Photos snapped during this recording (crew/self-serve shutter). Native
+  // <video controls> can't host timeline pins, so they render as a strip of
+  // thumbnails with seek chips under the player instead.
+  const [sessionPhotos, setSessionPhotos] = useState([]);
+  useEffect(() => {
+    setSessionPhotos([]);
+    if (!projectId || item?.kind !== 'recording' || !item?.roomId) return;
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/call-photos?roomId=${encodeURIComponent(item.roomId)}`)
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((data) => {
+        if (!cancelled) setSessionPhotos(data.items || []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, item?.kind, item?.id, item?.roomId]);
+
   const fetchComments = useCallback(async () => {
     if (!item) return;
     setComments(null);
@@ -245,26 +264,55 @@ export default function VaultMediaModal({
         {/* Body: media + comments */}
         <div className="flex-1 flex flex-col md:flex-row min-h-0">
           {/* Media pane with nav arrows */}
-          <div className="relative flex-1 bg-slate-950 flex items-center justify-center min-h-[240px]">
-            {item.mediaType === 'video' ? (
-              <video
-                key={itemKey}
-                ref={videoRef}
-                src={item.streamUrl}
-                controls
-                preload="metadata"
-                className="max-w-full max-h-full"
-              />
-            ) : item.streamUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={itemKey}
-                src={item.streamUrl}
-                alt={item.label || item.name}
-                className="max-w-full max-h-full object-contain"
-              />
-            ) : (
-              <p className="text-slate-500 text-sm">Preview unavailable</p>
+          <div className="relative flex-1 bg-slate-950 flex flex-col min-h-[240px]">
+            <div className="flex-1 min-h-0 flex items-center justify-center">
+              {item.mediaType === 'video' ? (
+                <video
+                  key={itemKey}
+                  ref={videoRef}
+                  src={item.streamUrl}
+                  controls
+                  preload="metadata"
+                  className="max-w-full max-h-full"
+                />
+              ) : item.streamUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={itemKey}
+                  src={item.streamUrl}
+                  alt={item.label || item.name}
+                  className="max-w-full max-h-full object-contain"
+                />
+              ) : (
+                <p className="text-slate-500 text-sm">Preview unavailable</p>
+              )}
+            </div>
+
+            {/* Photos snapped during this recording — chip seeks the player */}
+            {item.mediaType === 'video' && sessionPhotos.length > 0 && (
+              <div className="shrink-0 px-3 py-2 bg-black/60 border-t border-white/10">
+                <p className="text-[11px] text-slate-400 mb-1.5">
+                  Photos from this recording — tap to jump there
+                </p>
+                <div className="flex gap-2 overflow-x-auto">
+                  {sessionPhotos.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => p.capturedAtSeconds != null && seekTo(p.capturedAtSeconds)}
+                      className="relative shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-white/20 hover:border-white/70 transition-colors"
+                      title={p.label || 'Photo'}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.streamUrl} alt="" className="w-full h-full object-cover" />
+                      {p.capturedAtSeconds != null && (
+                        <span className="absolute bottom-0 inset-x-0 bg-black/70 text-white text-[9px] font-mono text-center leading-tight">
+                          {formatTimestamp(p.capturedAtSeconds)}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {index > 0 && (

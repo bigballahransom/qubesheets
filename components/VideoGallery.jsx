@@ -941,10 +941,12 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   // Handle video selection - use VideoRecordingModal for self-serve, Dialog for uploads
   const handleVideoSelect = (video) => {
     if (video._type === 'self_serve_recording') {
-      // Transform to VideoRecording format for VideoRecordingModal
+      // Transform to VideoRecording format for VideoRecordingModal.
+      // roomId must be the REAL room name (video.roomId) — the modal fetches
+      // snapped photos by it; the synthetic name never matches any photo.
       const recordingData = {
         _id: video._id,
-        roomId: video.name || `self-serve-${video._id}`,
+        roomId: video.roomId || video.name || `self-serve-${video._id}`,
         source: 'self_serve',
         selfServeSessionId: video.selfServeSessionId,
         s3Key: video.s3RawFile?.key,

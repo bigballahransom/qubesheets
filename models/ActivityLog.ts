@@ -1,7 +1,7 @@
 // models/ActivityLog.ts - Activity tracking for projects
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type ActivityType = 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'review_link_signed' | 'crew_link_shared' | 'project_created' | 'media_comment' | 'share_link_created';
+export type ActivityType = 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'review_link_signed' | 'crew_link_shared' | 'project_created' | 'media_comment' | 'share_link_created' | 'call_photo';
 export type UploadSource = 'admin' | 'customer' | 'video_call' | 'inventory_upload';
 
 export interface IActivityDetails {
@@ -54,6 +54,9 @@ export interface IActivityDetails {
   commentText?: string;
   commentSource?: 'internal' | 'external';
   timestampSeconds?: number;
+
+  // For call_photo: which capture surface snapped it
+  captureMode?: 'call' | 'self_serve' | 'on_site' | 'crew';
   
   // Common fields
   userName?: string;
@@ -92,7 +95,7 @@ const ActivityLogSchema: Schema = new Schema(
     },
     activityType: {
       type: String,
-      enum: ['upload', 'inventory_update', 'video_call', 'video_call_scheduled', 'upload_link_sent', 'upload_link_visited', 'note_activity', 'review_link_shared', 'review_link_signed', 'crew_link_shared', 'project_created', 'media_comment', 'share_link_created'],
+      enum: ['upload', 'inventory_update', 'video_call', 'video_call_scheduled', 'upload_link_sent', 'upload_link_visited', 'note_activity', 'review_link_shared', 'review_link_signed', 'crew_link_shared', 'project_created', 'media_comment', 'share_link_created', 'call_photo'],
       required: true,
       index: true
     },

@@ -34,7 +34,7 @@ interface ActivityLogProps {
 
 interface Activity {
   _id: string;
-  activityType: 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'review_link_signed' | 'crew_link_shared' | 'media_comment' | 'share_link_created';
+  activityType: 'upload' | 'inventory_update' | 'video_call' | 'video_call_scheduled' | 'upload_link_sent' | 'upload_link_visited' | 'note_activity' | 'review_link_shared' | 'review_link_signed' | 'crew_link_shared' | 'media_comment' | 'share_link_created' | 'call_photo';
   action: string;
   details: {
     fileName?: string;
@@ -136,6 +136,8 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
         return <MessageSquare className="w-4 h-4 text-blue-600" />;
       case 'share_link_created':
         return <ExternalLink className="w-4 h-4 text-indigo-600" />;
+      case 'call_photo':
+        return <Camera className="w-4 h-4 text-amber-600" />;
       case 'video_call_scheduled':
         if (activity.action === 'cancelled') {
           return <CalendarX className="w-4 h-4 text-red-600" />;
@@ -275,6 +277,32 @@ export default function ActivityLog({ projectId, onClose, embedded = false }: Ac
             <span className="font-medium"> {activity.details.mediaName || 'media'}</span>
           </span>
         );
+
+      case 'call_photo': {
+        // mediaName is the auto label ("Call photo M:SS") — rendering it plus
+        // the timestamp would repeat the time, so show just the timestamp.
+        // Walkthrough/crew snaps carry the link's customerName in userName
+        // (the snapper isn't a Clerk user).
+        const mode = (activity.details as any).captureMode;
+        const isWalkthroughSnap = mode === 'self_serve' || mode === 'on_site' || mode === 'crew';
+        const who = isWalkthroughSnap
+          ? activity.details.userName || 'Customer'
+          : userName;
+        const noun =
+          mode === 'crew' ? 'a photo during a vault recording'
+          : isWalkthroughSnap ? 'a photo during the walkthrough'
+          : 'a call photo';
+        const ts =
+          typeof activity.details.timestampSeconds === 'number'
+            ? ` at ${Math.floor(activity.details.timestampSeconds / 60)}:${String(Math.floor(activity.details.timestampSeconds % 60)).padStart(2, '0')} into the ${isWalkthroughSnap ? 'recording' : 'call'}`
+            : '';
+        return (
+          <span>
+            <strong>{who}</strong> snapped {noun}
+            {ts && <span className="text-gray-500">{ts}</span>}
+          </span>
+        );
+      }
 
       case 'video_call_scheduled':
         const formatScheduledDate = (dateStr: string, tz?: string) => {

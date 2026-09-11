@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Loader2, RefreshCw, Pencil, Check, X, QrCode, Sparkles, Film, ImageIcon, FolderInput, Search, Folder, Share2, MessageSquare, MoreVertical, Maximize2, Upload, Trash2, Link2
+  Loader2, RefreshCw, Pencil, Check, X, QrCode, Sparkles, Film, ImageIcon, FolderInput, Search, Folder, Share2, MessageSquare, MoreVertical, Maximize2, Upload, Trash2, Link2, Camera
 } from 'lucide-react';
 import SafeIcon from '@/components/icons/SafeIcon';
 import VaultMediaModal from '@/components/VaultMediaModal';
@@ -33,6 +33,15 @@ const formatDate = (d) =>
   new Date(d).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit'
   });
+
+// Badges for photos snapped during recorded sessions. Purple/blue match the
+// gallery's Self-Serve / On-Site convention.
+const CAPTURE_BADGES = {
+  call: { label: 'Call photo', className: 'text-amber-700 bg-amber-100' },
+  self_serve: { label: 'Self-serve photo', className: 'text-purple-700 bg-purple-100' },
+  on_site: { label: 'On-site photo', className: 'text-blue-700 bg-blue-100' },
+  crew: { label: 'Crew photo', className: 'text-emerald-700 bg-emerald-100' },
+};
 
 export default function VaultTab({ projectId, onOpenVaultLink }) {
   const [items, setItems] = useState([]);
@@ -400,10 +409,17 @@ export default function VaultTab({ projectId, onOpenVaultLink }) {
                       </p>
                     )}
                   </div>
-                  <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">
-                    {item.mediaType === 'video' ? <Film size={10} /> : <ImageIcon size={10} />}
-                    Vault
-                  </span>
+                  {CAPTURE_BADGES[item.captureKind] ? (
+                    <span className={`flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0 ${CAPTURE_BADGES[item.captureKind].className}`}>
+                      <Camera size={10} />
+                      {CAPTURE_BADGES[item.captureKind].label}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex-shrink-0">
+                      {item.mediaType === 'video' ? <Film size={10} /> : <ImageIcon size={10} />}
+                      Vault
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between mt-auto pt-1">

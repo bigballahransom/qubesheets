@@ -129,6 +129,25 @@ export function SelfServeRecorderLiveKit({
 
   const [videoReady, setVideoReady] = useState(false);
 
+  // Photos snapped from the live preview while recording. Saved server-side
+  // immediately (Media Vault, linked to this recording session); this state
+  // only powers the in-recorder strip + edit sheet.
+  type SnapPhoto = {
+    id: string;
+    url: string;
+    label: string | null;
+    description: string | null;
+    capturedAtSeconds: number | null;
+  };
+  const [snapPhotos, setSnapPhotos] = useState<SnapPhoto[]>([]);
+  const [snapFlash, setSnapFlash] = useState(false);
+  const [snapBusy, setSnapBusy] = useState(false);
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
+  const [photoEditTitle, setPhotoEditTitle] = useState('');
+  const [photoEditDesc, setPhotoEditDesc] = useState('');
+  const [photoEditBusy, setPhotoEditBusy] = useState(false);
+  const [deletingPhotoIds, setDeletingPhotoIds] = useState<Set<string>>(new Set());
+
   // Tell the server "the recorder UI mounted on this device" so we can see
   // who's hitting the page even if they never tap Start (or if init crashes
   // somewhere we don't catch).
@@ -223,6 +242,200 @@ export function SelfServeRecorderLiveKit({
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // ─── Snap photos while recording ──────────────────────────────────
+  // Grabs a frame from the live preview <video> and uploads it as vault
+  // media linked to this session. capturedAtSeconds uses the hook's
+  // `duration` counter (pause-aware on the local engine) — NOT wall clock —
+  // so playback pins line up with the recorded video.
+  const snapPhoto = async () => {
+    const video = videoRef.current;
+    if (!video || !recordingStarted || !sessionId || snapBusy) return;
+    setSnapFlash(true);
+    setTimeout(() => setSnapFlash(false), 300);
+    setSnapBusy(true);
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob: Blob | null = await new Promise((resolve) =>
+        canvas.toBlob(resolve, 'image/jpeg', 0.8)
+      );
+      if (!blob) return;
+      const capturedAtSeconds = duration;
+      const localUrl = URL.createObjectURL(blob);
+      const fd = new FormData();
+      fd.append(
+        'file',
+        new File([blob], `walkthrough-photo-${Date.now()}.jpg`, { type: 'image/jpeg' })
+      );
+      fd.append('sessionId', sessionId);
+      fd.append('capturedAtSeconds', String(capturedAtSeconds));
+      const res = await fetch(`/api/self-serve/${uploadToken}/snap-photo`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSnapPhotos((prev) => [
+          ...prev,
+          {
+            id: data.imageId,
+            url: localUrl,
+            label: data.label || null,
+            description: null,
+            capturedAtSeconds,
+          },
+        ]);
+      } else {
+        URL.revokeObjectURL(localUrl);
+      }
+    } catch (e) {
+      console.error('Failed to snap photo:', e);
+    } finally {
+      setSnapBusy(false);
+    }
+  };
+
+  const openPhotoEditor = (photo: { id: string; label: string | null; description: string | null }) => {
+    setEditingPhotoId(photo.id);
+    setPhotoEditTitle(photo.label || '');
+    setPhotoEditDesc(photo.description || '');
+  };
+
+  const savePhotoEdit = async () => {
+    if (!editingPhotoId || photoEditBusy) return;
+    setPhotoEditBusy(true);
+    try {
+      const res = await fetch(`/api/self-serve/${uploadToken}/snap-photo`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingPhotoId,
+          label: photoEditTitle,
+          description: photoEditDesc,
+        }),
+      });
+      if (res.ok) {
+        setSnapPhotos((prev) =>
+          prev.map((p) =>
+            p.id === editingPhotoId
+              ? { ...p, label: photoEditTitle || null, description: photoEditDesc || null }
+              : p
+          )
+        );
+        setEditingPhotoId(null);
+      }
+    } finally {
+      setPhotoEditBusy(false);
+    }
+  };
+
+  // Shared by the thumbnail X buttons and the edit sheet's Delete.
+  const removeSnapPhoto = async (photoId: string) => {
+    if (deletingPhotoIds.has(photoId)) return;
+    setDeletingPhotoIds((prev) => new Set(prev).add(photoId));
+    try {
+      const res = await fetch(`/api/self-serve/${uploadToken}/snap-photo`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: photoId }),
+      });
+      if (res.ok) {
+        setSnapPhotos((prev) => prev.filter((p) => p.id !== photoId));
+        setEditingPhotoId((current) => (current === photoId ? null : current));
+      }
+    } catch (e) {
+      console.error('Failed to delete photo:', e);
+    } finally {
+      setDeletingPhotoIds((prev) => {
+        const next = new Set(prev);
+        next.delete(photoId);
+        return next;
+      });
+    }
+  };
+
+  const deleteSnapPhoto = async () => {
+    if (!editingPhotoId || photoEditBusy) return;
+    setPhotoEditBusy(true);
+    try {
+      await removeSnapPhoto(editingPhotoId);
+    } finally {
+      setPhotoEditBusy(false);
+    }
+  };
+
+  // Bottom-sheet editor for a snapped photo (title / description / delete).
+  // Rendered in both the recording view and the completion screen.
+  const editingPhoto = snapPhotos.find((p) => p.id === editingPhotoId) || null;
+  const photoEditSheet = editingPhoto ? (
+    <div className="absolute inset-0 z-50 bg-black/80 flex items-end" onClick={() => setEditingPhotoId(null)}>
+      <div
+        className="w-full bg-gray-900 rounded-t-2xl p-4 space-y-3"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={editingPhoto.url} alt="" className="w-16 h-16 rounded-lg object-cover bg-black" />
+          <div className="min-w-0">
+            <p className="text-white text-sm font-medium truncate">
+              {editingPhoto.label || 'Photo'}
+            </p>
+            {editingPhoto.capturedAtSeconds != null && (
+              <p className="text-gray-400 text-xs">at {formatDuration(editingPhoto.capturedAtSeconds)}</p>
+            )}
+          </div>
+        </div>
+        <input
+          value={photoEditTitle}
+          onChange={(e) => setPhotoEditTitle(e.target.value)}
+          maxLength={200}
+          placeholder="Title"
+          className="w-full text-sm bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none"
+        />
+        <textarea
+          value={photoEditDesc}
+          onChange={(e) => setPhotoEditDesc(e.target.value)}
+          maxLength={1000}
+          rows={2}
+          placeholder="Description (optional)"
+          className="w-full text-sm bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+        />
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={savePhotoEdit}
+            disabled={photoEditBusy}
+            size="sm"
+            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            {photoEditBusy ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            onClick={deleteSnapPhoto}
+            disabled={photoEditBusy}
+            size="sm"
+            variant="outline"
+            className="bg-transparent border-red-500/60 text-red-400 hover:bg-red-500/10"
+          >
+            Delete
+          </Button>
+          <Button
+            onClick={() => setEditingPhotoId(null)}
+            size="sm"
+            variant="outline"
+            className="bg-transparent border-gray-700 text-white hover:bg-gray-800"
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // ─── "Upload a video file instead" escape hatch ──────────────────
   // Offered on every error screen: the native camera app records on every
@@ -1424,6 +1637,47 @@ export function SelfServeRecorderLiveKit({
             </div>
           )}
 
+          {/* Photos snapped during the recording — tap to title/describe/delete */}
+          {snapPhotos.length > 0 && (
+            <div className="w-full bg-gray-800 rounded-lg p-4 mb-6 text-left">
+              <p className="text-sm font-medium text-gray-300 mb-2">
+                Photos you snapped ({snapPhotos.length})
+              </p>
+              <div className="flex gap-2 overflow-x-auto pt-2 pr-2">
+                {snapPhotos.map((p) => (
+                  <div
+                    key={p.id}
+                    className={cn('relative shrink-0', deletingPhotoIds.has(p.id) && 'opacity-50 pointer-events-none')}
+                  >
+                    <button
+                      onClick={() => openPhotoEditor(p)}
+                      className="relative block w-16 h-16 rounded-lg overflow-hidden border border-gray-600"
+                      aria-label="Edit photo"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.url} alt="" className="w-full h-full object-cover" />
+                      {p.capturedAtSeconds != null && (
+                        <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[9px] font-mono text-center leading-tight">
+                          {formatDuration(p.capturedAtSeconds)}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => removeSnapPhoto(p.id)}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900 border border-gray-500 rounded-full flex items-center justify-center text-white shadow"
+                      aria-label="Remove photo"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Tap a photo to add a title or delete it.</p>
+            </div>
+          )}
+
           {walkthroughReturnUrl ? (
             <>
               <Button
@@ -1463,6 +1717,7 @@ export function SelfServeRecorderLiveKit({
             )
           )}
         </div>
+        {photoEditSheet}
       </div>
     );
   }
@@ -1804,7 +2059,51 @@ export function SelfServeRecorderLiveKit({
         );
       })()}
 
-      {/* Bottom controls - centered stop button */}
+      {/* Snapped-photo strip — tap a thumb to title/describe or delete it.
+          Sits above the zoom/torch cluster so neither blocks the other. */}
+      {isRecording && !countingDown && snapPhotos.length > 0 && (
+        <div
+          className="absolute left-3 right-3 z-10 flex gap-2 overflow-x-auto pt-2 pr-2"
+          style={{ bottom: 'calc(env(safe-area-inset-bottom) + 210px)' }}
+        >
+          {snapPhotos.map((p) => (
+            <div
+              key={p.id}
+              className={cn('relative shrink-0', deletingPhotoIds.has(p.id) && 'opacity-50 pointer-events-none')}
+            >
+              <button
+                onClick={() => openPhotoEditor(p)}
+                className="relative block w-12 h-12 rounded-lg overflow-hidden border-2 border-white/50 shadow-lg"
+                aria-label="Edit photo"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p.url} alt="" className="w-full h-full object-cover" />
+                {p.capturedAtSeconds != null && (
+                  <span className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[9px] font-mono text-center leading-tight">
+                    {formatDuration(p.capturedAtSeconds)}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => removeSnapPhoto(p.id)}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-black/80 border border-white/50 rounded-full flex items-center justify-center text-white shadow"
+                aria-label="Remove photo"
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Snap flash — brief white blink for capture feedback */}
+      {snapFlash && (
+        <div className="absolute inset-0 z-40 bg-white pointer-events-none animate-snapflash" />
+      )}
+
+      {/* Bottom controls - centered stop button, shutter to its left */}
       <div className="absolute bottom-0 left-0 right-0 z-10 flex justify-center" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 60px)' }}>
         {status === 'ready' && (
           <button
@@ -1816,25 +2115,49 @@ export function SelfServeRecorderLiveKit({
           </button>
         )}
         {isRecording && !countingDown && (
-          <button
-            onClick={stopRecording}
-            disabled={!recordingStarted}
-            className={cn(
-              'w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-lg border-4 border-white/30',
-              recordingStarted
-                ? 'bg-red-500 hover:bg-red-600 active:bg-red-700'
-                : 'bg-gray-500/60 cursor-not-allowed'
-            )}
-            aria-label={recordingStarted ? 'Stop recording' : 'Recording is starting, please wait'}
-          >
-            {recordingStarted ? (
-              <div className="w-6 h-6 bg-white rounded-[4px]" />
-            ) : (
-              <div className="w-6 h-6 border-2 border-white/70 border-t-white rounded-full animate-spin" />
-            )}
-          </button>
+          <div className="flex items-center gap-7">
+            <button
+              onClick={snapPhoto}
+              disabled={!recordingStarted || snapBusy}
+              className={cn(
+                'w-[52px] h-[52px] rounded-full flex items-center justify-center backdrop-blur-2xl border border-white/30 shadow-lg',
+                recordingStarted ? 'bg-white/15 text-white active:bg-white/30' : 'bg-white/10 text-white/40'
+              )}
+              aria-label="Snap a photo"
+            >
+              {snapBusy ? (
+                <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              ) : (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={stopRecording}
+              disabled={!recordingStarted}
+              className={cn(
+                'w-[72px] h-[72px] rounded-full flex items-center justify-center shadow-lg border-4 border-white/30',
+                recordingStarted
+                  ? 'bg-red-500 hover:bg-red-600 active:bg-red-700'
+                  : 'bg-gray-500/60 cursor-not-allowed'
+              )}
+              aria-label={recordingStarted ? 'Stop recording' : 'Recording is starting, please wait'}
+            >
+              {recordingStarted ? (
+                <div className="w-6 h-6 bg-white rounded-[4px]" />
+              ) : (
+                <div className="w-6 h-6 border-2 border-white/70 border-t-white rounded-full animate-spin" />
+              )}
+            </button>
+            {/* spacer keeps the stop button visually centered */}
+            <div className="w-[52px]" />
+          </div>
         )}
       </div>
+
+      {photoEditSheet}
     </div>
   );
 }

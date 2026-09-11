@@ -4696,6 +4696,93 @@ useEffect(() => {
         console.error('Error fetching notes for PDF:', error);
       }
 
+      // ==================== CAPTURED PHOTOS ====================
+      // Photos snapped during virtual calls / self-serve / on-site walkthroughs
+      // (vault capture media), rendered as a trailing thumbnail gallery — same
+      // treatment as the Scene room strips. Included in BOTH PDF variants; any
+      // failure degrades to a PDF without the section.
+      try {
+        const vmRes = await fetch(`/api/projects/${currentProject._id}/vault-media`);
+        if (vmRes.ok) {
+          const vmData = await vmRes.json();
+          const capturePhotos = (vmData.items || [])
+            .filter((it) => it.kind === 'image' && it.captureKind && it.streamUrl)
+            .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+          // Wash through fetch → blob → canvas: the blob URL keeps the canvas
+          // untainted (signed S3 URLs would taint it without crossOrigin), and
+          // the re-encode yields a standards-clean JPEG + trustworthy
+          // dimensions for jsPDF (same reasoning as the Scene strips above).
+          await Promise.all(
+            capturePhotos.map(async (p) => {
+              try {
+                const r = await fetch(p.streamUrl);
+                if (!r.ok) throw new Error(`status ${r.status}`);
+                const blob = await r.blob();
+                await new Promise((resolve, reject) => {
+                  const objUrl = URL.createObjectURL(blob);
+                  const img = new Image();
+                  img.onload = () => {
+                    try {
+                      const c = document.createElement('canvas');
+                      c.width = img.naturalWidth;
+                      c.height = img.naturalHeight;
+                      c.getContext('2d').drawImage(img, 0, 0);
+                      p.dataUrl = c.toDataURL('image/jpeg', 0.82);
+                      p.pxWidth = c.width;
+                      p.pxHeight = c.height;
+                      resolve();
+                    } catch (err) {
+                      reject(err);
+                    } finally {
+                      URL.revokeObjectURL(objUrl);
+                    }
+                  };
+                  img.onerror = () => {
+                    URL.revokeObjectURL(objUrl);
+                    reject(new Error('decode failed'));
+                  };
+                  img.src = objUrl;
+                });
+              } catch (e) {
+                p.pxWidth = 0; // skipped below
+              }
+            })
+          );
+
+          const embeddable = capturePhotos.filter((p) => p.pxWidth > 0);
+          if (embeddable.length > 0) {
+            drawSectionHeader('Captured Photos');
+            const gap = 2;
+            const cellW = (totalWidth - gap * 4) / 5;
+            const cellH = cellW * 0.75;
+            embeddable.forEach((p, idx) => {
+              const col = idx % 5;
+              if (col === 0) {
+                if (idx > 0) currentY += cellH + gap;
+                if (currentY + cellH + 5 > pageHeight - bottomMargin) {
+                  doc.addPage();
+                  currentY = topMargin;
+                }
+              }
+              try {
+                const scale = Math.min(cellW / p.pxWidth, cellH / p.pxHeight);
+                const w = p.pxWidth * scale;
+                const h = p.pxHeight * scale;
+                const x = marginX + col * (cellW + gap) + (cellW - w) / 2;
+                const y = currentY + (cellH - h) / 2;
+                doc.addImage(p.dataUrl, 'JPEG', x, y, w, h);
+              } catch (e) {
+                console.warn('Captured photo embed failed (skipping one):', e?.message);
+              }
+            });
+            currentY += cellH + 3;
+          }
+        }
+      } catch (error) {
+        console.warn('Captured photos fetch failed; PDF continues without them:', error);
+      }
+
       // ==================== RUNNING HEADER + FOOTER ON EVERY PAGE ====================
       // Build a small logo data URL sized for the running header
       const pageCount = doc.internal.getNumberOfPages();

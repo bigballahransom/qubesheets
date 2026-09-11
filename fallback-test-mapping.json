@@ -1,0 +1,110 @@
+[
+  {
+    "sourceRecordingId": "6aa2cbd3c6cd440c277f11e2",
+    "sourceProjectId": "6aa2cac8e52de4bc955f8764",
+    "sourceProjectName": "Gary Bellotti",
+    "sourceItemCount": 95,
+    "duration": 656,
+    "captureType": "virtual",
+    "s3Key": "recordings/6aa2cac8e52de4bc955f8764-1789053896680-vva1wqw/2026-09-10T15-25-07-350Z.mp4",
+    "roomName": "6aa2cac8e52de4bc955f8764-1789053896680-vva1wqw",
+    "testProjectId": "6aa328d98c4308ce36811cf9",
+    "testRecordingId": "6aa328d98c4308ce36811cfa"
+  },
+  {
+    "sourceRecordingId": "6aa2c5a9f6bb8efb94af6932",
+    "sourceProjectId": "6a94cbf4e6b993e38a89d2f7",
+    "sourceProjectName": "Eli Heetderks",
+    "sourceItemCount": 127,
+    "duration": 655,
+    "captureType": "virtual",
+    "s3Key": "recordings/6a94cbf4e6b993e38a89d2f7-1789050611090-d81fcd44/2026-09-10T14-58-49-079Z.mp4",
+    "roomName": "6a94cbf4e6b993e38a89d2f7-1789050611090-d81fcd44",
+    "testProjectId": "6aa328da8c4308ce36811cfb",
+    "testRecordingId": "6aa328da8c4308ce36811cfc"
+  },
+  {
+    "sourceRecordingId": "6aa2c65a4271c6db9015aef0",
+    "sourceProjectId": "6aa03f501ff4fde8d0031201",
+    "sourceProjectName": "Bridget",
+    "sourceItemCount": 63,
+    "duration": 369,
+    "captureType": "virtual",
+    "s3Key": "recordings/6aa03f501ff4fde8d0031201-1788991274184-0b37c1f9/2026-09-10T15-01-46-240Z.mp4",
+    "roomName": "6aa03f501ff4fde8d0031201-1788991274184-0b37c1f9",
+    "testProjectId": "6aa328da8c4308ce36811cfd",
+    "testRecordingId": "6aa328da8c4308ce36811cfe"
+  },
+  {
+    "sourceRecordingId": "6aa2cd18cf46e7753d141a74",
+    "sourceProjectId": "6aa2c88a17ddf171c34abfef",
+    "sourceProjectName": "Emma bratt",
+    "sourceItemCount": 143,
+    "duration": 506,
+    "captureType": "virtual",
+    "s3Key": "recordings/6aa2c88a17ddf171c34abfef-1789054206527-m9ykv9d/2026-09-10T15-30-32-654Z.mp4",
+    "roomName": "6aa2c88a17ddf171c34abfef-1789054206527-m9ykv9d",
+    "testProjectId": "6aa328db8c4308ce36811cff",
+    "testRecordingId": "6aa328db8c4308ce36811d00"
+  },
+  {
+    "sourceRecordingId": "6aa31a7200cfb5b0c33affd5",
+    "sourceProjectId": "6aa1b4bb291116dfed712133",
+    "sourceProjectName": "Michael G # 7241",
+    "sourceItemCount": 100,
+    "duration": 738,
+    "captureType": "virtual",
+    "s3Key": "recordings/6aa1b4bb291116dfed712133-1789058217502-2a910f90/2026-09-10T21-00-34-658Z.mp4",
+    "roomName": "6aa1b4bb291116dfed712133-1789058217502-2a910f90",
+    "testProjectId": "6aa328db8c4308ce36811d01",
+    "testRecordingId": "6aa328db8c4308ce36811d02"
+  },
+  {
+    "sourceRecordingId": "6aa2cadee52de4bc955f89d8",
+    "sourceProjectId": "6aa1d3ae9e0940ac843caff8",
+    "sourceProjectName": "Margo Lafferty",
+    "sourceItemCount": 14,
+    "duration": 31,
+    "captureType": "self_serve",
+    "s3Key": "self-serve/6aa1d3ae9e0940ac843caff8/b7e11a5b-2e98-489b-b0fc-f8c8322bdf07/local-recording-2026-09-10T15-19-40-176Z.mp4",
+    "roomName": "self-serve-local-b7e11a5b-2e98-489b-b0fc-f8c8322bdf07",
+    "testProjectId": "6aa328dc8c4308ce36811d03",
+    "testRecordingId": "6aa328dc8c4308ce36811d04"
+  },
+  {
+    "sourceRecordingId": "6aa2ca760e8b549d3e65804a",
+    "sourceProjectId": "6aa1d3ae9e0940ac843caff8",
+    "sourceProjectName": "Margo Lafferty",
+    "sourceItemCount": 20,
+    "duration": 39,
+    "captureType": "self_serve",
+    "s3Key": "self-serve/6aa1d3ae9e0940ac843caff8/00dac6e9-7861-4c76-b3d3-21daf1fb4870/local-recording-2026-09-10T15-18-28-160Z.mp4",
+    "roomName": "self-serve-local-00dac6e9-7861-4c76-b3d3-21daf1fb4870",
+    "testProjectId": "6aa328dc8c4308ce36811d05",
+    "testRecordingId": "6aa328dc8c4308ce36811d06"
+  },
+  {
+    "sourceRecordingId": "6aa2cea41ffef9da18e8da37",
+    "sourceProjectId": "6aa2c6babeca1b7a1fa4b024",
+    "sourceProjectName": "Chandler Kinley",
+    "sourceItemCount": 136,
+    "duration": 1200,
+    "captureType": "self_serve",
+    "s3Key": "self-serve/6aa2c6babeca1b7a1fa4b024/42d7c205-e306-44a1-bf5c-d39e4487529c/local-recording-2026-09-10T15-09-14-601Z.mp4",
+    "roomName": "self-serve-local-42d7c205-e306-44a1-bf5c-d39e4487529c",
+    "testProjectId": "6aa328dd8c4308ce36811d07",
+    "testRecordingId": "6aa328dd8c4308ce36811d08"
+  },
+  {
+    "sourceRecordingId": "6aa2c94a315c8680e718c3bc",
+    "sourceProjectId": "6aa227959deaa23e8d525153",
+    "sourceProjectName": "Cedric Streater",
+    "sourceItemCount": 92,
+    "duration": 221,
+    "captureType": "on_site",
+    "s3Key": "projects/6aa227959deaa23e8d525153/videos/2026-09-10T15-13-54-194Z_9690.mp4",
+    "roomName": "admin-upload-1789053258433",
+    "testProjectId": "6aa328dd8c4308ce36811d09",
+    "testRecordingId": "6aa328dd8c4308ce36811d0a"
+  }
+]

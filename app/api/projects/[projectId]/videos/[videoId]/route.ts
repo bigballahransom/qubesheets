@@ -159,6 +159,9 @@ export async function GET(
             _id: rec._id,
             _type: 'self_serve_recording', // Discriminator for streaming endpoint
             name: `self-serve-${rec._id}`,
+            // Real room name — snapped photos are keyed by it (call-photos API),
+            // so the playback modal needs it to find them
+            roomId: rec.roomId,
             originalName: `${displayName}.mp4`,
             mimeType: 'video/mp4',
             size: rec.fileSize || 0,

@@ -155,7 +155,7 @@ export async function GET(
         .sort({ createdAt: -1 })
         .lean(),
       Image.find({ projectId, purpose: 'vault' })
-        .select('originalName label mediaDescription s3RawFile createdAt')
+        .select('originalName label mediaDescription source s3RawFile createdAt')
         .sort({ createdAt: -1 })
         .lean(),
       VideoRecording.find({
@@ -221,6 +221,13 @@ export async function GET(
         createdAt: img.createdAt,
         mediaType: 'image' as const,
         mediaUrl: signOrNull(img.s3RawFile?.key),
+        isCallPhoto: img.source === 'call_capture',
+        captureKind:
+          img.source === 'call_capture' ? 'call'
+          : img.source === 'self_serve_capture' ? 'self_serve'
+          : img.source === 'onsite_capture' ? 'on_site'
+          : img.source === 'vault_capture' ? 'crew'
+          : null,
       })),
     ]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())

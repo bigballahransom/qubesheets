@@ -66,6 +66,13 @@ export const updates: MonthGroup[] = [
           'If a SmartMoving opportunity was already linked to an older Qube Sheets project (say, a repeat customer or a re-survey), syncing a new project to it no longer gets blocked. The new project simply takes over the link and the old project is unlinked automatically — you\'ll see a note in the sync window telling you which project it took over from. Only one project stays linked at a time, so your SmartMoving inventory always reflects the project you synced most recently.',
       },
       {
+        tag: 'New',
+        icon: Camera,
+        title: 'Snap photos during virtual calls and recorded walkthroughs',
+        description:
+          'On a virtual call, hover any customer video feed and tap the camera icon (or use the Snap photo button up top) to instantly capture what you\'re seeing — damage, access issues, anything worth documenting. The same shutter button now appears on self-serve, on-site, and vault-link recordings, so customers and crews can snap photos mid-walkthrough and add titles right from their phone. Every photo lands in the project\'s Media Vault (never counted as inventory), badged by where it came from, and stays linked to its recording: camera pins on the playback timeline mark the exact moment each photo was taken — hover for a preview, click to jump there — and vault recordings show a photo strip under the player. They\'re also included in your vault share gallery links.',
+      },
+      {
         tag: 'Improved',
         icon: Zap,
         title: 'SmartMoving sync is now verified 1-to-1',

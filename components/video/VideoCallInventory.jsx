@@ -18,6 +18,7 @@ import {
   AudioTrack,
   TrackRefContext,
   useTrackRefContext,
+  useMaybeTrackRefContext,
   ParticipantContext,
   useParticipantContext,
   FocusLayout,
@@ -86,6 +87,7 @@ const gridMembershipKey = (tracks) =>
     .join('|');
 import { ToggleGoingBadge } from '../ui/ToggleGoingBadge';
 import VideoCallNotes from '../VideoCallNotes';
+import CallPhotosPanel from './CallPhotosPanel';
 import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimizedRoomOptions } from '@/lib/webrtc-compatibility';
 import { reportClientError } from '@/lib/client-error-reporting';
 
@@ -607,6 +609,61 @@ function RoomSelector({ currentRoom, onChange, isSmallScreen }) {
 
 function isAgent(participantName) {
   return participantName.toLowerCase().includes('agent');
+}
+
+// Wraps LiveKit's ParticipantTile so the agent can snap a photo of any
+// remote (non-agent) feed into the Media Vault. GridLayout renders this once
+// per track inside a TrackRefContext.Provider; children must NOT be passed
+// to ParticipantTile itself (they would replace its internal template).
+function SnapableTile({ tileStyle, onSnap, flashSid, isSmallScreen }) {
+  const trackRef = useMaybeTrackRefContext();
+  const participant = trackRef?.participant;
+  const publication = trackRef?.publication;
+  // Shows a spinner from tap until the photo has saved (and the Photos
+  // panel refresh has been triggered) so the delay reads as "working".
+  const [snapping, setSnapping] = useState(false);
+  const snappable = !!(
+    participant &&
+    !participant.isLocal &&
+    !isAgent(participant.name || participant.identity || '') &&
+    publication?.track?.mediaStreamTrack &&
+    !publication.isMuted
+  );
+  const flashing = snappable && flashSid && flashSid === participant?.sid;
+  return (
+    <div className="relative w-full h-full group/tile">
+      <ParticipantTile style={tileStyle} />
+      {snappable && (
+        <button
+          onClick={async (e) => {
+            e.stopPropagation();
+            if (snapping) return;
+            setSnapping(true);
+            try {
+              await onSnap(trackRef);
+            } finally {
+              setSnapping(false);
+            }
+          }}
+          title="Snap photo"
+          className={`absolute z-20 rounded-full text-white transition-opacity ${
+            isSmallScreen
+              ? 'bottom-2 right-2 p-2 bg-black/35 opacity-80'
+              : `top-2 right-2 p-2 bg-black/50 ${snapping ? 'opacity-100' : 'opacity-0 group-hover/tile:opacity-100'}`
+          }`}
+        >
+          {snapping ? (
+            <Loader2 size={isSmallScreen ? 14 : 16} className="animate-spin" />
+          ) : (
+            <Camera size={isSmallScreen ? 14 : 16} />
+          )}
+        </button>
+      )}
+      {flashing && (
+        <div className="absolute inset-0 z-30 bg-white pointer-events-none animate-snapflash" />
+      )}
+    </div>
+  );
 }
 
 const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
@@ -1179,6 +1236,45 @@ const AgentView = React.memo(({
     }
   }, [roomId]);
 
+  // Call-photo snaps: grab a JPEG frame from a customer's video track and
+  // store it in the Media Vault, linked to this call (roomId + recording
+  // offset stamped server-side). Flash fires immediately for feedback.
+  const [flashSid, setFlashSid] = useState(null);
+  const [photosRefreshKey, setPhotosRefreshKey] = useState(0);
+
+  const snapFromTrackRef = useCallback(async (trackRef) => {
+    const track = trackRef?.publication?.track;
+    const participant = trackRef?.participant;
+    if (!track?.mediaStreamTrack) return;
+    setFlashSid(participant?.sid || null);
+    setTimeout(() => setFlashSid(null), 300);
+    try {
+      const blob = await extractFrameFromRemoteTrack(track);
+      if (!blob) {
+        toast.error('Could not capture a frame from that video');
+        return;
+      }
+      const formData = new FormData();
+      formData.append(
+        'file',
+        new File([blob], `call-photo-${Date.now()}.jpg`, { type: 'image/jpeg' })
+      );
+      formData.append('participantName', participant?.name || participant?.identity || '');
+      const response = await fetch(`/api/calls/${roomId}/snap-photo`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to save photo');
+      }
+      setPhotosRefreshKey((k) => k + 1);
+    } catch (error) {
+      console.error('Failed to snap call photo:', error);
+      toast.error(error.message || 'Photo could not be saved');
+    }
+  }, [roomId]);
+
   // Poll analysis status while processing
   useEffect(() => {
     if (processState !== 'processing' || !processRecordingId || !projectId) return;
@@ -1300,6 +1396,22 @@ const AgentView = React.memo(({
     { onlySubscribed: false }
   ).filter((t) => !t.participant?.identity?.startsWith('EG_'));
 
+  // Featured customer feed for the header/FAB snap button — prefer a screen
+  // share over a camera; each tile also has its own per-feed snap button.
+  const featuredCustomerTrack = useMemo(() => {
+    const remote = tracks.filter(
+      (t) =>
+        t.participant &&
+        !t.participant.isLocal &&
+        !isAgent(t.participant.name || t.participant.identity || '') &&
+        t.publication?.track?.mediaStreamTrack
+    );
+    return (
+      remote.find((t) => t.source === Track.Source.ScreenShare) ||
+      remote.find((t) => t.source === Track.Source.Camera) ||
+      null
+    );
+  }, [tracks]);
 
   useEffect(() => {
     const checkScreenSize = () => {
@@ -1388,7 +1500,12 @@ const AgentView = React.memo(({
             tracks={tracks}
             style={{ height: '100%', width: '100%' }}
           >
-            <ParticipantTile style={{ borderRadius: '0px', overflow: 'hidden' }} />
+            <SnapableTile
+              tileStyle={{ borderRadius: '0px', overflow: 'hidden' }}
+              onSnap={snapFromTrackRef}
+              flashSid={flashSid}
+              isSmallScreen={true}
+            />
           </GridLayout>
         </div>
 
@@ -1422,6 +1539,17 @@ const AgentView = React.memo(({
         {/* Floating Action Buttons - Right Side */}
         {showControls && (
           <div className="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
+
+            {/* Snap photo of the customer's feed */}
+            {featuredCustomerTrack && (
+              <button
+                onClick={() => snapFromTrackRef(featuredCustomerTrack)}
+                title="Snap photo"
+                className={`relative p-4 rounded-2xl ${glassStyle} bg-indigo-600/30 border-indigo-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95`}
+              >
+                <Camera size={24} />
+              </button>
+            )}
 
             {/* Mid-call Stop & Process trigger (one-shot) */}
             {processState === 'idle' && (
@@ -1573,6 +1701,7 @@ const AgentView = React.memo(({
                 onInventoryUpdate={handleInventoryUpdate}
                 participantName={participantName}
                 roomId={roomId}
+                photosRefreshKey={photosRefreshKey}
                 onRemoveItem={async (id) => {
                   // Remove from database via API
                   try {
@@ -1626,6 +1755,16 @@ const AgentView = React.memo(({
           </div>
           
           <div className="flex items-center gap-3">
+            {/* Snap a photo of the customer's feed into the Media Vault */}
+            <button
+              onClick={() => featuredCustomerTrack && snapFromTrackRef(featuredCustomerTrack)}
+              disabled={!featuredCustomerTrack}
+              title="Snap a photo of the customer's video — saved to the Media Vault"
+              className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <Camera size={16} />
+              Snap photo
+            </button>
             {/* Mid-call Stop & Process (one-shot) */}
             {processState === 'idle' && (
               <button
@@ -1684,13 +1823,16 @@ const AgentView = React.memo(({
                   justifyContent: 'center'
                 }}
               >
-                <ParticipantTile 
-                  style={{ 
+                <SnapableTile
+                  tileStyle={{
                     borderRadius: '16px',
                     overflow: 'hidden',
                     backgroundColor: '#374151',
                     border: '1px solid rgba(255,255,255,0.1)'
                   }}
+                  onSnap={snapFromTrackRef}
+                  flashSid={flashSid}
+                  isSmallScreen={false}
                 />
               </GridLayout>
             </div>
@@ -1715,6 +1857,7 @@ const AgentView = React.memo(({
               onInventoryUpdate={handleInventoryUpdate}
               participantName={participantName}
               roomId={roomId}
+              photosRefreshKey={photosRefreshKey}
               onRemoveItem={async (id) => {
                 // Remove from database via API
                 try {
@@ -1772,6 +1915,7 @@ const InventorySidebar = ({
   onInventoryUpdate,
   participantName,
   roomId,
+  photosRefreshKey = 0,
 }) => {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -1872,6 +2016,17 @@ const InventorySidebar = ({
             <span className="hidden sm:inline">Notes</span>
             <span className="sm:hidden">Notes</span>
           </button>
+          <button
+            onClick={() => setActiveTab('photos')}
+            className={`flex-1 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium transition-all duration-200 flex items-center justify-center gap-1 sm:gap-2 ${
+              activeTab === 'photos'
+                ? 'text-blue-600 bg-white border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <Camera className="w-4 h-4" />
+            <span>Photos</span>
+          </button>
         </div>
       </div>
 
@@ -1931,6 +2086,14 @@ const InventorySidebar = ({
         />
       </div>
 
+      {/* Call Photos Section - snapped during this call */}
+      <div className={`flex-1 min-h-0 overflow-y-auto bg-white ${activeTab === 'photos' ? '' : 'hidden'}`}>
+        <CallPhotosPanel
+          projectId={projectId}
+          roomId={roomId}
+          refreshKey={photosRefreshKey}
+        />
+      </div>
 
     </div>
   );
