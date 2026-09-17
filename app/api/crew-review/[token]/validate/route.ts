@@ -9,6 +9,7 @@ import InventoryNote from '@/models/InventoryNote';
 import Image from '@/models/Image';
 import Video from '@/models/Video';
 import VideoRecording from '@/models/VideoRecording';
+import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import { resolveWeightConfig, resolveItemWeight, WeightConfig } from '@/lib/weight-config';
 import { computeInventoryStats, deriveGoingQuantity } from '@/lib/inventory-stats';
 
@@ -251,7 +252,22 @@ export async function GET(
       projectId: reviewLink.projectId,
       status: 'completed',
       purpose: { $ne: 'vault' }
-    }).select('_id roomId duration s3Key createdAt analysisResult transcriptAnalysisResult').lean();
+    }).select('_id roomId duration s3Key createdAt analysisResult transcriptAnalysisResult segmentSummaries packingNotes').lean();
+
+    // The zone-scoped pipeline stores its summary/packing notes per segment
+    // instead of on the recording's analysisResult — gather them for fallback
+    const recordingSegments = videoRecordingsWithAnalysis.length > 0
+      ? await CallAnalysisSegment.find({
+          videoRecordingId: { $in: videoRecordingsWithAnalysis.map(r => r._id) },
+          status: 'completed'
+        }).sort({ segmentIndex: 1 }).select('videoRecordingId rawAnalysis.summary rawAnalysis.packing_notes').lean()
+      : [];
+    const segmentsByRecording = new Map<string, any[]>();
+    for (const seg of recordingSegments as any[]) {
+      const key = seg.videoRecordingId.toString();
+      if (!segmentsByRecording.has(key)) segmentsByRecording.set(key, []);
+      segmentsByRecording.get(key)!.push(seg);
+    }
 
     // Process video recordings with their AI summaries
     for (const recording of videoRecordingsWithAnalysis as any[]) {
@@ -260,14 +276,20 @@ export async function GET(
       );
 
       if (recordingItems.length > 0 || videoRecordingsWithAnalysis.length > 0) {
+        const segments = segmentsByRecording.get(recording._id.toString()) || [];
+        const segmentSummary = segments.map(s => s.rawAnalysis?.summary).filter(Boolean).join('\n\n') || null;
+        const segmentPackingNotes = segments.map(s => s.rawAnalysis?.packing_notes).filter(Boolean).join('\n\n') || null;
+
         mediaSections.push({
           type: 'videoRecording',
           mediaId: recording._id.toString(),
           mediaName: `Video Call Recording - ${new Date(recording.createdAt).toLocaleDateString()}`,
           items: groupItemsByRoom(recordingItems.map(formatItem)),
           aiSummary: {
-            analysisSummary: completedSummary(recording.analysisResult),
-            transcriptSummary: completedSummary(recording.transcriptAnalysisResult),
+            transcriptSummary: completedSummary(recording.transcriptAnalysisResult)
+              || recording.segmentSummaries || segmentSummary,
+            analysisSummary: completedSummary(recording.analysisResult)
+              || recording.packingNotes || segmentPackingNotes,
           },
         });
       }
