@@ -1290,6 +1290,13 @@ export async function syncNotesToSmartMoving(
     const customerNotesContent = composeField('customer');
     const crewNotesContent = composeField('crew');
 
+    // Nothing to write (every destination off and no QubeSheets notes) —
+    // skip the SmartMoving calls entirely rather than PATCHing empty bodies.
+    if (!internalNotesContent && !customerNotesContent && !crewNotesContent) {
+      console.log(`📝 [SMARTMOVING-NOTES-SYNC] No note content to sync - skipping`);
+      return { success: true, jobsUpdated: 0, notesSynced: 0 };
+    }
+
     // Fetch jobs for the opportunity
     const jobsResult = await getOpportunityJobs(opportunityId, apiKey, clientId);
     if (!jobsResult.success || !jobsResult.jobs) {
