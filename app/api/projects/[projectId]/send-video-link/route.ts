@@ -4,6 +4,7 @@ import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import { client, twilioPhoneNumber } from '@/lib/twilio';
+import { getCompanyName } from '@/lib/upload-link-helpers';
 
 export async function POST(
   request: NextRequest,
@@ -39,7 +40,8 @@ export async function POST(
     const videoUrl = `${process.env.NEXT_PUBLIC_APP_URL}/video-call/${roomId}?projectId=${projectId}&name=${encodeURIComponent(customerName)}`;
 
     // Send SMS via Twilio
-    const message = `Hi ${customerName}! Join your moving inventory video call for ${project.name}. Click here: ${videoUrl}`;
+    const companyName = await getCompanyName(authContext);
+    const message = `Hi ${customerName}! Join your video call with ${companyName}. Click here: ${videoUrl}`;
 
     try {
       await client.messages.create({

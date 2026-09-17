@@ -602,8 +602,8 @@ export default function CrewReviewPage() {
                 </div>
               )}
 
-              {/* AI Summary for Video Recordings */}
-              {section.type === 'videoRecording' && section.aiSummary && (section.aiSummary.analysisSummary || section.aiSummary.transcriptSummary) && (
+              {/* AI Summary for videos and call recordings */}
+              {section.aiSummary && (section.aiSummary.analysisSummary || section.aiSummary.transcriptSummary) && (
                 <div className="space-y-3">
                   {section.aiSummary.transcriptSummary && (
                     <div className="p-4 rounded-lg border bg-green-50 border-green-200">

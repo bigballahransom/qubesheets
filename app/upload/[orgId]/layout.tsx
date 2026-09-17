@@ -1,8 +1,8 @@
+// Branded link previews for the global org-level self-survey landing page.
+// orgId in the path is the Branding owner key (organizationId or userId).
 import type { Metadata } from 'next';
 import { brandedLinkMetadata } from '@/lib/link-preview-branding';
 
-// Branded link previews when a form URL is shared directly (the iframe embed
-// path never surfaces this metadata). orgId is the Branding owner key.
 export async function generateMetadata({
   params,
 }: {
@@ -13,24 +13,16 @@ export async function generateMetadata({
     async () => ({ organizationId: orgId, userId: orgId }),
     {
       title: (company) => `AI Inventory for ${company}`,
-      description: (company) => `Tell ${company} about your upcoming move.`,
+      description: (company) =>
+        `Share photos and videos of your move with ${company}.`,
     }
   );
 }
 
-export default function FormLayout({
+export default function UploadLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <>
-      <style>{`
-        html, body {
-          background: transparent !important;
-        }
-      `}</style>
-      {children}
-    </>
-  );
+  return children;
 }

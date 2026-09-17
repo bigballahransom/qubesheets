@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-09-10';
+export const LATEST_UPDATES_VERSION = '2026-09-17';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -58,6 +58,27 @@ export const updates: MonthGroup[] = [
   {
     month: 'September 2026',
     entries: [
+      {
+        tag: 'New',
+        icon: ClipboardList,
+        title: 'Choose where SmartMoving job notes go',
+        description:
+          'You can now pick exactly which SmartMoving notes field each synced item lands in — Internal, Customer, or Crew Notes — or turn any of them off. The crew review link, media vault links, AI summary, packing notes, and customer statements each get their own setting, so for example customer statements can go to Customer Notes while packing notes go to the crew. Set it up in Settings → Integrations under SmartMoving.',
+      },
+      {
+        tag: 'Improved',
+        icon: FileText,
+        title: 'PDFs now include company name and move addresses',
+        description:
+          'The downloadable inventory PDF and Scene PDF now show the customer\'s company name and the Moving From / Moving To addresses on the cover page — whenever those are filled in on the project (Edit Project Details). Empty fields are simply left off, so your PDFs stay clean.',
+      },
+      {
+        tag: 'New',
+        icon: Link2,
+        title: 'Customer links now show your company name and logo',
+        description:
+          'When you text or email a customer a link — video call invites, photo upload links, inventory review links, share galleries, and scheduling pages — the link preview in their messages app now shows your company name and logo from Settings → Branding instead of generic Qube Sheets branding. This works automatically for links sent from the app and through integrations. Just make sure your company name and logo are set in Settings → Branding.',
+      },
       {
         tag: 'Improved',
         icon: Link2,

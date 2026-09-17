@@ -7,6 +7,15 @@ import { Button } from '@/components/ui/button';
 import { SettingsPageShell } from '@/components/SettingsPageShell';
 import { toast } from 'sonner';
 
+// Where each synced piece of content can land in SmartMoving job notes.
+// Mirrors lib/smartmoving/noteDestinations.ts.
+const NOTE_DESTINATION_OPTIONS = [
+  { value: 'off', label: "Don't sync" },
+  { value: 'internal', label: 'Internal Notes' },
+  { value: 'customer', label: 'Customer Notes' },
+  { value: 'crew', label: 'Crew Notes' },
+];
+
 export default function IntegrationsPage() {
   const { user } = useUser();
   const { organization } = useOrganization();
@@ -22,9 +31,11 @@ export default function IntegrationsPage() {
   const [smartMovingApiKey, setSmartMovingApiKey] = useState('');
   const [hasExistingIntegration, setHasExistingIntegration] = useState(false);
   const [sendUploadLinkOnCreate, setSendUploadLinkOnCreate] = useState(false);
-  const [syncCrewLinkOnSync, setSyncCrewLinkOnSync] = useState(true);
-  const [syncVaultLinksOnSync, setSyncVaultLinksOnSync] = useState(true);
-  const [syncAiSummariesOnSync, setSyncAiSummariesOnSync] = useState(true);
+  const [crewLinkDestination, setCrewLinkDestination] = useState('crew');
+  const [vaultLinksDestination, setVaultLinksDestination] = useState('crew');
+  const [aiSummaryDestination, setAiSummaryDestination] = useState('internal');
+  const [packingNotesDestination, setPackingNotesDestination] = useState('internal');
+  const [customerStatementsDestination, setCustomerStatementsDestination] = useState('internal');
   const [webhookRecordFilter, setWebhookRecordFilter] = useState('opportunities_and_leads');
 
   // Chariot integration state
@@ -66,9 +77,11 @@ export default function IntegrationsPage() {
           setSmartMovingEnabled(true);
           setSmartMovingClientId(data.integration.smartMovingClientId);
           setSendUploadLinkOnCreate(data.integration.sendUploadLinkOnCreate || false);
-          setSyncCrewLinkOnSync(data.integration.syncCrewLinkOnSync !== false);
-          setSyncVaultLinksOnSync(data.integration.syncVaultLinksOnSync !== false);
-          setSyncAiSummariesOnSync(data.integration.syncAiSummariesOnSync !== false);
+          setCrewLinkDestination(data.integration.crewLinkDestination || 'crew');
+          setVaultLinksDestination(data.integration.vaultLinksDestination || 'crew');
+          setAiSummaryDestination(data.integration.aiSummaryDestination || 'internal');
+          setPackingNotesDestination(data.integration.packingNotesDestination || 'internal');
+          setCustomerStatementsDestination(data.integration.customerStatementsDestination || 'internal');
           setWebhookRecordFilter(data.integration.webhookRecordFilter || 'opportunities_and_leads');
           // API key is not returned for security, just show that it exists
           if (data.integration.hasApiKey) {
@@ -144,9 +157,11 @@ export default function IntegrationsPage() {
             smartMovingClientId,
             smartMovingApiKey,
             sendUploadLinkOnCreate,
-            syncCrewLinkOnSync,
-            syncVaultLinksOnSync,
-            syncAiSummariesOnSync,
+            crewLinkDestination,
+            vaultLinksDestination,
+            aiSummaryDestination,
+            packingNotesDestination,
+            customerStatementsDestination,
             webhookRecordFilter,
           }),
         });
@@ -167,9 +182,11 @@ export default function IntegrationsPage() {
           },
           body: JSON.stringify({
             sendUploadLinkOnCreate,
-            syncCrewLinkOnSync,
-            syncVaultLinksOnSync,
-            syncAiSummariesOnSync,
+            crewLinkDestination,
+            vaultLinksDestination,
+            aiSummaryDestination,
+            packingNotesDestination,
+            customerStatementsDestination,
             webhookRecordFilter,
           }),
         });
@@ -196,6 +213,11 @@ export default function IntegrationsPage() {
         setSmartMovingClientId('');
         setSmartMovingApiKey('');
         setSendUploadLinkOnCreate(false);
+        setCrewLinkDestination('crew');
+        setVaultLinksDestination('crew');
+        setAiSummaryDestination('internal');
+        setPackingNotesDestination('internal');
+        setCustomerStatementsDestination('internal');
         setWebhookRecordFilter('opportunities_and_leads');
       } else if (smartMovingEnabled && (!smartMovingClientId || !smartMovingApiKey)) {
         toast.error('Please provide both Client ID and API Key');
@@ -699,71 +721,92 @@ export default function IntegrationsPage() {
                         </div>
                       )}
 
-                      {/* Sync Crew Review Link Option */}
+                      {/* Job Notes Sync Destinations */}
                       {hasExistingIntegration && (
                         <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              id="sync-crew-link-on-sync"
-                              checked={syncCrewLinkOnSync}
-                              onChange={(e) => setSyncCrewLinkOnSync(e.target.checked)}
-                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <div>
-                              <label htmlFor="sync-crew-link-on-sync" className="text-sm font-medium text-gray-900 cursor-pointer">
-                                Sync crew review link to job notes
-                              </label>
-                              <p className="text-xs text-gray-600 mt-1">
-                                Automatically add the crew review link to the Crew Notes field in SmartMoving when syncing inventory.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Sync Media Vault Links Option */}
-                      {hasExistingIntegration && (
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              id="sync-vault-links-on-sync"
-                              checked={syncVaultLinksOnSync}
-                              onChange={(e) => setSyncVaultLinksOnSync(e.target.checked)}
-                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <div>
-                              <label htmlFor="sync-vault-links-on-sync" className="text-sm font-medium text-gray-900 cursor-pointer">
-                                Sync media vault links to job notes
-                              </label>
-                              <p className="text-xs text-gray-600 mt-1">
-                                Automatically add the media vault view and upload links to the Crew Notes field in SmartMoving when syncing inventory.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Sync AI Walkthrough Summaries Option */}
-                      {hasExistingIntegration && (
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                          <div className="flex items-start gap-3">
-                            <input
-                              type="checkbox"
-                              id="sync-ai-summaries-on-sync"
-                              checked={syncAiSummariesOnSync}
-                              onChange={(e) => setSyncAiSummariesOnSync(e.target.checked)}
-                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <div>
-                              <label htmlFor="sync-ai-summaries-on-sync" className="text-sm font-medium text-gray-900 cursor-pointer">
-                                Sync AI walkthrough summaries to job notes
-                              </label>
-                              <p className="text-xs text-gray-600 mt-1">
-                                Automatically add the AI summary, packing notes, and customer statements from video walkthroughs to the Internal Notes field in SmartMoving when syncing inventory.
-                              </p>
-                            </div>
+                          <h3 className="text-sm font-medium text-gray-900">Job notes sync</h3>
+                          <p className="text-xs text-gray-600 mt-1 mb-3">
+                            Choose which SmartMoving job notes field each item is added to when syncing inventory.
+                            Fields are rewritten on every sync, so changing a destination moves the content on the next sync.
+                          </p>
+                          <div className="space-y-4">
+                            {[
+                              {
+                                heading: 'Links',
+                                rows: [
+                                  {
+                                    id: 'crew-link-destination',
+                                    label: 'Crew review link',
+                                    description: 'Link for the crew to review the inventory.',
+                                    value: crewLinkDestination,
+                                    onChange: setCrewLinkDestination,
+                                  },
+                                  {
+                                    id: 'vault-links-destination',
+                                    label: 'Media vault links',
+                                    description: 'View and upload links for the media vault.',
+                                    value: vaultLinksDestination,
+                                    onChange: setVaultLinksDestination,
+                                  },
+                                ],
+                              },
+                              {
+                                heading: 'AI walkthrough content',
+                                rows: [
+                                  {
+                                    id: 'ai-summary-destination',
+                                    label: 'AI summary',
+                                    description: 'AI-generated summary of each video walkthrough.',
+                                    value: aiSummaryDestination,
+                                    onChange: setAiSummaryDestination,
+                                  },
+                                  {
+                                    id: 'packing-notes-destination',
+                                    label: 'Packing notes',
+                                    description: 'Packing guidance the AI picked up during the walkthrough.',
+                                    value: packingNotesDestination,
+                                    onChange: setPackingNotesDestination,
+                                  },
+                                  {
+                                    id: 'customer-statements-destination',
+                                    label: 'Customer statements',
+                                    description: 'Notable customer quotes from the walkthrough transcript.',
+                                    value: customerStatementsDestination,
+                                    onChange: setCustomerStatementsDestination,
+                                  },
+                                ],
+                              },
+                            ].map((group) => (
+                              <div key={group.heading}>
+                                <p className="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">
+                                  {group.heading}
+                                </p>
+                                <div className="space-y-3">
+                                  {group.rows.map((row) => (
+                                    <div key={row.id} className="flex items-center justify-between gap-4">
+                                      <div className="min-w-0">
+                                        <label htmlFor={row.id} className="text-sm font-medium text-gray-900">
+                                          {row.label}
+                                        </label>
+                                        <p className="text-xs text-gray-600">{row.description}</p>
+                                      </div>
+                                      <select
+                                        id={row.id}
+                                        value={row.value}
+                                        onChange={(e) => row.onChange(e.target.value)}
+                                        className="w-44 shrink-0 px-3 py-2 text-sm border rounded-lg bg-white focus:ring-2 focus:ring-blue-500"
+                                      >
+                                        {NOTE_DESTINATION_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}

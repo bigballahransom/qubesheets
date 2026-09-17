@@ -12,6 +12,13 @@ import CallAnalysisSegment from '@/models/CallAnalysisSegment';
 import { IInventoryItem } from '@/models/InventoryItem';
 import { effectiveGoingQuantity } from '@/lib/goingQuantity';
 import { logActivity } from '@/lib/activity-logger';
+import {
+  DEFAULT_NOTE_SYNC_DESTINATIONS,
+  NOTE_FIELDS,
+  NoteField,
+  NoteSyncDestinations,
+  resolveNoteSyncDestinations,
+} from '@/lib/smartmoving/noteDestinations';
 import crypto from 'crypto';
 
 interface WeightConfig {
@@ -314,17 +321,13 @@ export async function syncInventoryToSmartMoving(
     // no inventory (e.g. designer accounts) still need the links posted into
     // the SmartMoving job notes.
     const runNotesSync = async () => {
-      if (smartMovingIntegration.syncCrewLinkOnSync === false) return;
       try {
         const notesResult = await syncNotesToSmartMoving(
           projectId,
           smartMovingOpportunityId,
           smartMovingIntegration.smartMovingApiKey,
           smartMovingIntegration.smartMovingClientId,
-          {
-            includeVaultLinks: smartMovingIntegration.syncVaultLinksOnSync !== false,
-            includeAiSummaries: smartMovingIntegration.syncAiSummariesOnSync !== false
-          }
+          { destinations: resolveNoteSyncDestinations(smartMovingIntegration) }
         );
         if (notesResult.success) {
           console.log(`✅ [SMARTMOVING-SYNC] Notes synced to opportunity (${notesResult.notesSynced} notes, ${notesResult.jobsUpdated} jobs updated)`);
@@ -1000,21 +1003,29 @@ export async function syncCrewReviewLinkToSmartMoving(
   }
 }
 
+interface AiWalkthroughSection {
+  header: string;
+  summary: string;
+  packingNotes: string;
+  /** Pre-formatted `- "..."` lines of transcript highlights, '' when none. */
+  statements: string;
+}
+
 /**
- * Builds a text block of AI walkthrough analysis for all of a project's completed
+ * Gathers AI walkthrough analysis for all of a project's completed
  * video/virtual-call recordings: per-recording AI summary, packing notes, and
- * customer statements (transcript highlights). Vault reference media is excluded,
- * matching the recordings surfaced in the app's Notes tab. Returns '' when the
- * project has no analyzed recordings.
+ * customer statements (transcript highlights). Vault reference media is
+ * excluded, matching the recordings surfaced in the app's Notes tab. The three
+ * parts stay separate so each can be routed to its own SmartMoving note field.
  */
-async function buildAiSummariesContent(projectId: string): Promise<string> {
+async function buildAiWalkthroughSections(projectId: string): Promise<AiWalkthroughSection[]> {
   const recordings = await VideoRecording.find({
     projectId,
     status: 'completed',
     purpose: { $ne: 'vault' }
   }).sort({ createdAt: 1 }).lean<any[]>();
 
-  const sections: string[] = [];
+  const sections: AiWalkthroughSection[] = [];
 
   for (const rec of recordings) {
     const segments = await CallAnalysisSegment.find({
@@ -1036,22 +1047,41 @@ async function buildAiSummariesContent(projectId: string): Promise<string> {
     const recordedOn = rec.createdAt
       ? new Date(rec.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
       : '';
-    const parts: string[] = [`=== AI Walkthrough Summary${recordedOn ? ` (${recordedOn})` : ''} ===`];
-    if (summary) parts.push(summary);
-    if (packingNotes) parts.push(`Packing Notes:\n${packingNotes}`);
-    if (highlights.length > 0) {
-      const statements = highlights
-        .map((h: any) => {
-          const meta = [h.timestamp, h.related_item ? `Re: ${h.related_item}` : ''].filter(Boolean).join(' - ');
-          return `- "${h.text}"${meta ? ` (${meta})` : ''}`;
-        })
-        .join('\n');
-      parts.push(`Customer Statements:\n${statements}`);
-    }
-    sections.push(parts.join('\n\n'));
+    const statements = highlights
+      .map((h: any) => {
+        const meta = [h.timestamp, h.related_item ? `Re: ${h.related_item}` : ''].filter(Boolean).join(' - ');
+        return `- "${h.text}"${meta ? ` (${meta})` : ''}`;
+      })
+      .join('\n');
+    sections.push({
+      header: `=== AI Walkthrough Summary${recordedOn ? ` (${recordedOn})` : ''} ===`,
+      summary,
+      packingNotes,
+      statements
+    });
   }
 
-  return sections.join('\n\n');
+  return sections;
+}
+
+/**
+ * Composes the AI walkthrough block for one SmartMoving note field from the
+ * parts routed to it. Returns '' when no included part has content.
+ */
+function composeAiContentForField(
+  sections: AiWalkthroughSection[],
+  include: { summary: boolean; packingNotes: boolean; statements: boolean }
+): string {
+  const blocks: string[] = [];
+  for (const section of sections) {
+    const parts: string[] = [];
+    if (include.summary && section.summary) parts.push(section.summary);
+    if (include.packingNotes && section.packingNotes) parts.push(`Packing Notes:\n${section.packingNotes}`);
+    if (include.statements && section.statements) parts.push(`Customer Statements:\n${section.statements}`);
+    if (parts.length === 0) continue;
+    blocks.push([section.header, ...parts].join('\n\n'));
+  }
+  return blocks.join('\n\n');
 }
 
 // Mapping from QubeSheets note category to SmartMoving note type
@@ -1119,10 +1149,17 @@ async function updateJobAllNotes(
 }
 
 /**
- * Syncs QubeSheets notes to SmartMoving job notes based on category mapping:
+ * Syncs QubeSheets notes to SmartMoving job notes.
+ *
+ * QubeSheets category notes always follow the fixed category mapping:
  * - video-call, inventory, general → Internal Notes
- * - moving-day, special-instructions → Crew Notes (also includes crew review link)
+ * - moving-day, special-instructions → Crew Notes
  * - customer → Customer Notes
+ *
+ * The crew review link, media vault links, and the three AI walkthrough parts
+ * (summary, packing notes, customer statements) each go to the note field
+ * configured in options.destinations — or are skipped when set to 'off'.
+ * Defaults reproduce the historical behavior: links → crew, AI → internal.
  *
  * @param projectId - The QubeSheets project ID
  * @param opportunityId - The SmartMoving opportunity ID
@@ -1135,7 +1172,7 @@ export async function syncNotesToSmartMoving(
   opportunityId: string,
   apiKey: string,
   clientId: string,
-  options?: { includeVaultLinks?: boolean; includeAiSummaries?: boolean }
+  options?: { destinations?: NoteSyncDestinations }
 ): Promise<{ success: boolean; jobsUpdated?: number; notesSynced?: number; error?: string }> {
   console.log(`📝 [SMARTMOVING-NOTES-SYNC] Starting notes sync for project ${projectId}`);
 
@@ -1195,56 +1232,63 @@ export async function syncNotesToSmartMoving(
       return sections.join('\n\n');
     };
 
-    let internalNotesContent = buildNotesContent(groupedNotes.internal);
-    const customerNotesContent = buildNotesContent(groupedNotes.customer);
+    const destinations = options?.destinations ?? DEFAULT_NOTE_SYNC_DESTINATIONS;
 
-    // Append AI walkthrough summaries to internal notes, unless disabled in the
-    // integration settings. A summary-build failure must not break the
-    // notes/inventory sync — omit the section and keep going.
-    if (options?.includeAiSummaries !== false) {
-      try {
-        const aiSummariesContent = await buildAiSummariesContent(projectId);
-        if (aiSummariesContent) {
-          internalNotesContent = internalNotesContent
-            ? `${internalNotesContent}\n\n${aiSummariesContent}`
-            : aiSummariesContent;
-        }
-      } catch (aiError) {
-        console.error(`⚠️ [SMARTMOVING-NOTES-SYNC] Failed to build AI walkthrough summaries, omitting from internal notes:`, aiError);
-      }
+    // Each note field is assembled as: links, then category notes, then AI
+    // walkthrough content.
+    const linksByField: Record<NoteField, string[]> = { internal: [], customer: [], crew: [] };
+    const aiByField: Record<NoteField, string> = { internal: '', customer: '', crew: '' };
+
+    // Crew review link (auto-generated if none exists)
+    if (destinations.crewLinkDestination !== 'off') {
+      const crewReviewLink = await getOrCreateActiveCrewReviewLink(projectId);
+      const crewReviewUrl = `${getBaseUrl()}/crew-review/${crewReviewLink.reviewToken}`;
+      linksByField[destinations.crewLinkDestination].push(`Crew Review Link: ${crewReviewUrl}`);
     }
 
-    // For crew notes, also include the crew review link
-    let crewNotesContent = buildNotesContent(groupedNotes.crew);
-
-    // Get crew review link (auto-generated if none exists)
-    const crewReviewLink = await getOrCreateActiveCrewReviewLink(projectId);
-
-    const crewReviewUrl = `${getBaseUrl()}/crew-review/${crewReviewLink.reviewToken}`;
-
-    const linkLines = [`Crew Review Link: ${crewReviewUrl}`];
-
-    // Media Vault links (auto-generated if none exist), unless disabled in the
-    // integration settings. A vault-link failure must not break the
-    // notes/inventory sync — omit the vault lines and keep going.
-    if (options?.includeVaultLinks !== false) {
+    // Media Vault links (auto-generated if none exist). A vault-link failure
+    // must not break the notes/inventory sync — omit the lines and keep going.
+    if (destinations.vaultLinksDestination !== 'off') {
       try {
         const vaultShareLink = await getOrCreateVaultShareLink(projectId);
-        linkLines.push(`Media Vault (view): ${getBaseUrl()}/vault-review/${vaultShareLink.shareToken}`);
+        linksByField[destinations.vaultLinksDestination].push(`Media Vault (view): ${getBaseUrl()}/vault-review/${vaultShareLink.shareToken}`);
         const vaultCaptureLink = await getOrCreateVaultCaptureLink(projectId);
-        linkLines.push(`Media Vault (upload): ${getBaseUrl()}/customer-upload/${vaultCaptureLink.uploadToken}`);
+        linksByField[destinations.vaultLinksDestination].push(`Media Vault (upload): ${getBaseUrl()}/customer-upload/${vaultCaptureLink.uploadToken}`);
       } catch (vaultError) {
-        console.error(`⚠️ [SMARTMOVING-NOTES-SYNC] Failed to get media vault links, omitting from crew notes:`, vaultError);
+        console.error(`⚠️ [SMARTMOVING-NOTES-SYNC] Failed to get media vault links, omitting from notes:`, vaultError);
       }
     }
 
-    // Prepend crew review + media vault links to crew notes
-    const linksBlock = linkLines.join('\n');
-    if (crewNotesContent) {
-      crewNotesContent = `${linksBlock}\n\n${crewNotesContent}`;
-    } else {
-      crewNotesContent = linksBlock;
+    // AI walkthrough content, with each part routed to its configured field.
+    // A build failure must not break the notes/inventory sync — omit and
+    // keep going.
+    const aiPartsWanted =
+      destinations.aiSummaryDestination !== 'off' ||
+      destinations.packingNotesDestination !== 'off' ||
+      destinations.customerStatementsDestination !== 'off';
+    if (aiPartsWanted) {
+      try {
+        const aiSections = await buildAiWalkthroughSections(projectId);
+        for (const field of NOTE_FIELDS) {
+          aiByField[field] = composeAiContentForField(aiSections, {
+            summary: destinations.aiSummaryDestination === field,
+            packingNotes: destinations.packingNotesDestination === field,
+            statements: destinations.customerStatementsDestination === field
+          });
+        }
+      } catch (aiError) {
+        console.error(`⚠️ [SMARTMOVING-NOTES-SYNC] Failed to build AI walkthrough summaries, omitting from notes:`, aiError);
+      }
     }
+
+    const composeField = (field: NoteField): string =>
+      [linksByField[field].join('\n'), buildNotesContent(groupedNotes[field]), aiByField[field]]
+        .filter(Boolean)
+        .join('\n\n');
+
+    const internalNotesContent = composeField('internal');
+    const customerNotesContent = composeField('customer');
+    const crewNotesContent = composeField('crew');
 
     // Fetch jobs for the opportunity
     const jobsResult = await getOpportunityJobs(opportunityId, apiKey, clientId);

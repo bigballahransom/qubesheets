@@ -21,6 +21,7 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 const isPublicApiRoute = createRouteMatcher([
+  '/api/branding/logo/(.*)',  // Public org logo for SMS link previews (og:image)
   '/api/customer-upload/(.*)',
   '/api/upload/(.*)',  // Global self-survey link API (config + create-project)
   '/api/vault/(.*)',  // Global Media Vault crew link API (match-or-create + token)

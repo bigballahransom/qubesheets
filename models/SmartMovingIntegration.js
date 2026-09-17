@@ -78,6 +78,35 @@ const SmartMovingIntegrationSchema = new mongoose.Schema({
     default: true
   },
 
+  // Where each synced piece of content lands in the SmartMoving job notes.
+  // 'off' disables that piece. Unset means "derive from the legacy boolean
+  // flags above" — see lib/smartmoving/noteDestinations.ts, which is the
+  // source of truth for this enum and the fallback rules.
+  crewLinkDestination: {
+    type: String,
+    enum: ['off', 'internal', 'customer', 'crew']
+  },
+
+  vaultLinksDestination: {
+    type: String,
+    enum: ['off', 'internal', 'customer', 'crew']
+  },
+
+  aiSummaryDestination: {
+    type: String,
+    enum: ['off', 'internal', 'customer', 'crew']
+  },
+
+  packingNotesDestination: {
+    type: String,
+    enum: ['off', 'internal', 'customer', 'crew']
+  },
+
+  customerStatementsDestination: {
+    type: String,
+    enum: ['off', 'internal', 'customer', 'crew']
+  },
+
   // Which SmartMoving webhook records create projects. The opportunity-created
   // webhook fires for both new leads (opportunity-status 0) and new
   // opportunities (status 3); some teams only want one or the other.

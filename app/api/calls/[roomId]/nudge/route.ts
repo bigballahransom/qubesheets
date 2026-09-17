@@ -4,6 +4,7 @@ import connectMongoDB from '@/lib/mongodb';
 import CallPresence from '@/models/CallPresence';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import Project from '@/models/Project';
+import Branding from '@/models/Branding';
 import { sendSmsWithRetry } from '@/lib/twilio';
 
 const NUDGE_COOLDOWN_MS = 30 * 1000;
@@ -69,8 +70,15 @@ export async function POST(
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
   const videoUrl = `${appUrl}/video-call/${roomId}?projectId=${projectId}&name=${encodeURIComponent(customerName)}`;
 
+  const branding = await Branding.findOne(
+    p.organizationId ? { organizationId: p.organizationId } : { userId: p.userId }
+  ).lean();
+  const companyName = (branding as any)?.companyName;
+
   const firstName = customerName.split(/[\s,]+/)[0] || 'there';
-  const message = `Hi ${firstName}, your moving consultant is ready and waiting for you. Tap to join the call: ${videoUrl}`;
+  const message = companyName
+    ? `Hi ${firstName}, your ${companyName} consultant is ready and waiting for you. Tap to join the call: ${videoUrl}`
+    : `Hi ${firstName}, your moving consultant is ready and waiting for you. Tap to join the call: ${videoUrl}`;
 
   const result = await sendSmsWithRetry(message, customerPhone);
   if (!result.success) {

@@ -193,11 +193,20 @@ export async function GET(
     // on crew/customer review links)
     const [images, videos] = await Promise.all([
       Image.find({ projectId: reviewLink.projectId, purpose: { $ne: 'vault' } }).select('_id name originalName mimeType manualRoomEntry'),
-      Video.find({ projectId: reviewLink.projectId, purpose: { $ne: 'vault' } }).select('_id originalName mimeType duration manualRoomEntry'),
+      Video.find({ projectId: reviewLink.projectId, purpose: { $ne: 'vault' } }).select('_id originalName mimeType duration manualRoomEntry analysisResult'),
     ]);
 
     // Build media sections with associated items
     const mediaSections: MediaSection[] = [];
+
+    // Only surface AI summaries whose analysis actually finished — never the
+    // "Analysis pending..." placeholder written at upload time
+    const completedSummary = (result: any): string | null => {
+      if (!result?.summary) return null;
+      if (['pending', 'processing', 'failed'].includes(result.status)) return null;
+      if (result.summary === 'Analysis pending...') return null;
+      return result.summary;
+    };
 
     // Process images (using regularItems to exclude box recommendations)
     for (const image of images) {
@@ -229,6 +238,10 @@ export async function GET(
           mediaName: video.originalName || 'Video',
           roomEntry: video.manualRoomEntry,
           items: groupItemsByRoom(videoItems.map(formatItem)),
+          aiSummary: {
+            analysisSummary: completedSummary(video.analysisResult),
+            transcriptSummary: null,
+          },
         });
       }
     }
@@ -253,8 +266,8 @@ export async function GET(
           mediaName: `Video Call Recording - ${new Date(recording.createdAt).toLocaleDateString()}`,
           items: groupItemsByRoom(recordingItems.map(formatItem)),
           aiSummary: {
-            analysisSummary: recording.analysisResult?.summary || null,
-            transcriptSummary: recording.transcriptAnalysisResult?.summary || null,
+            analysisSummary: completedSummary(recording.analysisResult),
+            transcriptSummary: completedSummary(recording.transcriptAnalysisResult),
           },
         });
       }

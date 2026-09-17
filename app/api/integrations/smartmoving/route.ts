@@ -6,6 +6,7 @@ import {
   fetchReferralSources,
   pickDefaultReferralSource,
 } from '@/lib/smartmoving/referenceData';
+import { resolveNoteSyncDestinations } from '@/lib/smartmoving/noteDestinations';
 
 const WEBHOOK_RECORD_FILTERS = [
   'opportunities_and_leads',
@@ -17,6 +18,22 @@ function normalizeWebhookRecordFilter(value: unknown): string {
   return WEBHOOK_RECORD_FILTERS.includes(value as any)
     ? (value as string)
     : 'opportunities_and_leads';
+}
+
+// The five note-destination settings plus the legacy booleans mirrored from
+// them, ready to persist. Mirroring keeps older readers of the boolean flags
+// coherent with the destination fields.
+function noteDestinationData(source: Record<string, unknown>) {
+  const destinations = resolveNoteSyncDestinations(source);
+  return {
+    ...destinations,
+    syncCrewLinkOnSync: destinations.crewLinkDestination !== 'off',
+    syncVaultLinksOnSync: destinations.vaultLinksDestination !== 'off',
+    syncAiSummariesOnSync:
+      destinations.aiSummaryDestination !== 'off' ||
+      destinations.packingNotesDestination !== 'off' ||
+      destinations.customerStatementsDestination !== 'off',
+  };
 }
 
 // GET - Retrieve SmartMoving integration for the organization
@@ -59,6 +76,7 @@ export async function GET() {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false, // default true
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false, // default true
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false, // default true
+        ...resolveNoteSyncDestinations(integration),
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt,
@@ -91,7 +109,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, webhookRecordFilter } = body;
+    const { smartMovingClientId, smartMovingApiKey, sendUploadLinkOnCreate, webhookRecordFilter } = body;
 
     if (!smartMovingClientId || !smartMovingApiKey) {
       return NextResponse.json(
@@ -109,9 +127,7 @@ export async function POST(request: Request) {
       smartMovingClientId: smartMovingClientId.trim(),
       smartMovingApiKey: smartMovingApiKey.trim(),
       sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
-      syncCrewLinkOnSync: syncCrewLinkOnSync !== false, // default true
-      syncVaultLinksOnSync: syncVaultLinksOnSync !== false, // default true
-      syncAiSummariesOnSync: syncAiSummariesOnSync !== false, // default true
+      ...noteDestinationData(body),
       webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter)
     };
 
@@ -165,6 +181,7 @@ export async function POST(request: Request) {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false,
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false,
+        ...resolveNoteSyncDestinations(integration),
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         createdAt: integration.createdAt,
         updatedAt: integration.updatedAt
@@ -195,7 +212,7 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { sendUploadLinkOnCreate, syncCrewLinkOnSync, syncVaultLinksOnSync, syncAiSummariesOnSync, webhookRecordFilter } = body;
+    const { sendUploadLinkOnCreate, webhookRecordFilter } = body;
 
     await connectMongoDB();
 
@@ -205,9 +222,7 @@ export async function PATCH(request: Request) {
       {
         $set: {
           sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
-          syncCrewLinkOnSync: syncCrewLinkOnSync !== false,
-          syncVaultLinksOnSync: syncVaultLinksOnSync !== false,
-          syncAiSummariesOnSync: syncAiSummariesOnSync !== false,
+          ...noteDestinationData(body),
           webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter),
           userId // Track who updated it
         }
@@ -234,6 +249,7 @@ export async function PATCH(request: Request) {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false,
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false,
+        ...resolveNoteSyncDestinations(integration),
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         updatedAt: integration.updatedAt
       }

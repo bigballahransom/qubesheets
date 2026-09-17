@@ -3693,35 +3693,55 @@ useEffect(() => {
     };
     const infoFields = [
       { label: 'Customer Name', value: currentProject?.customerName || '' },
+      ...(currentProject?.customerCompanyName
+        ? [{ label: 'Company', value: currentProject.customerCompanyName }]
+        : []),
       { label: 'Phone Number', value: currentProject?.phone || '' },
       { label: 'E-mail Address', value: currentProject?.customerEmail || '' },
       { label: 'Move Date', value: fmtDate(currentProject?.jobDate || currentProject?.moveDate) },
     ];
     const infoGap = 3;
     const infoFullW = pageWidth - marginX * 2;
-    const infoCardW = (infoFullW - infoGap * (infoFields.length - 1)) / infoFields.length;
     const infoCardH = 18;
-    infoFields.forEach((field, i) => {
-      const cardX = marginX + i * (infoCardW + infoGap);
-      doc.setFillColor(...lightGray);
-      doc.roundedRect(cardX, coverY, infoCardW, infoCardH, 1.5, 1.5, 'F');
-      // Label
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7);
-      doc.setTextColor(...textSubtle);
-      doc.text(field.label, cardX + 3, coverY + 6);
-      // Value (truncated if too long)
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.setTextColor(...textStrong);
-      let v = field.value || '—';
-      const vMax = infoCardW - 6;
-      let truncated = v;
-      while (doc.getTextWidth(truncated) > vMax && truncated.length > 0) truncated = truncated.slice(0, -1);
-      if (truncated !== v && truncated.length > 3) truncated = truncated.slice(0, -3) + '...';
-      doc.text(truncated, cardX + 3, coverY + 14);
-    });
-    coverY += infoCardH + 14;
+    const drawInfoCardRow = (fields) => {
+      const cardW = (infoFullW - infoGap * (fields.length - 1)) / fields.length;
+      fields.forEach((field, i) => {
+        const cardX = marginX + i * (cardW + infoGap);
+        doc.setFillColor(...lightGray);
+        doc.roundedRect(cardX, coverY, cardW, infoCardH, 1.5, 1.5, 'F');
+        // Label
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(...textSubtle);
+        doc.text(field.label, cardX + 3, coverY + 6);
+        // Value (truncated if too long)
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...textStrong);
+        let v = field.value || '—';
+        const vMax = cardW - 6;
+        let truncated = v;
+        while (doc.getTextWidth(truncated) > vMax && truncated.length > 0) truncated = truncated.slice(0, -1);
+        if (truncated !== v && truncated.length > 3) truncated = truncated.slice(0, -3) + '...';
+        doc.text(truncated, cardX + 3, coverY + 14);
+      });
+      coverY += infoCardH;
+    };
+    drawInfoCardRow(infoFields);
+    // Second row: moving route — wider cards so full addresses fit
+    const routeFields = [
+      ...(currentProject?.origin?.address
+        ? [{ label: 'Moving From', value: currentProject.origin.address }]
+        : []),
+      ...(currentProject?.destination?.address
+        ? [{ label: 'Moving To', value: currentProject.destination.address }]
+        : []),
+    ];
+    if (routeFields.length > 0) {
+      coverY += infoGap;
+      drawInfoCardRow(routeFields);
+    }
+    coverY += 14;
 
     // ==================== SHARED RENDERING STATE ====================
     const startX = marginX;
@@ -4619,45 +4639,6 @@ useEffect(() => {
       };
 
       try {
-        // ==================== AI SUMMARIES ====================
-        const recordingsResponse = await fetch(`/api/projects/${currentProject._id}/video-recordings`);
-        if (recordingsResponse.ok) {
-          const recordingsData = await recordingsResponse.json();
-          const recordings = recordingsData.recordings || [];
-
-          const aiSummaries = recordings.filter(rec =>
-            rec.status === 'completed' &&
-            (rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary)
-          );
-
-          if (aiSummaries.length > 0) {
-            drawSectionHeader('AI Notes & Summaries');
-
-            for (const recording of aiSummaries) {
-              // Recording label
-              if (currentY + 8 > pageHeight - bottomMargin) {
-                doc.addPage();
-                currentY = topMargin;
-              }
-              doc.setFont('helvetica', 'bold');
-              doc.setFontSize(10);
-              doc.setTextColor(...textStrong);
-              const label = `Virtual Call — ${new Date(recording.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-              doc.text(label, marginX, currentY);
-              currentY += 5;
-
-              if (recording.transcriptAnalysisResult?.summary) {
-                renderNoteCard([16, 185, 129], 'Call Summary', recording.transcriptAnalysisResult.summary); // emerald-500
-              }
-              if (recording.analysisResult?.summary) {
-                renderNoteCard(primaryColor, 'Packing Notes', recording.analysisResult.summary);
-              }
-
-              currentY += 2;
-            }
-          }
-        }
-
         // ==================== PROJECT NOTES ====================
         const notesResponse = await fetch(`/api/projects/${currentProject._id}/notes?sortBy=priority&sortOrder=desc`);
         if (notesResponse.ok) {
