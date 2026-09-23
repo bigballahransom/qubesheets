@@ -61,6 +61,10 @@ export interface UseSelfServeLocalRecordingReturn extends UseSelfServeRecordingL
    *  silently dead). UI shows a non-blocking warning; recording continues —
    *  dark rooms are legitimate footage. */
   blackVideoWarning: boolean;
+  /** True while the connection can't keep pace with the recording (a part
+   *  upload stalled or errored and the backlog hasn't drained). UI shows a
+   *  passive pill; recording continues — footage is safe on-device. */
+  uploadLagging: boolean;
 }
 
 export function useSelfServeLocalRecording({
@@ -89,6 +93,7 @@ export function useSelfServeLocalRecording({
   const [torchOn, setTorchOn] = useState(false);
   const [savedDuration, setSavedDuration] = useState(0);
   const [blackVideoWarning, setBlackVideoWarning] = useState(false);
+  const [uploadLagging, setUploadLagging] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -151,6 +156,7 @@ export function useSelfServeLocalRecording({
     cameraInterruptedRef.current = false;
     setBlackVideoWarning(false);
     blackRunRef.current = 0;
+    setUploadLagging(false);
     interruptedFinishRef.current = false;
     try { audioCtxRef.current?.close(); } catch {}
     audioCtxRef.current = null;
@@ -367,6 +373,9 @@ export function useSelfServeLocalRecording({
       const engine = new SelfServeLocalRecorder(uploadToken, {
         onProgress: (uploaded, total) => {
           if (total > 0) setUploadProgress(Math.min(99, Math.round((uploaded / total) * 100)));
+          // Lagging clears only once the backlog has actually drained —
+          // one healthy part isn't proof the connection recovered.
+          if (total - uploaded < 10 * 1024 * 1024) setUploadLagging(false);
         },
         onError: (err) => {
           // Upload failures stay passive: footage keeps accumulating locally
@@ -378,7 +387,10 @@ export function useSelfServeLocalRecording({
             stopRef.current();
           }
         },
-        onRetry: (info) => sendTelemetry(uploadToken, { event: 'part_upload_retry', engine: 'local', ...info }),
+        onRetry: (info) => {
+          setUploadLagging(true);
+          sendTelemetry(uploadToken, { event: 'part_upload_retry', engine: 'local', ...info });
+        },
         onCaptureSettings: (info) => sendTelemetry(uploadToken, { event: 'capture_settings', engine: 'local', ...info }),
         onCaptureBroken: (reason) => {
           // Capture died with real footage already saved (encoder error,
@@ -555,8 +567,12 @@ export function useSelfServeLocalRecording({
     const engine = new SelfServeLocalRecorder(uploadToken, {
       onProgress: (uploaded, total) => {
         if (total > 0) setUploadProgress(Math.min(99, Math.round((uploaded / total) * 100)));
+        if (total - uploaded < 10 * 1024 * 1024) setUploadLagging(false);
       },
-      onRetry: (info) => sendTelemetry(uploadToken, { event: 'part_upload_retry', engine: 'local', ...info })
+      onRetry: (info) => {
+        setUploadLagging(true);
+        sendTelemetry(uploadToken, { event: 'part_upload_retry', engine: 'local', ...info });
+      }
     });
     engineRef.current = engine;
     setSessionId(sid);
@@ -813,6 +829,7 @@ export function useSelfServeLocalRecording({
     torchOn,
     toggleTorch,
     blackVideoWarning,
+    uploadLagging,
     cleanup
   };
 }

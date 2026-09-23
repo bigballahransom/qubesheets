@@ -8,6 +8,7 @@ import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 import { updateCalendarEvent, deleteCalendarEvent } from '@/lib/google-calendar';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
+import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
 
 const DEFAULT_VIDEO_CALL_CONFIRMATION_SMS = `Hi {customerName}, your video call with {companyName} has been rescheduled to {scheduledDate} at {scheduledTime}.
 
@@ -200,6 +201,12 @@ export async function PATCH(
       previousScheduledFor,
     });
 
+    // Move the mirrored SmartMoving survey (no-op if not linked; never throws)
+    await syncVirtualCallSurveyToSmartMoving({
+      callId: scheduledCall._id.toString(),
+      action: 'reschedule',
+    });
+
     return NextResponse.json({
       success: true,
       scheduledCall: {
@@ -305,6 +312,12 @@ export async function DELETE(
       roomId: scheduledCall.roomId,
       scheduledFor: scheduledCall.scheduledFor,
       timezone: scheduledCall.timezone,
+    });
+
+    // Flag the mirrored SmartMoving survey as cancelled (no delete API exists)
+    await syncVirtualCallSurveyToSmartMoving({
+      callId: scheduledCall._id.toString(),
+      action: 'cancel',
     });
 
     return NextResponse.json({

@@ -60,6 +60,9 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get('projectId');
+    // Optional phone override — the schedule-call modal lets the user edit the
+    // phone before the project has one saved.
+    const phoneParam = searchParams.get('phone');
 
     if (!projectId) {
       return NextResponse.json(
@@ -85,8 +88,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Check if project has a phone number
-    if (!project.phone) {
+    // Check if we have a phone number to search with
+    const searchPhone = phoneParam?.trim() || project.phone;
+    if (!searchPhone) {
       return NextResponse.json({
         success: false,
         error: 'no_phone',
@@ -107,7 +111,7 @@ export async function GET(request: NextRequest) {
         success: false,
         error: 'no_integration',
         message: 'SmartMoving integration not configured',
-        phone: project.phone,
+        phone: searchPhone,
         leads: [],
         customers: []
       });
@@ -115,25 +119,21 @@ export async function GET(request: NextRequest) {
 
     const { smartMovingApiKey, smartMovingClientId } = integration;
 
-    // Search for leads
-    console.log(`🔍 [SEARCH-RECORDS] Fetching leads from SmartMoving...`);
-    const leadsResult = await fetchSmartMovingLeads(smartMovingApiKey, smartMovingClientId);
+    // Lead fetch (pages through all open leads) and customer search are
+    // independent — run them in parallel; this is the modal's critical path.
+    console.log(`🔍 [SEARCH-RECORDS] Fetching leads + searching customers in parallel...`);
+    const [leadsResult, customersResult] = await Promise.all([
+      fetchSmartMovingLeads(smartMovingApiKey, smartMovingClientId),
+      searchCustomersByPhone(searchPhone, smartMovingApiKey, smartMovingClientId),
+    ]);
 
     let matchedLeads: SmartMovingLead[] = [];
     if (leadsResult.success) {
-      matchedLeads = findAllLeadsByPhone(leadsResult.leads, project.phone);
+      matchedLeads = findAllLeadsByPhone(leadsResult.leads, searchPhone);
       console.log(`✅ [SEARCH-RECORDS] Found ${matchedLeads.length} matching leads`);
     } else {
       console.log(`⚠️ [SEARCH-RECORDS] Failed to fetch leads: ${leadsResult.error}`);
     }
-
-    // Search for customers
-    console.log(`🔍 [SEARCH-RECORDS] Searching for customers by phone...`);
-    const customersResult = await searchCustomersByPhone(
-      project.phone,
-      smartMovingApiKey,
-      smartMovingClientId
-    );
 
     let customersWithOpportunities: Array<{
       id: string;
@@ -151,31 +151,33 @@ export async function GET(request: NextRequest) {
     if (customersResult.success && customersResult.customers.length > 0) {
       console.log(`✅ [SEARCH-RECORDS] Found ${customersResult.customers.length} matching customers`);
 
-      // Fetch opportunities for each customer
-      for (const customer of customersResult.customers) {
-        const oppsResult = await getOpportunitiesByCustomerId(
-          customer.id,
-          smartMovingApiKey,
-          smartMovingClientId
-        );
+      // Fetch every customer's opportunities concurrently
+      customersWithOpportunities = await Promise.all(
+        customersResult.customers.map(async (customer) => {
+          const oppsResult = await getOpportunitiesByCustomerId(
+            customer.id,
+            smartMovingApiKey,
+            smartMovingClientId
+          );
 
-        const opportunities = oppsResult.success
-          ? oppsResult.opportunities.map((opp: SmartMovingCustomerOpportunity) => ({
-              id: opp.id,
-              quoteNumber: opp.quoteNumber,
-              status: opp.status ?? 0,
-              statusLabel: getOpportunityStatusLabel(opp.status)
-            }))
-          : [];
+          const opportunities = oppsResult.success
+            ? oppsResult.opportunities.map((opp: SmartMovingCustomerOpportunity) => ({
+                id: opp.id,
+                quoteNumber: opp.quoteNumber,
+                status: opp.status ?? 0,
+                statusLabel: getOpportunityStatusLabel(opp.status)
+              }))
+            : [];
 
-        customersWithOpportunities.push({
-          id: customer.id,
-          name: customer.name,
-          phoneNumber: customer.phoneNumber,
-          opportunities,
-          type: 'customer'
-        });
-      }
+          return {
+            id: customer.id,
+            name: customer.name,
+            phoneNumber: customer.phoneNumber,
+            opportunities,
+            type: 'customer' as const
+          };
+        })
+      );
     } else {
       console.log(`⚠️ [SEARCH-RECORDS] No matching customers found`);
     }
@@ -193,7 +195,7 @@ export async function GET(request: NextRequest) {
 
     const result: SearchResult = {
       success: true,
-      phone: project.phone,
+      phone: searchPhone,
       leads: formattedLeads,
       customers: customersWithOpportunities
     };

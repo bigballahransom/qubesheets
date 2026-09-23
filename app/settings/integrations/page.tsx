@@ -37,6 +37,8 @@ export default function IntegrationsPage() {
   const [packingNotesDestination, setPackingNotesDestination] = useState('internal');
   const [customerStatementsDestination, setCustomerStatementsDestination] = useState('internal');
   const [webhookRecordFilter, setWebhookRecordFilter] = useState('opportunities_and_leads');
+  const [surveySyncEnabled, setSurveySyncEnabled] = useState(true);
+  const [surveyNotifyCustomer, setSurveyNotifyCustomer] = useState(false);
 
   // Chariot integration state
   const [chariotEnabled, setChariotEnabled] = useState(false);
@@ -83,6 +85,8 @@ export default function IntegrationsPage() {
           setPackingNotesDestination(data.integration.packingNotesDestination || 'internal');
           setCustomerStatementsDestination(data.integration.customerStatementsDestination || 'internal');
           setWebhookRecordFilter(data.integration.webhookRecordFilter || 'opportunities_and_leads');
+          setSurveySyncEnabled(data.integration.surveySyncEnabled !== false);
+          setSurveyNotifyCustomer(data.integration.surveyNotifyCustomer === true);
           // API key is not returned for security, just show that it exists
           if (data.integration.hasApiKey) {
             setSmartMovingApiKey('••••••••••••••••');
@@ -163,6 +167,8 @@ export default function IntegrationsPage() {
             packingNotesDestination,
             customerStatementsDestination,
             webhookRecordFilter,
+            surveySyncEnabled,
+            surveyNotifyCustomer,
           }),
         });
 
@@ -188,6 +194,8 @@ export default function IntegrationsPage() {
             packingNotesDestination,
             customerStatementsDestination,
             webhookRecordFilter,
+            surveySyncEnabled,
+            surveyNotifyCustomer,
           }),
         });
 
@@ -219,6 +227,8 @@ export default function IntegrationsPage() {
         setPackingNotesDestination('internal');
         setCustomerStatementsDestination('internal');
         setWebhookRecordFilter('opportunities_and_leads');
+        setSurveySyncEnabled(true);
+        setSurveyNotifyCustomer(false);
       } else if (smartMovingEnabled && (!smartMovingClientId || !smartMovingApiKey)) {
         toast.error('Please provide both Client ID and API Key');
         return;
@@ -715,6 +725,47 @@ export default function IntegrationsPage() {
                               </label>
                               <p className="text-xs text-gray-600 mt-1">
                                 Automatically send an SMS with an upload link to the customer when a new opportunity is created in SmartMoving.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Virtual Call Survey Sync */}
+                      {hasExistingIntegration && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              id="survey-sync-enabled"
+                              checked={surveySyncEnabled}
+                              onChange={(e) => setSurveySyncEnabled(e.target.checked)}
+                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <label htmlFor="survey-sync-enabled" className="text-sm font-medium text-gray-900 cursor-pointer">
+                                Add scheduled virtual calls to the SmartMoving calendar
+                              </label>
+                              <p className="text-xs text-gray-600 mt-1">
+                                When a virtual call is scheduled on a project linked to a SmartMoving opportunity, a virtual survey is created on the opportunity — assigned to the matching estimator (by email) with the join link in the internal notes. Reschedules and cancellations update it.
+                              </p>
+                            </div>
+                          </div>
+                          <div className={`flex items-start gap-3 mt-3 ml-7 ${!surveySyncEnabled ? 'opacity-50' : ''}`}>
+                            <input
+                              type="checkbox"
+                              id="survey-notify-customer"
+                              checked={surveyNotifyCustomer}
+                              onChange={(e) => setSurveyNotifyCustomer(e.target.checked)}
+                              disabled={!surveySyncEnabled}
+                              className="h-4 w-4 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <label htmlFor="survey-notify-customer" className="text-sm font-medium text-gray-900 cursor-pointer">
+                                Also send SmartMoving's customer notification
+                              </label>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Off by default — Qube Sheets already texts the customer a confirmation and reminders, so this would duplicate messages.
                               </p>
                             </div>
                           </div>

@@ -2,8 +2,39 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useUser } from '@clerk/nextjs';
-import { X, Video, Calendar, Loader2, Clock, Phone, Mail, User, Globe, ChevronDown, FileText } from 'lucide-react';
+import { X, Video, Calendar, Loader2, Clock, Phone, Mail, User, Globe, ChevronDown, FileText, Link2, Search } from 'lucide-react';
 import { toast } from 'sonner';
+
+// A SmartMoving lead or opportunity the user can link the project to before
+// scheduling (same selection shape the SmartMoving sync modal produces).
+interface SmartMovingRecordOption {
+  targetType: 'lead' | 'opportunity';
+  targetId: string;
+  customerId?: string;
+  quoteNumber?: string;
+  label: string;
+  sublabel: string;
+}
+
+// Mirror of the server's survey slot math (lib/smartmoving/surveys.ts
+// toSurveyStartAt): floor to a 30-min slot, clamp into 07:00–18:30.
+const surveySlotMinutes = (timeStr: string): number | null => {
+  const [h, m] = timeStr.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  let hour = h;
+  let minute = m < 30 ? 0 : 30;
+  if (hour < 7) { hour = 7; minute = 0; }
+  else if (hour > 18 || (hour === 18 && minute > 30)) { hour = 18; minute = 30; }
+  return hour * 60 + minute;
+};
+
+const formatSlotTime = (minutes: number): string => {
+  const h24 = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const period = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+};
 
 // Common US timezones
 const COMMON_TIMEZONES = [
@@ -117,6 +148,31 @@ export default function ScheduleVideoCallModal({
   const [calendarDescription, setCalendarDescription] = useState('');
   const [showDescriptionEdit, setShowDescriptionEdit] = useState(false);
 
+  // SmartMoving link state. 'linked' = project already has an opportunity;
+  // 'unlinked' = org has SmartMoving but this project isn't linked yet, so we
+  // offer the same record picker the sync modal uses. 'hidden' = no
+  // integration (or still checking) — section not shown.
+  const [smStatus, setSmStatus] = useState<'hidden' | 'linked' | 'unlinked'>('hidden');
+  // Gate: the form waits for the (fast) status check, and for SM orgs with an
+  // unlinked project, for the initial record search — so the SmartMoving
+  // section is on screen before anyone can fill the form or schedule.
+  const [smCheckDone, setSmCheckDone] = useState(false);
+  const [smFirstSearchDone, setSmFirstSearchDone] = useState(false);
+  // Stays true after "Change" flips the section into picker mode — the project
+  // is still linked unless a different record is picked.
+  const [smWasLinked, setSmWasLinked] = useState(false);
+  const [smLinkedQuote, setSmLinkedQuote] = useState<string | null>(null);
+  const [smRecords, setSmRecords] = useState<SmartMovingRecordOption[]>([]);
+  const [smSearching, setSmSearching] = useState(false);
+  const [smSearchDone, setSmSearchDone] = useState(false);
+  const [smSelected, setSmSelected] = useState<SmartMovingRecordOption | null>(null);
+  // The would-be estimator's booked SmartMoving windows for the chosen date
+  // (account-local wall-clock minutes), so time conflicts surface pre-submit.
+  const [smAvailability, setSmAvailability] = useState<{
+    name: string | null;
+    busy: Array<{ startMin: number; endMin: number }>;
+  } | null>(null);
+
   // Get browser's detected timezone as fallback
   const detectedTimezone = useMemo(() => {
     try {
@@ -166,6 +222,157 @@ export default function ScheduleVideoCallModal({
       setShowDescriptionEdit(false);
     }
   }, [isOpen, initialCustomerName, initialCustomerPhone, initialCustomerEmail, projectName]);
+
+  // Check SmartMoving link status; when unlinked, pre-search matching records
+  // so the user can optionally link before scheduling.
+  useEffect(() => {
+    if (!isOpen) return;
+    setSmStatus('hidden');
+    setSmCheckDone(false);
+    setSmFirstSearchDone(false);
+    setSmWasLinked(false);
+    setSmLinkedQuote(null);
+    setSmRecords([]);
+    setSmSelected(null);
+    setSmSearchDone(false);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/smartmoving/sync-from-lead?projectId=${projectId}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !data?.status?.hasIntegration) return;
+        if (data.status.hasOpportunityId) {
+          setSmStatus('linked');
+          setSmWasLinked(true);
+          setSmLinkedQuote(data.status.quoteNumber || null);
+        } else {
+          setSmStatus('unlinked');
+          searchSmartMovingRecords(initialCustomerPhone, () => cancelled);
+        }
+      } catch {
+        // No SmartMoving section on failure — scheduling is unaffected
+      } finally {
+        if (!cancelled) setSmCheckDone(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, projectId]);
+
+  // Fetch the estimator's booked SmartMoving windows for the chosen date.
+  const smRelevant = smStatus === 'linked' || smWasLinked || !!smSelected;
+  useEffect(() => {
+    if (!isOpen || !smRelevant || !scheduledDate) {
+      setSmAvailability(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const selectionParams = smSelected
+          ? `&targetType=${smSelected.targetType}&targetId=${smSelected.targetId}`
+          : '';
+        const res = await fetch(
+          `/api/smartmoving/survey-availability?projectId=${projectId}&date=${scheduledDate}${selectionParams}`
+        );
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled || !data?.success) return;
+        const busy = (data.busy || [])
+          .filter((b: any) => typeof b?.startAt === 'string' && b.startAt.slice(0, 10) === scheduledDate)
+          .map((b: any) => {
+            const startMin =
+              Number(b.startAt.slice(11, 13)) * 60 + Number(b.startAt.slice(14, 16));
+            return { startMin, endMin: startMin + (Number(b.durationMinutes) || 60) };
+          })
+          .filter((b: any) => !isNaN(b.startMin));
+        setSmAvailability({ name: data.estimatorName || null, busy });
+      } catch {
+        // No pre-check on failure — the post-schedule error still catches it
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, smRelevant, scheduledDate, smSelected, projectId]);
+
+  // Does the proposed survey slot overlap a booked window?
+  const smConflict = useMemo(() => {
+    if (!smAvailability || !scheduledTime) return null;
+    const slotStart = surveySlotMinutes(scheduledTime);
+    if (slotStart === null) return null;
+    const slotEnd = slotStart + 60;
+    const overlapping = smAvailability.busy.filter(
+      (b) => slotStart < b.endMin && slotEnd > b.startMin
+    );
+    if (overlapping.length === 0) return null;
+    return {
+      name: smAvailability.name,
+      slotLabel: formatSlotTime(slotStart),
+      busyLabels: overlapping.map((b) => `${formatSlotTime(b.startMin)}–${formatSlotTime(b.endMin)}`),
+    };
+  }, [smAvailability, scheduledTime]);
+
+  const searchSmartMovingRecords = async (
+    phone?: string,
+    isCancelled: () => boolean = () => false,
+  ) => {
+    setSmSearching(true);
+    setSmSearchDone(false);
+    try {
+      const digits = (phone || '').replace(/\D/g, '');
+      const phoneParam = digits ? `&phone=${digits}` : '';
+      const res = await fetch(
+        `/api/smartmoving/search-records?projectId=${projectId}${phoneParam}`
+      );
+      if (!res.ok || isCancelled()) return;
+      const data = await res.json();
+      if (isCancelled()) return;
+
+      const options: SmartMovingRecordOption[] = [];
+      for (const lead of data.leads || []) {
+        options.push({
+          targetType: 'lead',
+          targetId: lead.id,
+          label: lead.customerName || 'SmartMoving lead',
+          sublabel: `Lead${lead.phoneNumber ? ` • ${lead.phoneNumber}` : ''}`,
+        });
+      }
+      for (const customer of data.customers || []) {
+        for (const opp of customer.opportunities || []) {
+          // SmartMoving only allows surveys on active opportunities, so
+          // lost/completed jobs would just produce a failed survey — hide them.
+          if (opp.status !== 3 && opp.status !== 4) continue;
+          options.push({
+            targetType: 'opportunity',
+            targetId: opp.id,
+            customerId: customer.id,
+            quoteNumber: opp.quoteNumber,
+            label: customer.name || 'SmartMoving customer',
+            sublabel: `${opp.quoteNumber ? `Quote #${opp.quoteNumber} • ` : ''}${opp.statusLabel || 'Opportunity'}`,
+          });
+        }
+      }
+      setSmRecords(options);
+    } catch {
+      // Leave the list empty — the section shows "no matches"
+    } finally {
+      if (!isCancelled()) {
+        setSmSearching(false);
+        setSmSearchDone(true);
+        setSmFirstSearchDone(true);
+      }
+    }
+  };
+
+  // While gating, the form and Schedule button stay hidden. Non-SmartMoving
+  // orgs only wait for the single fast status lookup.
+  const smGateLoading = !smCheckDone || (smStatus === 'unlinked' && !smFirstSearchDone);
 
   const checkCalendarConnection = () => {
     setCheckingCalendar(true);
@@ -251,6 +458,14 @@ export default function ScheduleVideoCallModal({
           timezone: timezone || detectedTimezone,
           addToCalendar: addToCalendar && hasCalendarConnected,
           calendarDescription: calendarDescription.trim() || undefined,
+          smartMoving: smSelected
+            ? {
+                targetType: smSelected.targetType,
+                targetId: smSelected.targetId,
+                customerId: smSelected.customerId,
+                quoteNumber: smSelected.quoteNumber,
+              }
+            : undefined,
         }),
       });
 
@@ -261,6 +476,17 @@ export default function ScheduleVideoCallModal({
 
       const result = await response.json();
       toast.success('Video call scheduled! SMS confirmation sent.');
+      if (result.smartMovingLink && !result.smartMovingLink.linked) {
+        toast.warning(
+          `Call scheduled, but linking to SmartMoving failed: ${result.smartMovingLink.message || result.smartMovingLink.error || 'unknown error'}`
+        );
+      } else if (result.smartMovingSurvey?.status === 'failed') {
+        toast.warning(
+          `Call scheduled, but the SmartMoving calendar survey wasn't created${
+            result.smartMovingSurvey.error ? `: ${result.smartMovingSurvey.error}` : '.'
+          }`
+        );
+      }
 
       if (onScheduled) {
         onScheduled(result.scheduledCall);
@@ -285,6 +511,14 @@ export default function ScheduleVideoCallModal({
     setShowTimezoneSelect(false);
     setCalendarDescription('');
     setShowDescriptionEdit(false);
+    setSmStatus('hidden');
+    setSmCheckDone(false);
+    setSmFirstSearchDone(false);
+    setSmWasLinked(false);
+    setSmLinkedQuote(null);
+    setSmRecords([]);
+    setSmSelected(null);
+    setSmSearchDone(false);
     onClose();
   };
 
@@ -322,6 +556,109 @@ export default function ScheduleVideoCallModal({
                 Schedule a video inventory call with your customer
               </p>
             </div>
+
+            {/* SmartMoving — resolved before the rest of the form loads */}
+            {!smCheckDone && (
+              <p className="text-xs text-gray-500 flex items-center gap-2 py-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Checking SmartMoving...
+              </p>
+            )}
+            {smStatus === 'linked' && (
+              <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg flex items-start gap-2">
+                <Link2 className="w-4 h-4 text-gray-500 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gray-600">
+                    Linked to SmartMoving{smLinkedQuote ? ` (Quote #${smLinkedQuote})` : ''} — this
+                    call will be added to the SmartMoving calendar as a virtual survey.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSmStatus('unlinked');
+                    searchSmartMovingRecords(customerPhone || initialCustomerPhone);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-700 shrink-0 cursor-pointer"
+                >
+                  Change
+                </button>
+              </div>
+            )}
+            {smStatus === 'unlinked' && (
+              <div className="bg-gray-50 border border-gray-200 p-3 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                    <Link2 className="w-4 h-4 text-gray-500" />
+                    {smWasLinked ? 'Change SmartMoving job' : 'Add to SmartMoving calendar'}
+                    <span className="text-xs font-normal text-gray-400">(optional)</span>
+                  </p>
+                  {!smSearching && (
+                    <button
+                      type="button"
+                      onClick={() => searchSmartMovingRecords(customerPhone)}
+                      className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Search className="w-3 h-3" />
+                      Search again
+                    </button>
+                  )}
+                </div>
+                {smWasLinked && (
+                  <p className="text-xs text-gray-500 mb-1">
+                    Currently linked{smLinkedQuote ? ` to Quote #${smLinkedQuote}` : ''} — picking a
+                    different job re-links the project; picking nothing keeps the current link.
+                  </p>
+                )}
+                {smSearching ? (
+                  <p className="text-xs text-gray-500 flex items-center gap-2 py-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Searching SmartMoving by phone number...
+                  </p>
+                ) : smRecords.length > 0 ? (
+                  <div className="space-y-1.5 mt-1 max-h-40 overflow-y-auto">
+                    {smRecords.map((record) => {
+                      const isSelected =
+                        smSelected?.targetId === record.targetId &&
+                        smSelected?.targetType === record.targetType;
+                      return (
+                        <button
+                          key={`${record.targetType}-${record.targetId}`}
+                          type="button"
+                          onClick={() => setSmSelected(isSelected ? null : record)}
+                          className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'border-blue-500 bg-blue-50 text-blue-900'
+                              : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
+                          }`}
+                        >
+                          <span className="font-medium">{record.label}</span>
+                          <span className={`block text-xs ${isSelected ? 'text-blue-700' : 'text-gray-500'}`}>
+                            {record.sublabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {smSelected && (
+                      <p className="text-xs text-gray-500 pt-0.5">
+                        The project will be linked to this SmartMoving job and the call added to
+                        its calendar. Click again to unselect.
+                      </p>
+                    )}
+                  </div>
+                ) : smSearchDone ? (
+                  <p className="text-xs text-gray-500 py-1">
+                    No SmartMoving leads or opportunities matched this phone number.{' '}
+                    {smWasLinked
+                      ? 'The current link is kept.'
+                      : 'You can schedule without linking and sync later.'}
+                  </p>
+                ) : null}
+              </div>
+            )}
+
+            {!smGateLoading && (
+              <>
 
             {/* Customer Name */}
             <div>
@@ -402,6 +739,18 @@ export default function ScheduleVideoCallModal({
                 />
               </div>
             </div>
+
+            {/* SmartMoving estimator availability conflict */}
+            {smConflict && (
+              <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg">
+                <p className="text-xs text-amber-800">
+                  <strong>{smConflict.name || 'The SmartMoving estimator'} is not available at{' '}
+                  {smConflict.slotLabel} in SmartMoving</strong> — already booked{' '}
+                  {smConflict.busyLabels.join(', ')}. Pick a different time, or the survey
+                  won&apos;t be added to the SmartMoving calendar.
+                </p>
+              </div>
+            )}
 
             {/* Timezone */}
             <div>
@@ -531,6 +880,9 @@ export default function ScheduleVideoCallModal({
                 {customerEmail && addToCalendar && hasCalendarConnected && (
                   <li>- Calendar invite sent to customer</li>
                 )}
+                {(smStatus === 'linked' || smWasLinked || smSelected) && (
+                  <li>- Virtual survey added to the SmartMoving calendar</li>
+                )}
               </ul>
             </div>
 
@@ -553,6 +905,8 @@ export default function ScheduleVideoCallModal({
                 </>
               )}
             </button>
+              </>
+            )}
           </div>
         </div>
       </div>

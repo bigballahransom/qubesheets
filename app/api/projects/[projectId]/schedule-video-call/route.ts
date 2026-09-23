@@ -10,6 +10,8 @@ import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 import { createVideoCallCalendarEvents, hasGoogleCalendarConnected } from '@/lib/google-calendar';
 import { generateJoinUrl } from '@/lib/video-call-tokens';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
+import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
+import { linkProjectToSmartMovingRecord } from '@/lib/smartmoving/linkProject';
 import { randomBytes } from 'crypto';
 
 // Default templates
@@ -85,6 +87,10 @@ export async function POST(
       timezone = 'America/New_York',
       addToCalendar = false,
       calendarDescription,
+      // Optional SmartMoving record picked in the modal when the project
+      // wasn't linked yet: { targetType: 'lead'|'opportunity', targetId,
+      // customerId?, quoteNumber? } — same shape the sync modal produces.
+      smartMoving,
     } = body;
 
     // Validate required fields
@@ -102,6 +108,42 @@ export async function POST(
         { error: 'Scheduled time must be in the future' },
         { status: 400 }
       );
+    }
+
+    // Link the project to the selected SmartMoving record first, so the
+    // survey mirror below finds the link. A failed link never blocks
+    // scheduling — it's reported back in the response instead.
+    let smartMovingLink:
+      | { linked: boolean; error?: string; message?: string; takenOverFrom?: string[] }
+      | undefined;
+    if (smartMoving?.targetType && smartMoving?.targetId && organizationId) {
+      try {
+        const linkResult = await linkProjectToSmartMovingRecord({
+          projectId,
+          organizationId,
+          selection: {
+            targetType: smartMoving.targetType,
+            targetId: smartMoving.targetId,
+            customerId: smartMoving.customerId,
+            quoteNumber: smartMoving.quoteNumber,
+          },
+        });
+        smartMovingLink = linkResult.success
+          ? {
+              linked: true,
+              ...(linkResult.takenOverFrom.length > 0 && {
+                takenOverFrom: linkResult.takenOverFrom,
+              }),
+            }
+          : { linked: false, error: linkResult.error, message: linkResult.message };
+      } catch (linkError) {
+        console.error('Failed to link project to SmartMoving record:', linkError);
+        smartMovingLink = {
+          linked: false,
+          error: 'link_failed',
+          message: linkError instanceof Error ? linkError.message : 'Failed to link',
+        };
+      }
     }
 
     // Generate room ID
@@ -293,6 +335,13 @@ ${companyName}`;
       timezone,
     });
 
+    // Mirror onto the SmartMoving calendar (no-op unless the org is
+    // integrated and the project is linked; never throws)
+    const smartMovingSurvey = await syncVirtualCallSurveyToSmartMoving({
+      callId: scheduledCallId,
+      action: 'create',
+    });
+
     return NextResponse.json({
       success: true,
       scheduledCall: {
@@ -306,6 +355,8 @@ ${companyName}`;
         googleCalendarEventId,
         customerCalendarEventId,
       },
+      ...(smartMovingLink && { smartMovingLink }),
+      ...(smartMovingSurvey && { smartMovingSurvey }),
     });
   } catch (error) {
     console.error('Error scheduling video call:', error);

@@ -104,6 +104,12 @@ interface SelfServeRecorderLiveKitProps {
    *  Browsers that can't run local capture silently fall back to LiveKit.
    *  ?capture=local / ?capture=livekit override for testing. */
   captureEngine?: 'local' | 'livekit';
+  /** Opened via a stranded-upload recovery link (&recover=1). If no
+   *  resumable footage exists in THIS browser's storage, show a
+   *  wrong-device notice instead of a silent plain record screen — the
+   *  most likely mistake is opening the link on the office computer or a
+   *  different phone. */
+  recoverMode?: boolean;
 }
 
 export function SelfServeRecorderLiveKit({
@@ -116,7 +122,8 @@ export function SelfServeRecorderLiveKit({
   walkthroughReturnUrl,
   isVault,
   vaultUploadFormFields,
-  captureEngine
+  captureEngine,
+  recoverMode
 }: SelfServeRecorderLiveKitProps) {
   const router = useRouter();
   const [showInstructions, setShowInstructions] = useState(true);
@@ -639,22 +646,31 @@ export function SelfServeRecorderLiveKit({
   // the footage is still in IndexedDB. Offer to finish the upload — this is
   // what makes closing the page during "Saving your video…" non-fatal.
   const [pendingUpload, setPendingUpload] = useState<ResumableUpload | null>(null);
+  /** listResumable has resolved — distinguishes "none found" from "still
+   *  checking" so the recover-mode wrong-device notice never flashes. */
+  const [resumableCheckDone, setResumableCheckDone] = useState(false);
   useEffect(() => {
     if (!useLocalEngine || !showInstructions) return;
     let cancelled = false;
-    SelfServeLocalRecorder.listResumable(uploadToken).then((list) => {
-      if (!cancelled && list.length > 0) {
-        setPendingUpload(list[0]);
-        pingTelemetry(uploadToken, {
-          event: 'resumable_upload_found',
-          resumedSessionId: list[0].sessionId,
-          pendingBytes: list[0].totalBytes,
-          pendingDuration: list[0].durationSeconds
-        });
-      }
-    });
+    SelfServeLocalRecorder.listResumable(uploadToken)
+      .then((list) => {
+        if (cancelled) return;
+        if (list.length > 0) {
+          setPendingUpload(list[0]);
+          pingTelemetry(uploadToken, {
+            event: 'resumable_upload_found',
+            resumedSessionId: list[0].sessionId,
+            pendingBytes: list[0].totalBytes,
+            pendingDuration: list[0].durationSeconds
+          });
+        } else if (recoverMode) {
+          pingTelemetry(uploadToken, { event: 'recovery_link_no_pending' });
+        }
+        setResumableCheckDone(true);
+      })
+      .catch(() => { if (!cancelled) setResumableCheckDone(true); });
     return () => { cancelled = true; };
-  }, [useLocalEngine, showInstructions, uploadToken]);
+  }, [useLocalEngine, showInstructions, uploadToken, recoverMode]);
 
   // ─── Online/offline (for honest copy on the upload screen) ────────
   const [isOffline, setIsOffline] = useState(false);
@@ -1261,6 +1277,19 @@ export function SelfServeRecorderLiveKit({
               </svg>
               Records on your phone — keeps working even without signal
             </p>
+          )}
+
+          {/* Recovery link opened on a device with no saved footage — almost
+              always the wrong phone/browser. Say so instead of presenting a
+              plain record screen that implies "record it again". */}
+          {recoverMode && resumableCheckDone && !pendingUpload && (
+            <div className="w-full bg-amber-500/10 border border-amber-500/40 rounded-lg p-3 mb-4 text-left">
+              <p className="text-sm text-amber-300 font-medium mb-1">No unfinished recording found on this device</p>
+              <p className="text-sm text-gray-300">
+                The recovery link only works on the <span className="font-semibold text-white">same phone and browser</span> that
+                recorded the walkthrough. Open this link there to finish the upload — or record a new walkthrough below.
+              </p>
+            </div>
           )}
 
           {pendingUpload && (
@@ -2016,6 +2045,18 @@ export function SelfServeRecorderLiveKit({
         <div className="absolute top-14 left-0 right-0 z-20 flex justify-center px-4" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
           <div className="bg-yellow-500/95 text-black px-4 py-1.5 rounded-full text-xs font-semibold shadow-lg">
             We can&apos;t see anything — is the camera covered?
+          </div>
+        </div>
+      )}
+
+      {/* Slow-connection pill — the upload has stalled/errored and hasn't
+          drained. Passive by design: footage is safe on-device, the
+          walkthrough should continue uninterrupted. Yields the top-14 slot
+          to the black-video warning (that one needs action; this doesn't). */}
+      {useLocalEngine && isRecording && !cameraInterrupted && !localEngine.blackVideoWarning && localEngine.uploadLagging && (
+        <div className="absolute top-14 left-0 right-0 z-20 flex justify-center px-4" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+          <div className="bg-black/60 text-white/90 px-3 py-1 rounded-full text-[11px] font-medium shadow-lg">
+            Slow connection — video is saving to your phone
           </div>
         </div>
       )}

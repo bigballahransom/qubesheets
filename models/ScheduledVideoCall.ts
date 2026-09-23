@@ -32,6 +32,15 @@ export interface IScheduledVideoCall extends Document {
   googleCalendarEventId?: string; // Agent's calendar event
   customerCalendarEventId?: string; // Customer's calendar event (if email provided)
 
+  // SmartMoving survey mirror (lib/smartmoving/surveys.ts)
+  smartMovingSurveyId?: string;
+  smartMovingSurveySync?: {
+    status: 'synced' | 'failed' | 'skipped';
+    lastAction: 'create' | 'reschedule' | 'cancel';
+    error?: string;
+    syncedAt?: Date;
+  };
+
   // Notifications sent
   remindersSent: IReminderSent[];
 
@@ -111,6 +120,35 @@ const ScheduledVideoCallSchema: Schema = new Schema(
     },
     customerCalendarEventId: {
       type: String,
+    },
+
+    // SmartMoving survey mirror — the VirtualSurvey created on the linked
+    // opportunity, plus the outcome of the last sync attempt.
+    smartMovingSurveyId: {
+      type: String,
+    },
+    smartMovingSurveySync: {
+      type: new Schema(
+        {
+          status: {
+            type: String,
+            enum: ['synced', 'failed', 'skipped'],
+            required: true,
+          },
+          lastAction: {
+            type: String,
+            enum: ['create', 'reschedule', 'cancel'],
+            required: true,
+          },
+          error: {
+            type: String,
+          },
+          syncedAt: {
+            type: Date,
+          },
+        },
+        { _id: false }
+      ),
     },
 
     // Notifications

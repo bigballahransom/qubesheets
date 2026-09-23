@@ -9,6 +9,8 @@ import { authenticateApiKey } from '@/lib/api-key-auth';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 import { generateJoinUrl } from '@/lib/video-call-tokens';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
+import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
+import { linkProjectToOpportunityId } from '@/lib/smartmoving/linkProject';
 import { createVideoCallCalendarEvents, hasGoogleCalendarConnected } from '@/lib/google-calendar';
 import {
   listOrgMembers,
@@ -70,7 +72,8 @@ function generateRoomId(projectId: string): string {
  *     "customerEmail": "jane@example.com", // Optional
  *     "projectId": "507f1f77bcf86cd799439011", // Optional - attach to existing project. If omitted, a new project is created.
  *     "assignedToEmail": "rep@company.com", // Optional - assign the call to an org member by their login email
- *     "assignedToUserId": "user_2abc..."    // Optional - assign by user id (takes precedence over assignedToEmail)
+ *     "assignedToUserId": "user_2abc...",   // Optional - assign by user id (takes precedence over assignedToEmail)
+ *     "smartMovingOpportunityId": "uuid"    // Optional - link the project to this SmartMoving opportunity so the call is mirrored onto the SmartMoving calendar as a virtual survey
  *   }
  *
  * If the assignee can't be matched to an org member, the call is still created
@@ -101,6 +104,7 @@ export async function POST(request: NextRequest) {
       timezone = 'America/New_York',
       assignedToEmail,
       assignedToUserId,
+      smartMovingOpportunityId,
     } = data;
 
     if (!customerPhone || typeof customerPhone !== 'string') {
@@ -192,6 +196,37 @@ export async function POST(request: NextRequest) {
 
     const projectId = project._id.toString();
     const resolvedCustomerName = customerName?.trim() || project.customerName || project.name;
+
+    // Optional SmartMoving link (lenient like assignee resolution — a bad
+    // opportunity id doesn't block scheduling, it's reported in the response)
+    let smartMovingLink:
+      | { requested: string; linked: boolean; error?: string; message?: string }
+      | undefined;
+    if (smartMovingOpportunityId && typeof smartMovingOpportunityId === 'string') {
+      try {
+        const linkResult = await linkProjectToOpportunityId({
+          projectId,
+          organizationId: authContext.organizationId,
+          opportunityId: smartMovingOpportunityId.trim(),
+        });
+        smartMovingLink = linkResult.success
+          ? { requested: smartMovingOpportunityId, linked: true }
+          : {
+              requested: smartMovingOpportunityId,
+              linked: false,
+              error: linkResult.error,
+              message: linkResult.message,
+            };
+      } catch (linkError) {
+        console.error('Failed to link project to SmartMoving opportunity:', linkError);
+        smartMovingLink = {
+          requested: smartMovingOpportunityId,
+          linked: false,
+          error: 'link_failed',
+          message: linkError instanceof Error ? linkError.message : 'Failed to link',
+        };
+      }
+    }
 
     // Get branding for company name (org-scoped only — external API has no user context)
     const branding = await Branding.findOne({ organizationId: authContext.organizationId });
@@ -336,6 +371,13 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
       timezone,
     });
 
+    // Mirror onto the SmartMoving calendar (no-op unless the org is
+    // integrated and the project is linked; never throws)
+    const smartMovingSurvey = await syncVirtualCallSurveyToSmartMoving({
+      callId: scheduledCallId,
+      action: 'create',
+    });
+
     return NextResponse.json(
       {
         success: true,
@@ -363,6 +405,7 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
             calendarEventCreated: !!googleCalendarEventId,
           },
         }),
+        ...(smartMovingLink && { smartMoving: { ...smartMovingLink, survey: smartMovingSurvey } }),
         confirmationSms: {
           attempted: true,
           delivered: smsDelivered,
@@ -539,7 +582,7 @@ function getDocs() {
           conditionallyRequired: {
             customerName: 'Required when projectId is not provided',
           },
-          optional: ['projectId', 'customerEmail', 'timezone', 'assignedToEmail', 'assignedToUserId'],
+          optional: ['projectId', 'customerEmail', 'timezone', 'assignedToEmail', 'assignedToUserId', 'smartMovingOpportunityId'],
           example: {
             customerName: 'Jane Doe',
             customerPhone: '5551234567',
@@ -554,6 +597,10 @@ function getDocs() {
             assignedToUserId:
               'Assign by user id (from GET /api/external/users). Takes precedence over assignedToEmail if both are provided.',
             note: 'If the assignee cannot be matched, the call is still created unassigned and the failure is reported in the response `assignment` object. When matched, the rep appears on the call in-app, the confirmation SMS uses their name for {agentName}, a newly created project is assigned to them, and a Google Calendar event is created if they have their calendar connected.',
+          },
+          smartMoving: {
+            smartMovingOpportunityId:
+              "Link the project to this SmartMoving opportunity (requires the organization's SmartMoving integration). When linked, the call is mirrored onto the SmartMoving calendar as a virtual survey, and reschedules/cancellations update it. If the opportunity cannot be found, the call is still created and the failure is reported in the response `smartMoving` object.",
           },
         },
         response: {

@@ -9,6 +9,7 @@ import { authenticateApiKey } from '@/lib/api-key-auth';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 import { generateJoinUrl } from '@/lib/video-call-tokens';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
+import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
 import {
   createVideoCallCalendarEvents,
   deleteCalendarEvent,
@@ -393,6 +394,15 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
       });
     }
 
+    // Update the mirrored SmartMoving survey — a reassignment alone still
+    // matters (it changes the SmartMoving estimator). Never throws.
+    if (newScheduledDate || reassigned) {
+      await syncVirtualCallSurveyToSmartMoving({
+        callId: id,
+        action: 'reschedule',
+      });
+    }
+
     const changes = [
       ...(newScheduledDate ? ['rescheduled'] : []),
       ...(reassigned ? ['reassigned'] : []),
@@ -515,6 +525,12 @@ export async function DELETE(
       roomId: call.roomId,
       scheduledFor: call.scheduledFor,
       timezone: call.timezone,
+    });
+
+    // Flag the mirrored SmartMoving survey as cancelled (no delete API exists)
+    await syncVirtualCallSurveyToSmartMoving({
+      callId: call._id.toString(),
+      action: 'cancel',
     });
 
     return NextResponse.json({

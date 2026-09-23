@@ -21,6 +21,7 @@
 import {
   Zap,
   Bell,
+  Calendar,
   Package,
   Video,
   Camera,
@@ -35,7 +36,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-09-17';
+export const LATEST_UPDATES_VERSION = '2026-09-23';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -58,6 +59,27 @@ export const updates: MonthGroup[] = [
   {
     month: 'September 2026',
     entries: [
+      {
+        tag: 'New',
+        icon: Video,
+        title: 'Recover walkthrough recordings that didn\'t finish uploading',
+        description:
+          'If an on-site walkthrough is recorded somewhere with weak signal, the upload can get cut off before it finishes — the footage stays safely saved on the phone that recorded it, but the video never showed up in the project. Now the project page tells you: an amber "Walkthrough upload incomplete" button appears at the top of the project, with simple steps to finish the upload — open the recovery link on the same phone that recorded, get on WiFi, and tap the finish-upload banner. Recordings also upload much more reliably on cell connections now, and if the connection falls behind during a walkthrough, a small note on the recording screen lets your estimator know the video is saving to their phone.',
+      },
+      {
+        tag: 'New',
+        icon: Calendar,
+        title: 'See SmartMoving conflicts before you book a virtual call',
+        description:
+          'When you\'re scheduling a virtual call on a SmartMoving-linked project, the scheduling window now checks the estimator\'s SmartMoving calendar for the day you picked. If they\'re already booked at that time — say "Brandon is not available at 10:00 AM, already booked 10:00–11:00 AM" — you\'ll see a warning right under the time picker so you can choose a free slot before confirming. The call can still be scheduled either way; the warning just tells you the survey won\'t make it onto the SmartMoving calendar at a conflicting time.',
+      },
+      {
+        tag: 'New',
+        icon: Video,
+        title: 'Virtual calls now appear on your SmartMoving calendar',
+        description:
+          'When you schedule a virtual call on a project that\'s linked to a SmartMoving opportunity, a virtual survey is automatically added to that opportunity in SmartMoving — assigned to the estimator whose SmartMoving email matches the rep on the call, with the join link and exact call time in the internal notes. Rescheduling the call moves the survey, and cancelling marks it as cancelled. If the project isn\'t linked yet, the scheduling window now searches SmartMoving by phone number and lets you pick the matching lead or opportunity right there — same as the inventory sync — and you can change the linked job from the same spot. The SmartMoving quote number is saved on the project either way. You can turn this off (or have SmartMoving also email the customer) in Settings → Integrations under SmartMoving.',
+      },
       {
         tag: 'New',
         icon: ClipboardList,

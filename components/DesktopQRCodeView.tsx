@@ -22,6 +22,14 @@ interface DesktopQRCodeViewProps {
   isWalkthrough?: boolean;
   /** Media Vault capture link — reference-only copy, no survey framing. */
   isVault?: boolean;
+  /** Carried into the QR's mobile URL as ?start= so a deep-linked flow
+   *  (e.g. stranded-upload recovery, which needs the recorder's resume
+   *  banner) survives the desktop→QR→phone hop instead of dropping the
+   *  phone back on the record/upload chooser. */
+  startMode?: 'recording' | 'upload';
+  /** Stranded-upload recovery deep-link — carried into the QR URL as
+   *  &recover=1 so the phone-side recorder arms its wrong-device notice. */
+  recoverMode?: boolean;
 }
 
 interface SessionStatus {
@@ -42,14 +50,16 @@ export function DesktopQRCodeView({
   onSwitchToUpload,
   onSchedule,
   isWalkthrough,
-  isVault
+  isVault,
+  startMode,
+  recoverMode
 }: DesktopQRCodeViewProps) {
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [isPolling, setIsPolling] = useState(true);
 
   // Generate mobile URL
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const mobileUrl = `${baseUrl}/customer-upload/${uploadToken}?device=mobile`;
+  const mobileUrl = `${baseUrl}/customer-upload/${uploadToken}?device=mobile${startMode ? `&start=${startMode}` : ''}${recoverMode ? '&recover=1' : ''}`;
 
   // Poll for session status
   useEffect(() => {

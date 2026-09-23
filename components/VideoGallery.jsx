@@ -1109,7 +1109,13 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
   };
 
   const handleDelete = async (video) => {
-    if (!confirm(`Are you sure you want to delete "${video.originalName}"? This action cannot be undone.`)) {
+    // Self-serve/on-site recordings have no originalName — without the
+    // fallback the confirm literally said `delete "undefined"?`, which is
+    // how a real walkthrough got deleted by a rep who thought he'd tapped
+    // Rerun Analysis (the adjacent menu item).
+    const displayName = video.originalName ||
+      (video.isWalkthrough ? 'this On-Site Walkthrough recording' : 'this Self-Serve recording');
+    if (!confirm(`Delete ${video.originalName ? `"${displayName}"` : displayName}? This permanently deletes the video AND all inventory items created from it. This cannot be undone.`)) {
       return;
     }
 

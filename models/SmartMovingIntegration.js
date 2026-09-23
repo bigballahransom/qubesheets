@@ -107,6 +107,20 @@ const SmartMovingIntegrationSchema = new mongoose.Schema({
     enum: ['off', 'internal', 'customer', 'crew']
   },
 
+  // Mirror QBS-scheduled virtual calls onto the SmartMoving calendar as
+  // VirtualSurvey entries on the linked opportunity (lib/smartmoving/surveys.ts)
+  surveySyncEnabled: {
+    type: Boolean,
+    default: true
+  },
+
+  // Let SmartMoving email the customer about the mirrored survey. Off by
+  // default — Qube Sheets already sends its own confirmation + reminders.
+  surveyNotifyCustomer: {
+    type: Boolean,
+    default: false
+  },
+
   // Which SmartMoving webhook records create projects. The opportunity-created
   // webhook fires for both new leads (opportunity-status 0) and new
   // opportunities (status 3); some teams only want one or the other.

@@ -17,6 +17,7 @@ import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 import { generateJoinUrl } from '@/lib/video-call-tokens';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
+import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
 import {
   createVideoCallCalendarEvents,
   formatCalendarDescription,
@@ -258,6 +259,13 @@ export async function scheduleVideoCall(
       console.error('[scheduleVideoCall] Google Calendar sync failed', err);
     }
   }
+
+  // Mirror onto the SmartMoving calendar (no-op unless the org is integrated
+  // and the project is linked; never throws)
+  await syncVirtualCallSurveyToSmartMoving({
+    callId: scheduledCallId,
+    action: 'create',
+  });
 
   return {
     videoCall: {

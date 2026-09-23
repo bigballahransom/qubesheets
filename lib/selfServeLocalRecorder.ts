@@ -356,29 +356,15 @@ export class SelfServeLocalRecorder {
     // Kick the background remote-init — deliberately not awaited.
     this.ensureRemoteSession().catch(() => { /* surfaced at stop() */ });
 
-    // Encoder bitrate scaled to what the camera actually granted — a flat
-    // low bitrate is what makes motion-heavy walkthrough footage smear and
-    // stutter. 1080p → 5Mbps, 720p → 3Mbps, below → 2.5Mbps.
+    // Flat 2.5Mbps at every resolution. This used to scale to 5Mbps at
+    // 1080p for motion clarity, but real cell upload can't sustain 5Mbps —
+    // it stranded six walkthroughs on recording devices in Sept 2026. A
+    // same-footage bake-off (one walkthrough analyzed at 5/3.5/2.5Mbps)
+    // measured no inventory-recognition loss at 2.5, so upload reliability
+    // wins. The old storage-pressure step-down is gone with the ladder:
+    // 2.5Mbps was already its floor.
     const settings = stream.getVideoTracks()[0]?.getSettings?.() || {};
-    const pixels = (settings.width || 1280) * (settings.height || 720);
-    let videoBitsPerSecond =
-      pixels >= 1920 * 1080 * 0.9 ? 5_000_000 :
-      pixels >= 1280 * 720 * 0.9 ? 3_000_000 :
-      2_500_000;
-
-    // Storage headroom check: a 20-min 1080p recording is ~750MB. If the
-    // device can't hold the link's max-length recording at this bitrate,
-    // step down rather than dying mid-walkthrough on a full disk.
-    try {
-      const est = await (navigator as any).storage?.estimate?.();
-      if (est?.quota) {
-        const available = est.quota - (est.usage || 0);
-        const neededBytes = (videoBitsPerSecond / 8) * 1_200 * 1.3; // 20min cap + slack
-        if (available < neededBytes && videoBitsPerSecond > 2_500_000) {
-          videoBitsPerSecond = 2_500_000;
-        }
-      }
-    } catch { /* estimate unsupported — proceed */ }
+    const videoBitsPerSecond = 2_500_000;
     this.videoBitsPerSecond = videoBitsPerSecond;
 
     this.callbacks.onCaptureSettings?.({

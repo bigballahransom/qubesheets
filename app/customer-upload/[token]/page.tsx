@@ -736,6 +736,8 @@ export default function CustomerUploadPage() {
         onSchedule={onSchedule}
         isWalkthrough={!!validation.isWalkthrough}
         isVault={!!validation.isVault}
+        startMode={searchParams?.get('start') === 'recording' ? 'recording' : undefined}
+        recoverMode={searchParams?.get('recover') === '1'}
       />
     );
   }
@@ -754,6 +756,7 @@ export default function CustomerUploadPage() {
         isVault={!!validation.isVault}
         vaultUploadFormFields={validation.vaultUploadFormFields}
         captureEngine={validation.captureEngine}
+        recoverMode={searchParams?.get('recover') === '1'}
       />
 
     );

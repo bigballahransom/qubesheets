@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useOrganization, useAuth } from '@clerk/nextjs';
 import {
-  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload, MapPin, Archive, ArchiveRestore, Copy
+  Package, ShoppingBag, Table, Camera, Loader2, Scale, Cloud, X, ChevronDown, Images, Video, MessageSquare, Trash2, Download, Clock, Box, Info, ExternalLink, Users, Pencil, RefreshCw, User, UserPlus, Phone, Upload, MapPin, Archive, ArchiveRestore, Copy, AlertTriangle
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -261,6 +261,11 @@ const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
 const [lastUpdateCheck, setLastUpdateCheck] = useState(new Date().toISOString());
 const [processingStatus, setProcessingStatus] = useState([]);
 const [showProcessingNotification, setShowProcessingNotification] = useState(false);
+// On-site walkthrough recordings stranded on the estimator's phone
+// (recording started, upload never finished) — drives the amber header
+// button + recovery modal. Customer self-serve sessions are never included.
+const [strandedWalkthroughs, setStrandedWalkthroughs] = useState([]);
+const [strandedModalOpen, setStrandedModalOpen] = useState(false);
 const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 const [spreadsheetUpdateKey, setSpreadsheetUpdateKey] = useState(0);
 const [supermoveEnabled, setSupermoveEnabled] = useState(false);
@@ -360,6 +365,22 @@ const inventoryDataChanged = (oldItems, newItems) => {
   
   // Reference to track if data has been loaded
   const dataLoadedRef = useRef(false);
+
+  // Stranded on-site walkthroughs: recording started but the upload never
+  // finished — footage is still on the estimator's phone, recoverable via
+  // the upload link. One fetch per project load; the endpoint itself
+  // excludes anything younger than 15 min, so no polling is needed.
+  useEffect(() => {
+    if (!currentProject?._id) return;
+    let cancelled = false;
+    fetch(`/api/projects/${currentProject._id}/stranded-walkthroughs`)
+      .then((res) => (res.ok ? res.json() : { strandedWalkthroughs: [] }))
+      .then((data) => {
+        if (!cancelled) setStrandedWalkthroughs(data.strandedWalkthroughs || []);
+      })
+      .catch(() => { /* recovery affordance is best-effort — never block the page */ });
+    return () => { cancelled = true; };
+  }, [currentProject?._id]);
 
   // DATABASE-DRIVEN PROCESSING STATE: Simple, bulletproof reliability
   useEffect(() => {
@@ -5172,6 +5193,17 @@ const ProcessingNotification = () => {
       </div>
       {/* Add the processing notification here */}
       <ProcessingNotification />
+      {/* Stranded on-site walkthrough recovery — same slot as the processing
+          tag so it's visible without opening the videos tab */}
+      {strandedWalkthroughs.length > 0 && (
+        <button
+          onClick={() => setStrandedModalOpen(true)}
+          className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+        >
+          <AlertTriangle size={14} className="text-amber-600" />
+          Walkthrough upload incomplete
+        </button>
+      )}
     </div>
     
     {/* Action Buttons */}
@@ -6020,8 +6052,8 @@ const ProcessingNotification = () => {
       >
         Cancel
       </Button>
-      <Button 
-        variant="destructive" 
+      <Button
+        variant="destructive"
         onClick={() => {
           deleteProject();
           setIsDeleteConfirmOpen(false);
@@ -6030,6 +6062,50 @@ const ProcessingNotification = () => {
         Delete Project
       </Button>
     </DialogFooter>
+  </DialogContent>
+</Dialog>
+
+{/* Stranded Walkthrough Recovery Dialog */}
+<Dialog open={strandedModalOpen} onOpenChange={setStrandedModalOpen}>
+  <DialogContent>
+    <DialogHeader>
+      <DialogTitle>Recover your walkthrough recording</DialogTitle>
+      <DialogDescription>
+        Your signal was not strong enough to finish uploading this walkthrough.
+        The recording is still saved on the phone that recorded it.
+      </DialogDescription>
+    </DialogHeader>
+    <ol className="list-decimal ml-5 space-y-1.5 text-sm text-gray-700">
+      <li>Open the recovery link below on the <span className="font-semibold">same phone and browser</span> that recorded the walkthrough.</li>
+      <li>Connect to strong WiFi first — the upload already struggled on the connection where it was recorded.</li>
+      <li>Tap <span className="font-semibold">Finish upload</span> on the &quot;Unfinished upload&quot; banner — no need to record anything again.</li>
+      <li>Keep the page open until it says the upload is confirmed.</li>
+    </ol>
+    <div className="space-y-2">
+      {strandedWalkthroughs.map((s) => (
+        <div key={s.sessionId} className="flex items-center justify-between gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+          <span className="text-sm text-gray-700">
+            Recorded {new Date(s.recordedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}${s.resumeUrl}`)
+                  .then(() => toast.success('Recovery link copied — send it to the phone that recorded'))
+                  .catch(() => toast.error('Could not copy — long-press the Open button instead'));
+              }}
+            >
+              <Copy size={14} className="mr-1.5" />
+              Copy recovery link
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => window.open(s.resumeUrl, '_blank')}>
+              Open
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
   </DialogContent>
 </Dialog>
     </div>

@@ -2913,6 +2913,7 @@ export function getOpportunityStatusLabel(status: number | undefined): string {
     case 3: return 'Opportunity';
     case 4: return 'Booked';
     case 10: return 'Completed';
+    case 30: return 'Lost';
     default: return 'Unknown';
   }
 }

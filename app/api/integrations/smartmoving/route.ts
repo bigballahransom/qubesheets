@@ -76,6 +76,8 @@ export async function GET() {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false, // default true
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false, // default true
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false, // default true
+        surveySyncEnabled: integration.surveySyncEnabled !== false, // default true
+        surveyNotifyCustomer: integration.surveyNotifyCustomer === true, // default false
         ...resolveNoteSyncDestinations(integration),
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         createdAt: integration.createdAt,
@@ -127,6 +129,8 @@ export async function POST(request: Request) {
       smartMovingClientId: smartMovingClientId.trim(),
       smartMovingApiKey: smartMovingApiKey.trim(),
       sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
+      surveySyncEnabled: body.surveySyncEnabled !== false,
+      surveyNotifyCustomer: body.surveyNotifyCustomer === true,
       ...noteDestinationData(body),
       webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter)
     };
@@ -181,6 +185,8 @@ export async function POST(request: Request) {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false,
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false,
+        surveySyncEnabled: integration.surveySyncEnabled !== false,
+        surveyNotifyCustomer: integration.surveyNotifyCustomer === true,
         ...resolveNoteSyncDestinations(integration),
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         createdAt: integration.createdAt,
@@ -222,6 +228,8 @@ export async function PATCH(request: Request) {
       {
         $set: {
           sendUploadLinkOnCreate: sendUploadLinkOnCreate || false,
+          surveySyncEnabled: body.surveySyncEnabled !== false,
+          surveyNotifyCustomer: body.surveyNotifyCustomer === true,
           ...noteDestinationData(body),
           webhookRecordFilter: normalizeWebhookRecordFilter(webhookRecordFilter),
           userId // Track who updated it
@@ -249,6 +257,8 @@ export async function PATCH(request: Request) {
         syncCrewLinkOnSync: integration.syncCrewLinkOnSync !== false,
         syncVaultLinksOnSync: integration.syncVaultLinksOnSync !== false,
         syncAiSummariesOnSync: integration.syncAiSummariesOnSync !== false,
+        surveySyncEnabled: integration.surveySyncEnabled !== false,
+        surveyNotifyCustomer: integration.surveyNotifyCustomer === true,
         ...resolveNoteSyncDestinations(integration),
         webhookRecordFilter: normalizeWebhookRecordFilter(integration.webhookRecordFilter),
         updatedAt: integration.updatedAt
