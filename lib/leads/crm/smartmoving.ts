@@ -41,7 +41,7 @@ function pickUtm(utm: Record<string, string> | undefined): Record<string, string
       utm.utmKeyword ?? utm.utm_keyword ?? utm.utm_term ?? utm.term ?? '',
     utmAdGroup: utm.utmAdGroup ?? utm.utm_adgroup ?? utm.adgroup ?? '',
     utmCustomTracking:
-      utm.utmCustomTracking ?? utm.utm_custom_tracking ?? '',
+      utm.utmCustomTracking ?? utm.utm_custom_tracking ?? utm.gclid ?? '',
   };
   for (const [k, v] of Object.entries(map)) {
     if (v) out[k] = v;

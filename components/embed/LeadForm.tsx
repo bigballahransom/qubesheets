@@ -941,6 +941,22 @@ export default function LeadForm({ config, configId, previewMode = false, static
     }
     if (Object.keys(customPayload).length > 0) payload.custom = customPayload;
 
+    // Ad-tracking pass-through: the embed snippet forwards utm_* / gclid from
+    // the host page's URL onto the iframe src; pick them up here so they land
+    // on the lead (and flow to CRMs). Values are capped at 200 chars to match
+    // the server's per-field limit — longer would 400 the whole submission.
+    try {
+      new URLSearchParams(window.location.search).forEach((value, key) => {
+        if (!value) return;
+        const lower = key.toLowerCase();
+        if (lower.startsWith('utm_') || lower === 'gclid') {
+          payload[lower] = value.slice(0, 200);
+        }
+      });
+    } catch {
+      // window/URLSearchParams unavailable — skip tracking silently.
+    }
+
     try {
       const endpoint = previewMode
         ? `/api/leads/from-embed/${configId}/preview`

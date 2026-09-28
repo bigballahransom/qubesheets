@@ -6,6 +6,27 @@
  * lead to /api/leads/from-embed/<configId>, and dispatch the configured
  * post-submit action.
  *
+ * MAPPING DIRECTION — the most common setup mistake:
+ *
+ *   mapping key  (left side)  = the id or name= attribute of an input on
+ *                               YOUR page's form. It is matched with
+ *                               querySelector('#key') first, then
+ *                               querySelector('[name="key"]').
+ *   rule.target  (right side) = the Qube Sheets field that input fills.
+ *                               Valid targets: firstName, lastName, fullName,
+ *                               email, phone, phoneType, moveDate, moveSize,
+ *                               origin, destination, companyName, notes,
+ *                               plus utm_* keys and gclid.
+ *
+ * If you get it backwards the plugin logs a "mapping looks reversed" error
+ * in the console and blocks the submit.
+ *
+ * UTM / ad tracking: the plugin automatically captures utm_* parameters and
+ * gclid from the page URL (persisted for the visit via sessionStorage, so
+ * they survive navigation between pages) and attaches them to the lead. You
+ * do NOT need hidden fields or mapping entries for them — but explicitly
+ * mapped fields and defaultValues always win over auto-captured values.
+ *
  * The submit response's `action` field (also passed to onSuccess as
  * `result.action`) is one of:
  *
@@ -27,20 +48,22 @@
  * valid for 30 days. Without an onSuccess handler the plugin redirects to
  * uploadUrl / schedulerUrl automatically.
  *
- * Usage on the host page:
+ * Usage on the host page (example: a form whose inputs have ids like
+ * "your-first-name-input"):
  *
  *   <script>
  *     window.QubeSheets = {
  *       config:        { configId: 'abc123' },
  *       formSelector:  '#quote-form',
  *       mapping: {
- *         'first-name':      { target: 'firstName',     required: true  },
- *         'last-name':       { target: 'lastName',      required: true  },
- *         'email':           { target: 'email',         required: true  },
- *         'phone':           { target: 'phone',         required: true  },
- *         'move-date':       { target: 'moveDate',      required: false },
- *         'origin-full':     { target: 'origin',        required: false },
- *         'destination-full':{ target: 'destination',   required: false },
+ *         // '<id or name= on YOUR form>': { target: '<Qube Sheets field>' }
+ *         'your-first-name-input':   { target: 'firstName',   required: true  },
+ *         'your-last-name-input':    { target: 'lastName',    required: true  },
+ *         'your-email-input':        { target: 'email',       required: true  },
+ *         'your-phone-input':        { target: 'phone',       required: true  },
+ *         'your-move-date-input':    { target: 'moveDate',    required: false },
+ *         'your-origin-input':       { target: 'origin',      required: false },
+ *         'your-destination-input':  { target: 'destination', required: false },
  *       },
  *       defaultValues: { },                  // optional
  *       onSuccess: function(result){},       // optional override of default redirect
@@ -59,6 +82,23 @@
     }
     return 'https://app.qubesheets.com';
   })();
+
+  // Payload fields the submission endpoint understands. Anything else
+  // (except utm_* / gclid) is silently dropped server-side, so an unknown
+  // target is almost always a mapping written in the wrong direction.
+  var KNOWN_TARGETS = [
+    'firstName', 'lastName', 'fullName', 'email', 'phone', 'phoneType',
+    'moveDate', 'moveSize', 'origin', 'destination', 'companyName',
+    'notes', 'referrer',
+  ];
+
+  // Server caps utm values at 200 chars; anything longer would 400 the
+  // whole submission, so truncate client-side.
+  var TRACKING_VALUE_MAX = 200;
+
+  function isTrackingTarget(target) {
+    return target === 'gclid' || /^utm[A-Z]/.test(target) || target.indexOf('utm_') === 0;
+  }
 
   function getConfig() {
     var qs = window.QubeSheets || {};
@@ -91,7 +131,78 @@
     return el.value;
   }
 
-  function buildPayload(form, mapping, defaults) {
+  // Capture utm_* and gclid from the page URL, persisted for the visit so
+  // the values survive navigation from the landing page to the form page.
+  function collectTracking() {
+    var fromUrl = {};
+    try {
+      new URLSearchParams(window.location.search).forEach(function (value, key) {
+        if (!value) return;
+        var lower = key.toLowerCase();
+        if (lower.indexOf('utm_') === 0 || lower === 'gclid') {
+          fromUrl[lower] = value.slice(0, TRACKING_VALUE_MAX);
+        }
+      });
+    } catch (e) { /* very old browser — skip auto-capture */ }
+
+    try {
+      var stored = JSON.parse(sessionStorage.getItem('qsTracking') || '{}') || {};
+      var merged = {};
+      Object.keys(stored).forEach(function (k) { merged[k] = stored[k]; });
+      Object.keys(fromUrl).forEach(function (k) { merged[k] = fromUrl[k]; });
+      if (Object.keys(fromUrl).length) {
+        sessionStorage.setItem('qsTracking', JSON.stringify(merged));
+      }
+      return merged;
+    } catch (e) {
+      // sessionStorage unavailable (private mode / blocked) — use URL only.
+      return fromUrl;
+    }
+  }
+
+  // One-time sanity check of the mapping against the live form. Warnings
+  // only — fields injected later can still resolve at submit time.
+  function auditMapping(form, mapping, formSelector) {
+    var reversed = [];
+    var missing = [];
+
+    Object.keys(mapping).forEach(function (key) {
+      var rule = mapping[key] || {};
+      var target = rule.target;
+
+      if (target && KNOWN_TARGETS.indexOf(target) === -1 && !isTrackingTarget(target)) {
+        console.warn(
+          '[QubeSheets] mapping "' + key + '" has unknown target "' + target +
+          '" — the server will ignore it. Valid targets: ' + KNOWN_TARGETS.join(', ') +
+          ', utm_* keys, and gclid.'
+        );
+      }
+
+      if (!safeQuerySelector(form, key)) {
+        if (target && safeQuerySelector(form, target)) reversed.push(key);
+        else missing.push({ key: key, required: !!rule.required });
+      }
+    });
+
+    if (reversed.length) {
+      console.error(
+        '[QubeSheets] Your mapping looks REVERSED for: ' + reversed.join(', ') +
+        '. The LEFT side of each mapping entry must be the id or name= of an input on YOUR form ' +
+        '(e.g. "' + (mapping[reversed[0]] && mapping[reversed[0]].target) + '"), and target must be the Qube Sheets ' +
+        'field it fills (' + KNOWN_TARGETS.join(', ') + '). ' +
+        'Example fix: \'' + (mapping[reversed[0]] && mapping[reversed[0]].target) + '\': { target: \'firstName\' }.'
+      );
+    }
+    missing.forEach(function (m) {
+      console.warn(
+        '[QubeSheets] No input with id or name "' + m.key + '" found in ' + formSelector +
+        '. That field will be omitted from submissions' +
+        (m.required ? ' and, because it is marked required, submits will be BLOCKED until it resolves.' : '.')
+      );
+    });
+  }
+
+  function buildPayload(form, mapping, defaults, tracking) {
     var payload = {};
     var missing = [];
 
@@ -109,7 +220,10 @@
     });
 
     if (missing.length) {
-      var err = new Error('Missing required fields: ' + missing.join(', '));
+      var err = new Error(
+        'Missing required fields: ' + missing.join(', ') +
+        ' (each mapping key must match the id or name= of an input inside the form)'
+      );
       err.code = 'QS_MISSING_REQUIRED';
       err.missing = missing;
       throw err;
@@ -118,6 +232,12 @@
     // Apply defaults only when the field wasn't already populated.
     Object.keys(defaults).forEach(function (target) {
       if (payload[target] === undefined) payload[target] = defaults[target];
+    });
+
+    // Auto-captured utm_* / gclid fill any remaining gaps — explicitly
+    // mapped fields and defaultValues always win.
+    Object.keys(tracking || {}).forEach(function (key) {
+      if (payload[key] === undefined) payload[key] = tracking[key];
     });
 
     return payload;
@@ -133,6 +253,9 @@
     if (form.dataset.qsAttached === '1') return;
     form.dataset.qsAttached = '1';
 
+    var tracking = collectTracking();
+    auditMapping(form, config.mapping, config.formSelector);
+
     form.addEventListener('submit', function (event) {
       event.preventDefault();
 
@@ -140,7 +263,7 @@
 
       var payload;
       try {
-        payload = buildPayload(form, config.mapping, config.defaultValues);
+        payload = buildPayload(form, config.mapping, config.defaultValues, tracking);
       } catch (err) {
         console.error('[QubeSheets]', err.message);
         dispatchEvent('qs:lead-error', { error: err });

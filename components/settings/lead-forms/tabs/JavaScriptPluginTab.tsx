@@ -19,15 +19,18 @@ interface JavaScriptPluginTabProps {
 
 function buildSnippet(origin: string, configId: string): string {
   return `<!-- STEP 1: Configure the plugin. Update formSelector to point at
-              your existing website form, and adjust the mapping so each
-              key matches the id or [name] attribute of the corresponding
-              field on your form. -->
+              your existing website form, then replace the LEFT side of each
+              mapping entry with the id or name= attribute of the matching
+              field on YOUR form. Do not change the target values — those
+              are the Qube Sheets fields. -->
 <script>
   window.QubeSheets = {
     config:       { configId: ${JSON.stringify(configId)} },
     formSelector: '#quote-form',
 
     mapping: {
+      // LEFT side  = id or name= of the input on YOUR form (change these)
+      // RIGHT side = the Qube Sheets field it fills   (keep these as-is)
       'first-name':       { target: 'firstName',   required: true  },
       'last-name':        { target: 'lastName',    required: true  },
       'email':            { target: 'email',       required: true  },
@@ -38,7 +41,12 @@ function buildSnippet(origin: string, configId: string): string {
       'origin-full':      { target: 'origin',      required: false },
       'destination-full': { target: 'destination', required: false },
       // 'company-name':  { target: 'companyName', required: false },
+      // 'your-notes-field': { target: 'notes',    required: false },
     },
+
+    // UTM parameters (utm_source, utm_medium, ...) and gclid are captured
+    // from the page URL automatically and passed through to your CRM —
+    // no hidden fields or mapping entries needed.
 
     // Optional: override the default behavior (redirect to inventory
     // capture, or replace the form with a thank-you message).
@@ -105,10 +113,21 @@ export function JavaScriptPluginTab({ configId }: JavaScriptPluginTabProps) {
           </p>
           <p>
             <strong className="text-gray-700">mapping</strong> &mdash; each key
-            is the <code className="px-1 bg-gray-100 rounded">id</code> or
+            (the left side) is the <code className="px-1 bg-gray-100 rounded">id</code> or
             <code className="px-1 bg-gray-100 rounded">name</code> of an input on
             your form. The <code className="px-1 bg-gray-100 rounded">target</code> is
-            the Qube Sheets field it should populate.
+            the Qube Sheets field it should populate &mdash; keep those as-is.
+            If the plugin can&apos;t find a mapped field (or the mapping looks
+            reversed), it explains exactly what to fix in the browser console.
+          </p>
+          <p>
+            <strong className="text-gray-700">UTM tracking</strong> &mdash; the
+            plugin automatically captures
+            <code className="px-1 bg-gray-100 rounded">utm_*</code> parameters and
+            <code className="px-1 bg-gray-100 rounded">gclid</code> from the page
+            URL (remembered across pages during the visit) and attaches them to
+            each lead, so ad attribution flows through to your CRM without any
+            hidden fields.
           </p>
           <p>
             The plugin fires <code className="px-1 bg-gray-100 rounded">qs:lead-submitted</code> and

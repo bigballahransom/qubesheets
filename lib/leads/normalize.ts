@@ -179,10 +179,11 @@ export function normalize(
   }
 
   // utm: always collect (not gated by config.fields, since FieldKey doesn't
-  // include utm — utm tracking is a parallel concern).
+  // include utm — utm tracking is a parallel concern). gclid rides along in
+  // the same bucket; the SmartMoving adapter maps it to utmCustomTracking.
   const utm: Record<string, string> = {};
   for (const key of Object.keys(raw)) {
-    if (/^utm[A-Z]/.test(key) || key.startsWith('utm_')) {
+    if (/^utm[A-Z]/.test(key) || key.startsWith('utm_') || key === 'gclid') {
       const v = asTrimmedString(raw[key]);
       if (v) utm[key] = v;
     }

@@ -161,10 +161,11 @@ export function validateLeadSubmission(body: unknown): string | null {
     }
   }
 
-  // UTM-like fields — normalize() collects any key matching utm_* or utmX*.
-  // Cap their values to keep the persisted payload bounded.
+  // UTM-like fields (plus gclid) — normalize() collects any key matching
+  // utm_* or utmX*, and gclid. Cap their values to keep the persisted
+  // payload bounded.
   for (const key of keys) {
-    if (/^utm[A-Z]/.test(key) || key.startsWith('utm_')) {
+    if (/^utm[A-Z]/.test(key) || key.startsWith('utm_') || key === 'gclid') {
       const value = body[key];
       if (value === undefined || value === null) continue;
       if (!isString(value)) return `${key} must be a string`;

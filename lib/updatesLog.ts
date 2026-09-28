@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-09-23';
+export const LATEST_UPDATES_VERSION = '2026-09-28';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -59,6 +59,13 @@ export const updates: MonthGroup[] = [
   {
     month: 'September 2026',
     entries: [
+      {
+        tag: 'Improved',
+        icon: Link2,
+        title: 'Lead forms now track where your leads come from',
+        description:
+          'Website lead forms — both the embedded form and the JavaScript plugin for your existing form — now automatically capture ad-tracking details (UTM parameters and Google Ads click IDs) from the page the customer landed on and attach them to the lead, including on leads sent to SmartMoving. No hidden fields or extra setup needed, so you can see exactly which campaign each lead came from. The plugin setup instructions are also clearer, and if a field mapping is off, the plugin now explains exactly what to fix.',
+      },
       {
         tag: 'New',
         icon: Video,

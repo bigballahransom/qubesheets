@@ -19,10 +19,12 @@ function buildSnippet(origin: string, configId: string): string {
   // The snippet ships TWO things:
   //   1. An <iframe> with a small initial min-height so something is visible
   //      while the form's bundle is loading.
-  //   2. A tiny inline <script> that listens for the form's
-  //      `qubesheets-form-resize` postMessages and sets the iframe height
-  //      to the reported content size. This is what makes the iframe
-  //      "shrink to fit" the form (and grow when the wizard advances).
+  //   2. A tiny inline <script> that (a) forwards utm_* / gclid params from
+  //      the host page's URL onto the iframe src so ad tracking reaches the
+  //      lead, and (b) listens for the form's `qubesheets-form-resize`
+  //      postMessages and sets the iframe height to the reported content
+  //      size. This is what makes the iframe "shrink to fit" the form (and
+  //      grow when the wizard advances).
   const iframeId = `qs-leadform-${configId}`;
   return `<iframe
   id="${iframeId}"
@@ -35,6 +37,20 @@ function buildSnippet(origin: string, configId: string): string {
 (function () {
   var iframe = document.getElementById(${JSON.stringify(iframeId)});
   if (!iframe) return;
+  // Forward ad-tracking params (utm_*, gclid) from this page's URL into the
+  // form so they are attached to the lead automatically.
+  try {
+    var tracking = [];
+    new URLSearchParams(window.location.search).forEach(function (value, key) {
+      var lower = key.toLowerCase();
+      if (value && (lower.indexOf('utm_') === 0 || lower === 'gclid')) {
+        tracking.push(encodeURIComponent(lower) + '=' + encodeURIComponent(value.slice(0, 200)));
+      }
+    });
+    if (tracking.length) {
+      iframe.src += (iframe.src.indexOf('?') === -1 ? '?' : '&') + tracking.join('&');
+    }
+  } catch (e) { /* very old browser — form still works, just without tracking */ }
   window.addEventListener('message', function (e) {
     if (!e.data || e.data.type !== 'qubesheets-form-resize') return;
     if (e.source !== iframe.contentWindow) return;
