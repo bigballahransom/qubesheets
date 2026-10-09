@@ -12,6 +12,7 @@ import {
   X,
   Check,
   Sparkles,
+  ExternalLink,
   RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -44,6 +45,13 @@ interface AgentPreJoinProps {
   // project (they followed an older texted link). Offer a one-click switch.
   customerWaitingElsewhereRoomId?: string | null;
   onSwitchRoom?: (roomId: string) => void;
+  // The customer opened the link inside an in-app webview and is stuck on the
+  // "open in your browser" screen — they'll never become ready on that device.
+  customerInAppBrowser?: string | null;
+  // The customer has finished permissions + Do Not Disturb. Until this is
+  // true, the consultant can't start the meeting (so the customer is never
+  // pulled in mid-setup).
+  customerReady?: boolean;
 }
 
 // Preset backgrounds
@@ -62,6 +70,8 @@ export default function AgentPreJoin({
   onNudgeCustomer,
   customerWaitingElsewhereRoomId,
   onSwitchRoom,
+  customerInAppBrowser,
+  customerReady = false,
 }: AgentPreJoinProps) {
   const [isNudging, setIsNudging] = useState(false);
   const [nudgedAt, setNudgedAt] = useState<number | null>(null);
@@ -699,14 +709,21 @@ export default function AgentPreJoin({
                 : 'bg-white/5 border-white/15 text-white/70'
             }`}
           >
-            {customerPresent ? (
+            {customerPresent && customerReady ? (
               <>
                 <span className="relative flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
                 </span>
                 <span>
-                  <span className="font-semibold">{customerDisplayName || expectedCustomerName || 'Your customer'}</span> has joined the waiting room
+                  <span className="font-semibold">{customerDisplayName || expectedCustomerName || 'Your customer'}</span> is ready in the waiting room
+                </span>
+              </>
+            ) : customerPresent ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>
+                  <span className="font-semibold">{customerDisplayName || expectedCustomerName || 'Your customer'}</span> is getting set up — allowing camera &amp; mic and turning on Do Not Disturb…
                 </span>
               </>
             ) : (
@@ -717,10 +734,25 @@ export default function AgentPreJoin({
             )}
           </div>
 
-          {/* Start Meeting Button */}
+          {/* The customer is present but hard-blocked in an in-app webview —
+              explain why they can't become ready so the agent stops waiting. */}
+          {customerInAppBrowser && (
+            <div className="rounded-xl px-4 py-3 border bg-amber-500/15 border-amber-400/40 text-amber-100 text-sm flex items-start gap-2.5">
+              <ExternalLink className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                Your customer opened the link inside {customerInAppBrowser}. Ask them
+                to open it in their phone&apos;s browser (Safari or Chrome) — video
+                calls don&apos;t work inside that app.
+              </span>
+            </div>
+          )}
+
+          {/* Start Meeting Button — disabled until the customer has finished
+              BOTH the permissions slide and the Do Not Disturb slide, so they
+              can never be pulled into the call mid-setup. */}
           <button
             onClick={handleJoin}
-            disabled={isLoading || isSaving || !displayName.trim() || !customerPresent}
+            disabled={isLoading || isSaving || !displayName.trim() || !customerPresent || !customerReady}
             className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-white rounded-xl font-semibold text-lg transition-all transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none flex items-center justify-center gap-2"
           >
             {isLoading || isSaving ? (
@@ -732,6 +764,11 @@ export default function AgentPreJoin({
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
                 Waiting for customer
+              </>
+            ) : !customerReady ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Customer is getting set up…
               </>
             ) : (
               <>

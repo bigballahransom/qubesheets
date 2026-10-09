@@ -35,6 +35,7 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/vault-review/(.*)',  // Vault share gallery data + comments — auth by shareToken
   '/api/livekit/token(.*)',
   '/api/livekit/webhook(.*)',  // LiveKit webhook endpoint
+  '/api/debug/client-error',  // Client crash reports — customer side of video calls is anonymous; handler is rate-limited and always 204s
   '/api/calls/(.*)',  // Lobby presence + start — customer side is anonymous, agent auth checked inside handler
   '/api/projects/(.*)/public-info',
   '/api/external/(.*)',  // External API endpoints with API key auth

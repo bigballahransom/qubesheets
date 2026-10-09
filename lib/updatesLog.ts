@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-09-28';
+export const LATEST_UPDATES_VERSION = '2026-09-29';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -59,6 +59,27 @@ export const updates: MonthGroup[] = [
   {
     month: 'September 2026',
     entries: [
+      {
+        tag: 'New',
+        icon: Video,
+        title: 'Ask your customer to flip their camera — right from the call',
+        description:
+          'During a virtual survey, there\'s now a "Flip their camera" button in your call controls. Tap it and your customer\'s phone plays a chime, buzzes, and shows a clear "Your consultant asked you to flip your camera" prompt with a one-tap button to switch — so you can quickly get them pointing the back camera at the room without stopping to explain how. It works whether you\'re on desktop or mobile.',
+      },
+      {
+        tag: 'Improved',
+        icon: Video,
+        title: 'A smoother, one-tap start for customers joining a virtual call',
+        description:
+          'Getting into a video survey is now much easier for your customer. Instead of two separate pop-ups, the app asks for the camera and microphone together in a single "Allow" — one tap covers both — and it only asks after the customer taps "I\'m ready," so they know what\'s coming. Right after that, a quick page reminds them to turn on Do Not Disturb (an incoming phone call is the most common reason a mic cuts out mid-tour) with a one-tap "I\'ve turned it on" or Skip. Nothing about the waiting room changes — the customer still waits until you start the meeting, and if their camera is busy they can still join with audio only.',
+      },
+      {
+        tag: 'Improved',
+        icon: Video,
+        title: 'Virtual calls recover on their own from camera and mic hiccups',
+        description:
+          'Phone calls, network switches, and busy cameras are the most common reasons a virtual survey goes quiet — the customer looks muted and can\'t unmute, or one side can\'t see the other. Virtual calls now heal themselves: if an incoming phone call knocks out the customer\'s microphone, it reconnects automatically when they come back to the call, and the mute button now tells you when something is wrong instead of silently failing. If a camera or mic doesn\'t start when joining, both sides see a clear banner with a Retry button — and customers whose camera is stuck can join with audio only and bring the camera in later. Links opened inside apps like Messenger or Instagram now guide the customer to their real browser first (video doesn\'t work reliably in those in-app windows), a "tap to enable sound" prompt appears if the phone blocked audio, and a "low bandwidth" notice explains when video pauses on a weak connection. The customer lobby also suggests turning on Do Not Disturb before the tour starts.',
+      },
       {
         tag: 'Improved',
         icon: Link2,

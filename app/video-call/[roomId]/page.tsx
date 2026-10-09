@@ -9,6 +9,7 @@ import AgentPreJoin from '@/components/video/AgentPreJoin';
 import CustomerPreJoin from '@/components/video/CustomerPreJoin';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { detectInAppBrowser } from '@/lib/deviceDetection';
 
 interface BackgroundSettings {
   mode: 'none' | 'blur' | 'virtual';
@@ -32,6 +33,13 @@ interface PresenceState {
   activeRoomId: string | null;
   customerWaitingElsewhereRoomId: string | null;
   agentWentStale: boolean;
+  // The customer opened the link inside an in-app webview (Messenger/IG/…) and
+  // is hard-blocked on the "open in your browser" screen — so a "present"
+  // customer will never become ready on that device.
+  customerInAppBrowser: string | null;
+  // Customer has finished permissions + Do Not Disturb. The consultant's
+  // Start button stays disabled until this is true.
+  customerReady: boolean;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -50,6 +58,8 @@ const DEFAULT_PRESENCE: PresenceState = {
   activeRoomId: null,
   customerWaitingElsewhereRoomId: null,
   agentWentStale: false,
+  customerInAppBrowser: null,
+  customerReady: false,
 };
 
 export default function VideoCallPage() {
@@ -79,6 +89,11 @@ export default function VideoCallPage() {
 
   // Customer-side readiness (camera + mic permissions granted)
   const [customerReady, setCustomerReady] = useState(false);
+
+  // Customer chose "join with audio only" after a camera failure (camera held
+  // by another app, webview quirks). A degraded-but-connected call beats a
+  // blocked join; the in-call capture banner offers "try camera again".
+  const [customerAudioOnly, setCustomerAudioOnly] = useState(false);
 
   // Local flag that lets the agent enter the live call immediately after they
   // press Start Meeting, without waiting for the next presence poll round trip.
@@ -187,6 +202,8 @@ export default function VideoCallPage() {
             side: isAgent ? 'agent' : 'customer',
             displayName: isAgent ? agentDisplayName || undefined : legacyParticipantName,
             projectId: projectId || undefined,
+            inAppBrowser: !isAgent ? detectInAppBrowser() || undefined : undefined,
+            ready: !isAgent ? customerReady : undefined,
           }),
         });
         if (!res.ok) return;
@@ -203,6 +220,8 @@ export default function VideoCallPage() {
           activeRoomId: data.activeRoomId ?? null,
           customerWaitingElsewhereRoomId: data.customerWaitingElsewhereRoomId ?? null,
           agentWentStale: !!data.agentWentStale,
+          customerInAppBrowser: data.customerInAppBrowser ?? null,
+          customerReady: !!data.customerReady,
         }));
       } catch (e) {
         // Network blip — next tick will retry.
@@ -228,6 +247,8 @@ export default function VideoCallPage() {
           activeRoomId: data.activeRoomId ?? null,
           customerWaitingElsewhereRoomId: data.customerWaitingElsewhereRoomId ?? null,
           agentWentStale: !!data.agentWentStale,
+          customerInAppBrowser: data.customerInAppBrowser ?? null,
+          customerReady: !!data.customerReady,
         });
       } catch {}
     };
@@ -313,6 +334,8 @@ export default function VideoCallPage() {
           side: isAgent ? 'agent' : 'customer',
           displayName: isAgent ? agentDisplayName || undefined : legacyParticipantName,
           projectId: projectId || undefined,
+          inAppBrowser: !isAgent ? detectInAppBrowser() || undefined : undefined,
+          ready: !isAgent ? true : undefined, // in-call customer is fully ready
         }),
       }).catch(() => {});
     };
@@ -575,7 +598,8 @@ export default function VideoCallPage() {
         participantName={getParticipantName()}
         onCallEnd={handleCallEnd}
         isAgentUser={false}
-        customerSettings={{ videoEnabled: true, audioEnabled: true, facingMode: 'user' } as any}
+        customerSettings={{ videoEnabled: !customerAudioOnly, audioEnabled: true, facingMode: 'user' } as any}
+        onCustomerCameraOn={() => setCustomerAudioOnly(false)}
       />
     );
   }
@@ -592,6 +616,8 @@ export default function VideoCallPage() {
         onNudgeCustomer={handleNudgeCustomer}
         customerWaitingElsewhereRoomId={presence.customerWaitingElsewhereRoomId}
         onSwitchRoom={handleSwitchRoom}
+        customerInAppBrowser={presence.customerInAppBrowser}
+        customerReady={presence.customerReady}
       />
     );
   }
@@ -613,6 +639,8 @@ export default function VideoCallPage() {
       noShowExpired={noShowExpired}
       onReadyChange={handleCustomerReadyChange}
       agentSteppedAway={presence.agentWentStale}
+      roomId={roomId}
+      onAudioOnlyChange={setCustomerAudioOnly}
     />
   );
 }

@@ -9,6 +9,7 @@ import {
   ParticipantTile,
   ControlBar,
   RoomAudioRenderer,
+  StartAudio,
   useTracks,
   useLocalParticipant,
   useRemoteParticipants,
@@ -24,7 +25,7 @@ import {
   FocusLayout,
   CarouselLayout,
 } from '@livekit/components-react';
-import { Track, LocalVideoTrack, RemoteVideoTrack, createLocalVideoTrack, ConnectionState, DisconnectReason, facingModeFromLocalTrack } from 'livekit-client';
+import { Track, LocalVideoTrack, RemoteVideoTrack, createLocalVideoTrack, ConnectionState, DisconnectReason, RoomEvent, facingModeFromLocalTrack } from 'livekit-client';
 import '@livekit/components-styles';
 import { 
   Camera, 
@@ -62,6 +63,7 @@ import {
   MessageSquare,
   Radio,
   FileText,
+  Monitor,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import FrameProcessor from './FrameProcessor';
@@ -70,6 +72,8 @@ import Logo from '../../public/logo';
 import { Button } from '../ui/button';
 import { buildBackgroundConfig } from '../../lib/backgroundProcessor';
 import { useMediaRecovery } from '../../lib/hooks/useMicRecovery';
+import { useCallHealth, useRemoteVideoWatchdog } from '../../lib/hooks/useCallHealth';
+import { useLiveKitCameraControls } from '../../lib/hooks/useLiveKitCameraControls';
 // Client-side recording removed - using LiveKit Egress (server-side) recording
 
 // Remount GridLayout whenever tile membership changes (participant
@@ -90,6 +94,7 @@ import VideoCallNotes from '../VideoCallNotes';
 import CallPhotosPanel from './CallPhotosPanel';
 import { getDeviceInfo, getRecommendedCodec, getVideoConstraintLevels, getOptimizedRoomOptions } from '@/lib/webrtc-compatibility';
 import { reportClientError } from '@/lib/client-error-reporting';
+import { reportCallEvent } from '@/lib/call-telemetry';
 
 // Modern glassmorphism utility class
 const glassStyle = "backdrop-blur-xl bg-white/10 border border-white/20 shadow-2xl";
@@ -180,6 +185,168 @@ const MediaRecoveryBanner = ({ visible, label, onRecover }) => {
         {label === 'Microphone' ? <MicOff className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
         {label || 'Media'} disconnected — tap to reconnect
       </button>
+    </div>
+  );
+};
+
+// Persistent banner for a camera/mic that failed to start AFTER the room
+// connected. Historically this failure was silently swallowed (the
+// connection-succeeded gate suppresses all media toasts), producing the
+// "we both joined but can't see each other" calls with no visible cause.
+const CaptureFailureBanner = ({ failure, onRetry, onDismiss }) => {
+  const [retrying, setRetrying] = useState(false);
+  if (!failure) return null;
+  const label =
+    failure.kinds.length === 2
+      ? 'Camera & microphone'
+      : failure.kinds[0] === 'camera'
+        ? 'Camera'
+        : 'Microphone';
+  return (
+    <div className="absolute top-safe-or-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md">
+      <div className="rounded-2xl bg-red-500/95 text-white shadow-2xl px-4 py-3">
+        <p className="text-sm font-semibold mb-2">
+          {label} didn&apos;t start — others can&apos;t {failure.kinds.includes('camera') ? 'see' : 'hear'} you
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={async () => {
+              setRetrying(true);
+              try { await onRetry(); } finally { setRetrying(false); }
+            }}
+            disabled={retrying}
+            className="flex-1 px-3 py-2 rounded-xl bg-white text-red-600 text-sm font-semibold active:scale-95 transition-all disabled:opacity-60 flex items-center justify-center gap-1.5"
+          >
+            {retrying ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+            Retry
+          </button>
+          <button
+            onClick={onDismiss}
+            className="px-3 py-2 rounded-xl bg-white/20 text-white text-sm font-semibold active:scale-95 transition-all"
+          >
+            Continue anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// "Low bandwidth" chip: adaptiveStream paused the remote video (streamState
+// Paused) — without this, the other side just looks black/frozen with no
+// explanation.
+const LowBandwidthChip = ({ visible }) => {
+  if (!visible) return null;
+  return (
+    <div className="absolute top-24 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/90 text-white text-xs font-semibold shadow-lg">
+        <Activity className="w-3.5 h-3.5" />
+        Low bandwidth — video paused
+      </div>
+    </div>
+  );
+};
+
+// ── Consultant → customer control messages (LiveKit data channel) ──────────
+// Both roles' tokens grant canPublishData, so the agent can nudge the customer
+// in real time. Keep the payload tiny and tolerant of unknown message types so
+// it's forward-compatible.
+const QS_DATA_TOPIC = 'qs-control';
+const FLIP_CAMERA_REQUEST = 'flip_camera_request';
+
+function encodeControl(obj) {
+  return new TextEncoder().encode(JSON.stringify(obj));
+}
+function decodeControl(payload) {
+  try {
+    return JSON.parse(new TextDecoder().decode(payload));
+  } catch {
+    return null;
+  }
+}
+
+// The agent-side action: ask the customer to flip their camera. Fire-and-forget
+// (reliable delivery); returns true if the message was published.
+function sendFlipCameraRequest(room) {
+  try {
+    if (!room?.localParticipant) return false;
+    room.localParticipant.publishData(
+      encodeControl({ type: FLIP_CAMERA_REQUEST }),
+      { reliable: true, topic: QS_DATA_TOPIC }
+    );
+    return true;
+  } catch (e) {
+    console.warn('Failed to send flip-camera request:', e);
+    return false;
+  }
+}
+
+// Customer-side: listen for the consultant's flip-camera nudge and surface it
+// with a sound + vibration + a tap-to-flip prompt (styled like the self-survey
+// tip). Auto-dismisses so a missed nudge doesn't linger.
+function useFlipCameraRequest(roomId) {
+  const room = useRoomContext();
+  const [promptVisible, setPromptVisible] = useState(false);
+  const hideTimerRef = useRef(null);
+
+  const dismiss = useCallback(() => {
+    setPromptVisible(false);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!room) return;
+    const onData = (payload, _participant, _kind, topic) => {
+      if (topic && topic !== QS_DATA_TOPIC) return;
+      const msg = decodeControl(payload);
+      if (msg?.type !== FLIP_CAMERA_REQUEST) return;
+
+      setPromptVisible(true);
+      // Audio is unblocked by the join tap on mobile; swallow if still blocked.
+      try { new Audio('/happy-bell-alert.wav').play().catch(() => {}); } catch {}
+      try { navigator.vibrate?.([120, 60, 120]); } catch {}
+      if (roomId) reportCallEvent(roomId, 'customer', 'flip_camera_prompt_shown');
+
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = setTimeout(() => setPromptVisible(false), 15000);
+    };
+    room.on(RoomEvent.DataReceived, onData);
+    return () => {
+      room.off(RoomEvent.DataReceived, onData);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, [room, roomId]);
+
+  return { promptVisible, dismiss };
+}
+
+// The customer-facing prompt. Big, attention-grabbing, one obvious action.
+const FlipCameraPrompt = ({ visible, onFlip, onDismiss, switching }) => {
+  if (!visible) return null;
+  return (
+    <div className="absolute inset-x-0 top-20 z-50 flex justify-center px-4 pointer-events-none">
+      <div className="pointer-events-auto w-full max-w-xs bg-black/70 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl p-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-indigo-500/30 border border-indigo-300/40 flex items-center justify-center flex-shrink-0">
+            <SwitchCamera className="w-5 h-5 text-indigo-200" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-white text-sm font-semibold leading-snug">Your consultant asked you to flip your camera</p>
+            <p className="text-white/70 text-xs mt-0.5">Switch cameras so they can see the room.</p>
+          </div>
+          <button onClick={onDismiss} aria-label="Dismiss" className="text-white/60 hover:text-white p-0.5 -mt-0.5 flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <button
+          onClick={onFlip}
+          disabled={switching}
+          className="mt-3 w-full py-3 rounded-xl bg-gradient-to-b from-indigo-500 to-indigo-600 hover:to-indigo-700 text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-60"
+        >
+          {switching ? <Loader2 className="w-4 h-4 animate-spin" /> : <SwitchCamera className="w-4 h-4" />}
+          Flip camera
+        </button>
+      </div>
     </div>
   );
 };
@@ -666,24 +833,44 @@ function SnapableTile({ tileStyle, onSnap, flashSid, isSmallScreen }) {
   );
 }
 
-const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
+const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection, mediaDefaults, onCameraOn }) => {
   const [showControls, setShowControls] = useState(true);
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants().filter(
     (p) => !p.identity?.startsWith('EG_')
   );
   const connectionState = useConnectionState();
-  const { needsManualRecovery: mediaNeedsRecovery, failedLabel: mediaFailedLabel, recover: recoverMedia } = useMediaRecovery();
+  const {
+    needsManualRecovery: mediaNeedsRecovery,
+    failedLabel: mediaFailedLabel,
+    recover: recoverMedia,
+    setEnabledRobust,
+  } = useMediaRecovery({ roomId, side: 'customer', defaults: mediaDefaults });
+  const { captureFailure, retryCapture, dismissCaptureFailure } = useCallHealth({ roomId, side: 'customer' });
+  const { remoteVideoStalled, remotePaused, retryRemoteVideo } = useRemoteVideoWatchdog({ roomId, side: 'customer' });
 
   // Watchdog: the Connecting/Reconnecting spinner must not run forever. After
   // 30s of continuous connecting, offer a retry instead of spinning.
   const [connectingTimedOut, setConnectingTimedOut] = useState(false);
 
   // Custom control states
-  const [isMicEnabled, setIsMicEnabled] = useState(true);
-  const [isCameraEnabled, setIsCameraEnabled] = useState(true);
+  const [isMicEnabled, setIsMicEnabled] = useState(mediaDefaults?.microphone ?? true);
+  const [isCameraEnabled, setIsCameraEnabled] = useState(mediaDefaults?.camera ?? true);
   const [isLeaving, setIsLeaving] = useState(false);
   const { switchCamera, isSwitching: isCameraSwitching, canSwitchCamera } = useAdvancedCameraSwitching();
+
+  // Consultant can nudge the customer to flip their camera (sound + prompt).
+  const { promptVisible: flipPromptVisible, dismiss: dismissFlipPrompt } = useFlipCameraRequest(roomId);
+  const handleFlipFromPrompt = useCallback(async () => {
+    try {
+      await switchCamera();
+      if (roomId) reportCallEvent(roomId, 'customer', 'flip_camera_done');
+    } catch (e) {
+      console.error('Flip camera failed:', e);
+    } finally {
+      dismissFlipPrompt();
+    }
+  }, [switchCamera, dismissFlipPrompt, roomId]);
 
   // Show loading screen while connecting
   const isConnecting = connectionState === ConnectionState.Connecting || connectionState === ConnectionState.Reconnecting;
@@ -708,6 +895,16 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
   // Detect Android specifically for certain fixes
   const isAndroid = useMemo(() => {
     return /Android/i.test(navigator.userAgent);
+  }, []);
+
+  // Detect iOS (incl. iPadOS, which reports as Mac + touch). iOS Safari is the
+  // one that delivers a black first frame from getUserMedia at join.
+  const isIOS = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return (
+      /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
+    );
   }, []);
 
   // Track screen width for dynamic changes (but mobile devices always use mobile layout)
@@ -762,19 +959,47 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
   );
   const isCameraReady = !!localCameraTrack?.publication?.track;
 
+  // Track whether the camera was ever live, so the "your camera is off"
+  // placeholder shows only for a real off-state (audio-only join, or the user
+  // toggled off after being on) and NOT during the initial ~1s of camera
+  // acquisition on a normal join (where it would flash the wrong message).
+  const cameraEverReadyRef = useRef(false);
+  if (isCameraReady) cameraEverReadyRef.current = true;
+  const showCameraOff =
+    !isCameraEnabled && (mediaDefaults?.camera === false || cameraEverReadyRef.current);
+
   // Get remote video track (agent's camera)
   const remoteCameraTrack = tracks.find(
     t => !t.participant?.isLocal && t.source === Track.Source.Camera && t.publication?.track
   );
 
+  // Remote screen share (the consultant presenting their screen). When present
+  // it becomes the main feed so the customer can actually see what's being
+  // shown — the mobile layout bypasses GridLayout, so without this a shared
+  // screen never appears on the customer's phone at all.
+  const remoteScreenShareTrack = tracks.find(
+    t => !t.participant?.isLocal && t.source === Track.Source.ScreenShare && t.publication?.track
+  );
+  const isRemoteScreenSharing = !!remoteScreenShareTrack?.publication?.track;
+
+  // Native zoom + torch (flash) for the customer's own camera — same controls
+  // as the self-survey, driven off the LiveKit track's MediaStreamTrack.
+  const cameraControls = useLiveKitCameraControls(
+    localCameraTrack?.publication?.track?.mediaStreamTrack
+  );
+
   // Refs for manual video elements (Android only)
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const screenShareVideoRef = useRef(null);
 
   // Detect mobile for camera flip button
   const isMobile = isSmallScreen;
 
-  // Manual track attachment for mobile - bypasses GridLayout issues
+  // Manual track attachment for mobile - bypasses GridLayout issues.
+  // isRemoteScreenSharing is a dep because the self-view <video> element is
+  // swapped out when a shared screen takes over the main feed — the track must
+  // re-attach to whichever element is currently mounted.
   useEffect(() => {
     if (!isSmallScreen) return;
 
@@ -789,7 +1014,48 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
         localTrack.detach(videoElement);
       };
     }
-  }, [isSmallScreen, localCameraTrack?.publication?.track]);
+  }, [isSmallScreen, localCameraTrack?.publication?.track, isRemoteScreenSharing]);
+
+  // Manual screen-share attachment for mobile (the consultant's shared screen).
+  useEffect(() => {
+    if (!isSmallScreen) return;
+    const ssTrack = remoteScreenShareTrack?.publication?.track;
+    const videoElement = screenShareVideoRef.current;
+    if (ssTrack && videoElement) {
+      ssTrack.attach(videoElement);
+      return () => {
+        ssTrack.detach(videoElement);
+      };
+    }
+  }, [isSmallScreen, remoteScreenShareTrack?.publication?.track]);
+
+  // iOS Safari frequently paints the customer's OWN self-view <video> black on
+  // join even though the camera is live and the consultant receives frames
+  // fine — a known Safari repaint bug, NOT a capture problem. Flipping the
+  // camera fixes it only as a side effect of re-attaching a track to the
+  // element. So once the local track is up, force the element to repaint by
+  // re-attaching it (detach → attach resets srcObject) and replaying. iOS only;
+  // a couple of attempts since the first can land before frames flow.
+  const iosNudgedTrackRef = useRef(null);
+  useEffect(() => {
+    if (!isIOS || !isSmallScreen) return;
+    const track = localCameraTrack?.publication?.track;
+    if (!track || iosNudgedTrackRef.current === track) return;
+    iosNudgedTrackRef.current = track;
+    const repaint = () => {
+      const el = localVideoRef.current;
+      if (!el || !track) return;
+      try {
+        track.detach(el);
+        track.attach(el);
+        el.play?.().catch(() => {});
+      } catch (e) {
+        console.warn('[ios-selfview-repaint] failed:', e);
+      }
+    };
+    const timers = [500, 1400, 2800].map((d) => setTimeout(repaint, d));
+    return () => timers.forEach(clearTimeout);
+  }, [isIOS, isSmallScreen, localCameraTrack?.publication?.track]);
 
   // Manual remote track attachment for mobile
   useEffect(() => {
@@ -815,27 +1081,30 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
     setIsCameraEnabled(localParticipant.isCameraEnabled);
   }, [localParticipant?.isMicrophoneEnabled, localParticipant?.isCameraEnabled]);
 
-  // Toggle mic
+  // Toggle mic — robust ladder with user feedback: after a phone-call
+  // interruption the SDK auto-mutes a seized mic, and a plain
+  // setMicrophoneEnabled(true) can throw (mic still held) — previously that
+  // error was swallowed and the button just snapped back to muted.
   const toggleMic = useCallback(async () => {
     if (!localParticipant) return;
-    try {
-      await localParticipant.setMicrophoneEnabled(!isMicEnabled);
-      setIsMicEnabled(!isMicEnabled);
-    } catch (error) {
-      console.error('Failed to toggle microphone:', error);
-    }
-  }, [localParticipant, isMicEnabled]);
+    const next = !isMicEnabled;
+    setIsMicEnabled(next); // optimistic; reverted on failure
+    const ok = await setEnabledRobust('microphone', next);
+    if (!ok) setIsMicEnabled(localParticipant.isMicrophoneEnabled);
+  }, [localParticipant, isMicEnabled, setEnabledRobust]);
 
   // Toggle camera
   const toggleCamera = useCallback(async () => {
     if (!localParticipant) return;
-    try {
-      await localParticipant.setCameraEnabled(!isCameraEnabled);
-      setIsCameraEnabled(!isCameraEnabled);
-    } catch (error) {
-      console.error('Failed to toggle camera:', error);
-    }
-  }, [localParticipant, isCameraEnabled]);
+    const next = !isCameraEnabled;
+    setIsCameraEnabled(next); // optimistic; reverted on failure
+    const ok = await setEnabledRobust('camera', next);
+    if (!ok) setIsCameraEnabled(localParticipant.isCameraEnabled);
+    // An audio-only customer who turns their camera on: clear the stale
+    // audio-only flag upstream so an auto-rejoin remount keeps video on
+    // instead of silently dropping it back to audio-only.
+    else if (next) onCameraOn?.();
+  }, [localParticipant, isCameraEnabled, setEnabledRobust, onCameraOn]);
 
   // Leave call with loading state
   const leaveCall = useCallback(() => {
@@ -926,6 +1195,9 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
       }}
     >
       <MediaRecoveryBanner visible={mediaNeedsRecovery} label={mediaFailedLabel} onRecover={recoverMedia} />
+      <CaptureFailureBanner failure={captureFailure} onRetry={retryCapture} onDismiss={dismissCaptureFailure} />
+      <LowBandwidthChip visible={remotePaused} />
+      <FlipCameraPrompt visible={flipPromptVisible} onFlip={handleFlipFromPrompt} onDismiss={dismissFlipPrompt} switching={isCameraSwitching} />
       {/* Recording Indicator - Hidden
       <RecordingIndicator 
         recordingStatus={recordingStatus.recordingStatus}
@@ -945,9 +1217,25 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
           // Customer-side layout: customer's own camera is the large feed (so they can
           // see what they're showing), agent appears in the PiP corner.
           <div className="absolute inset-0 flex flex-col bg-black">
-            {/* Local video (self) - full screen background */}
+            {/* Main feed. Normally the customer's own camera (so they see what
+                they're showing). When the consultant shares their screen, that
+                becomes the main feed instead — shown with object-contain on a
+                black mat so the whole screen is visible, never cropped. */}
             <div className="flex-1 relative">
-              {localCameraTrack?.publication?.track ? (
+              {isRemoteScreenSharing ? (
+                <>
+                  <video
+                    ref={screenShareVideoRef}
+                    autoPlay
+                    playsInline
+                    className="absolute inset-0 w-full h-full object-contain bg-black"
+                  />
+                  <div className="absolute top-safe-or-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/60 backdrop-blur-sm border border-white/15">
+                    <Monitor className="w-3.5 h-3.5 text-white/80" />
+                    <span className="text-white/90 text-xs font-medium">{agentName} is sharing their screen</span>
+                  </div>
+                </>
+              ) : localCameraTrack?.publication?.track ? (
                 <video
                   ref={localVideoRef}
                   autoPlay
@@ -955,6 +1243,16 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
                   muted
                   className="absolute inset-0 w-full h-full object-cover"
                 />
+              ) : showCameraOff ? (
+                // Audio-only join (or camera toggled off): a spinner here
+                // would look like a hang — show an honest camera-off state.
+                <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900">
+                  <div className="text-center px-6">
+                    <VideoOff className="w-12 h-12 text-white/70 mx-auto mb-4" />
+                    <p className="text-white/80 font-medium">Your camera is off</p>
+                    <p className="text-white/50 text-sm mt-1">Tap the camera button below to turn it on</p>
+                  </div>
+                </div>
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900">
                   <div className="text-center">
@@ -968,7 +1266,7 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
             {/* Remote video (agent) - small overlay in corner */}
             {remoteCameraTrack?.publication?.track ? (
               <div
-                className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30 bg-black"
+                className="absolute bottom-44 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30 bg-black"
               >
                 <video
                   ref={remoteVideoRef}
@@ -977,8 +1275,18 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
                   className="w-full h-full object-cover"
                 />
               </div>
+            ) : remoteVideoStalled ? (
+              <button
+                onClick={retryRemoteVideo}
+                className="absolute bottom-44 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-amber-400/70 z-30 bg-black flex items-center justify-center active:scale-95 transition-all"
+              >
+                <div className="text-center px-2">
+                  <RotateCcw className="w-5 h-5 text-amber-300 mx-auto mb-1" />
+                  <p className="text-amber-200 text-[10px] leading-tight">Consultant&apos;s video is stuck — tap to retry</p>
+                </div>
+              </button>
             ) : (
-              <div className="absolute bottom-32 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30 bg-black flex items-center justify-center">
+              <div className="absolute bottom-44 right-4 w-28 h-40 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 z-30 bg-black flex items-center justify-center">
                 <div className="text-center px-2">
                   <Loader2 className="w-5 h-5 animate-spin text-white/70 mx-auto mb-1" />
                   <p className="text-white/70 text-[10px] leading-tight">Connecting consultant…</p>
@@ -1011,8 +1319,11 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
           </>
         )}
 
-        {/* Loading overlay when camera isn't ready */}
-        {!isCameraReady && (
+        {/* Loading overlay when camera isn't ready. Gated on isCameraEnabled:
+            an audio-only join (or camera-off) must not sit behind a full-screen
+            "Starting Camera..." curtain — and when capture fails silently the
+            capture-failure banner handles it instead of this spinner. */}
+        {!isCameraReady && isCameraEnabled && !captureFailure && (
           <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-indigo-900/90 via-purple-900/90 to-pink-900/90 backdrop-blur-sm">
             <div className={`p-8 rounded-3xl text-center ${glassStyle}`}>
               <Loader2 className="w-12 h-12 animate-spin text-white mx-auto mb-4" />
@@ -1042,17 +1353,74 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
                 <p className="text-white/80 text-sm font-medium">Moving Inventory Specialist</p>
               </div>
             </div>
-            
-            {/* Connection status */}
-            <div className={`px-4 py-3 rounded-2xl ${glassStyle} flex items-center gap-3`}>
-              <div className={`w-3 h-3 rounded-full ${hasAgent ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'} shadow-lg`}></div>
-              <span className="text-white text-sm font-bold tracking-wider">
-                {hasAgent ? 'LIVE SESSION' : 'CONNECTING...'}
-              </span>
-            </div>
           </div>
         </div>
       )}
+
+      {/* Camera controls — zoom presets + flashlight for the customer's OWN
+          camera, matching the self-survey. Phones only, only while their camera
+          is the visible feed (not during a screen share / camera-off), and only
+          for what THIS lens actually supports: multi-lens phones expose .5×/zoom
+          presets; most back cameras expose a torch, front cameras neither (so
+          they auto-hide). Camera-app style, centered just above the controls. */}
+      {isSmallScreen && isCameraReady && !isRemoteScreenSharing && showControls && (() => {
+        const range = cameraControls.zoomRange;
+        const presets = range
+          ? [0.5, 1, 2, 3].filter((z) => z >= range.min - 0.01 && z <= range.max + 0.01)
+          : [];
+        const showZoom = presets.length >= 2;
+        if (!showZoom && !cameraControls.torchAvailable) return null;
+        const nearest = presets.reduce(
+          (best, z) =>
+            Math.abs(z - cameraControls.currentZoom) < Math.abs(best - cameraControls.currentZoom) ? z : best,
+          presets[0] ?? 1
+        );
+        return (
+          <div
+            className="absolute left-0 right-0 z-30 flex items-center justify-center gap-3 pointer-events-none"
+            style={{ bottom: 'calc(env(safe-area-inset-bottom) + 118px)' }}
+          >
+            {showZoom && (
+              <div className="pointer-events-auto flex items-center gap-1 bg-white/10 backdrop-blur-2xl border border-white/20 rounded-full px-2 py-1 shadow-lg">
+                {presets.map((z) => (
+                  <button
+                    key={z}
+                    onClick={() => {
+                      cameraControls.setCameraZoom(z);
+                      if (roomId) reportCallEvent(roomId, 'customer', 'zoom_changed');
+                    }}
+                    className={`min-w-[38px] h-[34px] px-2 rounded-full text-sm font-semibold transition-colors ${
+                      nearest === z ? 'bg-white/90 text-black shadow' : 'text-white/95'
+                    }`}
+                    aria-label={`Zoom ${z}x`}
+                  >
+                    {z === 0.5 ? '.5' : `${z}`}
+                    <span className="text-[10px] align-top">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {cameraControls.torchAvailable && (
+              <button
+                onClick={() => {
+                  cameraControls.toggleTorch();
+                  if (roomId) reportCallEvent(roomId, 'customer', 'torch_toggled');
+                }}
+                className={`pointer-events-auto w-[42px] h-[42px] rounded-full flex items-center justify-center backdrop-blur-2xl border shadow-lg ${
+                  cameraControls.torchOn
+                    ? 'bg-yellow-400/90 border-yellow-200/50 text-black'
+                    : 'bg-white/10 border-white/20 text-white'
+                }`}
+                aria-label={cameraControls.torchOn ? 'Turn flashlight off' : 'Turn flashlight on'}
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Custom Mobile-Friendly Controls */}
       <div className={`absolute bottom-0 left-0 right-0 z-20 transition-all duration-300 ${showControls ? 'translate-y-0' : 'translate-y-full'}`}>
@@ -1122,6 +1490,16 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection }) => {
       </div>
 
       <RoomAudioRenderer />
+      {/* Autoplay unlock: mobile browsers can block remote audio until a tap
+          (especially after an automatic rejoin remount, which recreates the
+          audio elements without a user gesture). StartAudio renders only
+          while playback is blocked and hides itself once audio starts. */}
+      <div className="absolute bottom-52 left-1/2 -translate-x-1/2 z-40">
+        <StartAudio
+          label="Tap to enable sound"
+          className="flex items-center gap-2 px-5 py-3 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold shadow-2xl transition-all duration-200 active:scale-95"
+        />
+      </div>
     </div>
   );
 });
@@ -1155,7 +1533,30 @@ const AgentView = React.memo(({
   // Get participant identity for audio processor
   const { localParticipant } = useLocalParticipant();
   const participantIdentity = localParticipant?.identity || '';
-  const { needsManualRecovery: mediaNeedsRecovery, failedLabel: mediaFailedLabel, recover: recoverMedia } = useMediaRecovery();
+  const agentRoom = useRoomContext();
+
+  // Ask the customer to flip their camera (sound + prompt on their phone).
+  // Briefly disabled after a send so a double-tap doesn't spam them.
+  const [flipRequestCooling, setFlipRequestCooling] = useState(false);
+  const requestFlipCamera = useCallback(() => {
+    if (flipRequestCooling) return;
+    if (sendFlipCameraRequest(agentRoom)) {
+      toast.success('Asked your customer to flip their camera');
+      if (roomId) reportCallEvent(roomId, 'agent', 'flip_camera_requested');
+      setFlipRequestCooling(true);
+      setTimeout(() => setFlipRequestCooling(false), 4000);
+    } else {
+      toast.error("Couldn't send the request — check your connection.");
+    }
+  }, [agentRoom, flipRequestCooling, roomId]);
+  const {
+    needsManualRecovery: mediaNeedsRecovery,
+    failedLabel: mediaFailedLabel,
+    recover: recoverMedia,
+    setEnabledRobust,
+  } = useMediaRecovery({ roomId, side: 'agent' });
+  const { captureFailure, retryCapture, dismissCaptureFailure } = useCallHealth({ roomId, side: 'agent' });
+  const { remotePaused } = useRemoteVideoWatchdog({ roomId, side: 'agent' });
 
   // Handler for when a new transcript segment is received
   const handleTranscriptReceived = useCallback((segment) => {
@@ -1180,27 +1581,23 @@ const AgentView = React.memo(({
     setIsCameraEnabled(localParticipant.isCameraEnabled);
   }, [localParticipant?.isMicrophoneEnabled, localParticipant?.isCameraEnabled]);
 
-  // Toggle mic
+  // Toggle mic — robust ladder with user feedback (see CustomerView note).
   const toggleMic = useCallback(async () => {
     if (!localParticipant) return;
-    try {
-      await localParticipant.setMicrophoneEnabled(!isMicEnabled);
-      setIsMicEnabled(!isMicEnabled);
-    } catch (error) {
-      console.error('Failed to toggle microphone:', error);
-    }
-  }, [localParticipant, isMicEnabled]);
+    const next = !isMicEnabled;
+    setIsMicEnabled(next); // optimistic; reverted on failure
+    const ok = await setEnabledRobust('microphone', next);
+    if (!ok) setIsMicEnabled(localParticipant.isMicrophoneEnabled);
+  }, [localParticipant, isMicEnabled, setEnabledRobust]);
 
   // Toggle camera
   const toggleCamera = useCallback(async () => {
     if (!localParticipant) return;
-    try {
-      await localParticipant.setCameraEnabled(!isCameraEnabled);
-      setIsCameraEnabled(!isCameraEnabled);
-    } catch (error) {
-      console.error('Failed to toggle camera:', error);
-    }
-  }, [localParticipant, isCameraEnabled]);
+    const next = !isCameraEnabled;
+    setIsCameraEnabled(next); // optimistic; reverted on failure
+    const ok = await setEnabledRobust('camera', next);
+    if (!ok) setIsCameraEnabled(localParticipant.isCameraEnabled);
+  }, [localParticipant, isCameraEnabled, setEnabledRobust]);
 
   // Leave call with loading state
   const leaveCall = useCallback(() => {
@@ -1413,6 +1810,16 @@ const AgentView = React.memo(({
     );
   }, [tracks]);
 
+  // The agent's own camera — shown as a small self-view PiP on the desktop
+  // stage, so the customer's feed can be the large centered feature.
+  const localAgentTrack = useMemo(
+    () =>
+      tracks.find(
+        (t) => t.participant?.isLocal && t.source === Track.Source.Camera && t.publication?.track
+      ) || null,
+    [tracks]
+  );
+
   useEffect(() => {
     const checkScreenSize = () => {
       const smallScreen = window.innerWidth < 768;
@@ -1493,6 +1900,8 @@ const AgentView = React.memo(({
     return (
       <div className="h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-indigo-900 relative overflow-hidden">
         <MediaRecoveryBanner visible={mediaNeedsRecovery} label={mediaFailedLabel} onRecover={recoverMedia} />
+        <CaptureFailureBanner failure={captureFailure} onRetry={retryCapture} onDismiss={dismissCaptureFailure} />
+        <LowBandwidthChip visible={remotePaused} />
         {/* Video area - Full screen */}
         <div className="absolute inset-0 z-10">
           <GridLayout
@@ -1550,6 +1959,16 @@ const AgentView = React.memo(({
                 <Camera size={24} />
               </button>
             )}
+
+            {/* Ask the customer to flip their camera (sound + prompt on their phone) */}
+            <button
+              onClick={requestFlipCamera}
+              disabled={flipRequestCooling}
+              title="Ask customer to flip their camera"
+              className={`relative p-4 rounded-2xl ${glassStyle} bg-purple-600/30 border-purple-400/50 text-white shadow-2xl transition-all duration-300 transform hover:scale-110 active:scale-95 disabled:opacity-50 disabled:scale-100`}
+            >
+              <SwitchCamera size={24} />
+            </button>
 
             {/* Mid-call Stop & Process trigger (one-shot) */}
             {processState === 'idle' && (
@@ -1727,6 +2146,13 @@ const AgentView = React.memo(({
         )}
 
         <RoomAudioRenderer />
+        {/* Autoplay unlock — see CustomerView note. */}
+        <div className="absolute bottom-40 left-1/2 -translate-x-1/2 z-40">
+          <StartAudio
+            label="Tap to enable sound"
+            className="flex items-center gap-2 px-5 py-3 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold shadow-2xl transition-all duration-200 active:scale-95"
+          />
+        </div>
       </div>
     );
   }
@@ -1735,6 +2161,8 @@ const AgentView = React.memo(({
   return (
     <div className="h-full flex flex-col bg-gray-50 overflow-hidden relative">
       <MediaRecoveryBanner visible={mediaNeedsRecovery} label={mediaFailedLabel} onRecover={recoverMedia} />
+      <CaptureFailureBanner failure={captureFailure} onRetry={retryCapture} onDismiss={dismissCaptureFailure} />
+      <LowBandwidthChip visible={remotePaused} />
       {/* Recording Indicator - Hidden
       <RecordingIndicator 
         recordingStatus={recordingStatus.recordingStatus}
@@ -1765,6 +2193,16 @@ const AgentView = React.memo(({
               <Camera size={16} />
               Snap photo
             </button>
+            {/* Ask the customer to flip their camera (sound + prompt on their phone) */}
+            <button
+              onClick={requestFlipCamera}
+              disabled={flipRequestCooling}
+              title="Ask the customer to flip their camera — plays a sound and shows a prompt on their phone"
+              className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <SwitchCamera size={16} />
+              Flip their camera
+            </button>
             {/* Mid-call Stop & Process (one-shot) */}
             {processState === 'idle' && (
               <button
@@ -1786,20 +2224,6 @@ const AgentView = React.memo(({
                 isSmallScreen={false}
               />
             )}
-
-            {/* Inventory toggle */}
-            <button
-              onClick={toggleSidebar}
-              className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title={showInventory ? 'Hide inventory' : 'Show inventory'}
-            >
-              {showInventory ? <EyeOff size={20} /> : <Layers size={20} />}
-              {!showInventory && inventoryItems.length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
-                  {inventoryItems.length}
-                </span>
-              )}
-            </button>
           </div>
         </div>
       </div>
@@ -1808,38 +2232,69 @@ const AgentView = React.memo(({
       <div className="flex-1 h-full flex flex-row min-h-0 overflow-hidden">
         {/* Video Area with integrated controls */}
         <div className="flex-1 h-full flex flex-col bg-gray-900">
-          {/* Video Grid */}
-          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
-            <div className="w-full h-full flex items-center justify-center">
-              <GridLayout
-                key={gridMembershipKey(tracks)}
-                tracks={tracks}
-                style={{
-                  height: '100%',
-                  width: '100%',
-                  backgroundColor: 'transparent',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                <SnapableTile
-                  tileStyle={{
-                    borderRadius: '16px',
-                    overflow: 'hidden',
-                    backgroundColor: '#374151',
-                    border: '1px solid rgba(255,255,255,0.1)'
-                  }}
-                  onSnap={snapFromTrackRef}
-                  flashSid={flashSid}
-                  isSmallScreen={false}
+          {/* Video stage: the CUSTOMER is the large, centered feature (that's
+              what a survey is about); the agent's own camera is a small PiP.
+              The customer video sizes to its NATURAL aspect ratio bounded by
+              the stage — so it fills the available space, stays centered,
+              scales with the agent's window, and shows the ENTIRE frame in any
+              orientation (portrait → tall, landscape → wide; no cropping,
+              nothing lost when the customer rotates their phone). */}
+          <div className="flex-1 flex items-center justify-center p-4 lg:p-6 min-h-0">
+            <div className="relative w-full h-full flex items-center justify-center">
+              {featuredCustomerTrack?.publication?.track ? (
+                <VideoTrack
+                  trackRef={featuredCustomerTrack}
+                  className="qs-customer-stage"
                 />
-              </GridLayout>
+              ) : (
+                <div className="flex flex-col items-center justify-center text-gray-400 text-center">
+                  <Users className="w-14 h-14 mb-3 opacity-40" />
+                  <p className="text-sm font-medium">Waiting for your customer&apos;s video…</p>
+                </div>
+              )}
+
+              {/* Agent self-view — small PiP, bottom-right. The box is always
+                  rendered the moment the agent is in the call, so they can see
+                  where they'll appear instead of wondering "where am I?". It
+                  shows a spinner while the local camera is still coming up (the
+                  first few seconds after joining), their live video once it's
+                  publishing, or a camera-off state if they've turned it off. */}
+              <div
+                className="absolute bottom-3 right-3 w-36 xl:w-48 rounded-xl overflow-hidden border-2 border-white/20 shadow-2xl bg-black z-10 flex items-center justify-center"
+                style={{ aspectRatio: '16 / 9' }}
+              >
+                {localAgentTrack?.publication?.track ? (
+                  <VideoTrack
+                    trackRef={localAgentTrack}
+                    className="w-full h-full"
+                    style={{ objectFit: 'cover' }}
+                  />
+                ) : isCameraEnabled ? (
+                  <div className="flex flex-col items-center justify-center gap-1.5 text-white/70">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span className="text-[11px] font-medium">Starting camera…</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-1.5 text-white/50">
+                    <VideoOff className="w-5 h-5" />
+                    <span className="text-[11px] font-medium">Camera off</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Snap flash — brief white blink over the stage so the agent sees
+                  the photo was taken (fires for 300ms whenever snapFromTrackRef
+                  sets flashSid). */}
+              {flashSid && (
+                <div className="absolute inset-0 z-30 bg-white pointer-events-none animate-snapflash" />
+              )}
             </div>
           </div>
           
-          {/* Video Controls Bar - Right under video frames */}
-          <div className="bg-gray-800 p-2 border-t border-gray-700 flex-shrink-0">
+          {/* Video Controls Bar - Right under video frames (no top border: the
+              gray-800 bar already separates it from the gray-900 stage, and a
+              rule read as an extra/redundant line). */}
+          <div className="bg-gray-800 p-2 flex-shrink-0">
             <div className="flex justify-center items-center gap-4">
               {/* Recording is now automatic - starts when both join, stops when either leaves */}
               <ControlBar />
@@ -1900,6 +2355,13 @@ const AgentView = React.memo(({
         {/* Enhanced Inventory Sidebar */}
       {processConfirmDialog}
       <RoomAudioRenderer />
+      {/* Autoplay unlock — see CustomerView note. */}
+      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-40">
+        <StartAudio
+          label="Click to enable sound"
+          className="flex items-center gap-2 px-5 py-3 rounded-full bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold shadow-2xl transition-all duration-200 active:scale-95"
+        />
+      </div>
     </div>
   );
 });
@@ -1969,37 +2431,25 @@ const InventorySidebar = ({
 
   return (
     <div className="h-full flex flex-col bg-white">
-      {/* Enhanced Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="p-4 md:p-6 border-b border-blue-500/30">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 md:gap-4">
-              {isSmallScreen && (
-                <button
-                  onClick={onClose}
-                  className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 text-gray-700"
-                >
-                  <ChevronLeft size={24} />
-                </button>
-              )}
-              <div className="flex items-center gap-3">
-                <Logo />
-              </div>
-              {/* <div className="px-3 md:px-4 py-1 md:py-2 bg-purple-500 text-white rounded-xl md:rounded-2xl font-bold">
-                {items.reduce((total, item) => total + (item.quantity || 1), 0)}
-              </div> */}
-            </div>
-            {!isSmallScreen && (
+      {/* Header — mobile only. On desktop this sidebar is a permanent column,
+          so the qube-sheets logo and close (X) chrome are redundant; the
+          Notes/Photos tabs sit at the top of the panel instead. On mobile the
+          header keeps the back button (to collapse the drawer) and the logo. */}
+      {isSmallScreen && (
+        <div className="bg-white border-b border-gray-200">
+          <div className="p-4 md:p-6 border-b border-blue-500/30">
+            <div className="flex items-center gap-3">
               <button
                 onClick={onClose}
                 className="p-2 hover:bg-gray-100 rounded-xl transition-all duration-200 text-gray-700"
               >
-                <X size={24} />
+                <ChevronLeft size={24} />
               </button>
-            )}
+              <Logo />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Tab Navigation - Responsive Design */}
       <div className="bg-gray-50 border-b border-gray-200">
@@ -2108,9 +2558,19 @@ export default function VideoCallInventory({
   isAgentUser = false, // Explicitly indicates if user is an agent (from pre-join)
   backgroundSettings = null, // { mode: 'none' | 'blur' | 'virtual', blurRadius?: number, imageUrl?: string }
   customerSettings = null, // { videoEnabled: boolean, audioEnabled: boolean, facingMode: 'user' | 'environment' }
+  onCustomerCameraOn = () => {}, // Called when an audio-only customer enables their camera in-call (clears the stale audio-only flag so a rejoin remount keeps video on)
 }) {
   // Determine if current user is agent - either by explicit prop or legacy name check
   const isCurrentUserAgent = isAgentUser || participantName.toLowerCase().includes('agent');
+  // Stable identity so the memoized CustomerView doesn't re-render on every
+  // root render; seeds the media-recovery intent model with join-time state.
+  const customerMediaDefaults = useMemo(
+    () => ({
+      microphone: customerSettings?.audioEnabled ?? true,
+      camera: customerSettings?.videoEnabled ?? true,
+    }),
+    [customerSettings?.audioEnabled, customerSettings?.videoEnabled]
+  );
   const [token, setToken] = useState('');
   const [serverUrl, setServerUrl] = useState('');
   const [isConnecting, setIsConnecting] = useState(true);
@@ -2369,6 +2829,14 @@ export default function VideoCallInventory({
     return {
       publishDefaults: {
         videoCodec: codec, // Dynamic: VP8 for legacy Android, H.264 for modern
+        // Multi-codec safety net (flag-gated, default off): publish a VP8
+        // backup alongside the primary codec so a subscriber that can't
+        // decode the forced H.264 still gets video instead of a black tile.
+        // Covers subscriber-decode mismatch only — NOT a broken publisher
+        // encoder. Flip NEXT_PUBLIC_LIVEKIT_BACKUP_CODEC=1 to enable.
+        ...(process.env.NEXT_PUBLIC_LIVEKIT_BACKUP_CODEC === '1' && codec !== 'vp8'
+          ? { backupCodec: { codec: 'vp8' } }
+          : {}),
         videoSimulcast: !deviceInfo.isLegacyAndroid, // Disable simulcast on legacy Android
         videoEncoding: {
           maxBitrate: deviceInfo.isLegacyAndroid ? 800_000 : 1_500_000,
@@ -2543,6 +3011,44 @@ export default function VideoCallInventory({
             width: 100% !important;
             height: 100% !important;
           }
+          /* The customer is on a phone (portrait). Show their ENTIRE frame,
+             never cropped, so the moving consultant sees the whole room
+             instead of a cropped center strip. Only the remote (customer)
+             tile — the agent's own landscape webcam still fills its tile. */
+          :global(.lk-grid-layout .lk-participant-tile[data-lk-local-participant="false"] video) {
+            object-fit: contain !important;
+            background: #0b0910 !important;
+          }
+          /* Shape the customer's cell portrait so a phone video fills it with
+             minimal letterboxing (the whole frame still shows via contain
+             above — if they rotate to landscape it simply letterboxes top/
+             bottom instead). Keeps the agent's own cell landscape. */
+          :global(.lk-grid-layout > div:has(.lk-participant-tile[data-lk-local-participant="false"])) {
+            aspect-ratio: 9 / 16 !important;
+            height: min(78vh, 680px) !important;
+            max-height: 82vh !important;
+            max-width: none !important;
+            width: auto !important;
+          }
+        }
+        /* Desktop agent stage: the customer video fills the stage (scaling UP,
+           not just down) while object-fit:contain preserves its aspect ratio
+           and shows the ENTIRE frame — big, centered, scales with the agent's
+           window, and never cropped in any orientation (portrait tall /
+           landscape wide, so nothing is lost when the customer rotates their
+           phone). !important beats VideoTrack's internal styling. */
+        :global(.qs-customer-stage) {
+          width: 100% !important;
+          height: 100% !important;
+          object-fit: contain !important;
+          border-radius: 16px !important;
+          background: #000 !important;
+        }
+        /* No divider line above the agent's control bar — the gray-800 bar
+           already separates it from the stage; LiveKit's ControlBar ships its
+           own top border which read as an extra/redundant line. */
+        :global(.lk-control-bar) {
+          border-top: none !important;
         }
       `}</style>
       
@@ -2620,6 +3126,15 @@ export default function VideoCallInventory({
         onMediaDeviceFailure={(failure) => {
           console.error('Media device failure:', failure);
 
+          // Always report — historically these were invisible whenever the
+          // room connect succeeded, which is exactly the "joined but no
+          // camera/mic" case. The in-call banner (useCallHealth) handles the
+          // user-facing side post-connect; this is the telemetry side.
+          reportClientError({
+            message: `Media device failure (room=${roomId}, agent=${isCurrentUserAgent}): ${typeof failure === 'string' ? failure : (failure?.message || failure?.kind || JSON.stringify(failure))}`,
+            source: 'video-call:media-device-failure',
+          });
+
           // Queue error - only show if connection doesn't succeed in 5 seconds
           const errorTimeout = setTimeout(() => {
             if (connectionSucceeded.current) return;
@@ -2652,7 +3167,13 @@ export default function VideoCallInventory({
             onCallEnd={handleIntentionalCallEnd}
           />
         ) : (
-          <CustomerView onCallEnd={handleIntentionalCallEnd} roomId={roomId} onRetryConnection={handleManualRejoin} />
+          <CustomerView
+            onCallEnd={handleIntentionalCallEnd}
+            roomId={roomId}
+            onRetryConnection={handleManualRejoin}
+            mediaDefaults={customerMediaDefaults}
+            onCameraOn={onCustomerCameraOn}
+          />
         )}
       </LiveKitRoom>
     </div>

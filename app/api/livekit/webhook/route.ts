@@ -115,6 +115,10 @@ export async function POST(request: NextRequest) {
         await handleTrackPublished(event);
         break;
 
+      case 'track_unpublished':
+        await handleTrackUnpublished(event);
+        break;
+
       // Silently ignore other events
     }
 
@@ -192,16 +196,33 @@ async function handleParticipantJoined(event: WebhookEvent) {
     }
   });
 
+  // Device forensics: the presence heartbeat captured each side's user-agent
+  // (CallPresence TTLs out after 24h, so copy it onto the durable recording).
+  let userAgent: string | undefined;
+  try {
+    const CallPresence = (await import('@/models/CallPresence')).default;
+    const presence = await CallPresence.findOne({ roomId: roomName })
+      .select('agentUserAgent customerUserAgent')
+      .lean();
+    userAgent = participantType === 'agent'
+      ? (presence as any)?.agentUserAgent
+      : (presence as any)?.customerUserAgent;
+  } catch (e) {
+    // Forensics only — never block participant tracking.
+  }
+
   const existingParticipant = recording.participants?.find((p: any) => p.identity === participantIdentity);
   if (existingParticipant) {
+    const set: Record<string, any> = { 'participants.$.name': participantName, 'participants.$.joinedAt': new Date(), 'participants.$.leftAt': null };
+    if (userAgent) set['participants.$.userAgent'] = userAgent;
     await VideoRecording.findOneAndUpdate(
       { _id: recording._id, 'participants.identity': participantIdentity },
-      { $set: { 'participants.$.name': participantName, 'participants.$.joinedAt': new Date(), 'participants.$.leftAt': null } }
+      { $set: set }
     );
     console.log(`🔄 Participant rejoined: ${participantName}`);
   } else {
     await VideoRecording.findByIdAndUpdate(recording._id, {
-      $push: { participants: { identity: participantIdentity, name: participantName, joinedAt: new Date(), type: participantType } }
+      $push: { participants: { identity: participantIdentity, name: participantName, joinedAt: new Date(), type: participantType, ...(userAgent ? { userAgent } : {}) } }
     });
   }
 }
@@ -254,18 +275,50 @@ async function handleParticipantLeft(event: WebhookEvent) {
 }
 
 /**
- * Handle track_published event
+ * Handle track_published / track_unpublished events — RECORD-ONLY.
  *
- * DISABLED: Customer egress is no longer used - we use room composite for both
- * video playback AND AI analysis. This saves ~$254/month in egress costs.
+ * Per-track EGRESS remains DISABLED: customer egress was removed because the
+ * room composite covers both playback and AI analysis (~$254/month savings).
+ * Do NOT start egress from here.
  *
- * The room composite captures both agent and customer video in a single stream,
- * which is then processed by Railway for AI analysis.
+ * We persist a CallTelemetryEvent row per track event so "did the customer
+ * ever publish audio/video?" is answerable server-side when diagnosing
+ * "couldn't see/hear each other" incidents.
  */
-async function handleTrackPublished(_event: WebhookEvent) {
-  // DISABLED: Customer egress removed for cost savings
-  // Room composite handles both video playback and AI analysis
-  return;
+async function handleTrackPublished(event: WebhookEvent) {
+  await recordTrackEvent(event, 'track_published');
+}
+
+async function handleTrackUnpublished(event: WebhookEvent) {
+  await recordTrackEvent(event, 'track_unpublished');
+}
+
+async function recordTrackEvent(event: WebhookEvent, eventName: 'track_published' | 'track_unpublished') {
+  try {
+    if (!event.room || !event.participant) return;
+    const roomName = event.room.name;
+    if (roomName.startsWith('self-serve-')) return;
+
+    const participantType = getParticipantType(event.participant.identity);
+    if (participantType === 'egress') return;
+
+    const CallTelemetryEvent = (await import('@/models/CallTelemetryEvent')).default;
+    await CallTelemetryEvent.create({
+      roomId: roomName,
+      event: eventName,
+      side: participantType,
+      identity: event.participant.identity,
+      extra: {
+        trackSid: event.track?.sid,
+        trackType: event.track?.type,
+        trackSource: event.track?.source,
+        muted: event.track?.muted,
+      },
+    });
+  } catch (e) {
+    // Telemetry only — never fail the webhook over it.
+    console.warn('⚠️ Failed to record track event:', e);
+  }
 }
 
 async function handleEgressStarted(event: WebhookEvent) {

@@ -17,10 +17,12 @@ import AdminCompaniesTab from './AdminCompaniesTab';
 import AdminAdoptionTab from './AdminAdoptionTab';
 import AdminLeadFormsTab from './AdminLeadFormsTab';
 import AdminBitrateImpactTab from './AdminBitrateImpactTab';
+import AdminCallHealthTab from './AdminCallHealthTab';
 
 const TABS = [
   { key: 'adoption', label: 'Adoption Scores', blurb: 'Human-usage health scores, outreach queue, and top companies for Customer Success.' },
   { key: 'self-serve', label: 'Self-serve recording', blurb: 'Conversion and failures across all companies.' },
+  { key: 'call-health', label: 'Call Health', blurb: 'Virtual-call audio/video failures: "couldn\'t see each other", mic drops, and how often the call self-healed.' },
   { key: 'bitrate', label: 'Bitrate Impact', blurb: 'Upload success before vs after the 2026-09-23 capture-bitrate drop (5 → 2.5 Mbps).' },
   { key: 'virtual-calls', label: 'Virtual calls', blurb: 'Scheduled call outcomes, reps, and recordings across all companies.' },
   { key: 'lead-forms', label: 'Lead forms', blurb: 'Step completion and post-submission funnels across all companies.' },
@@ -149,6 +151,7 @@ export default function AdminDashboard() {
             </div>
 
             {tab === 'self-serve' && <AdminSelfServeDashboard range={range} reloadKey={reloadKey} />}
+            {tab === 'call-health' && <AdminCallHealthTab range={range} reloadKey={reloadKey} />}
             {tab === 'bitrate' && <AdminBitrateImpactTab range={range} reloadKey={reloadKey} />}
             {tab === 'virtual-calls' && <AdminVirtualCallsTab range={range} reloadKey={reloadKey} />}
             {tab === 'lead-forms' && <AdminLeadFormsTab range={range} reloadKey={reloadKey} />}
