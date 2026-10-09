@@ -26,6 +26,7 @@ export interface IVideoRecording extends Document {
     joinedAt: Date;
     leftAt?: Date;
     type: 'agent' | 'customer';
+    userAgent?: string; // Copied from CallPresence at join — survives its 24h TTL
   }>;
   // Track currently active participants in the room (for determining when to stop recording)
   activeParticipants?: Array<{
@@ -226,7 +227,10 @@ const VideoRecordingSchema: Schema = new Schema(
         type: String,
         enum: ['agent', 'customer'],
         required: true
-      }
+      },
+      // Device forensics, copied from CallPresence at join (presence docs
+      // TTL out after 24h; this record is the durable copy).
+      userAgent: { type: String }
     }],
     // Track currently active participants (for determining when to stop recording)
     activeParticipants: [{

@@ -88,7 +88,13 @@ export async function POST(
 ) {
   const { roomId } = await params;
 
-  let body: { side?: 'agent' | 'customer'; displayName?: string; projectId?: string };
+  let body: {
+    side?: 'agent' | 'customer';
+    displayName?: string;
+    projectId?: string;
+    inAppBrowser?: string;
+    ready?: boolean;
+  };
   try {
     body = await request.json();
   } catch {
@@ -108,6 +114,10 @@ export async function POST(
 
   if (body.projectId) setOnInsert.projectId = body.projectId;
 
+  // Device forensics for post-incident diagnosis ("was the customer on
+  // Android Chrome?") — read the UA server-side, never from the body.
+  const userAgent = request.headers.get('user-agent')?.slice(0, 300);
+
   if (side === 'agent') {
     const { userId } = await auth();
     if (!userId) {
@@ -117,11 +127,19 @@ export async function POST(
     update.agentLastSeen = now;
     update.agentDisplayName = displayName;
     update.agentUserId = userId;
+    if (userAgent) update.agentUserAgent = userAgent;
   } else {
     update.customerLastSeen = now;
     if (body.displayName?.trim()) {
       update.customerDisplayName = body.displayName.trim();
     }
+    if (userAgent) update.customerUserAgent = userAgent;
+    if (typeof body.inAppBrowser === 'string' && body.inAppBrowser) {
+      update.customerInAppBrowser = body.inAppBrowser.slice(0, 60);
+    }
+    // Whether the customer has finished permissions + Do Not Disturb. Gates
+    // the consultant's Start button.
+    if (typeof body.ready === 'boolean') update.customerReady = body.ready;
   }
 
   const scheduled = await ScheduledVideoCall.findOne({ roomId }).select('_id').lean();
@@ -150,6 +168,12 @@ export async function POST(
     activeRoomId: crossRoom.activeRoomId,
     customerWaitingElsewhereRoomId: crossRoom.customerWaitingElsewhereRoomId,
     agentWentStale: agentWentStale(presence),
+    // Surfaced so the agent lobby can explain why a "present" customer can't
+    // become ready (they opened the SMS link inside an in-app webview).
+    customerInAppBrowser: (presence as any).customerInAppBrowser || null,
+    // Gates the consultant's Start button: true only after the customer has
+    // finished permissions + Do Not Disturb.
+    customerReady: !!(presence as any).customerReady,
   });
 }
 
@@ -184,5 +208,7 @@ export async function GET(
     activeRoomId: crossRoom.activeRoomId,
     customerWaitingElsewhereRoomId: crossRoom.customerWaitingElsewhereRoomId,
     agentWentStale: agentWentStale(p),
+    customerInAppBrowser: p?.customerInAppBrowser || null,
+    customerReady: !!p?.customerReady,
   });
 }

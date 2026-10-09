@@ -12,9 +12,15 @@ export interface ICallPresence extends Document {
   agentLastSeen?: Date;
   agentDisplayName?: string;
   agentUserId?: string;
+  agentUserAgent?: string;
 
   customerLastSeen?: Date;
   customerDisplayName?: string;
+  customerUserAgent?: string;
+  customerInAppBrowser?: string;
+  // True once the customer has finished BOTH the permissions slide and the
+  // Do Not Disturb slide. The consultant's Start button is gated on this.
+  customerReady?: boolean;
 
   startedAt?: Date;
   endedAt?: Date;
@@ -56,9 +62,13 @@ const CallPresenceSchema: Schema = new Schema(
     agentLastSeen: { type: Date },
     agentDisplayName: { type: String },
     agentUserId: { type: String },
+    agentUserAgent: { type: String },
 
     customerLastSeen: { type: Date },
     customerDisplayName: { type: String },
+    customerUserAgent: { type: String },
+    customerInAppBrowser: { type: String },
+    customerReady: { type: Boolean },
 
     startedAt: { type: Date },
     endedAt: { type: Date },

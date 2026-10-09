@@ -9,9 +9,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   createLocalVideoTrack,
-  createLocalAudioTrack,
+  createLocalTracks,
   LocalVideoTrack,
   LocalAudioTrack,
+  Track,
 } from 'livekit-client';
 import {
   getDeviceInfo,
@@ -210,7 +211,27 @@ export function useAndroidCompatibleVideoTrack(
             trackOptions.resolution = { width: level.width, height: level.height };
           }
 
-          const track = await createLocalVideoTrack(trackOptions);
+          // When audio is requested, acquire BOTH in a single getUserMedia via
+          // createLocalTracks — this shows one combined "Camera and Microphone"
+          // permission prompt instead of two separate ones. The constraint
+          // ladder still applies (one combined attempt per level).
+          let track: LocalVideoTrack;
+          if (enableAudio) {
+            const tracks = await createLocalTracks({ video: trackOptions, audio: true });
+            const vid = tracks.find((t) => t.kind === Track.Kind.Video) as LocalVideoTrack | undefined;
+            const aud = tracks.find((t) => t.kind === Track.Kind.Audio) as LocalAudioTrack | undefined;
+            if (!vid) {
+              tracks.forEach((t) => t.stop());
+              throw new Error('createLocalTracks returned no video track');
+            }
+            track = vid;
+            if (aud) {
+              if (mounted.current) setAudioTrack(aud);
+              else aud.stop();
+            }
+          } else {
+            track = await createLocalVideoTrack(trackOptions);
+          }
 
           if (!mounted.current) {
             track.stop();
@@ -248,20 +269,8 @@ export function useAndroidCompatibleVideoTrack(
 
           console.log(`[VideoTrack] Success at ${level.name}`);
 
-          // Initialize audio if requested
-          if (enableAudio) {
-            try {
-              const audio = await createLocalAudioTrack();
-              if (mounted.current) {
-                setAudioTrack(audio);
-              } else {
-                audio.stop();
-              }
-            } catch (audioError) {
-              console.warn('[VideoTrack] Audio initialization failed:', audioError);
-              // Don't fail the whole thing for audio
-            }
-          }
+          // Audio (if requested) was already acquired in the combined
+          // createLocalTracks call above — one prompt for both.
 
           setIsInitializing(false);
           initializingRef.current = false;
