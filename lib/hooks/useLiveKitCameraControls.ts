@@ -51,12 +51,12 @@ export function useLiveKitCameraControls(
       caps.zoom.max > caps.zoom.min
     ) {
       setZoomRange({ min: caps.zoom.min, max: caps.zoom.max });
-      // Normalize to 1× — a virtual multi-lens camera can start at its min.
-      const initial = Math.min(Math.max(1, caps.zoom.min), caps.zoom.max);
-      track
-        .applyConstraints({ advanced: [{ zoom: initial }] } as any)
-        .then(() => setCurrentZoom(initial))
-        .catch(() => setCurrentZoom(caps.zoom.min <= 1 ? 1 : caps.zoom.min));
+      // Reflect the camera's CURRENT zoom — do NOT force a zoom here. Forcing
+      // one would reset the customer's chosen zoom every time the camera track
+      // restarts, which on iOS happens on a device rotation (portrait⇄
+      // landscape). Read the actual setting instead so rotation is a no-op.
+      const current = (track.getSettings?.() as any)?.zoom;
+      setCurrentZoom(typeof current === 'number' ? current : 1);
     } else {
       setZoomRange(null);
       setCurrentZoom(1);

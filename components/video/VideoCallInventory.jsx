@@ -74,6 +74,7 @@ import { buildBackgroundConfig } from '../../lib/backgroundProcessor';
 import { useMediaRecovery } from '../../lib/hooks/useMicRecovery';
 import { useCallHealth, useRemoteVideoWatchdog } from '../../lib/hooks/useCallHealth';
 import { useLiveKitCameraControls } from '../../lib/hooks/useLiveKitCameraControls';
+import { pickMultiLensBackCameraId } from '../../lib/cameraSelection';
 // Client-side recording removed - using LiveKit Egress (server-side) recording
 
 // Remount GridLayout whenever tile membership changes (participant
@@ -535,7 +536,7 @@ const RecordingIndicator = React.memo(({ recordingStatus, formattedDuration, cla
 
 // Enhanced camera switching with responsive approach
 // components/video/VideoCallInventory.jsx
-function useAdvancedCameraSwitching() {
+function useAdvancedCameraSwitching(persistKey) {
   const { localParticipant } = useLocalParticipant();
   const room = useRoomContext();
   const [isSwitching, setIsSwitching] = useState(false);
@@ -568,8 +569,18 @@ function useAdvancedCameraSwitching() {
     detectCameras();
   }, [isMobile]);
 
-  // Track current facing mode
-  const [currentFacingMode, setCurrentFacingMode] = useState('user');
+  // Track current facing mode. When persistKey is set (customer only, scoped
+  // per-room), it's restored from sessionStorage so a mid-call reload/reconnect
+  // keeps the user on the camera they'd flipped to (the back camera for a
+  // walkthrough) instead of silently reverting to the front. Agents pass no
+  // key → always 'user', no persistence (avoids a stale cross-role value).
+  const [currentFacingMode, setCurrentFacingMode] = useState(() => {
+    if (persistKey && typeof window !== 'undefined') {
+      const p = window.sessionStorage.getItem(persistKey);
+      if (p === 'user' || p === 'environment') return p;
+    }
+    return 'user';
+  });
 
   const switchCamera = useCallback(async () => {
     if (!localParticipant || isSwitching) {
@@ -597,8 +608,23 @@ function useAdvancedCameraSwitching() {
       console.log('📹 Waiting 500ms for camera release');
       await new Promise(resolve => setTimeout(resolve, 500));
 
+      // When flipping to the back camera, prefer the multi-lens virtual device
+      // ("Back Dual Wide/Triple") — the only one that exposes true 0.5×
+      // ultra-wide + a reliable torch (same device the self-survey selects).
+      // Falls back to plain facingMode when there's no such device.
+      let multiLensId;
+      if (newFacingMode === 'environment') {
+        try { multiLensId = await pickMultiLensBackCameraId(); } catch { /* fall back */ }
+      }
+
       // Try progressive constraint levels (like pre-join does)
       const constraints = [
+        ...(multiLensId
+          ? [
+              { deviceId: { exact: multiLensId }, resolution: { width: 640, height: 480 } },
+              { deviceId: { exact: multiLensId } },
+            ]
+          : []),
         { facingMode: newFacingMode, resolution: { width: 640, height: 480 } },
         { facingMode: newFacingMode, resolution: { width: 480, height: 360 } },
         { facingMode: newFacingMode, resolution: { width: 320, height: 240 } },
@@ -621,6 +647,12 @@ function useAdvancedCameraSwitching() {
       if (newTrack) {
         await localParticipant.publishTrack(newTrack);
         setCurrentFacingMode(newFacingMode);
+        // Persist so a reload/reconnect restores this camera (see the
+        // useState initializer and roomOptions.videoCaptureDefaults). Only
+        // when persistKey is set (customer, per-room).
+        try {
+          if (persistKey && typeof window !== 'undefined') window.sessionStorage.setItem(persistKey, newFacingMode);
+        } catch { /* sessionStorage unavailable (private mode) — non-fatal */ }
         console.log('📹 Camera switched successfully to', newFacingMode);
       } else {
         throw new Error('All camera constraints failed');
@@ -645,7 +677,7 @@ function useAdvancedCameraSwitching() {
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, isSwitching, currentFacingMode]);
+  }, [localParticipant, isSwitching, currentFacingMode, persistKey]);
 
   return {
     switchCamera,
@@ -857,7 +889,9 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection, mediaDe
   const [isMicEnabled, setIsMicEnabled] = useState(mediaDefaults?.microphone ?? true);
   const [isCameraEnabled, setIsCameraEnabled] = useState(mediaDefaults?.camera ?? true);
   const [isLeaving, setIsLeaving] = useState(false);
-  const { switchCamera, isSwitching: isCameraSwitching, canSwitchCamera } = useAdvancedCameraSwitching();
+  const { switchCamera, isSwitching: isCameraSwitching, canSwitchCamera } = useAdvancedCameraSwitching(
+    roomId ? `qs-call-facing:${roomId}` : undefined
+  );
 
   // Consultant can nudge the customer to flip their camera (sound + prompt).
   const { promptVisible: flipPromptVisible, dismiss: dismissFlipPrompt } = useFlipCameraRequest(roomId);
@@ -2818,9 +2852,17 @@ export default function VideoCallInventory({
       });
     }
 
-    // Determine facing mode
+    // Determine facing mode. For the customer, prefer the camera they last
+    // flipped to (persisted in sessionStorage by switchCamera) so a mid-call
+    // reload/reconnect resumes on the back camera they were using for the
+    // walkthrough instead of reverting to the front. Agents are unaffected.
     let facingMode = 'user'; // Default to front camera
-    if (customerSettings?.facingMode) {
+    const persistedFacing = (!isCurrentUserAgent && roomId && typeof window !== 'undefined')
+      ? window.sessionStorage.getItem(`qs-call-facing:${roomId}`)
+      : null;
+    if (persistedFacing === 'user' || persistedFacing === 'environment') {
+      facingMode = persistedFacing;
+    } else if (customerSettings?.facingMode) {
       facingMode = customerSettings.facingMode;
     } else if (!isSmallScreen && isCurrentUserAgent) {
       facingMode = 'environment'; // Desktop agents use back camera
@@ -2859,7 +2901,14 @@ export default function VideoCallInventory({
       adaptiveStream: true,
       dynacast: true,
       autoSubscribe: true,
-      disconnectOnPageLeave: true,
+      // For the desktop agent, do NOT disconnect on page hide. Edge/Chrome
+      // "sleeping tabs" (common with many tabs open) hide/suspend the tab;
+      // with this on, that fires a CLIENT_INITIATED disconnect which we treat
+      // as "call over" and navigate away — a permanent kick from a transient
+      // background. Off = the connection persists across backgrounding, and a
+      // truly suspended tab recovers via LiveKit reconnect / rejoin-in-place on
+      // resume instead of ending the call. Customers keep the default (true).
+      disconnectOnPageLeave: !isCurrentUserAgent,
       // Bounded: give up after ~8 attempts (~60s) so a wedged connection
       // surfaces as a Disconnected event (→ our rejoin-in-place flow) instead
       // of spinning "Reconnecting…" forever. Returning null stops retrying.
@@ -2892,7 +2941,11 @@ export default function VideoCallInventory({
       e2eeOptions: undefined, // Disable E2EE for better compatibility
       expWebAudioMix: false, // Disable experimental features that might cause issues
     };
-  }, [deviceInfo, customerSettings, isCurrentUserAgent, pendingProcessor]);
+    // roomMountKey is a dep so the in-place rejoin path (which bumps it to
+    // remount LiveKitRoom) recomputes this memo and re-reads the persisted
+    // facing from sessionStorage — otherwise a reconnect would recreate the
+    // camera from a stale 'user' default and revert the customer to the front.
+  }, [deviceInfo, customerSettings, isCurrentUserAgent, pendingProcessor, roomId, roomMountKey]);
   
   // Note: We removed the pre-request camera permissions useEffect because:
   // 1. LiveKit handles permission requests internally when connecting

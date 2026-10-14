@@ -480,6 +480,43 @@ export default function IntegrationsPage() {
       loading={loading}
     >
             <div className="space-y-6">
+              {/* Qube Sheets API */}
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <img src="/qs-box.png" alt="Qube Sheets API" className="h-16 w-auto mb-4" />
+                <h2 className="text-lg font-medium mb-2">Qube Sheets API Integration</h2>
+                <p className="text-sm text-gray-600 mb-4">
+                  Build your own integration - pull projects, inventory, AI summaries, and review links into any system.
+                </p>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">REST API with key-based auth</p>
+                      <p className="text-xs text-gray-600">Full reference with copy-paste examples</p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.location.href = '/settings/api-keys'}
+                      >
+                        Manage API Keys
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => window.open('/api-docs', '_blank')}
+                      >
+                        View API Docs
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-gray-500 pt-2 border-t">
+                    <strong>Endpoints:</strong> Projects, Inventory, AI Summary, Packing Notes, Customer Statements, Review Links
+                  </div>
+                </div>
+              </div>
+
               {/* Supermove Integration */}
               <div className="bg-white rounded-lg shadow-sm border p-6">
                 <img src="/supermove.png" alt="Supermove" className="h-16 w-auto mb-4" />

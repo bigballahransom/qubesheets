@@ -7,8 +7,7 @@ import CrewReviewLink from '@/models/CrewReviewLink';
 import VaultShareLink from '@/models/VaultShareLink';
 import CustomerUpload from '@/models/CustomerUpload';
 import InventoryNote from '@/models/InventoryNote';
-import VideoRecording from '@/models/VideoRecording';
-import CallAnalysisSegment from '@/models/CallAnalysisSegment';
+import { collectAiWalkthroughRecordings } from '@/lib/ai-walkthrough';
 import { IInventoryItem } from '@/models/InventoryItem';
 import { effectiveGoingQuantity } from '@/lib/goingQuantity';
 import { logActivity } from '@/lib/activity-logger';
@@ -1012,56 +1011,29 @@ interface AiWalkthroughSection {
 }
 
 /**
- * Gathers AI walkthrough analysis for all of a project's completed
- * video/virtual-call recordings: per-recording AI summary, packing notes, and
- * customer statements (transcript highlights). Vault reference media is
- * excluded, matching the recordings surfaced in the app's Notes tab. The three
- * parts stay separate so each can be routed to its own SmartMoving note field.
+ * Formats the shared AI walkthrough data (lib/ai-walkthrough.ts) into
+ * SmartMoving note sections. The three parts stay separate so each can be
+ * routed to its own SmartMoving note field.
  */
 async function buildAiWalkthroughSections(projectId: string): Promise<AiWalkthroughSection[]> {
-  const recordings = await VideoRecording.find({
-    projectId,
-    status: 'completed',
-    purpose: { $ne: 'vault' }
-  }).sort({ createdAt: 1 }).lean<any[]>();
-
-  const sections: AiWalkthroughSection[] = [];
-
-  for (const rec of recordings) {
-    const segments = await CallAnalysisSegment.find({
-      videoRecordingId: rec._id,
-      status: 'completed'
-    }).sort({ segmentIndex: 1 }).select('rawAnalysis.summary rawAnalysis.packing_notes rawAnalysis.transcript_highlights').lean<any[]>();
-
-    // Prefer the aggregated fields stamped at consolidation; fall back to combining
-    // the per-segment analysis (the live pipeline), then to legacy summary fields.
-    const segmentSummaries = segments.map(seg => seg.rawAnalysis?.summary).filter(Boolean).join('\n\n');
-    const segmentPackingNotes = segments.map(seg => seg.rawAnalysis?.packing_notes).filter(Boolean).join('\n\n');
-    const summary = rec.segmentSummaries || segmentSummaries ||
-      rec.analysisResult?.summary || rec.transcriptAnalysisResult?.summary || '';
-    const packingNotes = rec.packingNotes || segmentPackingNotes;
-    const highlights = segments.flatMap(seg => seg.rawAnalysis?.transcript_highlights || []);
-
-    if (!summary && !packingNotes && highlights.length === 0) continue;
-
-    const recordedOn = rec.createdAt
-      ? new Date(rec.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  const recordings = await collectAiWalkthroughRecordings(projectId);
+  return recordings.map(rec => {
+    const recordedOn = rec.recordedAt
+      ? new Date(rec.recordedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
       : '';
-    const statements = highlights
-      .map((h: any) => {
-        const meta = [h.timestamp, h.related_item ? `Re: ${h.related_item}` : ''].filter(Boolean).join(' - ');
+    const statements = rec.highlights
+      .map(h => {
+        const meta = [h.timestamp, h.relatedItem ? `Re: ${h.relatedItem}` : ''].filter(Boolean).join(' - ');
         return `- "${h.text}"${meta ? ` (${meta})` : ''}`;
       })
       .join('\n');
-    sections.push({
+    return {
       header: `=== AI Walkthrough Summary${recordedOn ? ` (${recordedOn})` : ''} ===`,
-      summary,
-      packingNotes,
+      summary: rec.summary,
+      packingNotes: rec.packingNotes,
       statements
-    });
-  }
-
-  return sections;
+    };
+  });
 }
 
 /**
