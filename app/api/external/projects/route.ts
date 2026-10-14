@@ -2,22 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import { authenticateApiKey } from '@/lib/api-key-auth';
+import { externalApiError, externalUnauthorized } from '@/lib/external-api';
 import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
 
 /**
- * External API endpoint for creating projects
- * Requires API key authentication via Authorization header
- * 
- * POST /api/external/projects
- * 
- * Headers:
- *   Authorization: Bearer qbs_keyId_secret
- * 
- * Body:
- *   {
- *     "customerName": "Customer Name",
- *     "phone": "5551234567"      // Optional - 10 digits, will be formatted as +1
- *   }
+ * External API endpoints for projects. API key authentication via
+ * Authorization header: Bearer qbs_keyId_secret
+ *
+ * POST /api/external/projects - create a project
+ *   Body: { "customerName": "Customer Name", "phone": "5551234567" (optional) }
+ *
+ * GET /api/external/projects - list the organization's projects
+ *   Query: page (default 1), limit (default 25, max 100),
+ *          updatedSince (ISO 8601 - only projects updated at/after this time)
+ *
+ * Full endpoint documentation: GET /api/external
  */
 export async function POST(request: NextRequest) {
   try {
@@ -185,53 +184,74 @@ export async function POST(request: NextRequest) {
 
 
 /**
- * GET endpoint for API documentation
+ * GET /api/external/projects - list the organization's projects.
+ * Sorted by most recently updated first. `updatedSince` enables cheap
+ * change polling: pass the timestamp of your last poll.
  */
-export async function GET() {
-  return NextResponse.json({
-    endpoint: '/api/external/projects',
-    method: 'POST',
-    description: 'Create a new project using API key authentication',
-    authentication: {
-      type: 'Bearer Token',
-      header: 'Authorization: Bearer qbs_keyId_secret',
-      note: 'Get your API key from the Settings > API Keys page'
-    },
-    requestBody: {
-      required: ['customerName'],
-      optional: ['phone'],
-      example: {
-        customerName: 'Sarah Johnson',
-        phone: '5551234567'
-      }
-    },
-    responses: {
-      201: {
-        description: 'Project created successfully',
-        example: {
-          success: true,
-          message: 'Project created successfully',
-          project: {
-            id: '507f1f77bcf86cd799439011',
-            name: 'Sarah Johnson',
-            customerName: 'Sarah Johnson',
-            phone: '+15551234567',
-            createdAt: '2024-01-15T10:30:00.000Z',
-            organizationId: 'org_abc123',
-            uploadLink: {
-              attempted: true,
-              sent: true,
-              smsDelivered: true,
-              uploadUrl: 'https://app.qubesheets.com/customer-upload/abc123...',
-              expiresAt: '2024-01-22T10:30:00.000Z'
-            }
-          }
-        }
-      },
-      400: 'Invalid request data',
-      401: 'Invalid or missing API key',
-      409: 'Project already exists',
-      500: 'Internal server error'
+export async function GET(request: NextRequest) {
+  try {
+    const authContext = await authenticateApiKey(request);
+    if (!authContext) {
+      return externalUnauthorized();
     }
-  });
+
+    await connectMongoDB();
+
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
+    const updatedSinceParam = searchParams.get('updatedSince');
+
+    const filter: Record<string, any> = { organizationId: authContext.organizationId };
+    if (updatedSinceParam) {
+      const updatedSince = new Date(updatedSinceParam);
+      if (isNaN(updatedSince.getTime())) {
+        return externalApiError(
+          400,
+          'Invalid updatedSince',
+          'updatedSince must be an ISO 8601 timestamp, e.g. 2026-10-01T00:00:00Z'
+        );
+      }
+      filter.updatedAt = { $gte: updatedSince };
+    }
+
+    const total = await Project.countDocuments(filter);
+    // DTO is limited to the base-product fields shown on the project page -
+    // CRM add-on fields (jobDate, opportunityType, jobType) are not exposed.
+    const projects = await Project.find(filter)
+      .sort({ updatedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .select('name customerName customerCompanyName customerEmail phone origin destination metadata.createdViaApi createdAt updatedAt')
+      .lean<any[]>();
+
+    const toLocation = (loc: any) =>
+      loc?.address ? { address: loc.address, unit: loc.unit || null } : null;
+
+    return NextResponse.json({
+      projects: projects.map(p => ({
+        id: p._id.toString(),
+        name: p.name,
+        customerName: p.customerName,
+        customerCompanyName: p.customerCompanyName || null,
+        customerEmail: p.customerEmail || null,
+        phone: p.phone || null,
+        origin: toLocation(p.origin),
+        destination: toLocation(p.destination),
+        createdViaApi: !!p.metadata?.createdViaApi,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: page * limit < total,
+      },
+    });
+  } catch (error) {
+    console.error('Error in GET /api/external/projects:', error);
+    return externalApiError(500, 'Internal server error', 'Failed to list projects. Please try again later.');
+  }
 }

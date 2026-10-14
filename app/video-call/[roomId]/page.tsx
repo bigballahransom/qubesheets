@@ -114,12 +114,33 @@ export default function VideoCallPage() {
   const presenceRef = useRef<PresenceState>(DEFAULT_PRESENCE);
   presenceRef.current = presence;
 
+  // Debounce the "signed-out" redirect. Clerk can briefly null `userId` while
+  // refreshing its session (e.g. right after a backgrounded/slept tab resumes
+  // mid-call); redirecting instantly on that transient blip ejects the agent
+  // from a live call. Only redirect if userId stays null past this window.
+  const signOutRedirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (signOutRedirectTimerRef.current) clearTimeout(signOutRedirectTimerRef.current);
+  }, []);
+
   useEffect(() => {
     if (isAgent) {
       if (!isLoaded) return;
       if (!userId) {
-        router.push('/sign-in');
+        // Transient blip → wait before ejecting. If userId comes back, the
+        // effect re-runs with a value and clears the timer below.
+        if (!signOutRedirectTimerRef.current) {
+          signOutRedirectTimerRef.current = setTimeout(() => {
+            signOutRedirectTimerRef.current = null;
+            router.push('/sign-in');
+          }, 10000);
+        }
         return;
+      }
+      // userId present → cancel any pending sign-out redirect.
+      if (signOutRedirectTimerRef.current) {
+        clearTimeout(signOutRedirectTimerRef.current);
+        signOutRedirectTimerRef.current = null;
       }
     }
 

@@ -38,7 +38,8 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/debug/client-error',  // Client crash reports — customer side of video calls is anonymous; handler is rate-limited and always 204s
   '/api/calls/(.*)',  // Lobby presence + start — customer side is anonymous, agent auth checked inside handler
   '/api/projects/(.*)/public-info',
-  '/api/external/(.*)',  // External API endpoints with API key auth
+  '/api/external(.*)',  // External API endpoints with API key auth (bare /api/external is the public docs index)
+  '/api-docs(.*)',  // Public partner API documentation page
   '/api/processing-complete(.*)',  // Webhook endpoint and SSE for Railway services
   '/api/generate-video-upload-url',  // Video upload pre-signed URL generation
   '/api/confirm-video-upload',  // Video upload confirmation
