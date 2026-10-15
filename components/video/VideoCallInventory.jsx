@@ -536,7 +536,7 @@ const RecordingIndicator = React.memo(({ recordingStatus, formattedDuration, cla
 
 // Enhanced camera switching with responsive approach
 // components/video/VideoCallInventory.jsx
-function useAdvancedCameraSwitching(persistKey) {
+function useAdvancedCameraSwitching(persistKey, telemetryRoomId, telemetrySide) {
   const { localParticipant } = useLocalParticipant();
   const room = useRoomContext();
   const [isSwitching, setIsSwitching] = useState(false);
@@ -592,6 +592,8 @@ function useAdvancedCameraSwitching(persistKey) {
     const newFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
     console.log('📹 Switching camera from', currentFacingMode, 'to', newFacingMode);
 
+    let newTrack = null;
+    let multiLensId;
     try {
       // Get current camera track
       const currentPublication = localParticipant.getTrackPublication(Track.Source.Camera);
@@ -612,7 +614,6 @@ function useAdvancedCameraSwitching(persistKey) {
       // ("Back Dual Wide/Triple") — the only one that exposes true 0.5×
       // ultra-wide + a reliable torch (same device the self-survey selects).
       // Falls back to plain facingMode when there's no such device.
-      let multiLensId;
       if (newFacingMode === 'environment') {
         try { multiLensId = await pickMultiLensBackCameraId(); } catch { /* fall back */ }
       }
@@ -631,7 +632,6 @@ function useAdvancedCameraSwitching(persistKey) {
         { facingMode: newFacingMode }, // Unconstrained - last resort
       ];
 
-      let newTrack = null;
       for (const constraint of constraints) {
         try {
           console.log('📹 Trying constraint:', constraint);
@@ -644,6 +644,21 @@ function useAdvancedCameraSwitching(persistKey) {
         }
       }
 
+      if (newTrack && multiLensId) {
+        // Fresh multi-lens virtual tracks can start at their minimum zoom
+        // (0.5× ultra-wide). Land on 1× like the plain back camera would —
+        // matching the pre-incident flip behavior. The in-call zoom controls
+        // mirror the track's current zoom, so they stay consistent.
+        try {
+          const caps = newTrack.mediaStreamTrack?.getCapabilities?.() || {};
+          if (caps.zoom && typeof caps.zoom.min === 'number' && caps.zoom.min < 1) {
+            await newTrack.mediaStreamTrack.applyConstraints({
+              advanced: [{ zoom: Math.min(Math.max(1, caps.zoom.min), caps.zoom.max ?? 1) }],
+            });
+          }
+        } catch { /* keep device default zoom */ }
+      }
+
       if (newTrack) {
         await localParticipant.publishTrack(newTrack);
         setCurrentFacingMode(newFacingMode);
@@ -654,6 +669,15 @@ function useAdvancedCameraSwitching(persistKey) {
           if (persistKey && typeof window !== 'undefined') window.sessionStorage.setItem(persistKey, newFacingMode);
         } catch { /* sessionStorage unavailable (private mode) — non-fatal */ }
         console.log('📹 Camera switched successfully to', newFacingMode);
+        // Device label closes a diagnosis gap: telemetry previously couldn't
+        // tell the multi-lens virtual camera from the plain back camera.
+        if (telemetryRoomId && telemetrySide) {
+          reportCallEvent(telemetryRoomId, telemetrySide, 'flip_camera_switched', {
+            toFacing: newFacingMode,
+            deviceLabel: newTrack.mediaStreamTrack?.label,
+            multiLens: !!multiLensId,
+          });
+        }
       } else {
         throw new Error('All camera constraints failed');
       }
@@ -661,6 +685,17 @@ function useAdvancedCameraSwitching(persistKey) {
     } catch (error) {
       console.error('📹 Camera switch failed:', error);
       toast.error('Could not switch camera. Try again.');
+      if (telemetryRoomId && telemetrySide) {
+        reportCallEvent(telemetryRoomId, telemetrySide, 'flip_camera_switch_failed', {
+          toFacing: newFacingMode,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      // A track that captured but failed to publish still holds the camera —
+      // on iOS (one active capture max) that would make the restore
+      // getUserMedia below fail with the very error we're recovering from.
+      try { newTrack?.stop(); } catch { /* already stopped */ }
 
       // Try to restore camera if switch failed
       try {
@@ -672,12 +707,19 @@ function useAdvancedCameraSwitching(persistKey) {
         console.log('📹 Camera restored');
       } catch (restoreError) {
         console.error('📹 Failed to restore camera:', restoreError);
+        // Worst case: customer left with no camera until recovery/rejoin —
+        // make it queryable per room alongside the media_recovery_* events.
+        if (telemetryRoomId && telemetrySide) {
+          reportCallEvent(telemetryRoomId, telemetrySide, 'flip_camera_restore_failed', {
+            errorMessage: restoreError instanceof Error ? restoreError.message : String(restoreError),
+          });
+        }
         toast.error('Camera error. Please rejoin the call.');
       }
     } finally {
       setIsSwitching(false);
     }
-  }, [localParticipant, isSwitching, currentFacingMode, persistKey]);
+  }, [localParticipant, isSwitching, currentFacingMode, persistKey, telemetryRoomId, telemetrySide]);
 
   return {
     switchCamera,
@@ -890,7 +932,9 @@ const CustomerView = React.memo(({ onCallEnd, roomId, onRetryConnection, mediaDe
   const [isCameraEnabled, setIsCameraEnabled] = useState(mediaDefaults?.camera ?? true);
   const [isLeaving, setIsLeaving] = useState(false);
   const { switchCamera, isSwitching: isCameraSwitching, canSwitchCamera } = useAdvancedCameraSwitching(
-    roomId ? `qs-call-facing:${roomId}` : undefined
+    roomId ? `qs-call-facing:${roomId}` : undefined,
+    roomId,
+    'customer'
   );
 
   // Consultant can nudge the customer to flip their camera (sound + prompt).
@@ -1606,7 +1650,7 @@ const AgentView = React.memo(({
   const remoteParticipants = useRemoteParticipants().filter(
     (p) => !p.identity?.startsWith('EG_')
   );
-  const { switchCamera, isSwitching, canSwitchCamera: canSwitchCameraCustomer } = useAdvancedCameraSwitching();
+  const { switchCamera, isSwitching, canSwitchCamera: canSwitchCameraCustomer } = useAdvancedCameraSwitching(undefined, roomId, 'agent');
 
   // Sync control states with localParticipant
   useEffect(() => {
@@ -2834,6 +2878,29 @@ export default function VideoCallInventory({
     return () => clearTimeout(t);
   }, []);
 
+  // Read the customer's persisted camera facing ONCE per mount/rejoin — never
+  // live inside the roomOptions memo. switchCamera updates this sessionStorage
+  // key mid-call; if roomOptions re-read it on a routine re-render, the
+  // stringified options would change and useLiveKitRoom would tear down and
+  // recreate the entire Room — a full disconnect/reconnect seconds after every
+  // camera flip (the Oct 2026 "video blinks out after flipping" incident).
+  // A ref snapshot keyed on roomMountKey (NOT useMemo — React may discard a
+  // memo cache and re-run the body, which would re-read the mutated value)
+  // guarantees the read happens exactly once per mount key; a rejoin-in-place
+  // bumps roomMountKey, so the remounted room re-reads the latest facing.
+  const persistedFacingSnapRef = useRef(null);
+  if (persistedFacingSnapRef.current?.key !== roomMountKey) {
+    let value = null;
+    if (!isCurrentUserAgent && roomId && typeof window !== 'undefined') {
+      try {
+        const p = window.sessionStorage.getItem(`qs-call-facing:${roomId}`);
+        if (p === 'user' || p === 'environment') value = p;
+      } catch { /* sessionStorage unavailable (private mode) — non-fatal */ }
+    }
+    persistedFacingSnapRef.current = { key: roomMountKey, value };
+  }
+  const persistedFacingAtMount = persistedFacingSnapRef.current.value;
+
   const roomOptions = useMemo(() => {
     const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
     const optimizedOptions = getOptimizedRoomOptions(deviceInfo);
@@ -2857,11 +2924,8 @@ export default function VideoCallInventory({
     // reload/reconnect resumes on the back camera they were using for the
     // walkthrough instead of reverting to the front. Agents are unaffected.
     let facingMode = 'user'; // Default to front camera
-    const persistedFacing = (!isCurrentUserAgent && roomId && typeof window !== 'undefined')
-      ? window.sessionStorage.getItem(`qs-call-facing:${roomId}`)
-      : null;
-    if (persistedFacing === 'user' || persistedFacing === 'environment') {
-      facingMode = persistedFacing;
+    if (persistedFacingAtMount) {
+      facingMode = persistedFacingAtMount;
     } else if (customerSettings?.facingMode) {
       facingMode = customerSettings.facingMode;
     } else if (!isSmallScreen && isCurrentUserAgent) {
@@ -2941,11 +3005,10 @@ export default function VideoCallInventory({
       e2eeOptions: undefined, // Disable E2EE for better compatibility
       expWebAudioMix: false, // Disable experimental features that might cause issues
     };
-    // roomMountKey is a dep so the in-place rejoin path (which bumps it to
-    // remount LiveKitRoom) recomputes this memo and re-reads the persisted
-    // facing from sessionStorage — otherwise a reconnect would recreate the
-    // camera from a stale 'user' default and revert the customer to the front.
-  }, [deviceInfo, customerSettings, isCurrentUserAgent, pendingProcessor, roomId, roomMountKey]);
+    // persistedFacingAtMount only changes on mount/rejoin (its memo is keyed
+    // on roomMountKey), so a mid-call flip can never alter these options —
+    // any content change here recreates the Room inside useLiveKitRoom.
+  }, [deviceInfo, customerSettings, isCurrentUserAgent, pendingProcessor, persistedFacingAtMount]);
   
   // Note: We removed the pre-request camera permissions useEffect because:
   // 1. LiveKit handles permission requests internally when connecting

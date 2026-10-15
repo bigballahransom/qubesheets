@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-09-29';
+export const LATEST_UPDATES_VERSION = '2026-10-15';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -56,6 +56,18 @@ export interface MonthGroup {
 }
 
 export const updates: MonthGroup[] = [
+  {
+    month: 'October 2026',
+    entries: [
+      {
+        tag: 'Fixed',
+        icon: Video,
+        title: 'Steadier customer video on virtual calls',
+        description:
+          'Flipping between the front and back camera during a virtual survey is now much more reliable — the customer\'s video no longer drops or flickers after a flip. On newer iPhones, flipping to the back camera also unlocks 0.5× ultra-wide zoom and the flashlight, so customers can show a whole room or a dark garage corner. And when a phone call or another app takes over the customer\'s microphone mid-tour, the call now retries briefly and then shows a clear tap-to-reconnect banner instead of letting the video stutter while it keeps trying in the background.',
+      },
+    ],
+  },
   {
     month: 'September 2026',
     entries: [
