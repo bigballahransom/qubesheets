@@ -36,6 +36,34 @@ export interface ExternalProjectRequestContext {
 }
 
 /**
+ * THE tenancy guard for org-credentialed surfaces (partner REST API, MCP
+ * server). Loads a project only if it belongs to the given organization;
+ * returns null for a malformed id, a missing project, or - critically - a
+ * project owned by a different org. Every handler that receives a projectId
+ * from an external caller MUST resolve it through this function before
+ * passing it to any lib helper (the helpers in lib/ai-walkthrough.ts,
+ * lib/review-links.ts, and lib/capture-links.ts take a bare projectId and do
+ * NOT re-check ownership).
+ */
+export async function loadOrgProject(
+  organizationId: string,
+  projectId: string
+): Promise<any | null> {
+  await connectMongoDB();
+
+  // Invalid ObjectIds would throw a CastError in the query - treat them the
+  // same as a missing project so callers get a clean not-found.
+  if (!mongoose.isValidObjectId(projectId)) {
+    return null;
+  }
+
+  return Project.findOne({
+    _id: projectId,
+    organizationId,
+  });
+}
+
+/**
  * Authenticates the API key and loads the project, enforcing that it belongs
  * to the key's organization. Returns a ready-to-send 401/404 NextResponse
  * when the request can't proceed - callers check `instanceof NextResponse`.
@@ -49,18 +77,7 @@ export async function authenticateExternalProjectRequest(
     return externalUnauthorized();
   }
 
-  await connectMongoDB();
-
-  // Invalid ObjectIds would throw a CastError in the query - treat them the
-  // same as a missing project so partners get a clean 404.
-  if (!mongoose.isValidObjectId(projectId)) {
-    return externalProjectNotFound();
-  }
-
-  const project = await Project.findOne({
-    _id: projectId,
-    organizationId: authContext.organizationId,
-  });
+  const project = await loadOrgProject(authContext.organizationId, projectId);
 
   if (!project) {
     return externalProjectNotFound();

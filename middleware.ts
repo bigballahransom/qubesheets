@@ -40,6 +40,7 @@ const isPublicApiRoute = createRouteMatcher([
   '/api/projects/(.*)/public-info',
   '/api/external(.*)',  // External API endpoints with API key auth (bare /api/external is the public docs index)
   '/api-docs(.*)',  // Public partner API documentation page
+  '/api/mcp(.*)',  // MCP server - auth is bearer/path token inside the handler, never Clerk
   '/api/processing-complete(.*)',  // Webhook endpoint and SSE for Railway services
   '/api/generate-video-upload-url',  // Video upload pre-signed URL generation
   '/api/confirm-video-upload',  // Video upload confirmation

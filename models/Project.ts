@@ -230,6 +230,8 @@ const ProjectSchema: Schema = new Schema(
 
 // For org-wide time-range dashboard queries
 ProjectSchema.index({ organizationId: 1, createdAt: -1 });
+// For org-scoped lists/search sorted by recency (external API, MCP find_project)
+ProjectSchema.index({ organizationId: 1, updatedAt: -1 });
 
 export default mongoose.models.Project || mongoose.model<IProject>('Project', ProjectSchema);
 
