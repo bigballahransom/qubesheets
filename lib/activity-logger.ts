@@ -205,10 +205,18 @@ export async function logVideoCallScheduled(
     scheduledFor: Date;
     timezone: string;
     previousScheduledFor?: Date;
-  }
+  },
+  // API-key flows (REST partner API, MCP) have no Clerk session: without an
+  // explicit org the auth() fallback stamps userId 'system' and NO org, so
+  // the row vanishes from org-filtered dashboards (or, if a stray Clerk
+  // cookie rides along, stamps the WRONG org). Callers with a verified
+  // authContext must pass it.
+  authContext?: { userId?: string; organizationId?: string }
 ) {
   return logActivity({
     projectId,
+    ...(authContext?.userId ? { userId: authContext.userId } : {}),
+    ...(authContext?.organizationId ? { organizationId: authContext.organizationId } : {}),
     activityType: 'video_call_scheduled',
     action,
     details

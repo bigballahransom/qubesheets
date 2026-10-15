@@ -959,6 +959,7 @@ export default function ApiDocsPage() {
             {searching && visibleEndpoints.length === 0 && (
               <p className="px-2.5 text-xs text-gray-400">No matches</p>
             )}
+            {!searching && navLink('mcp', 'AI assistants (MCP)')}
             {!searching && navLink('errors', 'Errors')}
           </div>
         </nav>
@@ -1095,6 +1096,58 @@ export default function ApiDocsPage() {
               <p className="text-sm font-medium text-gray-900">No endpoints match "{query}"</p>
               <p className="mt-1 text-xs text-gray-500">Try a method (GET, POST), a path, or a keyword like inventory or link.</p>
             </div>
+          )}
+
+          {/* MCP server */}
+          {!searching && (
+          <section id="mcp" className="scroll-mt-24 rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-950/5">
+            <h2 className="text-lg font-semibold mb-1">AI assistants (MCP server)</h2>
+            <p className="text-sm text-gray-600">
+              Qube Sheets runs a remote MCP server so AI assistants can work with your data directly:
+              find projects, inventory with going-aware totals, AI walkthrough notes, and shareable
+              links. Connectors are read-only by default; an org admin can enable actions (create
+              projects, schedule/reschedule/cancel video calls - scheduling texts the customer their
+              join link, exactly like the app). Everything is scoped to your organization, rate
+              limited, and audit logged per tool call.
+            </p>
+            <ul className="mt-3 space-y-1">
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                Set up from the app: Settings, then AI Connectors. An org admin mints a connector and
+                gets a ready-to-paste URL. Treat that URL as a password; revoke it there anytime.
+              </li>
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                claude.ai / Claude Desktop ("No sign-in"), ChatGPT (Developer Mode, "No
+                authentication"), and Grok (grok.com/connectors, Custom) all accept the connector
+                URL directly.
+              </li>
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                Claude Code, Cursor, VS Code, Windsurf: point at the bearer endpoint and send your
+                token as an Authorization header from an environment variable.
+              </li>
+            </ul>
+            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+              <CodeBlock
+                title="Endpoint (header auth)"
+                code={`${baseUrl}/api/mcp\n\nAuthorization: Bearer ${PLACEHOLDER_KEY}`}
+              />
+              <CodeBlock
+                title="Claude Code"
+                code={`claude mcp add qubesheets ${baseUrl}/api/mcp \\\n  --header "Authorization: Bearer $QBS_MCP_TOKEN"`}
+              />
+            </div>
+            <p className="mt-4 text-xs text-gray-500">
+              Read tools: get_api_overview, find_project, list_projects, get_project, get_inventory,
+              get_item_details, get_walkthrough_notes, get_project_link, list_video_calls,
+              get_video_call, list_users. Action tools (admin-enabled connectors only):
+              create_project, schedule_video_call, update_video_call, cancel_video_call. Everything
+              the REST API can do is available, with one deliberate exception: video call join links
+              are never exposed through MCP. Transport is streamable HTTP (MCP 2025-03 or newer
+              clients).
+            </p>
+          </section>
           )}
 
           {/* Errors */}

@@ -23,6 +23,7 @@ import {
   Inbox,
   Loader2,
   Archive,
+  Bot,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import LeadFormsUpgradeModal from '@/components/LeadFormsUpgradeModal';
@@ -60,7 +61,8 @@ const settingsItems: SettingsItem[] = [
   // Integrations
   { title: 'Link Calendar', icon: CalendarDays, href: '/settings/calendar', sectionLabel: 'Integrations' },
   { title: 'Integrations', icon: Plug, href: '/settings/integrations' },
-  { title: 'API Keys', icon: Key, href: '/settings/api-keys' }
+  { title: 'API Keys', icon: Key, href: '/settings/api-keys' },
+  { title: 'AI Connectors', icon: Bot, href: '/settings/ai-connectors' }
 ];
 
 export function SettingsSection() {

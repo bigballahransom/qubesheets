@@ -201,6 +201,32 @@ export async function GET(request: NextRequest) {
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
     const updatedSinceParam = searchParams.get('updatedSince');
+    const q = searchParams.get('q');
+
+    // Free-text search short-circuits the paginated list (shared with the
+    // MCP find_project tool).
+    if (q && q.trim()) {
+      const { searchProjects } = await import('@/lib/project-search');
+      const { projects, fuzzy } = await searchProjects(authContext.organizationId, q, limit);
+      const toLoc = (loc: any) =>
+        loc?.address ? { address: loc.address, unit: loc.unit || null } : null;
+      return NextResponse.json({
+        projects: projects.map(p => ({
+          id: p._id.toString(),
+          name: p.name,
+          customerName: p.customerName,
+          customerCompanyName: p.customerCompanyName || null,
+          customerEmail: p.customerEmail || null,
+          phone: p.phone || null,
+          origin: toLoc(p.origin),
+          destination: toLoc(p.destination),
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+        })),
+        fuzzy,
+        pagination: { page: 1, limit, total: projects.length, totalPages: 1, hasMore: false },
+      });
+    }
 
     const filter: Record<string, any> = { organizationId: authContext.organizationId };
     if (updatedSinceParam) {

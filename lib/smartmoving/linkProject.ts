@@ -117,7 +117,9 @@ async function stampLink(
         $set: metadataUpdate,
         $unset: { 'metadata.smartMovingQuoteNumber': '' },
       };
-  await Project.findByIdAndUpdate(projectId, update);
+  // Org-scoped so a caller passing an unverified projectId can never stamp
+  // SmartMoving link metadata onto another organization's project.
+  await Project.findOneAndUpdate({ _id: projectId, organizationId }, update);
   return takenOverFrom;
 }
 
