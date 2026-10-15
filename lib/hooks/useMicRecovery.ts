@@ -42,6 +42,17 @@ const VERIFY_DELAY_MS = 600;
 // LiveKitRoom's own initial acquisition and cause the NotReadable conflicts
 // this hook exists to fix.
 const NEVER_PUBLISHED_GRACE_MS = 8000;
+// Circuit breaker for AUTOMATIC recovery. A device the ladder keeps failing on
+// is wedged at the OS level (e.g. iOS refusing to hand the mic back) — and on
+// iOS every mic getUserMedia attempt natively interrupts the LIVE camera
+// (single capture session), so an unbounded mic ladder re-running every ~5s
+// makes the customer's video blink black for the entire call (Oct 2026
+// incident: loops of 10-45 cycles). After this many consecutive automatic
+// failures per device we stop and rely on the tap-to-reconnect banner; a user
+// gesture, a native unmute, return-to-page, or a room reconnect re-arms
+// automatic recovery.
+const MAX_AUTO_RECOVERY_FAILURES = 2;
+const RECOVERY_FAILURE_COOLDOWN_MS = 8000;
 
 const WATCHED = [
   { source: Track.Source.Microphone, kind: 'microphone' },
@@ -67,6 +78,37 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
   const [failedKinds, setFailedKinds] = useState<Kind[]>([]);
   const recoveringRef = useRef<Record<string, boolean>>({});
   const mountedAtRef = useRef(Date.now());
+  // Consecutive AUTOMATIC ladder failures per kind, plus the earliest time the
+  // next automatic attempt may run. See MAX_AUTO_RECOVERY_FAILURES above.
+  const autoFailuresRef = useRef<Record<Kind, number>>({ microphone: 0, camera: 0 });
+  const cooldownUntilRef = useRef<Record<Kind, number>>({ microphone: 0, camera: 0 });
+  const cappedReportedRef = useRef<Record<Kind, boolean>>({ microphone: false, camera: false });
+  // A wedged device generates no further events after a failed ladder, so the
+  // next (pre-cap) attempt must self-schedule at cooldown expiry or it would
+  // never run. At most one pending timer per kind.
+  const retryTimersRef = useRef<Record<Kind, ReturnType<typeof setTimeout> | null>>({
+    microphone: null,
+    camera: null,
+  });
+  const unmountedRef = useRef(false);
+  useEffect(() => () => {
+    unmountedRef.current = true;
+    for (const kind of ['microphone', 'camera'] as Kind[]) {
+      const t = retryTimersRef.current[kind];
+      if (t) clearTimeout(t);
+    }
+  }, []);
+
+  const resetBreaker = useCallback((kind: Kind) => {
+    autoFailuresRef.current[kind] = 0;
+    cooldownUntilRef.current[kind] = 0;
+    cappedReportedRef.current[kind] = false;
+    const t = retryTimersRef.current[kind];
+    if (t) {
+      clearTimeout(t);
+      retryTimersRef.current[kind] = null;
+    }
+  }, []);
 
   // User intent per source, seeded from join-time defaults. Updated ONLY by
   // explicit user toggles.
@@ -95,7 +137,8 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
     intentRef.current[kind] = enabled;
     // A user action supersedes any prior involuntary-loss signal.
     involuntaryRef.current[kind] = false;
-  }, []);
+    resetBreaker(kind);
+  }, [resetBreaker]);
 
   const isIntendedOn = useCallback(
     (source: Track.Source) => intentRef.current[kindOf(source)],
@@ -128,7 +171,23 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
       const pub = getPublication(source);
       const mst = pub?.track?.mediaStreamTrack ?? null;
       if (!pub || !pub.track || !mst) {
-        // Only a genuine "never captured at join" — not a user-removed track.
+        // MICROPHONE ONLY: a deliberate mic mute never removes the publication
+        // (LiveKit just flips enabled=false), so a VANISHED mic publication
+        // after a native loss event can only be the recovery ladder's own
+        // rung-4 unpublish whose re-acquisition failed — still dead; keep the
+        // banner and retries alive. The camera is deliberately excluded: a
+        // deliberate camera-off DOES remove its publication, and reviving it
+        // would override the user (the Sep 2026 ControlBar regression class).
+        if (
+          kind === 'microphone' &&
+          everPublishedRef.current[kind] &&
+          involuntaryRef.current[kind] &&
+          roomIsConnected()
+        ) {
+          return true;
+        }
+        // Otherwise only a genuine "never captured at join" — not a
+        // user-removed track.
         return (
           !everPublishedRef.current[kind] &&
           roomIsConnected() &&
@@ -216,6 +275,12 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
       if (!shouldContinue()) return;
 
       if (source === Track.Source.Microphone) {
+        // Release-then-acquire is deliberate: a wedged Android audio session
+        // needs the old track gone before a fresh getUserMedia can succeed.
+        // If the fresh acquisition fails we're left with NO publication —
+        // isDead's vanished-mic clause keeps that state detectable as dead,
+        // so the banner and later retries (e.g. after the phone call ends)
+        // still work.
         const pub = getPublication(source);
         if (pub?.track) {
           await localParticipant.unpublishTrack(pub.track as any, true);
@@ -239,7 +304,14 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
 
   const attemptRecovery = useCallback(
     async ({ source, kind }: { source: Track.Source; kind: Kind }, fromUserGesture = false) => {
-      if (!localParticipant || recoveringRef.current[kind]) return;
+      if (!localParticipant) return;
+      if (recoveringRef.current[kind]) {
+        // An attempt is already in flight — but don't drop a user's tap on
+        // the floor: re-arm the breaker so automatic retries continue even if
+        // the in-flight attempt fails and would otherwise have capped.
+        if (fromUserGesture) resetBreaker(kind);
+        return;
+      }
       if (!isDead(source)) {
         setKindFailed(kind, false);
         return;
@@ -250,8 +322,61 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
       // room re-captures on its own and a fresh hook instance takes over.
       if (!roomIsConnected()) return;
 
+      if (fromUserGesture) {
+        // A fresh gesture re-arms automatic recovery for this kind.
+        resetBreaker(kind);
+      } else {
+        // Circuit breaker — see MAX_AUTO_RECOVERY_FAILURES. Keep the banner
+        // up so the user can retry manually.
+        if (autoFailuresRef.current[kind] >= MAX_AUTO_RECOVERY_FAILURES) {
+          if (!cappedReportedRef.current[kind]) {
+            cappedReportedRef.current[kind] = true;
+            reportRecoveryTelemetry('media_recovery_capped', kind, {
+              failures: autoFailuresRef.current[kind],
+            });
+          }
+          setKindFailed(kind, true);
+          return;
+        }
+        if (Date.now() < cooldownUntilRef.current[kind]) return;
+      }
+
       recoveringRef.current[kind] = true;
       try {
+        // Single-flight across kinds: a mic ladder's getUserMedia calls
+        // natively mute the LIVE camera on iOS (one capture session), so a
+        // camera check firing mid-mic-ladder would "recover" a self-inflicted
+        // mute that resolves on its own once the audio attempts stop. Wait
+        // the other ladder out, then re-evaluate whether this track is still
+        // actually dead.
+        const otherKind: Kind = kind === 'microphone' ? 'camera' : 'microphone';
+        if (recoveringRef.current[otherKind]) {
+          const waitStart = Date.now();
+          while (recoveringRef.current[otherKind] && Date.now() - waitStart < 10000) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+          if (recoveringRef.current[otherKind]) {
+            // Still busy after 10s — never run two ladders at once (that IS
+            // the blink). Re-check shortly; doesn't count as a failure.
+            if (!unmountedRef.current) {
+              if (retryTimersRef.current[kind]) clearTimeout(retryTimersRef.current[kind]!);
+              retryTimersRef.current[kind] = setTimeout(() => {
+                retryTimersRef.current[kind] = null;
+                void attemptRecovery({ source, kind }, fromUserGesture);
+              }, 2500);
+            }
+            return;
+          }
+          // Give iOS a beat to fire the camera's native 'unmute' after the
+          // other ladder's getUserMedia churn stops, so we don't "recover" a
+          // self-inflicted mute that resolves on its own.
+          await new Promise((r) => setTimeout(r, 750));
+          if (!isDead(source)) {
+            setKindFailed(kind, false);
+            return;
+          }
+        }
+
         const pub = getPublication(source);
         console.log(`[media-recovery] ${kind} dead, attempting recovery`, {
           published: !!pub?.track,
@@ -265,10 +390,23 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
 
         console.log(`[media-recovery] ${kind} recovered`);
         involuntaryRef.current[kind] = false;
+        resetBreaker(kind);
         setKindFailed(kind, false);
         reportRecoveryTelemetry('media_recovered', kind, { fromUserGesture });
         toast.success(kind === 'microphone' ? 'Microphone reconnected' : 'Camera reconnected');
       } catch (err) {
+        if (!fromUserGesture) {
+          autoFailuresRef.current[kind] += 1;
+          const cooldown = RECOVERY_FAILURE_COOLDOWN_MS * autoFailuresRef.current[kind];
+          cooldownUntilRef.current[kind] = Date.now() + cooldown;
+          if (autoFailuresRef.current[kind] < MAX_AUTO_RECOVERY_FAILURES && !unmountedRef.current) {
+            if (retryTimersRef.current[kind]) clearTimeout(retryTimersRef.current[kind]!);
+            retryTimersRef.current[kind] = setTimeout(() => {
+              retryTimersRef.current[kind] = null;
+              void attemptRecovery({ source, kind });
+            }, cooldown + 250);
+          }
+        }
         console.error(`[media-recovery] ${kind} recovery failed:`, err);
         reportRecoveryTelemetry('media_recovery_failed', kind, {
           fromUserGesture,
@@ -285,7 +423,7 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
         recoveringRef.current[kind] = false;
       }
     },
-    [localParticipant, isDead, roomIsConnected, getPublication, runRecoveryLadder, reportRecoveryTelemetry, roomId]
+    [localParticipant, isDead, roomIsConnected, getPublication, runRecoveryLadder, reportRecoveryTelemetry, roomId, resetBreaker]
   );
 
   // User-facing robust toggle: records intent, then walks the same ladder.
@@ -314,6 +452,8 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
       }
 
       if (recoveringRef.current[kind]) return false;
+      // Deliberate user enable — re-arm automatic recovery for this kind.
+      resetBreaker(kind);
       recoveringRef.current[kind] = true;
       try {
         await runRecoveryLadder(source);
@@ -339,7 +479,7 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
         recoveringRef.current[kind] = false;
       }
     },
-    [localParticipant, runRecoveryLadder, reportRecoveryTelemetry, roomId]
+    [localParticipant, runRecoveryLadder, reportRecoveryTelemetry, roomId, resetBreaker]
   );
 
   useEffect(() => {
@@ -387,6 +527,9 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
         };
         const onUnmute = () => {
           involuntaryRef.current[watched.kind] = false;
+          // Device came back on its own — automatic recovery earns a clean
+          // slate.
+          resetBreaker(watched.kind);
           clearTimeout(checkTimers[watched.kind]);
           setKindFailed(watched.kind, false);
         };
@@ -415,14 +558,29 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
     // check either way — attemptRecovery only acts if a native loss event
     // flagged it involuntary, so deliberate mutes are a harmless no-op.
     const onTrackMuted = () => scheduleAll(STUCK_MUTED_DELAY_MS);
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') scheduleAll(RETURN_TO_PAGE_DELAY_MS);
+    // Returning to the page and surviving a reconnect are the moments the OS
+    // genuinely hands devices back (phone call ended, network switch settled)
+    // — re-arm the automatic-recovery breaker so they get fresh attempts.
+    // NOT on devicechange: our own getUserMedia churn fires that.
+    const resetAllBreakers = () => {
+      for (const watched of WATCHED) resetBreaker(watched.kind);
     };
-    const onFocus = () => scheduleAll(RETURN_TO_PAGE_DELAY_MS);
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      resetAllBreakers();
+      scheduleAll(RETURN_TO_PAGE_DELAY_MS);
+    };
+    const onFocus = () => {
+      resetAllBreakers();
+      scheduleAll(RETURN_TO_PAGE_DELAY_MS);
+    };
     const onDeviceChange = () => scheduleAll(1000);
     // A WiFi→cellular switch resumes via Reconnected; tracks that died during
     // the transition need a post-resume check.
-    const onReconnected = () => scheduleAll(RETURN_TO_PAGE_DELAY_MS);
+    const onReconnected = () => {
+      resetAllBreakers();
+      scheduleAll(RETURN_TO_PAGE_DELAY_MS);
+    };
 
     attachTrackListeners();
     // One-shot check just past the join grace period so a track that never
@@ -456,7 +614,7 @@ export function useMediaRecovery(options: MediaRecoveryOptions = {}) {
       window.removeEventListener('pageshow', onFocus);
       navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
     };
-  }, [localParticipant, room, attemptRecovery]);
+  }, [localParticipant, room, attemptRecovery, resetBreaker]);
 
   const recover = useCallback(() => {
     for (const watched of WATCHED) void attemptRecovery(watched, true);

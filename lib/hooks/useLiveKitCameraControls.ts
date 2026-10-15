@@ -51,12 +51,24 @@ export function useLiveKitCameraControls(
       caps.zoom.max > caps.zoom.min
     ) {
       setZoomRange({ min: caps.zoom.min, max: caps.zoom.max });
-      // Reflect the camera's CURRENT zoom — do NOT force a zoom here. Forcing
-      // one would reset the customer's chosen zoom every time the camera track
-      // restarts, which on iOS happens on a device rotation (portrait⇄
-      // landscape). Read the actual setting instead so rotation is a no-op.
+      // Mirror the camera's CURRENT zoom — never force 1× (that reset the
+      // customer's chosen zoom on every track restart, e.g. an iOS portrait⇄
+      // landscape rotation). But DO re-apply that same value: the
+      // applyConstraints pass nudges iOS Safari's capture session to
+      // re-arbitrate devices after a restart. The old per-restart normalize
+      // provided that kick, and its removal coincided with wedged-mic
+      // recovery loops no longer self-healing (Oct 2026 blinking incident).
+      // Re-applying the current value keeps rotation a visual no-op while
+      // restoring the kick.
       const current = (track.getSettings?.() as any)?.zoom;
-      setCurrentZoom(typeof current === 'number' ? current : 1);
+      const value = Math.min(
+        Math.max(typeof current === 'number' ? current : 1, caps.zoom.min),
+        caps.zoom.max
+      );
+      setCurrentZoom(value);
+      track
+        .applyConstraints({ advanced: [{ zoom: value }] } as any)
+        .catch(() => { /* device refused — state already mirrors settings */ });
     } else {
       setZoomRange(null);
       setCurrentZoom(1);

@@ -3,7 +3,7 @@
 
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@clerk/nextjs';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import VideoCallInventory from '@/components/video/VideoCallInventory';
 import AgentPreJoin from '@/components/video/AgentPreJoin';
 import CustomerPreJoin from '@/components/video/CustomerPreJoin';
@@ -94,6 +94,16 @@ export default function VideoCallPage() {
   // by another app, webview quirks). A degraded-but-connected call beats a
   // blocked join; the in-call capture banner offers "try camera again".
   const [customerAudioOnly, setCustomerAudioOnly] = useState(false);
+  // Stable identity matters: this object feeds VideoCallInventory's
+  // roomOptions memo, and this page re-renders every 5s (the `now` ticker).
+  // A fresh inline object each render recomputes that memo — and ANY content
+  // change to roomOptions makes useLiveKitRoom tear down and recreate the
+  // whole Room mid-call.
+  const customerCallSettings = useMemo(
+    () => ({ videoEnabled: !customerAudioOnly, audioEnabled: true, facingMode: 'user' }),
+    [customerAudioOnly]
+  );
+  const handleCustomerCameraOn = useCallback(() => setCustomerAudioOnly(false), []);
 
   // Local flag that lets the agent enter the live call immediately after they
   // press Start Meeting, without waiting for the next presence poll round trip.
@@ -619,8 +629,8 @@ export default function VideoCallPage() {
         participantName={getParticipantName()}
         onCallEnd={handleCallEnd}
         isAgentUser={false}
-        customerSettings={{ videoEnabled: !customerAudioOnly, audioEnabled: true, facingMode: 'user' } as any}
-        onCustomerCameraOn={() => setCustomerAudioOnly(false)}
+        customerSettings={customerCallSettings as any}
+        onCustomerCameraOn={handleCustomerCameraOn}
       />
     );
   }
