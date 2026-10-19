@@ -40,8 +40,10 @@ export async function GET(request: NextRequest) {
       .lean();
 
     // Build the agent map from one org-membership call instead of one
-    // clerk.users.getUser per distinct agent.
-    const userMap: Record<string, { id: string; name: string; email: string }> = {};
+    // clerk.users.getUser per distinct agent. isMember marks current org
+    // members (valid reassignment targets) vs. attribution-only fallback
+    // entries (departed members, 'api-created'/'form-scheduled' sentinels).
+    const userMap: Record<string, { id: string; name: string; email: string; isMember: boolean }> = {};
 
     if (authContext.organizationId) {
       const members = await listOrgMembers(authContext.organizationId);
@@ -51,6 +53,7 @@ export async function GET(request: NextRequest) {
           id: m.userId,
           name: hasName ? m.name : m.email || 'Unknown',
           email: hasName ? m.email : '', // Only include email separately if they have a name
+          isMember: true,
         };
       }
     }
@@ -75,9 +78,10 @@ export async function GET(request: NextRequest) {
               id: userId,
               name,
               email: hasName ? email : '',
+              isMember: false,
             };
           } catch (error) {
-            userMap[userId] = { id: userId, name: 'Unknown', email: '' };
+            userMap[userId] = { id: userId, name: 'Unknown', email: '', isMember: false };
           }
         })
       );
@@ -87,7 +91,7 @@ export async function GET(request: NextRequest) {
     const callsWithLinks = scheduledCalls.map((call: any) => {
       const scheduledCallId = call._id.toString();
       const scheduledFor = new Date(call.scheduledFor);
-      const agent = userMap[call.userId] || { id: call.userId, name: 'Unknown', email: '' };
+      const agent = userMap[call.userId] || { id: call.userId, name: 'Unknown', email: '', isMember: false };
 
       return {
         ...call,

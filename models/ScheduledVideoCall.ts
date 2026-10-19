@@ -8,7 +8,11 @@ export interface IReminderSent {
 
 export interface IScheduledVideoCall extends Document {
   projectId: mongoose.Types.ObjectId;
+  /** Assigned agent: a Clerk userId, or a sentinel ('api-created',
+   *  'form-scheduled') when nobody is assigned. Reassignment rewrites this. */
   userId: string;
+  /** Who scheduled the call, when different from the assignee. */
+  createdByUserId?: string;
   organizationId?: string;
 
   // Scheduling
@@ -61,6 +65,9 @@ const ScheduledVideoCallSchema: Schema = new Schema(
       type: String,
       required: true,
       index: true,
+    },
+    createdByUserId: {
+      type: String,
     },
     organizationId: {
       type: String,

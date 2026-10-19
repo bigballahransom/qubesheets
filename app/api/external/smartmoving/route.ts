@@ -536,62 +536,12 @@ async function fetchSmartMovingLead(
 }
 
 /**
- * GET endpoint for API documentation
+ * This route is internal integration plumbing (an inbound webhook the
+ * configured CRM calls to auto-create projects), NOT part of the documented
+ * partner API. It is deliberately NOT self-documenting — GET returns a plain
+ * 404 so the endpoint and its mechanics aren't discoverable or advertised.
+ * The POST handler above remains fully functional for the live integration.
  */
 export async function GET() {
-  return NextResponse.json({
-    endpoint: '/api/external/smartmoving',
-    method: 'POST',
-    description: 'SmartMoving webhook endpoint for automatic project creation',
-    authentication: {
-      type: 'Bearer Token',
-      header: 'Authorization: Bearer qbs_keyId_secret',
-      note: 'Get your API key from the Settings > API Keys page'
-    },
-    webhookConfiguration: {
-      url: 'https://app.qubesheets.com/api/external/smartmoving',
-      events: ['opportunity_created'],
-      customHeaders: {
-        'api_key': 'Your Qube Sheets API Key (no Bearer prefix needed)',
-        'Authorization': 'Bearer qbs_keyId_secret'
-      }
-    },
-    supportedEvents: {
-      'opportunity-created': 'Creates a new project when an opportunity OR new lead (opportunity-status 0) is created in SmartMoving. Which record types are accepted is controlled by the "Create projects from" setting in Settings > Integrations (default: opportunities and leads).'
-    },
-    requirements: [
-      'SmartMoving integration must be configured in Settings > Integrations',
-      'Valid API key required for authentication',
-      'Webhook must include opportunity-id in payload'
-    ],
-    responses: {
-      201: {
-        description: 'Project created successfully',
-        example: {
-          success: true,
-          message: 'Project created successfully from SmartMoving opportunity',
-          project: {
-            id: '507f1f77bcf86cd799439011',
-            name: 'John Smith',
-            customerName: 'John Smith',
-            phone: '+15551234567',
-            createdAt: '2024-01-15T10:30:00.000Z',
-            organizationId: 'org_abc123',
-            smartMovingOpportunityId: 'opp_123456'
-          },
-          uploadLink: {
-            attempted: true,
-            sent: true,
-            smsDelivered: true,
-            uploadUrl: 'https://app.qubesheets.com/customer-upload/abc123...',
-            expiresAt: '2024-01-22T10:30:00.000Z'
-          }
-        }
-      },
-      200: 'Event ignored or project already exists',
-      400: 'Invalid request or missing SmartMoving integration',
-      401: 'Invalid or missing API key',
-      500: 'Internal server error'
-    }
-  });
+  return NextResponse.json({ error: 'Not found' }, { status: 404 });
 }

@@ -4,8 +4,12 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Folder, User, Phone, Loader2, Building } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { filterProjects, projectMatchesCrmId } from '@/components/providers/SearchProvider';
-import { useOrganization } from '@clerk/nextjs';
+import {
+  useProjectReplica,
+  searchProjects,
+  searchProjectsByCrmId,
+} from '@/lib/project-store';
+import { useAuth, useOrganization } from '@clerk/nextjs';
 
 interface SearchDropdownProps {
   isMobile?: boolean;
@@ -20,9 +24,12 @@ interface Customer {
   company?: string;
 }
 
+// Result rows are capped — the dropdown shows the top matches, not every
+// match (rendering stays O(cap) however many projects exist).
+const RESULT_CAP = 30;
+
 export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [projects, setProjects] = useState<any[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filteredProjects, setFilteredProjects] = useState<any[]>([]);
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([]);
@@ -31,47 +38,50 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const { isLoaded, userId, orgId } = useAuth();
   const { organization } = useOrganization();
 
   // Check if organization has CRM add-on
   const hasCrmAddOn = (organization?.publicMetadata as any)?.subscription?.addOns?.includes('crm');
 
-  // Fetch data when component mounts. Projects are always fetched — even in
-  // CRM (customers) mode they're searchable by CRM job/quote number.
+  // Projects come from the shared slim replica (same store the sidebar list
+  // uses — no separate full-collection fetch). Even in CRM (customers) mode
+  // they're searchable by CRM job/quote number.
+  const replicaScope = isLoaded && userId ? orgId || userId : null;
+  const replica = useProjectReplica(replicaScope);
+
+  // Fetch customers when component mounts (CRM mode only)
   useEffect(() => {
     if (hasCrmAddOn) {
       fetchCustomers();
     }
-    fetchProjects();
   }, [hasCrmAddOn]);
 
-  // Listen for organization data refresh events
+  // Listen for organization data refresh events (the project replica handles
+  // its own refresh inside lib/project-store)
   useEffect(() => {
     const handleDataRefresh = () => {
       if (hasCrmAddOn) {
         fetchCustomers();
       }
-      fetchProjects();
     };
 
     window.addEventListener('organizationDataRefresh', handleDataRefresh);
     return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
   }, [hasCrmAddOn]);
 
-  // Archived projects stay searchable but rank below active matches
-  const sortActiveFirst = (list: any[]) =>
-    [...list].sort((a, b) => (a.isArchived ? 1 : 0) - (b.isArchived ? 1 : 0));
-
-  // Filter results when search query changes
+  // Filter results when search query changes. Project matching runs over
+  // precomputed search strings in the store and caps results, so a
+  // keystroke's cost doesn't grow with org size.
   useEffect(() => {
     if (searchQuery.trim()) {
       if (hasCrmAddOn) {
-        setFilteredCustomers(filterCustomers(customers, searchQuery));
         // Customers own name/phone/email search in CRM mode — projects only
         // surface on CRM job/quote id matches, so results aren't doubled.
-        setFilteredProjects(sortActiveFirst(projects.filter((p) => projectMatchesCrmId(p, searchQuery))));
+        setFilteredCustomers(filterCustomers(customers, searchQuery).slice(0, RESULT_CAP));
+        setFilteredProjects(searchProjectsByCrmId(searchQuery, RESULT_CAP));
       } else {
-        setFilteredProjects(sortActiveFirst(filterProjects(projects, searchQuery)));
+        setFilteredProjects(searchProjects(searchQuery, RESULT_CAP));
       }
       setShowResults(true);
     } else {
@@ -79,7 +89,7 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
       setFilteredCustomers([]);
       setShowResults(false);
     }
-  }, [searchQuery, projects, customers, hasCrmAddOn]);
+  }, [searchQuery, replica.projects, customers, hasCrmAddOn]);
 
   // Click outside to close dropdown
   useEffect(() => {
@@ -92,21 +102,6 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  const fetchProjects = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/projects');
-      if (response.ok) {
-        const data = await response.json();
-        setProjects(data);
-      }
-    } catch (error) {
-      console.error('Error fetching projects:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchCustomers = async () => {
     try {
@@ -183,6 +178,11 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
   const resultsEmpty =
     filteredProjects.length === 0 && (!hasCrmAddOn || filteredCustomers.length === 0);
 
+  // Spinner while either source is still warming up (customers fetch, or the
+  // project replica's one-time cold sync).
+  const resultsLoading =
+    loading || replica.status === 'idle' || replica.status === 'loading';
+
   return (
     <div className="relative" ref={dropdownRef}>
       <div className="relative">
@@ -201,7 +201,7 @@ export function SearchDropdown({ isMobile = false }: SearchDropdownProps) {
       {/* Search Results Dropdown */}
       {showResults && (
         <div className="absolute top-full mt-1 left-0 right-0 bg-white rounded-md shadow-lg border border-gray-200 max-h-96 overflow-y-auto z-50">
-          {loading ? (
+          {resultsLoading && resultsEmpty ? (
             <div className="p-4 text-center">
               <Loader2 className="h-5 w-5 animate-spin mx-auto text-gray-400" />
             </div>

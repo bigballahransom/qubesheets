@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Don't advertise the framework on any response (incl. the partner API).
+  poweredByHeader: false,
   // Allow external origins for development (iPhone testing)
   ...(process.env.NODE_ENV === 'development' && {
     allowedDevOrigins: [

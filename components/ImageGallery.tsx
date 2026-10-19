@@ -488,14 +488,14 @@ export default function ImageGallery({ projectId, projectName, onUploadClick, re
   const handleDownloadItem = async (item: MediaItem) => {
     try {
       if (isVideo(item)) {
-        // For videos, get streaming URL and download from S3
-        const streamResponse = await fetch(`/api/projects/${projectId}/videos/${item._id}/stream`);
+        // Ask for a download-disposition URL (?download=1) so the cross-origin
+        // S3 link downloads to disk instead of opening in a tab.
+        const streamResponse = await fetch(`/api/projects/${projectId}/videos/${item._id}/stream?download=1`);
         if (!streamResponse.ok) {
           throw new Error('Failed to get video stream URL');
         }
         const { streamUrl } = await streamResponse.json();
-        
-        // Open in new tab for download
+
         const a = document.createElement('a');
         a.href = streamUrl;
         a.download = item.originalName;

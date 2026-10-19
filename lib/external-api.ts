@@ -9,6 +9,7 @@ import mongoose from 'mongoose';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import { authenticateApiKey, ApiKeyAuthContext } from '@/lib/api-key-auth';
+import { getBaseUrl } from '@/lib/upload-link-helpers';
 
 export function externalApiError(status: number, error: string, message: string): NextResponse {
   return NextResponse.json({ error, message }, { status });
@@ -33,6 +34,34 @@ function externalProjectNotFound(): NextResponse {
 export interface ExternalProjectRequestContext {
   authContext: ApiKeyAuthContext;
   project: any;
+}
+
+/**
+ * The partner-facing project DTO — shared by GET /api/external/projects
+ * (list + search) and the outbound webhook envelope's `project` block, so the
+ * shapes can never drift. Limited to the base-product fields shown on the
+ * project page; CRM add-on fields (jobDate, opportunityType, jobType) are not
+ * exposed.
+ */
+export function serializeExternalProject(p: any) {
+  const toLocation = (loc: any) =>
+    loc?.address ? { address: loc.address, unit: loc.unit || null } : null;
+  const id = p._id.toString();
+  return {
+    id,
+    // Deep link to the project page in the app — lets a partner's system
+    // render "open in Qube Sheets" next to the imported inventory.
+    url: `${getBaseUrl().replace(/\/$/, '')}/projects/${id}`,
+    name: p.name,
+    customerName: p.customerName,
+    customerCompanyName: p.customerCompanyName || null,
+    customerEmail: p.customerEmail || null,
+    phone: p.phone || null,
+    origin: toLocation(p.origin),
+    destination: toLocation(p.destination),
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+  };
 }
 
 /**

@@ -43,15 +43,18 @@ export async function GET(
     const id = call._id.toString();
     const scheduledDate = new Date(call.scheduledFor);
 
-    let assignedTo: { userId: string; name: string | null; email: string | null } | null = null;
+    // Only surface an assignee that resolves to a real current org member;
+    // internal sentinels ('api-created'/'form-scheduled') and departed users
+    // are reported as unassigned rather than leaking a raw internal userId.
+    let assignedTo: { userId: string; name: string; email: string } | null = null;
     if (call.userId && call.userId !== 'api-created') {
       try {
         const member = await findOrgMemberByUserId(authContext.organizationId, call.userId);
-        assignedTo = member
-          ? { userId: member.userId, name: member.name, email: member.email }
-          : { userId: call.userId, name: null, email: null };
+        if (member) {
+          assignedTo = { userId: member.userId, name: member.name, email: member.email };
+        }
       } catch {
-        assignedTo = { userId: call.userId, name: null, email: null };
+        assignedTo = null;
       }
     }
 
@@ -60,7 +63,6 @@ export async function GET(
       videoCall: {
         id,
         projectId: call.projectId.toString(),
-        roomId: call.roomId,
         scheduledFor: call.scheduledFor,
         timezone: call.timezone,
         status: call.status,

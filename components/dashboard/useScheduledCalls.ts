@@ -7,6 +7,9 @@ export interface Agent {
   id: string;
   name: string;
   email: string;
+  /** Current org member (valid reassignment target), vs. an attribution-only
+   *  entry for a departed member or 'api-created'/'form-scheduled' sentinel. */
+  isMember?: boolean;
 }
 
 export interface ScheduledCall {
@@ -71,6 +74,11 @@ export function useScheduledCalls({ defaultAgentId }: { defaultAgentId?: string 
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [sendCancellationSms, setSendCancellationSms] = useState(true);
   const [isCancelling, setIsCancelling] = useState(false);
+
+  // Reassign modal state
+  const [showReassignModal, setShowReassignModal] = useState(false);
+  const [reassignUserId, setReassignUserId] = useState('');
+  const [isReassigning, setIsReassigning] = useState(false);
 
   // Store the call being acted on (separate from selectedCall to avoid modal-on-modal)
   const [actionCall, setActionCall] = useState<ScheduledCall | null>(null);
@@ -202,6 +210,39 @@ export function useScheduledCalls({ defaultAgentId }: { defaultAgentId?: string 
     setIsRescheduling(false);
   };
 
+  // Reassign handler — moves the call (and its calendar events) to another
+  // team member. No customer SMS: the time and join link don't change.
+  const handleReassign = async () => {
+    if (!actionCall || !reassignUserId || reassignUserId === actionCall.userId) return;
+    setIsReassigning(true);
+
+    try {
+      const response = await fetch(
+        `/api/projects/${actionCall.projectId}/scheduled-calls/${actionCall._id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assignedUserId: reassignUserId }),
+        }
+      );
+
+      if (response.ok) {
+        const newAgentName =
+          agents.find((a) => a.id === reassignUserId)?.name || 'the selected team member';
+        toast.success(`Call reassigned to ${newAgentName}.`);
+        setShowReassignModal(false);
+        setActionCall(null);
+        fetchScheduledCalls();
+      } else {
+        const data = await response.json();
+        toast.error(data.error || 'Failed to reassign call');
+      }
+    } catch (error) {
+      toast.error('Failed to reassign call');
+    }
+    setIsReassigning(false);
+  };
+
   // Cancel handler
   const handleCancel = async () => {
     if (!actionCall) return;
@@ -262,6 +303,12 @@ export function useScheduledCalls({ defaultAgentId }: { defaultAgentId?: string 
     sendCancellationSms,
     setSendCancellationSms,
     isCancelling,
+    showReassignModal,
+    setShowReassignModal,
+    reassignUserId,
+    setReassignUserId,
+    isReassigning,
+    handleReassign,
     actionCall,
     setActionCall,
     statusFilter,

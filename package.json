@@ -38,6 +38,7 @@
     "@radix-ui/react-tabs": "^1.1.12",
     "@radix-ui/react-tooltip": "^1.2.6",
     "@react-google-maps/api": "^2.20.8",
+    "@tanstack/react-virtual": "^3.14.21",
     "@types/bcryptjs": "^2.4.6",
     "aws-sdk": "^2.1692.0",
     "bcryptjs": "^3.0.2",

@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
         firstName: m.firstName,
         lastName: m.lastName,
         name: m.name,
-        role: m.role,
+        // Strip the auth provider's "org:" prefix → plain 'admin' | 'member'.
+        role: m.role === 'org:admin' ? 'admin' : 'member',
       })),
       total: members.length,
     });
@@ -76,7 +77,7 @@ function getDocs() {
                 firstName: 'Jane',
                 lastName: 'Smith',
                 name: 'Jane Smith',
-                role: 'org:member',
+                role: 'member',
               },
             ],
             total: 1,

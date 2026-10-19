@@ -42,6 +42,10 @@ export async function GET(
     // Check if this is a self-serve recording request
     const url = new URL(request.url);
     const recordingType = url.searchParams.get('type');
+    // ?download=1 → force a browser download (Content-Disposition: attachment)
+    // baked into the presigned URL, so cross-origin S3 links download instead
+    // of opening in a tab. Default stays inline for the in-page player.
+    const contentDisposition = url.searchParams.get('download') === '1' ? 'attachment' : 'inline';
 
     let streamUrl: string | undefined;
     let videoInfo: { _id: string; name: string; originalName: string; mimeType: string; size: number; duration: number };
@@ -92,7 +96,7 @@ export async function GET(
             Key: s3Key,
             Expires: 3600, // 1 hour expiry
             ResponseContentType: 'video/mp4',
-            ResponseContentDisposition: `inline; filename="Self-Serve Recording.mp4"`,
+            ResponseContentDisposition: `${contentDisposition}; filename="Self-Serve Recording.mp4"`,
           };
 
           const timeoutPromise = new Promise((_, reject) =>
@@ -181,7 +185,7 @@ export async function GET(
               Key: s3Key,
               Expires: 3600,
               ResponseContentType: 'video/mp4',
-              ResponseContentDisposition: `inline; filename="Self-Serve Recording.mp4"`,
+              ResponseContentDisposition: `${contentDisposition}; filename="Self-Serve Recording.mp4"`,
             };
 
             streamUrl = await Promise.race([
@@ -232,7 +236,7 @@ export async function GET(
               Key: video.s3RawFile.key,
               Expires: 3600, // 1 hour expiry
               ResponseContentType: video.mimeType || 'video/mp4',
-              ResponseContentDisposition: `inline; filename="${video.originalName}"`,
+              ResponseContentDisposition: `${contentDisposition}; filename="${video.originalName}"`,
             };
 
             // Add timeout for S3 operations (reduced to 5 seconds)

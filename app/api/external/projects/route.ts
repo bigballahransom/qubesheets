@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import { authenticateApiKey } from '@/lib/api-key-auth';
-import { externalApiError, externalUnauthorized } from '@/lib/external-api';
+import { externalApiError, externalUnauthorized, serializeExternalProject } from '@/lib/external-api';
 import { generateAndSendUploadLink } from '@/lib/upload-link-helpers';
 
 /**
@@ -123,17 +123,20 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // Return sanitized project data with upload link status
+    // Return sanitized project data with upload link status. organizationId is
+    // intentionally omitted — the API key is already org-scoped, so the caller
+    // gains nothing from it and it would leak an internal tenant identifier.
     const response: any = {
       id: project._id,
       name: project.name,
       customerName: project.customerName,
       phone: project.phone,
       createdAt: project.createdAt,
-      organizationId: project.organizationId
     };
-    
-    // Add upload link information if it was attempted
+
+    // Add upload link information if it was attempted. Any failure reason is
+    // sanitized to a generic message — the raw error can carry SMS-vendor /
+    // internal text (logged server-side above, never returned to the partner).
     if (data.phone?.trim()) {
       response.uploadLink = {
         attempted: true,
@@ -141,7 +144,7 @@ export async function POST(request: NextRequest) {
         smsDelivered: uploadLinkResult?.smsDelivered || false,
         uploadUrl: uploadLinkResult?.uploadUrl,
         expiresAt: uploadLinkResult?.expiresAt,
-        error: uploadLinkResult?.error
+        error: uploadLinkResult?.success ? undefined : 'Failed to send upload link',
       };
     } else {
       response.uploadLink = {
@@ -208,21 +211,8 @@ export async function GET(request: NextRequest) {
     if (q && q.trim()) {
       const { searchProjects } = await import('@/lib/project-search');
       const { projects, fuzzy } = await searchProjects(authContext.organizationId, q, limit);
-      const toLoc = (loc: any) =>
-        loc?.address ? { address: loc.address, unit: loc.unit || null } : null;
       return NextResponse.json({
-        projects: projects.map(p => ({
-          id: p._id.toString(),
-          name: p.name,
-          customerName: p.customerName,
-          customerCompanyName: p.customerCompanyName || null,
-          customerEmail: p.customerEmail || null,
-          phone: p.phone || null,
-          origin: toLoc(p.origin),
-          destination: toLoc(p.destination),
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-        })),
+        projects: projects.map(serializeExternalProject),
         fuzzy,
         pagination: { page: 1, limit, total: projects.length, totalPages: 1, hasMore: false },
       });
@@ -251,23 +241,8 @@ export async function GET(request: NextRequest) {
       .select('name customerName customerCompanyName customerEmail phone origin destination metadata.createdViaApi createdAt updatedAt')
       .lean<any[]>();
 
-    const toLocation = (loc: any) =>
-      loc?.address ? { address: loc.address, unit: loc.unit || null } : null;
-
     return NextResponse.json({
-      projects: projects.map(p => ({
-        id: p._id.toString(),
-        name: p.name,
-        customerName: p.customerName,
-        customerCompanyName: p.customerCompanyName || null,
-        customerEmail: p.customerEmail || null,
-        phone: p.phone || null,
-        origin: toLocation(p.origin),
-        destination: toLocation(p.destination),
-        createdViaApi: !!p.metadata?.createdViaApi,
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-      })),
+      projects: projects.map(serializeExternalProject),
       pagination: {
         page,
         limit,

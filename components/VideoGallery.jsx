@@ -1021,27 +1021,26 @@ export default function VideoGallery({ projectId, projectName, onVideoSelect, re
 
       console.log(`🎬 Downloading video: ${video.originalName} (ID: ${video._id}) from project: ${projectId}`);
       
-      // For S3 videos, get the stream URL and download directly
+      // For S3 videos, fetch a fresh download-disposition URL (?download=1) —
+      // NOT the cached inline playback URL — so the browser downloads it to
+      // disk instead of opening it in a tab.
       if (video.s3RawFile) {
-        // Get or fetch the stream URL
-        let streamUrl = streamUrls[video._id]?.url;
-        if (!streamUrl) {
-          console.log('🎬 Fetching stream URL for download...');
-          streamUrl = await getStreamUrl(video._id, video._type);
+        const typeParam = video._type === 'self_serve_recording' ? '&type=self_serve_recording' : '';
+        const streamResponse = await fetch(
+          `/api/projects/${projectId}/videos/${video._id}/stream?download=1${typeParam}`,
+          { signal: downloadAbortController.signal }
+        );
+        if (!streamResponse.ok) {
+          throw new Error('Failed to get download URL');
         }
-        
+        const { streamUrl } = await streamResponse.json();
         if (!streamUrl) {
           throw new Error('Failed to get download URL');
         }
-        
-        console.log(`🎬 Using stream URL for download: ${streamUrl}`);
-        
-        // Open the S3 URL directly in a new tab for download
-        // This avoids CORS issues with redirects
+
         const a = document.createElement('a');
         a.href = streamUrl;
         a.download = video.originalName;
-        a.target = '_blank'; // Open in new tab to avoid navigation issues
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
