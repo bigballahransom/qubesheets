@@ -6,20 +6,44 @@ import Branding from '@/models/Branding';
 import OrganizationSettings from '@/models/OrganizationSettings';
 import ScheduledVideoCall from '@/models/ScheduledVideoCall';
 import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
-import { updateCalendarEvent, deleteCalendarEvent } from '@/lib/google-calendar';
+import {
+  updateCalendarEvent,
+  deleteCalendarEvent,
+  createVideoCallCalendarEvents,
+  hasGoogleCalendarConnected,
+} from '@/lib/google-calendar';
+import { generateJoinUrl } from '@/lib/video-call-tokens';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
 import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
+import { findOrgMemberByUserId } from '@/lib/external-org-members';
 
 const DEFAULT_VIDEO_CALL_CONFIRMATION_SMS = `Hi {customerName}, your video call with {companyName} has been rescheduled to {scheduledDate} at {scheduledTime}.
 
 Join here: {videoCallLink}`;
 
+const DEFAULT_VIDEO_CALL_INVITE = `Video Inventory Call
+
+Join here: {videoCallLink}
+
+Please join the video call at the scheduled time. Make sure you're in a well-lit area and have access to the rooms/items we'll be reviewing.
+
+---
+Scheduled by {agentName}
+{companyName}`;
+
+/** Calendar events live on the assignee's calendar — but only when the
+ *  assignee is a real Clerk user, not an 'api-created'/'form-scheduled'
+ *  sentinel. Falls back to the caller for legacy calls. */
+const calendarOwnerFor = (call: { userId?: string }, fallbackUserId: string) =>
+  call.userId?.startsWith('user_') ? call.userId : fallbackUserId;
+
+// Single-pass so values are inserted literally: customer-supplied text like
+// "$'" would otherwise be interpreted as a JS replacement pattern, and values
+// containing "{placeholder}" would get chain-expanded by later iterations.
 function replaceTemplateVariables(template: string, variables: Record<string, string>): string {
-  let result = template;
-  for (const [key, value] of Object.entries(variables)) {
-    result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
-  }
-  return result;
+  return template.replace(/\{(\w+)\}/g, (match, key) =>
+    Object.hasOwn(variables, key) ? variables[key] : match
+  );
 }
 
 // GET /api/projects/[projectId]/scheduled-calls/[callId] - Get a specific scheduled call
@@ -106,38 +130,87 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { scheduledFor, timezone } = body;
+    const { scheduledFor, timezone, assignedUserId } = body;
 
-    if (!scheduledFor) {
+    const wantsReschedule = scheduledFor !== undefined && scheduledFor !== null;
+    const wantsReassign = typeof assignedUserId === 'string' && assignedUserId.length > 0;
+
+    if (!wantsReschedule && !wantsReassign) {
       return NextResponse.json(
-        { error: 'New scheduled time is required' },
+        { error: 'Provide a new scheduled time and/or an assigned user' },
         { status: 400 }
       );
     }
 
-    const newScheduledDate = new Date(scheduledFor);
-    if (newScheduledDate <= new Date()) {
-      return NextResponse.json(
-        { error: 'Scheduled time must be in the future' },
-        { status: 400 }
-      );
+    // Validate the timezone BEFORE any write — Intl throws on invalid IANA
+    // names, and the formatters below run after the save, so an unvalidated
+    // value would persist a half-applied update and then 500.
+    if (timezone) {
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+      } catch {
+        return NextResponse.json(
+          { error: 'timezone must be a valid IANA timezone like America/Chicago' },
+          { status: 400 }
+        );
+      }
     }
+
+    let newScheduledDate: Date | null = null;
+    if (wantsReschedule) {
+      newScheduledDate = new Date(scheduledFor);
+      if (isNaN(newScheduledDate.getTime()) || newScheduledDate <= new Date()) {
+        return NextResponse.json(
+          { error: 'Scheduled time must be a valid time in the future' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Resolve the new assignee — must be a member of the org.
+    let assignee: { userId: string; name: string; email: string } | null = null;
+    if (wantsReassign) {
+      if (!organizationId) {
+        return NextResponse.json(
+          { error: 'Reassigning calls requires an organization account' },
+          { status: 400 }
+        );
+      }
+      const member = await findOrgMemberByUserId(organizationId, assignedUserId);
+      if (!member) {
+        return NextResponse.json(
+          { error: 'The assigned user is not a member of this organization' },
+          { status: 400 }
+        );
+      }
+      assignee = { userId: member.userId, name: member.name, email: member.email };
+    }
+
+    const previousUserId = scheduledCall.userId;
+    const reassigned = !!assignee && assignee.userId !== previousUserId;
 
     // Store previous date for activity log
     const previousScheduledFor = new Date(scheduledCall.scheduledFor);
 
-    // Update the scheduled call
-    const updatedTimezone = timezone || scheduledCall.timezone;
-    scheduledCall.scheduledFor = newScheduledDate;
-    scheduledCall.timezone = updatedTimezone;
-    await scheduledCall.save();
-
-    // Get branding for company name
+    // Get branding for company name (read before the save so a failure here
+    // can't leave a committed update without its follow-on side effects)
     const brandingQuery = authContext.isPersonalAccount
       ? { userId: authContext.userId }
       : { organizationId: authContext.organizationId };
     const branding = await Branding.findOne(brandingQuery);
     const companyName = branding?.companyName || 'Your Company';
+
+    // Update the scheduled call
+    const updatedTimezone = timezone || scheduledCall.timezone;
+    const effectiveScheduledDate = newScheduledDate || previousScheduledFor;
+    if (newScheduledDate) {
+      scheduledCall.scheduledFor = newScheduledDate;
+      scheduledCall.timezone = updatedTimezone;
+    }
+    if (reassigned) {
+      scheduledCall.userId = assignee!.userId;
+    }
+    await scheduledCall.save();
 
     // Format date and time
     const dateFormatter = new Intl.DateTimeFormat('en-US', {
@@ -153,8 +226,8 @@ export async function PATCH(
       hour12: true,
     });
 
-    const formattedDate = dateFormatter.format(newScheduledDate);
-    const formattedTime = timeFormatter.format(newScheduledDate);
+    const formattedDate = dateFormatter.format(effectiveScheduledDate);
+    const formattedTime = timeFormatter.format(effectiveScheduledDate);
 
     const videoCallLink = `${process.env.NEXT_PUBLIC_APP_URL}/video-call/${scheduledCall.roomId}?projectId=${projectId}&name=${encodeURIComponent(scheduledCall.customerName)}`;
 
@@ -162,59 +235,153 @@ export async function PATCH(
       customerName: scheduledCall.customerName,
       companyName,
       projectName: project.name,
+      agentName: assignee?.name || companyName,
       videoCallLink,
       scheduledDate: formattedDate,
       scheduledTime: formattedTime,
     };
 
-    // Send reschedule SMS
-    const smsMessage = replaceTemplateVariables(DEFAULT_VIDEO_CALL_CONFIRMATION_SMS, templateVariables);
+    // Send reschedule SMS — only when the time actually changed. A pure
+    // reassignment is invisible to the customer (same time, same join link).
+    if (newScheduledDate) {
+      const smsMessage = replaceTemplateVariables(DEFAULT_VIDEO_CALL_CONFIRMATION_SMS, templateVariables);
+      try {
+        await twilioClient.messages.create({
+          body: smsMessage,
+          from: twilioPhoneNumber,
+          to: scheduledCall.customerPhone,
+        });
+      } catch (twilioError) {
+        console.error('Failed to send reschedule SMS:', twilioError);
+      }
+    }
+
+    // Google Calendar sync (best-effort). Events live on the assignee's
+    // calendar, not the caller's. Mirrors the external API twin in
+    // lib/external-video-call-actions.ts (updateVideoCallAction).
     try {
-      await twilioClient.messages.create({
-        body: smsMessage,
-        from: twilioPhoneNumber,
-        to: scheduledCall.customerPhone,
-      });
-    } catch (twilioError) {
-      console.error('Failed to send reschedule SMS:', twilioError);
+      if (reassigned) {
+        // Remove events from the previous assignee's calendar
+        const hadCustomerEvent = !!scheduledCall.customerCalendarEventId;
+        if (previousUserId?.startsWith('user_')) {
+          if (scheduledCall.googleCalendarEventId) {
+            await deleteCalendarEvent(previousUserId, scheduledCall.googleCalendarEventId);
+          }
+          if (scheduledCall.customerCalendarEventId) {
+            await deleteCalendarEvent(previousUserId, scheduledCall.customerCalendarEventId);
+          }
+        }
+        scheduledCall.googleCalendarEventId = undefined;
+        scheduledCall.customerCalendarEventId = undefined;
+
+        // Recreate on the new assignee's calendar. The agent event is always
+        // recreated (org-internal, no email); the customer invite is only
+        // MOVED, never introduced — if the call was scheduled without a
+        // calendar invite, reassigning must not email the customer one.
+        if (await hasGoogleCalendarConnected(assignee!.userId)) {
+          const agentJoinLink = generateJoinUrl(callId, 'agent', effectiveScheduledDate);
+          const customerJoinLink = generateJoinUrl(callId, 'customer', effectiveScheduledDate);
+          const agentDescription = `Video Inventory Call with ${scheduledCall.customerName}
+
+Click here to join: ${agentJoinLink}
+
+Customer: ${scheduledCall.customerName}
+Phone: ${scheduledCall.customerPhone}
+${scheduledCall.customerEmail ? `Email: ${scheduledCall.customerEmail}` : ''}
+
+---
+${formattedDate} at ${formattedTime}`;
+
+          const orgSettings = organizationId
+            ? await OrganizationSettings.findOne({ organizationId })
+            : null;
+          const inviteTemplate = orgSettings?.videoCallInviteTemplate || DEFAULT_VIDEO_CALL_INVITE;
+          const endTime = new Date(effectiveScheduledDate.getTime() + 30 * 60 * 1000);
+
+          const calendarResult = await createVideoCallCalendarEvents({
+            userId: assignee!.userId,
+            agentTitle: `Video Call: ${scheduledCall.customerName}`,
+            customerTitle: `${companyName} Video Call`,
+            agentDescription,
+            customerDescription: replaceTemplateVariables(inviteTemplate, {
+              ...templateVariables,
+              videoCallLink: customerJoinLink,
+            }),
+            startTime: effectiveScheduledDate,
+            endTime,
+            customerEmail: hadCustomerEvent ? scheduledCall.customerEmail || undefined : undefined,
+            timezone: updatedTimezone,
+          });
+          if (calendarResult.agentEventId) {
+            scheduledCall.googleCalendarEventId = calendarResult.agentEventId;
+          }
+          if (calendarResult.customerEventId) {
+            scheduledCall.customerCalendarEventId = calendarResult.customerEventId;
+          }
+        }
+        await scheduledCall.save();
+      } else if (newScheduledDate) {
+        // Same assignee, new time — move their existing events
+        const calendarOwner = calendarOwnerFor(scheduledCall, userId);
+        const endTime = new Date(newScheduledDate.getTime() + 30 * 60 * 1000);
+        if (scheduledCall.googleCalendarEventId) {
+          await updateCalendarEvent({
+            userId: calendarOwner,
+            eventId: scheduledCall.googleCalendarEventId,
+            startTime: newScheduledDate,
+            endTime,
+            timezone: updatedTimezone,
+          });
+        }
+        if (scheduledCall.customerCalendarEventId) {
+          await updateCalendarEvent({
+            userId: calendarOwner,
+            eventId: scheduledCall.customerCalendarEventId,
+            startTime: newScheduledDate,
+            endTime,
+            timezone: updatedTimezone,
+          });
+        }
+      }
+    } catch (calendarError) {
+      console.error('Failed to sync calendar events for call update:', calendarError);
     }
 
-    // Update Google Calendar event if exists
-    if (scheduledCall.googleCalendarEventId) {
-      const endTime = new Date(newScheduledDate.getTime() + 30 * 60 * 1000);
-      await updateCalendarEvent({
-        userId,
-        eventId: scheduledCall.googleCalendarEventId,
-        startTime: newScheduledDate,
-        endTime,
+    // Log activity — reschedules only (reassignment isn't a customer-visible event)
+    if (newScheduledDate) {
+      await logVideoCallScheduled(projectId, 'rescheduled', {
+        customerName: scheduledCall.customerName,
+        customerPhone: scheduledCall.customerPhone,
+        roomId: scheduledCall.roomId,
+        scheduledFor: newScheduledDate,
         timezone: updatedTimezone,
+        previousScheduledFor,
       });
     }
 
-    // Log activity
-    await logVideoCallScheduled(projectId, 'rescheduled', {
-      customerName: scheduledCall.customerName,
-      customerPhone: scheduledCall.customerPhone,
-      roomId: scheduledCall.roomId,
-      scheduledFor: newScheduledDate,
-      timezone: updatedTimezone,
-      previousScheduledFor,
-    });
-
-    // Move the mirrored SmartMoving survey (no-op if not linked; never throws)
-    await syncVirtualCallSurveyToSmartMoving({
-      callId: scheduledCall._id.toString(),
-      action: 'reschedule',
-    });
+    // Update the mirrored SmartMoving survey. A reassignment re-resolves the
+    // estimator from the new assignee — but only when the linked SmartMoving
+    // opportunity has no estimator/sales rep of its own, since that always
+    // wins (lib/smartmoving/surveys.ts resolveSurveyEstimator). No-op if not
+    // linked; never throws.
+    if (newScheduledDate || reassigned) {
+      await syncVirtualCallSurveyToSmartMoving({
+        callId: scheduledCall._id.toString(),
+        action: 'reschedule',
+      });
+    }
 
     return NextResponse.json({
       success: true,
       scheduledCall: {
         _id: scheduledCall._id,
-        scheduledFor: newScheduledDate,
+        scheduledFor: scheduledCall.scheduledFor,
         timezone: updatedTimezone,
         status: scheduledCall.status,
+        userId: scheduledCall.userId,
+        ...(assignee && { assignedTo: assignee }),
       },
+      reassigned,
     });
   } catch (error) {
     console.error('Error rescheduling call:', error);
@@ -277,9 +444,15 @@ export async function DELETE(
     scheduledCall.status = 'cancelled';
     await scheduledCall.save();
 
-    // Delete Google Calendar event if exists
+    // Delete Google Calendar events if they exist — from the assignee's
+    // calendar (where they were created), including the customer's invite so
+    // the cancelled call doesn't linger on their calendar.
+    const calendarOwner = calendarOwnerFor(scheduledCall, userId);
     if (scheduledCall.googleCalendarEventId) {
-      await deleteCalendarEvent(userId, scheduledCall.googleCalendarEventId);
+      await deleteCalendarEvent(calendarOwner, scheduledCall.googleCalendarEventId);
+    }
+    if (scheduledCall.customerCalendarEventId) {
+      await deleteCalendarEvent(calendarOwner, scheduledCall.customerCalendarEventId);
     }
 
     // Send cancellation SMS if requested

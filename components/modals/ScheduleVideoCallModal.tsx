@@ -5,6 +5,17 @@ import { useUser } from '@clerk/nextjs';
 import { X, Video, Calendar, Loader2, Clock, Phone, Mail, User, Globe, ChevronDown, FileText, Link2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
+// Org member shape returned by GET /api/organizations/members.
+interface OrgMember {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  identifier: string;
+}
+
+const memberDisplayName = (m: OrgMember) =>
+  [m.firstName, m.lastName].filter(Boolean).join(' ') || m.identifier || 'Team member';
+
 // A SmartMoving lead or opportunity the user can link the project to before
 // scheduling (same selection shape the SmartMoving sync modal produces).
 interface SmartMovingRecordOption {
@@ -139,6 +150,11 @@ export default function ScheduleVideoCallModal({
   const [scheduledTime, setScheduledTime] = useState('');
   const [addToCalendar, setAddToCalendar] = useState(true);
 
+  // Assignee state — defaults to the signed-in user; org members can assign
+  // the call (and its calendar event) to a teammate instead.
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
+  const [assignedUserId, setAssignedUserId] = useState('');
+
   // Timezone state
   const [timezone, setTimezone] = useState('');
   const [showTimezoneSelect, setShowTimezoneSelect] = useState(false);
@@ -191,6 +207,45 @@ export default function ScheduleVideoCallModal({
       setTimezone(savedTimezone || detectedTimezone);
     }
   }, [isOpen, user, detectedTimezone]);
+
+  // Load org members for the assignee picker (403 on personal accounts —
+  // the picker just doesn't render and the call stays assigned to the user).
+  // Keyed on user.id (not the user object: Clerk re-emits a new identity on
+  // session touches, which would silently snap the picker back to "(me)"),
+  // and only initializes the selection when unset for the same reason.
+  const userId = user?.id;
+  useEffect(() => {
+    if (!isOpen || !userId) return;
+    setAssignedUserId((prev) => prev || userId);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/organizations/members');
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data)) setOrgMembers(data);
+      } catch {
+        // No picker on failure — scheduling is unaffected
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, userId]);
+
+  // Signed-in user first, then teammates alphabetically.
+  const sortedMembers = useMemo(() => {
+    return [...orgMembers].sort((a, b) => {
+      if (a.userId === user?.id) return -1;
+      if (b.userId === user?.id) return 1;
+      return memberDisplayName(a).localeCompare(memberDisplayName(b));
+    });
+  }, [orgMembers, user?.id]);
+
+  const assigneeIsSelf = !user || !assignedUserId || assignedUserId === user.id;
+  const assigneeMember = orgMembers.find((m) => m.userId === assignedUserId);
+  const assigneeName = assigneeMember ? memberDisplayName(assigneeMember) : '';
+  const assigneeFirstName = assigneeMember?.firstName || assigneeName;
 
   // Set default date/time and pre-fill form when modal opens
   useEffect(() => {
@@ -276,8 +331,14 @@ export default function ScheduleVideoCallModal({
         const selectionParams = smSelected
           ? `&targetType=${smSelected.targetType}&targetId=${smSelected.targetId}`
           : '';
+        // The survey lands on the ASSIGNEE's SmartMoving calendar (when the
+        // opportunity has no estimator of its own), so check their windows.
+        const assigneeParam =
+          assignedUserId && assignedUserId !== user?.id
+            ? `&assignedUserId=${encodeURIComponent(assignedUserId)}`
+            : '';
         const res = await fetch(
-          `/api/smartmoving/survey-availability?projectId=${projectId}&date=${scheduledDate}${selectionParams}`
+          `/api/smartmoving/survey-availability?projectId=${projectId}&date=${scheduledDate}${selectionParams}${assigneeParam}`
         );
         if (!res.ok || cancelled) return;
         const data = await res.json();
@@ -299,7 +360,7 @@ export default function ScheduleVideoCallModal({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, smRelevant, scheduledDate, smSelected, projectId]);
+  }, [isOpen, smRelevant, scheduledDate, smSelected, projectId, assignedUserId]);
 
   // Does the proposed survey slot overlap a booked window?
   const smConflict = useMemo(() => {
@@ -456,8 +517,11 @@ export default function ScheduleVideoCallModal({
           customerEmail: customerEmail.trim() || undefined,
           scheduledFor: scheduledFor.toISOString(),
           timezone: timezone || detectedTimezone,
-          addToCalendar: addToCalendar && hasCalendarConnected,
+          // For teammates we can't check their Google connection client-side;
+          // the server checks and reports back in `calendar`.
+          addToCalendar: assigneeIsSelf ? addToCalendar && hasCalendarConnected : addToCalendar,
           calendarDescription: calendarDescription.trim() || undefined,
+          assignedUserId: assignedUserId || undefined,
           smartMoving: smSelected
             ? {
                 targetType: smSelected.targetType,
@@ -476,6 +540,11 @@ export default function ScheduleVideoCallModal({
 
       const result = await response.json();
       toast.success('Video call scheduled! SMS confirmation sent.');
+      if (result.calendar?.requested && result.calendar.assigneeConnected === false) {
+        toast.warning(
+          `${assigneeIsSelf ? 'You haven’t' : `${assigneeName || 'The assignee'} hasn’t`} connected Google Calendar, so no calendar event was created.`
+        );
+      }
       if (result.smartMovingLink && !result.smartMovingLink.linked) {
         toast.warning(
           `Call scheduled, but linking to SmartMoving failed: ${result.smartMovingLink.message || result.smartMovingLink.error || 'unknown error'}`
@@ -508,6 +577,7 @@ export default function ScheduleVideoCallModal({
     setScheduledDate('');
     setScheduledTime('');
     setAddToCalendar(true);
+    setAssignedUserId('');
     setShowTimezoneSelect(false);
     setCalendarDescription('');
     setShowDescriptionEdit(false);
@@ -711,6 +781,36 @@ export default function ScheduleVideoCallModal({
               </p>
             </div>
 
+            {/* Assign To — only shown when there are teammates to pick from */}
+            {sortedMembers.length > 1 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <User className="inline w-4 h-4 mr-1" />
+                  Assign To
+                </label>
+                <div className="relative">
+                  <select
+                    value={assignedUserId}
+                    onChange={(e) => setAssignedUserId(e.target.value)}
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer"
+                  >
+                    {sortedMembers.map((member) => (
+                      <option key={member.userId} value={member.userId}>
+                        {memberDisplayName(member)}
+                        {member.userId === user?.id ? ' (me)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+                {!assigneeIsSelf && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    This call will show as {assigneeName}&apos;s on the dashboard
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Date and Time */}
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -796,7 +896,27 @@ export default function ScheduleVideoCallModal({
             {/* Add to Calendar checkbox */}
             {!checkingCalendar && (
               <div className="bg-gray-50 p-4 rounded-lg">
-                {hasCalendarConnected ? (
+                {!assigneeIsSelf ? (
+                  // Assigned to a teammate: we can't check their Google
+                  // connection client-side — the server checks and the toast
+                  // reports if no event could be created.
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={addToCalendar}
+                      onChange={(e) => setAddToCalendar(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-700">
+                        Add to {assigneeFirstName}&apos;s Google Calendar
+                      </span>
+                      <p className="text-xs text-gray-500">
+                        Creates the event on their calendar if they&apos;ve connected Google Calendar
+                      </p>
+                    </div>
+                  </label>
+                ) : hasCalendarConnected ? (
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
                       type="checkbox"
@@ -833,7 +953,7 @@ export default function ScheduleVideoCallModal({
             )}
 
             {/* Calendar event description - only show when adding to calendar */}
-            {addToCalendar && hasCalendarConnected && customerEmail && (
+            {addToCalendar && (!assigneeIsSelf || hasCalendarConnected) && customerEmail && (
               <div>
                 <button
                   type="button"
@@ -874,11 +994,17 @@ export default function ScheduleVideoCallModal({
               <ul className="text-xs text-green-700 space-y-1">
                 <li>- SMS confirmation sent to customer</li>
                 <li>- Reminder SMS 1 hour and 15 min before</li>
-                {addToCalendar && hasCalendarConnected && (
-                  <li>- Event added to your Google Calendar</li>
+                {addToCalendar && (!assigneeIsSelf || hasCalendarConnected) && (
+                  <li>
+                    - Event added to {assigneeIsSelf ? 'your' : `${assigneeFirstName}'s`} Google
+                    Calendar
+                  </li>
                 )}
-                {customerEmail && addToCalendar && hasCalendarConnected && (
+                {customerEmail && addToCalendar && (!assigneeIsSelf || hasCalendarConnected) && (
                   <li>- Calendar invite sent to customer</li>
+                )}
+                {!assigneeIsSelf && (
+                  <li>- Call assigned to {assigneeName}</li>
                 )}
                 {(smStatus === 'linked' || smWasLinked || smSelected) && (
                   <li>- Virtual survey added to the SmartMoving calendar</li>

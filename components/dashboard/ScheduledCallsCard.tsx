@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   User,
+  UserCog,
   Filter,
   XCircle,
 } from 'lucide-react';
@@ -60,6 +61,12 @@ export default function ScheduledCallsCard() {
     sendCancellationSms,
     setSendCancellationSms,
     isCancelling,
+    showReassignModal,
+    setShowReassignModal,
+    reassignUserId,
+    setReassignUserId,
+    isReassigning,
+    handleReassign,
     actionCall,
     setActionCall,
     statusFilter,
@@ -75,6 +82,11 @@ export default function ScheduledCallsCard() {
     navigator.clipboard.writeText(text);
     toast.success(`${label} copied to clipboard`);
   };
+
+  // Reassignment targets: current org members only. The full `agents` list
+  // also carries attribution-only entries (departed members, 'Unknown'
+  // sentinels from API/form-scheduled calls) that the server would reject.
+  const assignableAgents = agents.filter((agent) => agent.isMember);
 
   return (
     <>
@@ -259,6 +271,20 @@ export default function ScheduledCallsCard() {
                             >
                               <CalendarIcon className="h-4 w-4 text-amber-600" />
                             </button>
+                            {assignableAgents.some((a) => a.id !== call.userId) && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setReassignUserId('');
+                                  setActionCall(call);
+                                  setShowReassignModal(true);
+                                }}
+                                className="p-1.5 hover:bg-blue-100 rounded-full transition-colors"
+                                title="Reassign"
+                              >
+                                <UserCog className="h-4 w-4 text-blue-600" />
+                              </button>
+                            )}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -333,9 +359,26 @@ export default function ScheduledCallsCard() {
                 </div>
               </div>
 
-              {/* Scheduled By */}
+              {/* Assigned To */}
               <div className="bg-slate-50 rounded-lg p-4 overflow-hidden">
-                <h4 className="text-sm font-medium text-gray-500 mb-2">Scheduled By</h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium text-gray-500">Assigned To</h4>
+                  {selectedCall.status === 'scheduled' &&
+                    assignableAgents.some((a) => a.id !== selectedCall.userId) && (
+                    <button
+                      onClick={() => {
+                        setReassignUserId('');
+                        setActionCall(selectedCall);
+                        setSelectedCall(null);
+                        setShowReassignModal(true);
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer flex items-center gap-1"
+                    >
+                      <UserCog className="h-3.5 w-3.5" />
+                      Reassign
+                    </button>
+                  )}
+                </div>
                 <p className="font-medium text-gray-900 flex items-center gap-2">
                   <User className="h-4 w-4 flex-shrink-0 text-blue-500" />
                   <span className="truncate">{selectedCall.agent?.name || selectedCall.agent?.email || 'Unknown'}</span>
@@ -538,6 +581,97 @@ export default function ScheduledCallsCard() {
                 <button
                   onClick={() => {
                     setShowRescheduleModal(false);
+                    setActionCall(null);
+                  }}
+                  className="px-4 py-2.5 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reassign Modal */}
+      <Dialog open={showReassignModal} onOpenChange={(open) => {
+        setShowReassignModal(open);
+        if (!open) setActionCall(null);
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCog className="h-5 w-5 text-blue-500" />
+              Reassign Virtual Call
+            </DialogTitle>
+          </DialogHeader>
+
+          {actionCall && (
+            <div className="space-y-4">
+              {/* Call details */}
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="font-medium text-gray-900">{actionCall.customerName}</p>
+                <p className="text-sm text-gray-500">
+                  {new Date(actionCall.scheduledFor).toLocaleDateString('en-US', {
+                    weekday: 'long', month: 'long', day: 'numeric'
+                  })} at {formatCallTime(actionCall.scheduledFor, selectedTimezone)}
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  Currently assigned to {actionCall.agent?.name || 'Unknown'}
+                </p>
+              </div>
+
+              {/* New assignee */}
+              <div>
+                <label className="text-sm font-medium text-gray-700">Reassign to</label>
+                <select
+                  value={reassignUserId}
+                  onChange={(e) => setReassignUserId(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer"
+                >
+                  <option value="" disabled>
+                    Select a team member...
+                  </option>
+                  {assignableAgents.map((agent) => (
+                    <option
+                      key={agent.id}
+                      value={agent.id}
+                      disabled={agent.id === actionCall.userId}
+                    >
+                      {agent.name}
+                      {agent.id === actionCall.userId ? ' (current)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* What happens */}
+              <div className="bg-blue-50 rounded-lg p-3 text-sm">
+                <p className="text-blue-700">
+                  The call moves to their dashboard and Google Calendar. The customer keeps the
+                  same time and join link — no SMS is sent.
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={handleReassign}
+                  disabled={!reassignUserId || reassignUserId === actionCall.userId || isReassigning}
+                  className="flex-1 bg-blue-500 hover:bg-blue-600 text-white py-2.5 rounded-lg font-medium disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isReassigning ? (
+                    <>
+                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Reassigning...
+                    </>
+                  ) : (
+                    'Confirm Reassign'
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowReassignModal(false);
                     setActionCall(null);
                   }}
                   className="px-4 py-2.5 border rounded-lg hover:bg-gray-50 cursor-pointer"

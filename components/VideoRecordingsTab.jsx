@@ -319,15 +319,16 @@ const VideoRecordingsTab = ({
     try {
       toast('Preparing download...', { duration: 2000 });
       
-      // Fetch signed download URL
-      const response = await fetch(`/api/projects/${projectId}/video-recordings/${recording._id}/stream`);
-      
+      // ?download=1 → attachment-disposition URL so the cross-origin S3 link
+      // downloads to disk instead of opening/playing in a new tab.
+      const response = await fetch(`/api/projects/${projectId}/video-recordings/${recording._id}/stream?download=1`);
+
       if (!response.ok) {
         throw new Error('Failed to get download URL');
       }
-      
+
       const data = await response.json();
-      
+
       const link = document.createElement('a');
       link.href = data.streamUrl;
       link.download = `recording-${recording.roomId}-${new Date(recording.createdAt).toLocaleDateString()}.mp4`;

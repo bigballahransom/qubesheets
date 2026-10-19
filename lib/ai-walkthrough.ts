@@ -20,9 +20,13 @@ export interface AiWalkthroughHighlight {
   relatedItem?: string;
 }
 
+/** Partner-facing capture type. Internal recording.source 'livekit' (virtual
+ *  calls) is surfaced as 'video_call' — we never expose vendor/infra names. */
+export type AiWalkthroughCaptureType = 'video_call' | 'self_serve';
+
 export interface AiWalkthroughRecording {
   recordingId: string;
-  source?: 'livekit' | 'self_serve' | 'video_call';
+  source?: AiWalkthroughCaptureType;
   recordedAt?: Date;
   summary: string;
   packingNotes: string;
@@ -66,7 +70,8 @@ export async function collectAiWalkthroughRecordings(
 
     results.push({
       recordingId: rec._id.toString(),
-      source: rec.source,
+      // Map the internal vendor value to a product capture type.
+      source: rec.source === 'self_serve' ? 'self_serve' : 'video_call',
       recordedAt: rec.createdAt,
       summary,
       packingNotes,

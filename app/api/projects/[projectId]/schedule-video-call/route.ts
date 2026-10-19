@@ -12,6 +12,7 @@ import { generateJoinUrl } from '@/lib/video-call-tokens';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
 import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
 import { linkProjectToSmartMovingRecord } from '@/lib/smartmoving/linkProject';
+import { findOrgMemberByUserId } from '@/lib/external-org-members';
 import { randomBytes } from 'crypto';
 
 // Default templates
@@ -35,12 +36,13 @@ function generateRoomId(projectId: string): string {
   return `${projectId}-${timestamp}-${randomStr}`;
 }
 
+// Single-pass so values are inserted literally: customer-supplied text like
+// "$'" would otherwise be interpreted as a JS replacement pattern, and values
+// containing "{placeholder}" would get chain-expanded by later iterations.
 function replaceTemplateVariables(template: string, variables: Record<string, string>): string {
-  let result = template;
-  for (const [key, value] of Object.entries(variables)) {
-    result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
-  }
-  return result;
+  return template.replace(/\{(\w+)\}/g, (match, key) =>
+    Object.hasOwn(variables, key) ? variables[key] : match
+  );
 }
 
 function formatPhoneForTwilio(phone: string): string {
@@ -87,6 +89,11 @@ export async function POST(
       timezone = 'America/New_York',
       addToCalendar = false,
       calendarDescription,
+      // Clerk userId of the team member the call is assigned to. Defaults to
+      // the scheduling user; must be a member of the org when it's someone
+      // else. The assignee owns the call (dashboard, calendar, SmartMoving
+      // estimator matching).
+      assignedUserId,
       // Optional SmartMoving record picked in the modal when the project
       // wasn't linked yet: { targetType: 'lead'|'opportunity', targetId,
       // customerId?, quoteNumber? } — same shape the sync modal produces.
@@ -108,6 +115,40 @@ export async function POST(
         { error: 'Scheduled time must be in the future' },
         { status: 400 }
       );
+    }
+
+    // Validate the timezone before any write — Intl throws on invalid IANA
+    // names, and the date formatters run after the call is created, so an
+    // unvalidated value would create a ghost call (no SMS, no calendar) and 500.
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+    } catch {
+      return NextResponse.json(
+        { error: 'timezone must be a valid IANA timezone like America/Chicago' },
+        { status: 400 }
+      );
+    }
+
+    // Resolve the assignee. Defaults to the scheduling user; assigning to
+    // someone else requires an org account and the target must be a member.
+    let assigneeUserId = userId;
+    let assigneeName: string | null = null;
+    if (assignedUserId && typeof assignedUserId === 'string' && assignedUserId !== userId) {
+      if (!organizationId) {
+        return NextResponse.json(
+          { error: 'Assigning calls to another user requires an organization account' },
+          { status: 400 }
+        );
+      }
+      const member = await findOrgMemberByUserId(organizationId, assignedUserId);
+      if (!member) {
+        return NextResponse.json(
+          { error: 'The assigned user is not a member of this organization' },
+          { status: 400 }
+        );
+      }
+      assigneeUserId = member.userId;
+      assigneeName = member.name;
     }
 
     // Link the project to the selected SmartMoving record first, so the
@@ -170,17 +211,22 @@ export async function POST(
       }
     }
 
-    // Get user/agent info
-    const clerk = await clerkClient();
-    const user = await clerk.users.getUser(userId);
-    const agentName = user.firstName
-      ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`
-      : user.emailAddresses[0]?.emailAddress || 'Agent';
+    // Agent name for templates: the assignee (falls back to the scheduling
+    // user's own name when self-assigned).
+    let agentName = assigneeName;
+    if (!agentName) {
+      const clerk = await clerkClient();
+      const user = await clerk.users.getUser(userId);
+      agentName = user.firstName
+        ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`
+        : user.emailAddresses[0]?.emailAddress || 'Agent';
+    }
 
     // Create the scheduled video call record first (we need the _id for tokens)
     const scheduledCall = await ScheduledVideoCall.create({
       projectId,
-      userId,
+      userId: assigneeUserId,
+      ...(assigneeUserId !== userId && { createdByUserId: userId }),
       organizationId: organizationId || undefined,
       scheduledFor: scheduledDate,
       timezone,
@@ -252,13 +298,15 @@ export async function POST(
       // Don't fail the whole request, just log it
     }
 
-    // Create Google Calendar events if requested and user has calendar connected
+    // Create Google Calendar events if requested and the assignee has their
+    // calendar connected — events always live on the assignee's calendar.
     let googleCalendarEventId: string | null = null;
     let customerCalendarEventId: string | null = null;
+    let assigneeCalendarConnected: boolean | null = null;
 
     if (addToCalendar) {
-      const hasCalendar = await hasGoogleCalendarConnected(userId);
-      if (hasCalendar) {
+      assigneeCalendarConnected = await hasGoogleCalendarConnected(assigneeUserId);
+      if (assigneeCalendarConnected) {
         // Separate titles for agent and customer events
         const agentTitle = `Video Call: ${customerName}`;
         const customerTitle = `${companyName} Video Call`;
@@ -299,7 +347,7 @@ ${companyName}`;
         const endTime = new Date(scheduledDate.getTime() + 30 * 60 * 1000);
 
         const calendarResult = await createVideoCallCalendarEvents({
-          userId,
+          userId: assigneeUserId,
           agentTitle,
           customerTitle,
           agentDescription,
@@ -354,6 +402,13 @@ ${companyName}`;
         customerJoinLink,
         googleCalendarEventId,
         customerCalendarEventId,
+        assignedTo: { userId: assigneeUserId, name: agentName },
+      },
+      calendar: {
+        requested: !!addToCalendar,
+        assigneeConnected: assigneeCalendarConnected,
+        agentEventCreated: !!googleCalendarEventId,
+        customerEventCreated: !!customerCalendarEventId,
       },
       ...(smartMovingLink && { smartMovingLink }),
       ...(smartMovingSurvey && { smartMovingSurvey }),

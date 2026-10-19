@@ -27,8 +27,7 @@ import { scheduleVideoCallAction } from '@/lib/external-video-call-actions';
  *     "customerEmail": "jane@example.com", // Optional
  *     "projectId": "507f1f77bcf86cd799439011", // Optional - attach to existing project. If omitted, a new project is created.
  *     "assignedToEmail": "rep@company.com", // Optional - assign the call to an org member by their login email
- *     "assignedToUserId": "user_2abc...",   // Optional - assign by user id (takes precedence over assignedToEmail)
- *     "smartMovingOpportunityId": "uuid"    // Optional - link the project to this SmartMoving opportunity so the call is mirrored onto the SmartMoving calendar as a virtual survey
+ *     "assignedToUserId": "user_2abc..."    // Optional - assign by user id (takes precedence over assignedToEmail)
  *   }
  *
  * If the assignee can't be matched to an org member, the call is still created
@@ -165,20 +164,21 @@ export async function GET(request: NextRequest) {
     const videoCalls = calls.map((call: any) => {
       const id = call._id.toString();
       const scheduledForDate = new Date(call.scheduledFor);
-      const isAssigned = call.userId && call.userId !== 'api-created';
+      // Only surface an assignee that resolves to a real current org member.
+      // Anything else (the 'api-created'/'form-scheduled' internal sentinels, a
+      // departed user) is reported as unassigned rather than echoing a raw
+      // internal userId.
+      const resolvedAssignee = call.userId ? memberById.get(call.userId) : undefined;
       return {
         id,
         projectId: call.projectId.toString(),
-        roomId: call.roomId,
         scheduledFor: call.scheduledFor,
         timezone: call.timezone,
         status: call.status,
         customerName: call.customerName,
         customerPhone: call.customerPhone,
         customerEmail: call.customerEmail,
-        assignedTo: isAssigned
-          ? memberById.get(call.userId) || { userId: call.userId, name: null, email: null }
-          : null,
+        assignedTo: resolvedAssignee || null,
         startedAt: call.startedAt,
         completedAt: call.completedAt,
         agentJoinLink: generateJoinUrl(id, 'agent', scheduledForDate),
@@ -219,7 +219,7 @@ function getDocs() {
           conditionallyRequired: {
             customerName: 'Required when projectId is not provided',
           },
-          optional: ['projectId', 'customerEmail', 'timezone', 'assignedToEmail', 'assignedToUserId', 'smartMovingOpportunityId'],
+          optional: ['projectId', 'customerEmail', 'timezone', 'assignedToEmail', 'assignedToUserId'],
           example: {
             customerName: 'Jane Doe',
             customerPhone: '5551234567',
@@ -235,10 +235,6 @@ function getDocs() {
               'Assign by user id (from GET /api/external/users). Takes precedence over assignedToEmail if both are provided.',
             note: 'If the assignee cannot be matched, the call is still created unassigned and the failure is reported in the response `assignment` object. When matched, the rep appears on the call in-app, the confirmation SMS uses their name for {agentName}, a newly created project is assigned to them, and a Google Calendar event is created if they have their calendar connected.',
           },
-          smartMoving: {
-            smartMovingOpportunityId:
-              "Link the project to this SmartMoving opportunity (requires the organization's SmartMoving integration). When linked, the call is mirrored onto the SmartMoving calendar as a virtual survey, and reschedules/cancellations update it. If the opportunity cannot be found, the call is still created and the failure is reported in the response `smartMoving` object.",
-          },
         },
         response: {
           status: 201,
@@ -248,7 +244,6 @@ function getDocs() {
             videoCall: {
               id: '507f1f77bcf86cd799439011',
               projectId: '507f1f77bcf86cd799439012',
-              roomId: '507f1f77bcf86cd799439012-1700000000000-abcd1234',
               scheduledFor: '2024-12-31T20:00:00.000Z',
               timezone: 'America/New_York',
               status: 'scheduled',

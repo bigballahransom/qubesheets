@@ -1,8 +1,14 @@
 // app/api/processing-complete/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { getAuth } from '@clerk/nextjs/server';
 import simpleRealTime from '@/lib/simple-realtime';
 import connectMongoDB from '@/lib/mongodb';
+import {
+  enqueueInventoryWebhooks,
+  drainDueDeliveries,
+  DELIVERY_HOLDOFF_MS,
+} from '@/lib/outbound-webhooks';
 
 // Type definitions for pending SSE events
 interface SSEEventData {
@@ -21,6 +27,11 @@ interface SSEEventData {
 declare global {
   var pendingSSEEvents: Map<string, SSEEventData[]> | undefined;
 }
+
+// The after() hook below sleeps through the webhook coalescing holdoff
+// (~30s) and then performs outbound sends — make sure the function outlives
+// it regardless of the deployment's default duration limit.
+export const maxDuration = 120;
 
 // In-memory store for Server-Sent Events connections with connection limit
 const sseConnections = new Map<string, ReadableStreamDefaultController>();
@@ -109,6 +120,43 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString(),
       webhookId: `webhook-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     });
+
+    // OUTBOUND PARTNER WEBHOOKS: an analysis pipeline just finished writing
+    // this project's inventory — the partner-facing "inventory is ready"
+    // moment. Enqueue one coalesced delivery per subscribed endpoint, then
+    // drain after the holdoff (after() runs post-response on Fluid Compute;
+    // the cron sweeper catches anything dropped here). Never blocks or fails
+    // the railway callback.
+    //
+    // Shared-secret gate: x-webhook-source is a static, guessable string and
+    // this route is public, so without this an unauthenticated caller who
+    // knows a projectId could fire signed partner webhooks at will. Tolerant
+    // rollout — enforced only once PROCESSING_COMPLETE_SECRET is set here AND
+    // the railway services send the matching x-webhook-secret header; while
+    // unset, behavior is unchanged. (The legacy SSE path stays header-gated
+    // only, as before.)
+    const outboundWebhookAuthorized =
+      !process.env.PROCESSING_COMPLETE_SECRET ||
+      request.headers.get('x-webhook-secret') === process.env.PROCESSING_COMPLETE_SECRET;
+    if (success && projectId && outboundWebhookAuthorized) {
+      after(async () => {
+        try {
+          const enqueued = await enqueueInventoryWebhooks({
+            projectId,
+            source: webhookSource || 'unknown',
+          });
+          if (enqueued > 0) {
+            await new Promise(resolve => setTimeout(resolve, DELIVERY_HOLDOFF_MS + 5000));
+            const counts = await drainDueDeliveries({ projectId });
+            if (counts.attempted > 0) {
+              console.log(`📤 outbound-webhooks: project=${projectId}`, counts);
+            }
+          }
+        } catch (err) {
+          console.error('outbound-webhooks: trigger failed (non-fatal):', err);
+        }
+      });
+    }
 
     // SIMPLE REAL-TIME: Complete processing immediately
     if (success && projectId) {

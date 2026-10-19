@@ -27,6 +27,16 @@ export async function GET(
 
     // Await params as required in Next.js 15+
     const { projectId, recordingId } = await params;
+    // ?download=1 → force a browser download via Content-Disposition:
+    // attachment on the presigned URL (cross-origin S3 links otherwise open in
+    // a tab). Playback requests omit it and get the default inline behavior.
+    const wantsDownload = new URL(request.url).searchParams.get('download') === '1';
+    const downloadParams = wantsDownload
+      ? {
+          ResponseContentType: 'video/mp4',
+          ResponseContentDisposition: `attachment; filename="recording-${recordingId}.mp4"`,
+        }
+      : {};
 
     // First try to find as LiveKit VideoRecording
     const liveKitRecording = await VideoRecording.findOne({
@@ -124,7 +134,8 @@ export async function GET(
       const signedUrl = s3.getSignedUrl('getObject', {
         Bucket: bucket,
         Key: s3Key,
-        Expires: 3600
+        Expires: 3600,
+        ...downloadParams
       });
 
       return NextResponse.json({
@@ -175,7 +186,8 @@ export async function GET(
       const signedUrl = s3.getSignedUrl('getObject', {
         Bucket: s3Bucket || process.env.AWS_BUCKET_NAME || process.env.AWS_S3_BUCKET_NAME,
         Key: s3Key,
-        Expires: 3600
+        Expires: 3600,
+        ...downloadParams
       });
 
       return NextResponse.json({

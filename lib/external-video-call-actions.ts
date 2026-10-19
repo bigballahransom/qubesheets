@@ -7,7 +7,10 @@
 // handlers delegate here; responses are byte-identical to the pre-extraction
 // routes. Each function takes a verified { organizationId, apiKeyId } auth
 // context - callers own authentication; these functions own everything else
-// (validation, SMS, calendar sync, SmartMoving mirror, activity log).
+// (validation, SMS, calendar sync, the invisible org-side SmartMoving calendar
+// mirror, activity log). NOTE: nothing SmartMoving is exposed to the API caller
+// — no SmartMoving input is accepted and no SmartMoving status is returned; the
+// mirror is a server-side no-op unless the project is already linked in-app.
 
 import { NextResponse } from 'next/server';
 import { randomBytes } from 'crypto';
@@ -21,7 +24,6 @@ import { client as twilioClient, twilioPhoneNumber } from '@/lib/twilio';
 import { generateJoinUrl } from '@/lib/video-call-tokens';
 import { logVideoCallScheduled } from '@/lib/activity-logger';
 import { syncVirtualCallSurveyToSmartMoving } from '@/lib/smartmoving/surveys';
-import { linkProjectToOpportunityId } from '@/lib/smartmoving/linkProject';
 import {
   createVideoCallCalendarEvents,
   deleteCalendarEvent,
@@ -101,7 +103,6 @@ export async function scheduleVideoCallAction(
       timezone = 'America/New_York',
       assignedToEmail,
       assignedToUserId,
-      smartMovingOpportunityId,
     } = data;
 
     // customerName is substituted verbatim into the org-branded SMS template:
@@ -213,37 +214,6 @@ export async function scheduleVideoCallAction(
     const projectId = project._id.toString();
     const resolvedCustomerName = customerName?.trim() || project.customerName || project.name;
 
-    // Optional SmartMoving link (lenient like assignee resolution - a bad
-    // opportunity id doesn't block scheduling, it's reported in the response)
-    let smartMovingLink:
-      | { requested: string; linked: boolean; error?: string; message?: string }
-      | undefined;
-    if (smartMovingOpportunityId && typeof smartMovingOpportunityId === 'string') {
-      try {
-        const linkResult = await linkProjectToOpportunityId({
-          projectId,
-          organizationId: authContext.organizationId,
-          opportunityId: smartMovingOpportunityId.trim(),
-        });
-        smartMovingLink = linkResult.success
-          ? { requested: smartMovingOpportunityId, linked: true }
-          : {
-              requested: smartMovingOpportunityId,
-              linked: false,
-              error: linkResult.error,
-              message: linkResult.message,
-            };
-      } catch (linkError) {
-        console.error('Failed to link project to SmartMoving opportunity:', linkError);
-        smartMovingLink = {
-          requested: smartMovingOpportunityId,
-          linked: false,
-          error: 'link_failed',
-          message: linkError instanceof Error ? linkError.message : 'Failed to link',
-        };
-      }
-    }
-
     // Get branding for company name (org-scoped only - external API has no user context)
     const branding = await Branding.findOne({ organizationId: authContext.organizationId });
     const companyName = branding?.companyName || 'Your Company';
@@ -323,8 +293,10 @@ export async function scheduleVideoCallAction(
         }
       );
     } catch (twilioError: any) {
+      // Log the raw vendor error for ourselves; never pass it to the partner
+      // (it names the SMS vendor and carries account-level detail).
       console.error('Failed to send confirmation SMS:', twilioError);
-      smsError = twilioError?.message || 'Failed to send SMS';
+      smsError = 'Failed to send SMS';
     }
 
     // Create Google Calendar events for the assigned rep (best-effort)
@@ -387,9 +359,11 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
       timezone,
     }, { userId: 'api-created', organizationId: authContext.organizationId });
 
-    // Mirror onto the SmartMoving calendar (no-op unless the org is
-    // integrated and the project is linked; never throws)
-    const smartMovingSurvey = await syncVirtualCallSurveyToSmartMoving({
+    // Mirror onto the org's SmartMoving calendar if (and only if) the project
+    // is already SmartMoving-linked — a no-op otherwise, and it never throws.
+    // This is an invisible org-side side effect (identical to the in-app
+    // scheduling path); nothing about SmartMoving is exposed to the API caller.
+    await syncVirtualCallSurveyToSmartMoving({
       callId: scheduledCallId,
       action: 'create',
     });
@@ -401,7 +375,6 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
         videoCall: {
           id: scheduledCallId,
           projectId,
-          roomId,
           scheduledFor: scheduledDate,
           timezone,
           status: 'scheduled',
@@ -421,7 +394,6 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
             calendarEventCreated: !!googleCalendarEventId,
           },
         }),
-        ...(smartMovingLink && { smartMoving: { ...smartMovingLink, survey: smartMovingSurvey } }),
         confirmationSms: {
           attempted: true,
           delivered: smsDelivered,
@@ -678,7 +650,7 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
         smsDelivered = true;
       } catch (twilioError: any) {
         console.error('Failed to send reschedule SMS:', twilioError);
-        smsError = twilioError?.message || 'Failed to send SMS';
+        smsError = 'Failed to send SMS';
       }
 
       await logVideoCallScheduled(call.projectId.toString(), 'rescheduled', {
@@ -711,7 +683,6 @@ ${templateVariables.scheduledDate} at ${templateVariables.scheduledTime}`;
       videoCall: {
         id,
         projectId: call.projectId.toString(),
-        roomId: call.roomId,
         scheduledFor: call.scheduledFor,
         timezone: updatedTimezone,
         status: call.status,
@@ -786,7 +757,7 @@ export async function cancelVideoCallAction(
         smsDelivered = true;
       } catch (twilioError: any) {
         console.error('Failed to send cancellation SMS:', twilioError);
-        smsError = twilioError?.message || 'Failed to send SMS';
+        smsError = 'Failed to send SMS';
       }
     }
 

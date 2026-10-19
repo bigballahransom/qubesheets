@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 
 /** Bump to today's date (YYYY-MM-DD) whenever a new entry is added. */
-export const LATEST_UPDATES_VERSION = '2026-10-15';
+export const LATEST_UPDATES_VERSION = '2026-10-19';
 
 /** localStorage key holding the last LATEST_UPDATES_VERSION the user viewed. */
 export const UPDATES_SEEN_STORAGE_KEY = 'qs-updates-last-seen';
@@ -59,6 +59,20 @@ export const updates: MonthGroup[] = [
   {
     month: 'October 2026',
     entries: [
+      {
+        tag: 'New',
+        icon: Users,
+        title: 'Assign virtual calls to teammates',
+        description:
+          'When scheduling a virtual call you can now pick which team member it belongs to — it defaults to you, and the calendar event lands on the assigned person\'s Google Calendar. Need to hand a call off later? Open it on the dashboard and hit Reassign: the call moves to their schedule and calendar, while the customer keeps the same time and join link with no extra messages.',
+      },
+      {
+        tag: 'New',
+        icon: Link2,
+        title: 'Webhooks: push inventories to your other systems automatically',
+        description:
+          'If you connect Qube Sheets to a CRM or another internal tool through our API, that system no longer has to keep checking whether a survey is done. Add a webhook endpoint in Settings → Webhooks and we\'ll send the full inventory to your system the moment an AI walkthrough finishes — whether it came from a virtual call, a self-serve walkthrough, or customer photo and video uploads. Deliveries are signed so your system can verify they\'re really from us, retried automatically if your endpoint is briefly down, and there\'s a one-click test event to check your setup. Admins only; see the API docs page for integration details.',
+      },
       {
         tag: 'Fixed',
         icon: Video,

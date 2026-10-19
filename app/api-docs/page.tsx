@@ -74,6 +74,7 @@ const ENDPOINTS: Endpoint[] = [
   "projects": [
     {
       "id": "665f1f77bcf86cd799439011",
+      "url": "https://app.qubesheets.com/projects/665f1f77bcf86cd799439011",
       "name": "Sarah Johnson",
       "customerName": "Sarah Johnson",
       "customerCompanyName": null,
@@ -81,7 +82,6 @@ const ENDPOINTS: Endpoint[] = [
       "phone": "+15551234567",
       "origin": { "address": "123 Main St, Austin, TX", "unit": "4B" },
       "destination": { "address": "456 Oak Ave, Dallas, TX", "unit": null },
-      "createdViaApi": true,
       "createdAt": "2026-10-01T15:21:08.000Z",
       "updatedAt": "2026-10-11T19:02:44.000Z"
     }
@@ -115,7 +115,6 @@ const ENDPOINTS: Endpoint[] = [
     "customerName": "John Smith",
     "phone": "+15551234567",
     "createdAt": "2026-10-12T10:30:00.000Z",
-    "organizationId": "org_abc123",
     "uploadLink": {
       "attempted": true,
       "sent": true,
@@ -183,8 +182,6 @@ const ENDPOINTS: Endpoint[] = [
       "specialHandling": null,
       "boxRecommendation": null,
       "tags": [],
-      "aiGenerated": true,
-      "sourceType": "self_serve",
       "createdAt": "2026-10-11T18:40:12.000Z",
       "updatedAt": "2026-10-11T19:02:44.000Z"
     }
@@ -389,7 +386,6 @@ const ENDPOINTS: Endpoint[] = [
   "videoCall": {
     "id": "65f1b2c3d4e5f6a7b8c9d0e1",
     "projectId": "65f1b2c3d4e5f6a7b8c9d0e2",
-    "roomId": "65f1b2c3d4e5f6a7b8c9d0e2-1717000000000-a1b2c3d4",
     "scheduledFor": "2026-06-15T20:00:00.000Z",
     "timezone": "America/New_York",
     "status": "scheduled",
@@ -448,8 +444,7 @@ const ENDPOINTS: Endpoint[] = [
     {
       "id": "65f1b2c3d4e5f6a7b8c9d0e1",
       "projectId": "65f1b2c3d4e5f6a7b8c9d0e2",
-      "roomId": "65f1b2c3d4e5f6a7b8c9d0e2-1717000000000-a1b2c3d4",
-      "scheduledFor": "2026-06-15T20:00:00.000Z",
+        "scheduledFor": "2026-06-15T20:00:00.000Z",
       "timezone": "America/New_York",
       "status": "scheduled",
       "customerName": "Jane Doe",
@@ -490,7 +485,6 @@ const ENDPOINTS: Endpoint[] = [
   "videoCall": {
     "id": "65f1b2c3d4e5f6a7b8c9d0e1",
     "projectId": "65f1b2c3d4e5f6a7b8c9d0e2",
-    "roomId": "65f1b2c3d4e5f6a7b8c9d0e2-1717000000000-a1b2c3d4",
     "scheduledFor": "2026-06-15T20:00:00.000Z",
     "timezone": "America/New_York",
     "status": "scheduled",
@@ -650,6 +644,59 @@ const ENDPOINTS: Endpoint[] = [
 }`,
   },
 
+  // ── Media ───────────────────────────────────────────────────────────────
+  {
+    id: 'media',
+    group: 'Media',
+    method: 'GET',
+    path: '/api/external/projects/{projectId}/media',
+    title: 'Get media',
+    description: "Every photo and video captured for a project, each with a signed download URL. Built for programmatic sync: GET each url to download the raw file bytes and store them in your own system (e.g. attach to the matching record in your CRM). Vault reference media is excluded. Same shape as the webhook payload's media section.",
+    notes: [
+      'Each url is a plain GET that returns the actual file bytes (image/jpeg, video/mp4) - no login and no API key needed on the download itself; the signed url is the credential. Stream the response straight into your own storage.',
+      'Download URLs expire 24 hours after this response (urlsExpireAt) - call this endpoint again any time for fresh ones, and never store the URLs themselves as permanent references (store the downloaded files, keyed by the stable media id).',
+      'Each URL streams the file directly from the API (photos and videos alike); video URLs support HTTP Range requests for seeking, resuming, and chunked downloads of large recordings.',
+      'videos covers both customer uploads (source customer_upload) and call/self-serve recordings (source video_call / self_serve).',
+    ],
+    params: [
+      { name: 'projectId', kind: 'path', required: true, description: 'Project id.' },
+    ],
+    requests: (b) => [
+      {
+        title: '1. List media',
+        code: `curl "${b}/api/external/projects/{projectId}/media" \\\n  -H "Authorization: Bearer ${PLACEHOLDER_KEY}"`,
+      },
+      {
+        title: '2. Download a file (no auth header needed)',
+        code: `# take any url from the response above and save the bytes:\ncurl -L -o living-room.jpg "${b}/api/external/media/eyJvIjoi..."`,
+      },
+    ],
+    responseSample: `{
+  "projectId": "665f1f77bcf86cd799439011",
+  "images": [
+    {
+      "id": "665f2d44bcf86cd799439dd1",
+      "name": "living-room.jpg",
+      "contentType": "image/jpeg",
+      "sizeBytes": 245120,
+      "capturedAt": "2026-10-11T18:05:44.000Z",
+      "url": "https://app.qubesheets.com/api/external/media/eyJvIjoi..."
+    }
+  ],
+  "videos": [
+    {
+      "id": "665f2b11bcf86cd799439bb2",
+      "name": null,
+      "source": "self_serve",
+      "durationSec": 184,
+      "recordedAt": "2026-10-11T18:12:00.000Z",
+      "url": "https://app.qubesheets.com/api/external/media/eyJvIjoi..."
+    }
+  ],
+  "urlsExpireAt": "2026-10-12T18:30:00.000Z"
+}`,
+  },
+
   // ── Team ────────────────────────────────────────────────────────────────
   {
     id: 'list-users',
@@ -676,7 +723,7 @@ const ENDPOINTS: Endpoint[] = [
       "firstName": "Jane",
       "lastName": "Smith",
       "name": "Jane Smith",
-      "role": "org:member"
+      "role": "member"
     }
   ],
   "total": 1
@@ -855,7 +902,7 @@ export default function ApiDocsPage() {
       },
       { rootMargin: '-96px 0px -75% 0px' }
     );
-    const ids = ['getting-started', ...ENDPOINTS.map((e) => e.id), 'errors'];
+    const ids = ['getting-started', ...ENDPOINTS.map((e) => e.id), 'webhooks', 'errors'];
     ids.forEach((id) => {
       const el = document.getElementById(id);
       if (el) observer.observe(el);
@@ -959,6 +1006,7 @@ export default function ApiDocsPage() {
             {searching && visibleEndpoints.length === 0 && (
               <p className="px-2.5 text-xs text-gray-400">No matches</p>
             )}
+            {!searching && navLink('webhooks', 'Webhooks')}
             {!searching && navLink('mcp', 'AI assistants (MCP)')}
             {!searching && navLink('errors', 'Errors')}
           </div>
@@ -1096,6 +1144,168 @@ export default function ApiDocsPage() {
               <p className="text-sm font-medium text-gray-900">No endpoints match "{query}"</p>
               <p className="mt-1 text-xs text-gray-500">Try a method (GET, POST), a path, or a keyword like inventory or link.</p>
             </div>
+          )}
+
+          {/* Webhooks */}
+          {!searching && (
+          <section id="webhooks" className="scroll-mt-24 rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-950/5">
+            <h2 className="text-lg font-semibold mb-1">Webhooks</h2>
+            <p className="text-sm text-gray-600">
+              Get inventory pushed to you instead of polling{' '}
+              <code className="text-xs font-mono bg-gray-100 px-1 py-0.5 rounded">GET /api/external/projects/{'{projectId}'}/inventory</code>.
+              Whenever an AI analysis finishes writing a project's inventory - from virtual call
+              walkthroughs, self-serve walkthroughs, or customer photo/video uploads - Qube Sheets
+              POSTs an <code className="text-xs font-mono bg-gray-100 px-1 py-0.5 rounded">inventory.ready</code>{' '}
+              event to each of your active endpoints. You choose per endpoint which sections ride in the{' '}
+              <code className="text-xs font-mono bg-gray-100 px-1 py-0.5 rounded">data</code> field:
+              inventory summary and items (on by default, same shapes as Get inventory), review links
+              (customerReview + crewReview URLs), AI summary, packing notes, customer statements
+              (same shapes as their GET endpoints), and media.
+            </p>
+            <ul className="mt-3 space-y-1">
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                Set up from the app: Settings, then Webhooks (org admins only - endpoints are not
+                configurable through this API). Each endpoint gets a signing secret (whsec_...)
+                shown once at creation; store it somewhere safe.
+              </li>
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                initialInventory is true on the first successful inventory delivery for a project to
+                your endpoint - use it to tell "new inventory" from "inventory updated".
+              </li>
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                The project block carries the customer name, contact details, and addresses — the
+                same object shape List projects returns — so you can match the delivery to your own
+                records without a follow-up API call.
+              </li>
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                Bursts are coalesced: when many analyses finish close together (say a 30-photo
+                batch), you get one delivery about 25 seconds after the last one completes, and
+                every section is rebuilt from current data at send time.
+              </li>
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                The media section lists every non-vault photo and video with a signed download URL.
+                GET each url to download the raw file bytes (no API key needed on the download —
+                the signed url is the credential) and store them in your own app, keyed by the
+                stable media id. URLs expire 24 hours after the delivery (data.media.urlsExpireAt)
+                and die immediately if the endpoint is deleted, so download promptly (or re-list via
+                GET /api/external/projects/:id/media for fresh URLs) and never treat the URLs
+                themselves as permanent references.
+              </li>
+              <li className="text-xs text-gray-600 flex gap-1.5">
+                <span className="text-blue-500 mt-0.5">•</span>
+                Verify your receiver anytime by sending a webhook.test event (same envelope, sample
+                data) from the settings page.
+              </li>
+            </ul>
+            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+              <div className="space-y-3 min-w-0">
+                <CodeBlock
+                  title="Request headers"
+                  code={`POST https://your-server.example.com/qubesheets-webhook\nContent-Type: application/json\nUser-Agent: QubeSheets-Webhooks/1.0\nX-Qubesheets-Event: inventory.ready\nX-Qubesheets-Delivery: 665f3c99bcf86cd799439cc3\nX-Qubesheets-Timestamp: 1791745390\nX-Qubesheets-Signature: v1=bfc7dd7386a075c7d6c0607c6d11a6a81dfbe4537a99606830d459cc961aee20`}
+                />
+                <CodeBlock
+                  title="Verify the signature (Node.js)"
+                  code={`const crypto = require('crypto');
+
+function verifyQubeSheetsSignature(req, rawBody, secret) {
+  const timestamp = req.headers['x-qubesheets-timestamp'];
+  const signature = req.headers['x-qubesheets-signature']; // "v1=<hex>"
+  const expected = 'v1=' + crypto.createHmac('sha256', secret)
+    .update(\`\${timestamp}.\${rawBody}\`)
+    .digest('hex');
+  const fresh = Math.abs(Date.now() / 1000 - Number(timestamp)) < 300;
+  // timingSafeEqual throws on length mismatch — compare lengths first so a
+  // missing or malformed header returns false instead of crashing.
+  const a = Buffer.from(signature || '');
+  const b = Buffer.from(expected);
+  return fresh && a.length === b.length && crypto.timingSafeEqual(a, b);
+}`}
+                />
+              </div>
+              <div className="min-w-0">
+                <CodeBlock
+                  title="Example delivery"
+                  lang="json"
+                  code={`{
+  "id": "evt_665f3c99bcf86cd799439cc3",
+  "event": "inventory.ready",
+  "createdAt": "2026-10-11T19:03:10.000Z",
+  "initialInventory": true,
+  "project": {
+    "id": "665f1f77bcf86cd799439011",
+    "url": "https://app.qubesheets.com/projects/665f1f77bcf86cd799439011",
+    "name": "Sarah Johnson",
+    "customerName": "Sarah Johnson",
+    "customerCompanyName": null,
+    "customerEmail": "sarah@example.com",
+    "phone": "+15551234567",
+    "origin": { "address": "123 Main St, Austin, TX", "unit": "4B" },
+    "destination": { "address": "456 Oak Ave, Dallas, TX", "unit": null },
+    "createdAt": "2026-10-01T15:21:08.000Z",
+    "updatedAt": "2026-10-11T19:02:44.000Z"
+  },
+  "data": {
+    "projectId": "665f1f77bcf86cd799439011",
+    "projectName": "Sarah Johnson",
+    "summary": {
+      "rowCount": 42,
+      "totalItems": 67,
+      "totalBoxes": 25,
+      "totalCuft": 812,
+      "totalWeightLbs": 5684,
+      "totalCuftWithoutRecommendedBoxes": 744,
+      "totalWeightLbsWithoutRecommendedBoxes": 5684,
+      "totalRooms": 6
+    },
+    "items": [
+      {
+        "id": "665f2a88bcf86cd799439aa1",
+        "name": "Sofa",
+        "description": "3-seat leather sofa",
+        "room": "Living Room",
+        "category": "Furniture",
+        "quantity": 1,
+        "going": "going",
+        "goingQuantity": 1,
+        "cuftPerUnit": 50,
+        "totalCuft": 50,
+        "weightPerUnitLbs": 350,
+        "totalWeightLbs": 350,
+        "itemType": "furniture",
+        "isBox": false,
+        "fragile": false,
+        "packedBy": "N/A",
+        "specialHandling": null,
+        "boxRecommendation": null,
+        "tags": [],
+        "createdAt": "2026-10-11T18:40:12.000Z",
+        "updatedAt": "2026-10-11T19:02:44.000Z"
+      }
+    ]
+  }
+}`}
+                />
+              </div>
+            </div>
+            <p className="mt-4 text-xs text-gray-500">
+              The signature is an HMAC-SHA256 over{' '}
+              <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">{'<timestamp>.<raw request body>'}</code>{' '}
+              keyed with your endpoint's signing secret - always verify against the raw bytes before
+              parsing the JSON. Respond with any 2xx within 10 seconds and do heavy work
+              asynchronously; a non-2xx response or timeout is retried up to 5 attempts total with
+              backoff of roughly 1m, 5m, 15m, then 1h (timing is approximate). After 10 consecutive
+              failed deliveries the endpoint is disabled automatically - re-enable it from Settings.
+              Deliveries can occasionally arrive out of order or more than once, so dedupe on{' '}
+              <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">X-Qubesheets-Delivery</code>{' '}
+              (or the envelope id) and treat each payload as a full snapshot of the current
+              inventory - last write wins.
+            </p>
+          </section>
           )}
 
           {/* MCP server */}

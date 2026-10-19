@@ -36,6 +36,14 @@ import {
   Sparkles
 } from 'lucide-react';
 import { LATEST_UPDATES_VERSION, UPDATES_SEEN_STORAGE_KEY } from '@/lib/updatesLog';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import {
+  useProjectReplica,
+  upsertProject,
+  toSlimProject,
+  patchProject as patchProjectInStore,
+  type SlimProject,
+} from '@/lib/project-store';
 import { toast } from 'sonner';
 import { Sidebar } from '@/components/ui/sidebar';
 import { Separator } from '@/components/ui/separator';
@@ -56,51 +64,17 @@ import CreateCustomerModal from '@/components/modals/CreateCustomerModal';
 import SettingsSection from '@/components/SettingsSection';
 import { FormNotificationBell } from '@/components/FormNotificationBell';
 
-interface Project {
-  _id: string;
-  name: string;
-  description?: string;
-  customerName?: string;
-  phone?: string;
-  updatedAt: string;
-  userId: string; // Creator of the project
-  isArchived?: boolean;
-  assignedTo?: {
-    userId: string;
-    name: string;
-    assignedAt: string;
-  };
-  metadata?: {
-    smartMovingOpportunityId?: string;
-    smartMovingSyncedAt?: string;
-    source?: string;
-    supermoveSync?: {
-      synced: boolean;
-      syncedAt: string;
-    };
-    chariotSync?: {
-      synced: boolean;
-      syncedAt: string;
-    };
-    moverbaseSync?: {
-      synced: boolean;
-      syncedAt: string;
-    };
-    moverightSync?: {
-      synced: boolean;
-      syncedAt: string;
-    };
-  };
-}
+// Slim replica rows from lib/project-store — the sidebar never loads full
+// project documents.
+type Project = SlimProject;
 
 // ── Sidebar persistence ────────────────────────────────────────────────
 // The sidebar is mounted PER PAGE (every page.tsx renders its own
 // <AppSidebar />), so client-side navigation unmounts and remounts it.
-// Without these, every project click reset the filter to "My Projects",
-// snapped the list back to the top, and flashed the loading skeleton while
-// projects refetched. Filter choice is durable (localStorage); scroll is
-// per-tab (sessionStorage); the project list is cached at module scope and
-// revalidated in the background on each mount.
+// Without these, every project click reset the filter to "My Projects" and
+// snapped the list back to the top. Filter choice is durable (localStorage);
+// scroll is per-tab (sessionStorage); the project list itself lives in the
+// shared replica (lib/project-store) which delta-syncs on each mount.
 const FILTER_STORAGE_KEY = 'qs-sidebar-project-filter';
 const SCROLL_STORAGE_KEY = 'qs-sidebar-scroll';
 
@@ -113,8 +87,6 @@ interface OrgMember {
   identifier: string;
 }
 
-let projectsCache: Project[] | null = null;
-
 function readStoredFilter(): ProjectFilter {
   if (typeof window === 'undefined') return 'all';
   try {
@@ -125,9 +97,6 @@ function readStoredFilter(): ProjectFilter {
 }
 
 export function AppSidebar() {
-  const [projects, setProjects] = useState<Project[]>(() => projectsCache ?? []);
-  const [loading, setLoading] = useState(() => projectsCache === null);
-  const [error, setError] = useState<string | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [dispatchExpanded, setDispatchExpanded] = useState(false);
   const [automationsExpanded, setAutomationsExpanded] = useState(false);
@@ -145,9 +114,17 @@ export function AppSidebar() {
 
   const router = useRouter();
   const pathname = usePathname();
-  const { isLoaded, userId } = useAuth();
+  const { isLoaded, userId, orgId } = useAuth();
   const { organization } = useOrganization();
   const { user } = useUser();
+
+  // Shared project replica: slim rows, disk-cached, delta-synced on every
+  // mount (throttled). Also feeds the header search.
+  const replicaScope = isLoaded && userId ? orgId || userId : null;
+  const replica = useProjectReplica(replicaScope);
+  const projects = replica.projects;
+  const loading = replica.status === 'idle' || replica.status === 'loading';
+  const error = replica.status === 'error' ? replica.error : null;
 
   // Check if organization has CRM add-on
   const hasCrmAddOn = (organization?.publicMetadata as any)?.subscription?.addOns?.includes('crm');
@@ -157,13 +134,6 @@ export function AppSidebar() {
   const isQubeAdmin = !!user?.emailAddresses?.some(
     (e) => e.emailAddress?.toLowerCase() === 'andrew@qubesheets.com'
   );
-  
-  // Fetch projects when auth state loads initially
-  useEffect(() => {
-    if (isLoaded && userId) {
-      fetchProjects();
-    }
-  }, [isLoaded, userId]);
 
   // "What's New" unread dot: show until this device has viewed the latest
   // updates version; visiting /updates marks it seen.
@@ -195,52 +165,11 @@ export function AppSidebar() {
     })();
   }, [organization, hasCrmAddOn]);
   
-  // Listen for organization data refresh events
-  useEffect(() => {
-    const handleDataRefresh = (event: Event) => {
-      // Same-org updates (e.g. archiving a project) pass silent: true — the
-      // list is already patched in place, so revalidate without the skeleton.
-      if ((event as CustomEvent).detail?.silent) {
-        fetchProjects();
-        return;
-      }
-      console.log('Refreshing projects data due to organization change');
-      // Drop the cache — a silent revalidate would keep showing the OLD
-      // org's projects until the fetch lands. A skeleton is honest here.
-      projectsCache = null;
-      setProjects([]);
-      fetchProjects();
-    };
-    
-    window.addEventListener('organizationDataRefresh', handleDataRefresh);
-    return () => window.removeEventListener('organizationDataRefresh', handleDataRefresh);
-  }, []);
+  // organizationDataRefresh and projectSyncStatusChanged events are handled
+  // inside lib/project-store (registered once per session) — org switches
+  // reset the replica, silent refreshes delta-sync it, and CRM sync badges
+  // patch in place.
 
-  // Listen for CRM sync completions and patch the affected project's
-  // metadata in place, so the synced icon appears instantly. Deliberately
-  // NOT a refetch: organizationDataRefresh drops the cache and flashes the
-  // skeleton (right for org switches, jarring after a sync), and a refetch
-  // would also re-sort the list mid-view.
-  useEffect(() => {
-    const handleSyncStatusChanged = (event: Event) => {
-      const detail = (event as CustomEvent).detail as
-        | { projectId?: string; metadataPatch?: Record<string, unknown> }
-        | undefined;
-      if (!detail?.projectId || !detail.metadataPatch) return;
-      const patch = (list: Project[]) =>
-        list.map((p) =>
-          p._id === detail.projectId
-            ? { ...p, metadata: { ...p.metadata, ...detail.metadataPatch } }
-            : p
-        );
-      if (projectsCache) projectsCache = patch(projectsCache);
-      setProjects((prev) => patch(prev));
-    };
-
-    window.addEventListener('projectSyncStatusChanged', handleSyncStatusChanged);
-    return () => window.removeEventListener('projectSyncStatusChanged', handleSyncStatusChanged);
-  }, []);
-  
   // Set active project based on URL
   useEffect(() => {
     if (pathname) {
@@ -256,38 +185,8 @@ export function AppSidebar() {
     }
   }, [pathname, activeProjectId]);
   
-  const fetchProjects = async () => {
-    // With a warm cache this is a silent background revalidate — the list
-    // renders immediately from cache and updates in place when fresh data
-    // lands, instead of flashing the skeleton on every navigation.
-    if (projectsCache === null) setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/projects');
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch projects');
-      }
-
-      const data = await response.json();
-      projectsCache = data;
-      setProjects(data);
-    } catch (err) {
-      console.error('Error fetching projects:', err);
-      // Only surface the error when there's nothing usable to show — a
-      // failed background refresh shouldn't blank out a working list.
-      if (projectsCache === null) setError('Failed to load projects. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleProjectCreated = (project: Project) => {
-    // Add the new project to the list
-    const next = [project, ...projects];
-    projectsCache = next;
-    setProjects(next);
+    upsertProject(toSlimProject(project));
   };
 
   const changeProjectFilter = (filter: ProjectFilter) => {
@@ -317,13 +216,6 @@ export function AppSidebar() {
     router.push(`/projects/${projectId}`);
   };
 
-  const patchProject = (projectId: string, changes: Partial<Project>) => {
-    const patch = (list: Project[]) =>
-      list.map((p) => (p._id === projectId ? { ...p, ...changes } : p));
-    if (projectsCache) projectsCache = patch(projectsCache);
-    setProjects((prev) => patch(prev));
-  };
-
   const setArchived = async (project: Project, isArchived: boolean) => {
     try {
       const response = await fetch(`/api/projects/${project._id}`, {
@@ -332,7 +224,7 @@ export function AppSidebar() {
         body: JSON.stringify({ isArchived }),
       });
       if (!response.ok) throw new Error(`Failed to update project: ${response.status}`);
-      patchProject(project._id, { isArchived });
+      patchProjectInStore(project._id, { isArchived });
       // Let the projects page / search revalidate without flashing our skeleton
       window.dispatchEvent(new CustomEvent('organizationDataRefresh', { detail: { silent: true } }));
       return true;
@@ -374,7 +266,7 @@ export function AppSidebar() {
       }
 
       const updated = await response.json();
-      patchProject(project._id, { assignedTo: updated.assignedTo });
+      patchProjectInStore(project._id, { assignedTo: updated.assignedTo });
       window.dispatchEvent(new CustomEvent('organizationDataRefresh', { detail: { silent: true } }));
       toast.success(`Assigned "${project.name}" to ${memberDisplayName(member)}`);
     } catch (err) {
@@ -412,6 +304,31 @@ export function AppSidebar() {
         return active;
     }
   })();
+
+  // Virtualized project rows: only the visible window exists in the DOM, so
+  // the sidebar stays smooth regardless of project count. scrollMargin
+  // accounts for the content above the list inside the shared scroll
+  // container (the sticky filter bar).
+  const listWrapperRef = useRef<HTMLDivElement>(null);
+  const [listOffset, setListOffset] = useState(0);
+  useEffect(() => {
+    const scroller = scrollContainerRef.current;
+    const wrapper = listWrapperRef.current;
+    if (!scroller || !wrapper) return;
+    setListOffset(
+      wrapper.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top +
+        scroller.scrollTop
+    );
+  }, [loading, hasCrmAddOn, projectFilter, projects.length]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: filteredProjects.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 60,
+    overscan: 10,
+    scrollMargin: listOffset,
+  });
 
   return (
     <Sidebar>
@@ -730,8 +647,14 @@ export function AppSidebar() {
                     {projectFilter === 'archived' && 'No archived projects.'}
                   </div>
                 ) : (
-                  <ul className="space-y-1">
-                    {filteredProjects.map((project) => {
+                  <div ref={listWrapperRef}>
+                  <ul
+                    className="relative"
+                    style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+                  >
+                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const project = filteredProjects[virtualRow.index];
+                      if (!project) return null;
                       // Show SmartMoving logo only for projects that have been synced (have syncedAt timestamp)
                       const isSyncedToSmartMoving = !!project.metadata?.smartMovingSyncedAt;
                       const isSyncedToSupermove = !!project.metadata?.supermoveSync?.synced;
@@ -740,7 +663,16 @@ export function AppSidebar() {
                       const isSyncedToMoveright = !!project.metadata?.moverightSync?.synced;
 
                       return (
-                        <li key={project._id} className="group relative">
+                        <li
+                          key={project._id}
+                          data-index={virtualRow.index}
+                          ref={rowVirtualizer.measureElement}
+                          className="absolute left-0 top-0 w-full pb-1"
+                          style={{
+                            transform: `translateY(${virtualRow.start - rowVirtualizer.options.scrollMargin}px)`,
+                          }}
+                        >
+                          <div className="group relative">
                           <button
                             onClick={() => handleProjectClick(project._id)}
                             className={`flex items-center w-full p-2 rounded-md text-left hover:bg-gray-100 cursor-pointer transition-colors ${
@@ -878,10 +810,12 @@ export function AppSidebar() {
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
+                          </div>
                         </li>
                       );
                     })}
                   </ul>
+                  </div>
                 )}
               </>
             )}

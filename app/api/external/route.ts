@@ -78,6 +78,11 @@ export async function GET() {
         description: 'Active on-site walkthrough URL for your surveyor. Creates the link on first call; never expires; sends nothing.',
       },
       {
+        method: 'GET',
+        path: '/api/external/projects/{projectId}/media',
+        description: 'All non-vault photos and videos with signed download URLs (expire 24h). GET each url to download the raw file bytes (no API key needed on the download — the signed url is the credential) and store them in your own system; the file streams directly from the API. Same shape as the webhook media section.',
+      },
+      {
         method: 'POST',
         path: '/api/external/video-calls',
         description: 'Schedule a video call (new or existing project); sends the customer a confirmation SMS with their join link. Supports rep assignment via assignedToEmail/assignedToUserId. See the route itself for full documentation.',
@@ -108,5 +113,18 @@ export async function GET() {
         description: 'List organization members - use id/email for video-call assignment.',
       },
     ],
+    webhooks: {
+      description:
+        'Outbound webhooks push a project inventory to your endpoint the moment an AI analysis (virtual call, self-serve walkthrough, or customer photo/video upload) finishes writing it - no need to poll GET /api/external/projects/{projectId}/inventory.',
+      configuration:
+        'Org admins add endpoints in the Settings > Webhooks page (not configurable via this API). The signing secret (whsec_...) is shown once at creation. A webhook.test event (same envelope, sample data) can be sent from that page.',
+      event: 'inventory.ready',
+      payload:
+        '{ id: "evt_<deliveryId>", event, createdAt, initialInventory, project: <the project object as returned by GET /projects — id, url (link to the project page in Qube Sheets), name, customerName, customerCompanyName, customerEmail, phone, origin, destination, createdAt, updatedAt>, data: <exactly the GET /inventory response body> }. initialInventory is true on the first successful inventory delivery for that project to your endpoint. Bursts (e.g. a 30-photo batch) are coalesced into one delivery sent ~25s after the last completion; data is always the full current inventory at send time.',
+      signature:
+        'Headers: X-Qubesheets-Event, X-Qubesheets-Delivery (unique delivery id), X-Qubesheets-Timestamp (unix seconds), X-Qubesheets-Signature: v1=<hex> where hex is HMAC-SHA256 over "<timestamp>.<raw request body>" keyed with the endpoint signing secret.',
+      retries:
+        'Respond 2xx within 10 seconds (do heavy work async). Non-2xx or timeout is retried up to 5 attempts total with ~1m/5m/15m/1h backoff (timing approximate). 10 consecutive failed deliveries auto-disable the endpoint (re-enable in settings). Deliveries can arrive out of order or more than once - dedupe on X-Qubesheets-Delivery and treat each payload as a full current snapshot (last write wins).',
+    },
   });
 }

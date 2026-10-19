@@ -4,6 +4,7 @@ import connectMongoDB from '@/lib/mongodb';
 import Project from '@/models/Project';
 import SmartMovingIntegration from '@/models/SmartMovingIntegration';
 import { getRepEmail, resolveSurveyEstimator } from '@/lib/smartmoving/surveys';
+import { findOrgMemberByUserId } from '@/lib/external-org-members';
 
 const SMARTMOVING_BASE_URL = 'https://api-public.smartmoving.com/v1/api';
 
@@ -23,6 +24,9 @@ const SMARTMOVING_BASE_URL = 'https://api-public.smartmoving.com/v1/api';
  *   targetType/targetId - optional picker selection not yet linked
  *                ('opportunity' resolves that opportunity's rep; 'lead' has no
  *                opportunity yet, so resolution falls to the rep/default)
+ *   assignedUserId - optional org member the call will be ASSIGNED to; the
+ *                survey follows the assignee (not the scheduler), so rep-based
+ *                estimator resolution must use their email
  *
  * Response: { success, estimatorName, busy: [{ startAt, durationMinutes }] }
  * busy startAt values are SmartMoving account-local date-times.
@@ -70,7 +74,16 @@ export async function GET(request: NextRequest) {
           ? null
           : project.metadata?.smartMovingOpportunityId || null;
 
-    const repEmail = await getRepEmail(userId);
+    // Resolve the rep from the assignee when one is picked (and is a verified
+    // org member); otherwise from the scheduling user.
+    let repUserId = userId;
+    const assignedUserId = searchParams.get('assignedUserId');
+    if (assignedUserId && assignedUserId !== userId) {
+      const member = await findOrgMemberByUserId(orgId, assignedUserId);
+      if (member) repUserId = member.userId;
+    }
+
+    const repEmail = await getRepEmail(repUserId);
     const estimator = await resolveSurveyEstimator({
       apiKey,
       clientId,
