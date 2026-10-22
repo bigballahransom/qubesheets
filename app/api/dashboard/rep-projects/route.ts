@@ -6,6 +6,10 @@
 // - captureType=virtual|self_serve|on_site|photo (+ range params): only
 //   projects with captures of that type in the period attributed to the rep —
 //   mirrors how the By Rep cell counts are attributed
+//
+// Rows carry lastCaptureAt — when the survey actually happened (capture-doc
+// createdAt), never Project.updatedAt, which moves whenever anyone touches
+// the project. Lists are sorted by it, no-capture projects last.
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext, getOrgFilter } from '@/lib/auth-helpers';
 import connectMongoDB from '@/lib/mongodb';
@@ -50,6 +54,12 @@ export async function GET(request: NextRequest) {
         .sort({ updatedAt: -1 })
         .limit(MAX_PROJECTS)
         .lean();
+      const lastCapture = await getLastCaptureDates(orgFilter, projects.map((p: any) => p._id));
+      for (const p of projects) p.lastCaptureAt = lastCapture.get(p._id.toString()) || null;
+      projects.sort((a: any, b: any) =>
+        (b.lastCaptureAt?.getTime() || 0) - (a.lastCaptureAt?.getTime() || 0) ||
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
     }
 
     // Attach customer names for nicer rows
@@ -68,6 +78,7 @@ export async function GET(request: NextRequest) {
         customerName: customerNames.get(p.customerId?.toString()) || null,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
+        lastCaptureAt: p.lastCaptureAt || null,
       })),
       capped: projects.length >= MAX_PROJECTS,
     });
@@ -94,17 +105,17 @@ async function getCaptureProjects(
   const range = resolveDashboardRangeFromParams(searchParams, tz);
   const inRange = { $gte: range.start, $lt: range.end };
 
-  let docs: { userId?: string; projectId?: any }[];
+  let docs: { userId?: string; projectId?: any; createdAt?: Date }[];
   if (captureType === 'photo') {
     docs = (await Image.find({ ...orgFilter, purpose: 'inventory', createdAt: inRange })
-      .select('userId projectId')
+      .select('userId projectId createdAt')
       .lean()) as any[];
   } else {
     docs = await VideoRecording.aggregate([
       { $match: { ...orgFilter, createdAt: inRange, status: { $in: COMPLETED_RECORDING_STATUSES }, purpose: { $ne: 'vault' } } },
       CAPTURE_TYPE_ADD_FIELDS,
       { $match: { _captureType: captureType } },
-      { $project: { userId: 1, projectId: 1 } },
+      { $project: { userId: 1, projectId: 1, createdAt: 1 } },
     ]);
   }
 
@@ -119,17 +130,56 @@ async function getCaptureProjects(
   const matchesRep = (attributedTo: string | null) =>
     rep === UNASSIGNED_REP ? isSyntheticUserId(attributedTo) : attributedTo === rep;
 
-  const matchedIds = new Set<string>();
+  // Latest matching capture per project — shown as "when the survey happened"
+  const lastCapture = new Map<string, Date>();
   for (const doc of docs) {
     const pid = doc.projectId?.toString();
-    if (!pid || matchedIds.has(pid)) continue;
+    if (!pid) continue;
     const project: any = projectById.get(pid);
     const attributedTo = doc.userId || project?.assignedTo?.userId || project?.userId || null;
-    if (matchesRep(attributedTo)) matchedIds.add(pid);
+    if (!matchesRep(attributedTo)) continue;
+    const when = new Date(doc.createdAt!);
+    const prev = lastCapture.get(pid);
+    if (!prev || when > prev) lastCapture.set(pid, when);
   }
 
   return allProjects
-    .filter((p: any) => matchedIds.has(p._id.toString()))
-    .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .filter((p: any) => lastCapture.has(p._id.toString()))
+    .map((p: any) => ({ ...p, lastCaptureAt: lastCapture.get(p._id.toString()) }))
+    .sort((a: any, b: any) => b.lastCaptureAt.getTime() - a.lastCaptureAt.getTime())
     .slice(0, MAX_PROJECTS);
+}
+
+// Most recent survey capture (any type, any time) per project, for the
+// unfiltered all-active-projects list. Recording projectIds are stored as
+// strings, Image projectIds as ObjectIds — aggregate skips schema casting,
+// so each query gets its native type.
+async function getLastCaptureDates(orgFilter: any, projectIds: any[]): Promise<Map<string, Date>> {
+  if (projectIds.length === 0) return new Map();
+  const [recs, imgs] = await Promise.all([
+    VideoRecording.aggregate([
+      {
+        $match: {
+          ...orgFilter,
+          projectId: { $in: projectIds.map(String) },
+          status: { $in: COMPLETED_RECORDING_STATUSES },
+          purpose: { $ne: 'vault' },
+        },
+      },
+      { $group: { _id: '$projectId', last: { $max: '$createdAt' } } },
+    ]),
+    Image.aggregate([
+      { $match: { ...orgFilter, projectId: { $in: projectIds }, purpose: 'inventory' } },
+      { $group: { _id: '$projectId', last: { $max: '$createdAt' } } },
+    ]),
+  ]);
+
+  const lastCapture = new Map<string, Date>();
+  for (const row of [...recs, ...imgs]) {
+    const key = row._id?.toString();
+    if (!key) continue;
+    const existing = lastCapture.get(key);
+    if (!existing || row.last > existing) lastCapture.set(key, row.last);
+  }
+  return lastCapture;
 }
