@@ -399,7 +399,7 @@ function RepProjectsDialog({
 }) {
   const { rangeQuery } = useDashboard();
   const [projects, setProjects] = useState<
-    { projectId: string; name: string; customerName: string | null; updatedAt: string }[]
+    { projectId: string; name: string; customerName: string | null; lastCaptureAt: string | null }[]
   >([]);
   const [capped, setCapped] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -470,14 +470,19 @@ function RepProjectsDialog({
                     <p className="text-sm font-medium text-gray-900 truncate group-hover:text-blue-700">{p.name}</p>
                     {p.customerName && <p className="text-xs text-gray-400 truncate">{p.customerName}</p>}
                   </div>
-                  <span className="text-xs text-gray-400 whitespace-nowrap flex-shrink-0">
-                    {new Date(p.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  <span
+                    className="text-xs text-gray-400 whitespace-nowrap flex-shrink-0"
+                    title={p.lastCaptureAt ? 'Most recent survey capture' : undefined}
+                  >
+                    {p.lastCaptureAt
+                      ? new Date(p.lastCaptureAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                      : 'No captures'}
                   </span>
                 </Link>
               ))}
             </div>
             {capped && (
-              <p className="text-xs text-gray-400 text-center py-2">Showing the 100 most recently updated projects</p>
+              <p className="text-xs text-gray-400 text-center py-2">Showing the 100 most recent projects</p>
             )}
           </div>
         )}
